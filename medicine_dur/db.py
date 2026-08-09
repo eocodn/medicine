@@ -4,13 +4,17 @@ import csv
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Iterable
 
 from openpyxl import load_workbook
+
+from .catalog import build_product_catalog
 
 
 PRODUCT_DATASETS = {
@@ -72,6 +76,13 @@ CREATE TABLE product_dur (
     notice_date TEXT
 );
 
+CREATE TABLE product_catalog (
+    product_code TEXT PRIMARY KEY,
+    product_name TEXT NOT NULL,
+    ingredient_code TEXT,
+    ingredient_name TEXT
+);
+
 CREATE TABLE ingredient_dur (
     id INTEGER PRIMARY KEY,
     dataset_key TEXT NOT NULL,
@@ -94,6 +105,8 @@ CREATE INDEX idx_product_product_code ON product_dur(product_code);
 CREATE INDEX idx_product_pair_ingredient_name ON product_dur(paired_ingredient_name);
 CREATE INDEX idx_product_pair_ingredient_code ON product_dur(paired_ingredient_code);
 CREATE INDEX idx_product_pair_product_code ON product_dur(paired_product_code);
+CREATE INDEX idx_catalog_product_name ON product_catalog(product_name);
+CREATE INDEX idx_catalog_ingredient_name ON product_catalog(ingredient_name);
 
 CREATE INDEX idx_ingredient_category ON ingredient_dur(category);
 CREATE INDEX idx_ingredient_name ON ingredient_dur(ingredient_name);
@@ -107,6 +120,22 @@ def _text(value) -> str | None:
         return None
     value = str(value).strip()
     return value if value else None
+
+
+def _code(value) -> str | None:
+    value = _text(value)
+    if value is None:
+        return None
+    return re.sub(r"\s+", "", value)
+
+
+def _therapeutic_duplication_code(value) -> str | None:
+    value = _text(value)
+    if value is None:
+        return None
+    # In this specific CSV, embedded blanks are consistently used where a zero
+    # appears in the same product/ingredient code in the other DUR datasets.
+    return re.sub(r"\s", "0", value)
 
 
 def _sha256(path: Path) -> str:
@@ -136,20 +165,20 @@ def _product_common(category: str, row: dict[str, str]) -> tuple:
 
     if category == "combination_contraindication":
         ingredient_name = _text(row.get("성분명A"))
-        ingredient_code = _text(row.get("성분코드A"))
-        product_code = _text(row.get("제품코드A"))
+        ingredient_code = _code(row.get("성분코드A"))
+        product_code = _code(row.get("제품코드A"))
         product_name = _text(row.get("제품명A"))
         pair_name = _text(row.get("성분명B"))
-        pair_code = _text(row.get("성분코드B"))
-        pair_product_code = _text(row.get("제품코드B"))
+        pair_code = _code(row.get("성분코드B"))
+        pair_product_code = _code(row.get("제품코드B"))
         pair_product_name = _text(row.get("제품명B"))
         details = _text(row.get("금기사유")) or _text(row.get("비고"))
         notice_no = _text(row.get("고시번호"))
         notice_date = _text(row.get("고시적용일"))
     else:
         ingredient_name = _text(row.get("성분명"))
-        ingredient_code = _text(row.get("성분코드"))
-        product_code = _text(row.get("제품코드"))
+        ingredient_code = _code(row.get("성분코드"))
+        product_code = _code(row.get("제품코드"))
         product_name = _text(row.get("제품명"))
         notice_no = _text(row.get("공고번호"))
         notice_date = _text(row.get("공고일자"))
@@ -174,6 +203,11 @@ def _product_common(category: str, row: dict[str, str]) -> tuple:
         elif category == "elderly_caution":
             details = _text(row.get("약품상세정보"))
         elif category == "therapeutic_duplication_caution":
+            # The published CSV's values are shifted relative to these two headers:
+            # 성분코드 contains the ingredient name, while 성분명 contains the ingredient code.
+            ingredient_name = _text(row.get("성분코드"))
+            ingredient_code = _therapeutic_duplication_code(row.get("성분명"))
+            product_code = _therapeutic_duplication_code(row.get("제품코드"))
             rule_value = _text(row.get("효능군"))
             extra = {
                 "그룹구분": _text(row.get("그룹구분")),
@@ -384,6 +418,7 @@ def _insert_source_file(
     )
 
 
+
 def build_database(
     db_path: str | Path,
     raw_dir: str | Path,
@@ -401,11 +436,12 @@ def build_database(
 
     product_rows = 0
     ingredient_rows = 0
+    catalog_products = 0
     source_files = 0
     started = time.monotonic()
 
     try:
-        with sqlite3.connect(temp_path) as conn:
+        with closing(sqlite3.connect(temp_path)) as conn:
             conn.executescript(SCHEMA)
             conn.execute("BEGIN")
 
@@ -427,6 +463,7 @@ def build_database(
                 conn.commit()
                 conn.execute("BEGIN")
 
+            catalog_products = build_product_catalog(conn)
             conn.commit()
             conn.execute("ANALYZE")
             conn.execute("PRAGMA optimize")
@@ -444,6 +481,7 @@ def build_database(
         "source_files": source_files,
         "product_rows": product_rows,
         "ingredient_rows": ingredient_rows,
+        "catalog_products": catalog_products,
         "total_rows": product_rows + ingredient_rows,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "size_bytes": db_path.stat().st_size,
@@ -452,10 +490,11 @@ def build_database(
 
 def database_stats(db_path: str | Path) -> dict:
     db_path = Path(db_path)
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         product_rows = conn.execute("SELECT COUNT(*) AS n FROM product_dur").fetchone()["n"]
         ingredient_rows = conn.execute("SELECT COUNT(*) AS n FROM ingredient_dur").fetchone()["n"]
+        catalog_products = conn.execute("SELECT COUNT(*) AS n FROM product_catalog").fetchone()["n"]
         source_files = conn.execute("SELECT COUNT(*) AS n FROM source_files").fetchone()["n"]
         categories = [
             dict(row)
@@ -473,6 +512,7 @@ def database_stats(db_path: str | Path) -> dict:
         "source_files": source_files,
         "product_rows": product_rows,
         "ingredient_rows": ingredient_rows,
+        "catalog_products": catalog_products,
         "total_rows": product_rows + ingredient_rows,
         "size_bytes": db_path.stat().st_size,
         "categories": categories,
@@ -512,7 +552,7 @@ def search_records(db_path: str | Path, term: str, *, limit: int = 20) -> list[d
         WHERE ingredient_name LIKE ? OR ingredient_name_ko LIKE ? OR paired_ingredient_name LIKE ?
         LIMIT ?
     """
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         params = [pattern, pattern, pattern, pattern, pattern, pattern, pattern, limit]
         return [dict(row) for row in conn.execute(sql, params)]

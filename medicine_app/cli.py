@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+from .core import MedicationApp
+
+
+DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
+DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
+
+
+def emit(payload, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    elif isinstance(payload, list):
+        for item in payload:
+            print(json.dumps(item, ensure_ascii=False))
+    else:
+        print(json.dumps(payload, ensure_ascii=False))
+
+
+def capture_screenshot(
+    dur_db: Path,
+    personal_db: Path,
+    output: Path,
+    width: int,
+    height: int,
+) -> dict:
+    browser = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
+    if browser is None:
+        raise RuntimeError("Chromium is not installed; use the compose 'ui' service")
+
+    output = output.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    env = os.environ.copy()
+    env["MEDICINE_DUR_DB"] = str(dur_db.resolve())
+    env["MEDICINE_PERSONAL_DB"] = str(personal_db.resolve())
+    server = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "medicine_app.web:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
+        ],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    url = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 10
+        while True:
+            if server.poll() is not None:
+                raise RuntimeError("temporary web server exited before screenshot")
+            try:
+                with urllib.request.urlopen(f"{url}/api/health", timeout=0.5) as response:
+                    if response.status == 200:
+                        break
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError("temporary web server did not become ready")
+            time.sleep(0.1)
+
+        subprocess.run(
+            [
+                browser,
+                "--headless",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--hide-scrollbars",
+                f"--window-size={width},{height}",
+                f"--screenshot={output}",
+                url,
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait(timeout=5)
+
+    return {"path": str(output), "width": width, "height": height, "size_bytes": output.stat().st_size}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="medicine-app", description="Headless control CLI for the medication app")
+    parser.add_argument("--dur-db", type=Path, default=DEFAULT_DUR_DB)
+    parser.add_argument("--personal-db", type=Path, default=DEFAULT_PERSONAL_DB)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    people = sub.add_parser("people")
+    people.add_argument("--json", action="store_true")
+
+    person_add = sub.add_parser("person-add")
+    person_add.add_argument("--name", required=True)
+    person_add.add_argument("--birth-date", required=True)
+    person_add.add_argument("--sex", default="unknown")
+    person_add.add_argument("--pregnancy-status", default="unknown")
+    person_add.add_argument("--json", action="store_true")
+
+    search = sub.add_parser("drug-search")
+    search.add_argument("term")
+    search.add_argument("--limit", type=int, default=20)
+    search.add_argument("--json", action="store_true")
+
+    meds = sub.add_parser("meds")
+    meds.add_argument("--person", required=True)
+    meds.add_argument("--json", action="store_true")
+
+    preview = sub.add_parser("risk-preview")
+    preview.add_argument("--person", required=True)
+    preview.add_argument("--product-code", required=True)
+    preview.add_argument("--json", action="store_true")
+
+    add = sub.add_parser("med-add")
+    add.add_argument("--person", required=True)
+    add.add_argument("--product-code", required=True)
+    add.add_argument("--dose")
+    add.add_argument("--time", action="append", default=[])
+    add.add_argument("--json", action="store_true")
+
+    log = sub.add_parser("dose-log")
+    log.add_argument("--medication", required=True)
+    log.add_argument("--status", choices=["taken", "skipped"], required=True)
+    log.add_argument("--at")
+    log.add_argument("--json", action="store_true")
+
+    screenshot = sub.add_parser("screenshot")
+    screenshot.add_argument("--output", type=Path, default=Path("data/debug/mobile.png"))
+    screenshot.add_argument("--width", type=int, default=390)
+    screenshot.add_argument("--height", type=int, default=844)
+    screenshot.add_argument("--json", action="store_true")
+
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    app = MedicationApp(args.dur_db, args.personal_db)
+
+    if args.command == "people":
+        payload = app.list_people()
+    elif args.command == "person-add":
+        payload = app.create_person(args.name, args.birth_date, args.sex, args.pregnancy_status)
+    elif args.command == "drug-search":
+        payload = app.search_products(args.term, args.limit)
+    elif args.command == "meds":
+        payload = app.list_medications(args.person)
+    elif args.command == "risk-preview":
+        payload = app.preview_medication(args.person, args.product_code)
+    elif args.command == "med-add":
+        payload = app.add_medication(
+            args.person,
+            product_code=args.product_code,
+            dosage_text=args.dose,
+            schedule_times=args.time,
+        )
+    elif args.command == "dose-log":
+        payload = app.record_dose(args.medication, args.status, args.at)
+    elif args.command == "screenshot":
+        if args.width < 320 or args.height < 480:
+            raise SystemExit("screenshot dimensions are too small")
+        payload = capture_screenshot(args.dur_db, args.personal_db, args.output, args.width, args.height)
+    else:
+        raise AssertionError(args.command)
+
+    emit(payload, args.json)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

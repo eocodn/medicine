@@ -2,6 +2,7 @@ import csv
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -67,6 +68,11 @@ class ImporterTest(unittest.TestCase):
         stats = database_stats(db_path)
         self.assertEqual(stats["product_rows"], 1)
         self.assertEqual(stats["ingredient_rows"], 1)
+        self.assertEqual(stats["catalog_products"], 2)
+
+        with closing(sqlite3.connect(db_path)) as conn:
+            catalog_codes = {row[0] for row in conn.execute("SELECT product_code FROM product_catalog")}
+        self.assertEqual(catalog_codes, {"P001", "P002"})
 
         matches = search_records(db_path, "diflunisal", limit=10)
         self.assertEqual(len(matches), 2)
@@ -86,9 +92,31 @@ class ImporterTest(unittest.TestCase):
 
         self.assertEqual(first["product_rows"], 1)
         self.assertEqual(second["product_rows"], 1)
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn:
             count = conn.execute("SELECT COUNT(*) FROM product_dur").fetchone()[0]
         self.assertEqual(count, 1)
+
+    def test_normalizes_codes_and_repairs_therapeutic_duplication_columns(self):
+        self._write_cp949_csv(
+            "therapeutic_duplication_caution.csv",
+            [
+                "효능군", "그룹구분", "일반명코드", "성분코드", "성분명", "제품코드",
+                "제품명", "업체명", "급여구분", "공고번호", "공고일자",
+            ],
+            [[
+                "최면진정제", "Group 2", "112B0008", "zolpidem", "2505 1ATB", "66810 180",
+                "산도스졸피뎀정10mg", "제약A", "급여", "20170079", "2017-02-16",
+            ]],
+        )
+        db_path = self.root / "dur.sqlite"
+
+        build_database(db_path, self.raw_dir, self.kids_dir, progress=False)
+
+        with closing(sqlite3.connect(db_path)) as conn:
+            row = conn.execute(
+                "SELECT ingredient_name, ingredient_code, product_code, rule_value FROM product_dur"
+            ).fetchone()
+        self.assertEqual(row, ("zolpidem", "250501ATB", "668100180", "최면진정제"))
 
 
 if __name__ == "__main__":

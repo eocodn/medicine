@@ -6,6 +6,30 @@ services:
       - .:/app
     entrypoint: ["python", "-m", "medicine_dur.cli"]
 
+  app:
+    build: .
+    working_dir: /app
+    volumes:
+      - .:/app
+    entrypoint: ["python", "-m", "medicine_app.cli"]
+
+  web:
+    build: .
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "127.0.0.1:${MEDICINE_PORT:-18787}:8000"
+    command: ["uvicorn", "medicine_app.web:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    working_dir: /app
+    volumes:
+      - .:/app
+
   test:
     build: .
     working_dir: /app
