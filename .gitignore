@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# DUR source and generated data are intentionally kept out of Git.
+data/raw/
+data/kids/
+data/db/

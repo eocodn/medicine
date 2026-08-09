@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medicine-dur"
+version = "0.1.0"
+description = "Local Korean DUR data importer and query CLI"
+requires-python = ">=3.13"
+dependencies = [
+  "openpyxl==3.1.5",
+]
+
+[project.scripts]
+medicine-dur = "medicine_dur.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["medicine_dur*"]

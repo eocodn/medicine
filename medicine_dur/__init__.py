@@ -1,0 +1,3 @@
+"""Local DUR data tooling."""
+
+__version__ = "0.1.0"
