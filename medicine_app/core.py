@@ -10,63 +10,15 @@ from pathlib import Path
 from typing import Iterator
 from zoneinfo import ZoneInfo
 
-
-PERSONAL_SCHEMA = """
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
-CREATE TABLE IF NOT EXISTS people (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    birth_date TEXT NOT NULL,
-    sex TEXT NOT NULL,
-    pregnancy_status TEXT NOT NULL,
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS medications (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
-    product_code TEXT,
-    product_name TEXT NOT NULL,
-    ingredient_code TEXT,
-    ingredient_name TEXT,
-    dosage_text TEXT,
-    start_date TEXT,
-    end_date TEXT,
-    active INTEGER NOT NULL DEFAULT 1,
-    source TEXT NOT NULL DEFAULT 'dur_search',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS medication_schedules (
-    id TEXT PRIMARY KEY,
-    medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
-    time_of_day TEXT NOT NULL,
-    dose_text TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS dose_logs (
-    id TEXT PRIMARY KEY,
-    medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
-    person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
-    status TEXT NOT NULL,
-    occurred_at TEXT NOT NULL,
-    note TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_medications_person_active ON medications(person_id, active);
-CREATE INDEX IF NOT EXISTS idx_schedules_medication ON medication_schedules(medication_id);
-CREATE INDEX IF NOT EXISTS idx_logs_person_time ON dose_logs(person_id, occurred_at DESC);
-"""
-
+from .persistence import ensure_personal_schema
+from .planning import materialize_daily_plan, record_instance
+from .products import ProductRepository
 
 SEX_VALUES = {"female", "male", "other", "unknown"}
 PREGNANCY_VALUES = {"pregnant", "not_pregnant", "unknown", "not_applicable"}
 DOSE_STATUS_VALUES = {"taken", "skipped"}
+MEAL_RELATION_VALUES = {"unspecified", "before_meal", "after_meal", "with_meal", "empty_stomach", "regardless"}
+ADMINISTRATION_ROUTE_VALUES = {"oral", "topical", "inhaled", "ophthalmic", "otic", "nasal", "injection", "other", "unknown"}
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 
@@ -146,14 +98,21 @@ def age_rule_matches(birth_date: str, rule: str | None, as_of: date | None = Non
 
 
 class MedicationApp:
-    def __init__(self, dur_db: Path | str, personal_db: Path | str):
+    def __init__(
+        self,
+        dur_db: Path | str,
+        personal_db: Path | str,
+        catalog_db: Path | str | None = None,
+    ):
         self.dur_db = Path(dur_db)
         self.personal_db = Path(personal_db)
+        self.catalog_db = Path(catalog_db) if catalog_db else None
         if not self.dur_db.exists():
             raise FileNotFoundError(f"DUR database not found: {self.dur_db}")
         self.personal_db.parent.mkdir(parents=True, exist_ok=True)
+        self.products = ProductRepository(self.dur_db, self.catalog_db)
         with self._personal() as con:
-            con.executescript(PERSONAL_SCHEMA)
+            ensure_personal_schema(con)
 
     @contextmanager
     def _personal(self) -> Iterator[sqlite3.Connection]:
@@ -224,86 +183,112 @@ class MedicationApp:
         return data
 
     def search_products(self, term: str, limit: int = 30) -> list[dict]:
-        term = term.strip()
-        if not term:
-            return []
-        if limit < 1 or limit > 100:
-            raise ValueError("limit must be between 1 and 100")
-        like = f"%{term}%"
-        code_like = f"{term}%"
-        sql = """
-            SELECT product_code, product_name, ingredient_code, ingredient_name
-            FROM product_catalog
-            WHERE product_name LIKE ? OR ingredient_name LIKE ? OR product_code LIKE ?
-            ORDER BY CASE WHEN product_name LIKE ? THEN 0 ELSE 1 END, product_name
-            LIMIT ?
-        """
-        with self._dur() as con:
-            rows = con.execute(sql, (like, like, code_like, f"{term}%", limit)).fetchall()
-        return [dict(row) for row in rows]
+        return self.products.search(term, limit)
 
-    def get_product(self, product_code: str) -> dict:
-        product_code = product_code.strip()
-        with self._dur() as con:
-            row = con.execute(
-                """
-                SELECT product_code, product_name, ingredient_code, ingredient_name
-                FROM product_catalog WHERE product_code=?
-                """,
-                (product_code,),
-            ).fetchone()
-        if row is None:
-            raise KeyError("product not found in DUR dataset")
-        return dict(row)
+    def get_product(self, product_ref: str) -> dict:
+        return self.products.get(product_ref)
 
     def add_medication(
         self,
         person_id: str,
         *,
+        product_ref: str | None = None,
         product_code: str | None = None,
         manual_name: str | None = None,
         ingredient_name: str | None = None,
         dosage_text: str | None = None,
+        dose_amount: float | None = None,
+        dose_unit: str | None = None,
+        frequency_per_day: int | None = None,
+        meal_relation: str = "unspecified",
+        administration_route: str = "oral",
+        as_needed: bool = False,
+        prescription_days: int | None = None,
         schedule_times: list[str] | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         source: str | None = None,
     ) -> dict:
         self.get_person(person_id)
-        if product_code:
-            product = self.get_product(product_code)
-            product_name = product["product_name"] or product_code
+        resolved_ref = product_ref or product_code
+        if resolved_ref:
+            product = self.get_product(resolved_ref)
+            product_code = product["product_code"]
+            product_name = product["product_name"] or resolved_ref
             ingredient_code = product["ingredient_code"]
             resolved_ingredient = product["ingredient_name"]
-            med_source = source or "dur_search"
+            catalog_item_seq = product["catalog_item_seq"]
+            manufacturer = product["manufacturer"]
+            catalog_source = product["catalog_source"]
+            med_source = source or ("catalog_search" if catalog_source != "dur" else "dur_search")
         else:
             product_name = (manual_name or "").strip()
             if not product_name:
-                raise ValueError("product_code or manual_name is required")
+                raise ValueError("product_ref, product_code or manual_name is required")
             ingredient_code = None
             resolved_ingredient = ingredient_name
+            catalog_item_seq = None
+            manufacturer = None
+            catalog_source = "manual"
             med_source = source or "manual"
 
         schedule_times = schedule_times or []
         for value in schedule_times:
             self._validate_time(value)
-        if start_date:
-            date.fromisoformat(start_date)
-        if end_date:
-            date.fromisoformat(end_date)
+        if frequency_per_day is None and schedule_times:
+            frequency_per_day = len(schedule_times)
+        if dose_amount is not None:
+            dose_amount = float(dose_amount)
+            if dose_amount <= 0:
+                raise ValueError("dose_amount must be > 0")
+        dose_unit = (dose_unit or "").strip() or None
+        if frequency_per_day is not None:
+            frequency_per_day = int(frequency_per_day)
+            if frequency_per_day < 1 or frequency_per_day > 24:
+                raise ValueError("frequency_per_day must be between 1 and 24")
+            if schedule_times and frequency_per_day != len(schedule_times):
+                raise ValueError("frequency_per_day must match the number of schedule_times")
+        if meal_relation not in MEAL_RELATION_VALUES:
+            raise ValueError(f"invalid meal_relation: {meal_relation}")
+        if administration_route not in ADMINISTRATION_ROUTE_VALUES:
+            raise ValueError(f"invalid administration_route: {administration_route}")
+        if prescription_days is not None:
+            prescription_days = int(prescription_days)
+            if prescription_days < 1 or prescription_days > 3650:
+                raise ValueError("prescription_days must be between 1 and 3650")
+
+        start = date.fromisoformat(start_date) if start_date else datetime.now(APP_TIMEZONE).date()
+        finish = date.fromisoformat(end_date) if end_date else None
+        if prescription_days is not None:
+            computed_finish = start + timedelta(days=prescription_days - 1)
+            if finish is not None and finish != computed_finish:
+                raise ValueError("end_date conflicts with start_date and prescription_days")
+            finish = computed_finish
+        if start is not None and finish is not None and finish < start:
+            raise ValueError("end_date must be on or after start_date")
+        start_date = start.isoformat() if start else None
+        end_date = finish.isoformat() if finish else None
+
+        if dosage_text is None and dose_amount is not None:
+            amount_text = f"{dose_amount:g}"
+            dosage_text = f"{amount_text}{dose_unit or ''}"
 
         medication_id = _uuid()
         with self._personal() as con:
             con.execute(
                 """
                 INSERT INTO medications(
-                    id,person_id,product_code,product_name,ingredient_code,ingredient_name,
-                    dosage_text,start_date,end_date,active,source
-                ) VALUES(?,?,?,?,?,?,?,?,?,1,?)
+                    id,person_id,catalog_item_seq,product_code,product_name,ingredient_code,ingredient_name,
+                    manufacturer,catalog_source,dosage_text,dose_amount,dose_unit,frequency_per_day,
+                    meal_relation,administration_route,as_needed,prescription_days,
+                    start_date,end_date,active,source
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
                 """,
                 (
-                    medication_id, person_id, product_code, product_name, ingredient_code,
-                    resolved_ingredient, dosage_text, start_date, end_date, med_source,
+                    medication_id, person_id, catalog_item_seq, product_code, product_name, ingredient_code,
+                    resolved_ingredient, manufacturer, catalog_source, dosage_text, dose_amount, dose_unit,
+                    frequency_per_day, meal_relation, administration_route, int(bool(as_needed)),
+                    prescription_days, start_date, end_date, med_source,
                 ),
             )
             for time_of_day in schedule_times:
@@ -331,6 +316,9 @@ class MedicationApp:
             ).fetchall()
         data = dict(row)
         data["active"] = bool(data["active"])
+        data["as_needed"] = bool(data.get("as_needed") or 0)
+        data["meal_relation"] = data.get("meal_relation") or "unspecified"
+        data["administration_route"] = data.get("administration_route") or "oral"
         data["schedules"] = [dict(item) for item in schedules]
         return data
 
@@ -343,6 +331,32 @@ class MedicationApp:
         with self._personal() as con:
             rows = con.execute(f"SELECT id FROM medications {where} ORDER BY rowid", params).fetchall()
         return [self.get_medication(row["id"]) for row in rows]
+
+    def get_daily_plan(self, person_id: str, target_date: str | date | None = None) -> dict:
+        self.get_person(person_id)
+        if target_date is None:
+            target = datetime.now(APP_TIMEZONE).date()
+        elif isinstance(target_date, date):
+            target = target_date
+        else:
+            target = date.fromisoformat(target_date)
+        medications = self.list_medications(person_id, active_only=True)
+        with self._personal() as con:
+            return materialize_daily_plan(con, person_id, medications, target, _uuid)
+
+    def record_dose_instance(
+        self,
+        instance_id: str,
+        status: str,
+        occurred_at: str | None = None,
+        note: str | None = None,
+    ) -> dict:
+        if status not in DOSE_STATUS_VALUES:
+            raise ValueError("status must be taken or skipped")
+        when = occurred_at or datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
+        datetime.fromisoformat(when)
+        with self._personal() as con:
+            return record_instance(con, instance_id, status, when, note, _uuid)
 
     def deactivate_medication(self, medication_id: str) -> dict:
         with self._personal() as con:
@@ -384,16 +398,25 @@ class MedicationApp:
         product = self.get_product(product_code)
         current = self.list_medications(person_id)
         risks: list[dict] = []
-        with self._dur() as con:
-            risks.extend(self._combination_risks(con, product, current))
-            risks.extend(self._person_specific_risks(con, person, product, as_of))
-            risks.extend(self._duplication_risks(con, product, current))
-            risks.extend(self._rule_presence_risks(con, product))
+        if product.get("dur_match"):
+            with self._dur() as con:
+                risks.extend(self._combination_risks(con, product, current))
+                risks.extend(self._person_specific_risks(con, person, product, as_of))
+                risks.extend(self._duplication_risks(con, product, current))
+                risks.extend(self._rule_presence_risks(con, product))
         return {
             "person": person,
             "product": product,
             "current_medication_count": len(current),
             "risks": self._dedupe_risks(risks),
+            "coverage": {
+                "dur_match": bool(product.get("dur_match")),
+                "message": (
+                    "DUR 제품코드와 연결되어 개인별 금기·주의를 확인했습니다."
+                    if product.get("dur_match")
+                    else "전체 의약품 카탈로그에는 있지만 DUR 제품코드와 연결되지 않아 자동 위험 확인 범위가 제한됩니다."
+                ),
+            },
         }
 
     def _combination_risks(self, con: sqlite3.Connection, product: dict, current: list[dict]) -> list[dict]:

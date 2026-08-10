@@ -16,6 +16,7 @@ from .core import MedicationApp
 
 DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
 DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
+DEFAULT_CATALOG_DB = Path("data/db/catalog.sqlite")
 
 
 def emit(payload, as_json: bool) -> None:
@@ -31,6 +32,7 @@ def emit(payload, as_json: bool) -> None:
 def capture_screenshot(
     dur_db: Path,
     personal_db: Path,
+    catalog_db: Path,
     output: Path,
     width: int,
     height: int,
@@ -48,6 +50,7 @@ def capture_screenshot(
     env = os.environ.copy()
     env["MEDICINE_DUR_DB"] = str(dur_db.resolve())
     env["MEDICINE_PERSONAL_DB"] = str(personal_db.resolve())
+    env["MEDICINE_CATALOG_DB"] = str(catalog_db.resolve())
     server = subprocess.Popen(
         [
             sys.executable,
@@ -111,6 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="medicine-app", description="Headless control CLI for the medication app")
     parser.add_argument("--dur-db", type=Path, default=DEFAULT_DUR_DB)
     parser.add_argument("--personal-db", type=Path, default=DEFAULT_PERSONAL_DB)
+    parser.add_argument("--catalog-db", type=Path, default=DEFAULT_CATALOG_DB)
     sub = parser.add_subparsers(dest="command", required=True)
 
     people = sub.add_parser("people")
@@ -134,15 +138,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     preview = sub.add_parser("risk-preview")
     preview.add_argument("--person", required=True)
-    preview.add_argument("--product-code", required=True)
+    preview.add_argument("--product-ref", "--product-code", dest="product_ref", required=True)
     preview.add_argument("--json", action="store_true")
 
     add = sub.add_parser("med-add")
     add.add_argument("--person", required=True)
-    add.add_argument("--product-code", required=True)
+    add.add_argument("--product-ref", "--product-code", dest="product_ref", required=True)
     add.add_argument("--dose")
+    add.add_argument("--dose-amount", type=float)
+    add.add_argument("--dose-unit")
+    add.add_argument("--frequency", type=int)
+    add.add_argument("--meal-relation", default="unspecified")
+    add.add_argument("--route", default="oral")
+    add.add_argument("--prn", action="store_true")
+    add.add_argument("--days", type=int)
+    add.add_argument("--start-date")
     add.add_argument("--time", action="append", default=[])
     add.add_argument("--json", action="store_true")
+
+    plan = sub.add_parser("daily-plan")
+    plan.add_argument("--person", required=True)
+    plan.add_argument("--date")
+    plan.add_argument("--json", action="store_true")
+
+    instance = sub.add_parser("dose-instance")
+    instance.add_argument("--instance", required=True)
+    instance.add_argument("--status", choices=["taken", "skipped"], required=True)
+    instance.add_argument("--at")
+    instance.add_argument("--json", action="store_true")
 
     log = sub.add_parser("dose-log")
     log.add_argument("--medication", required=True)
@@ -161,7 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    app = MedicationApp(args.dur_db, args.personal_db)
+    app = MedicationApp(args.dur_db, args.personal_db, args.catalog_db)
 
     if args.command == "people":
         payload = app.list_people()
@@ -172,20 +195,32 @@ def main(argv=None) -> int:
     elif args.command == "meds":
         payload = app.list_medications(args.person)
     elif args.command == "risk-preview":
-        payload = app.preview_medication(args.person, args.product_code)
+        payload = app.preview_medication(args.person, args.product_ref)
     elif args.command == "med-add":
         payload = app.add_medication(
             args.person,
-            product_code=args.product_code,
+            product_ref=args.product_ref,
             dosage_text=args.dose,
+            dose_amount=args.dose_amount,
+            dose_unit=args.dose_unit,
+            frequency_per_day=args.frequency,
+            meal_relation=args.meal_relation,
+            administration_route=args.route,
+            as_needed=args.prn,
+            prescription_days=args.days,
+            start_date=args.start_date,
             schedule_times=args.time,
         )
+    elif args.command == "daily-plan":
+        payload = app.get_daily_plan(args.person, args.date)
+    elif args.command == "dose-instance":
+        payload = app.record_dose_instance(args.instance, args.status, args.at)
     elif args.command == "dose-log":
         payload = app.record_dose(args.medication, args.status, args.at)
     elif args.command == "screenshot":
         if args.width < 320 or args.height < 480:
             raise SystemExit("screenshot dimensions are too small")
-        payload = capture_screenshot(args.dur_db, args.personal_db, args.output, args.width, args.height)
+        payload = capture_screenshot(args.dur_db, args.personal_db, args.catalog_db, args.output, args.width, args.height)
     else:
         raise AssertionError(args.command)
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from medicine_app.web import create_web_app
-from tests.test_app_core import make_dur_db
+from tests.test_app_core import make_catalog_db, make_dur_db
 
 
 class WebApiTest(unittest.TestCase):
@@ -16,8 +16,10 @@ class WebApiTest(unittest.TestCase):
         root = Path(self.tmp.name)
         self.dur_db = root / "dur.sqlite"
         self.personal_db = root / "personal.sqlite"
+        self.catalog_db = root / "catalog.sqlite"
         make_dur_db(self.dur_db)
-        self.client = TestClient(create_web_app(self.dur_db, self.personal_db))
+        make_catalog_db(self.catalog_db)
+        self.client = TestClient(create_web_app(self.dur_db, self.personal_db, self.catalog_db))
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -76,6 +78,48 @@ class WebApiTest(unittest.TestCase):
         body = dashboard.json()
         self.assertEqual(len(body["medications"]), 2)
         self.assertEqual(len(body["recent_logs"]), 1)
+
+    def test_structured_prescription_and_daily_plan_api(self) -> None:
+        person = self.client.post(
+            "/api/people",
+            json={"name": "일정", "birth_date": "1990-01-01", "sex": "female", "pregnancy_status": "not_pregnant"},
+        ).json()
+
+        search = self.client.get("/api/products", params={"q": "전체카탈로그약B"})
+        self.assertEqual(search.status_code, 200)
+        self.assertEqual(search.json()[0]["product_ref"], "MFDS-B")
+
+        added = self.client.post(
+            f"/api/people/{person['id']}/medications",
+            json={
+                "product_ref": "MFDS-B",
+                "dose_amount": 1,
+                "dose_unit": "정",
+                "frequency_per_day": 2,
+                "meal_relation": "after_meal",
+                "administration_route": "oral",
+                "prescription_days": 2,
+                "start_date": "2026-08-10",
+                "schedule_times": ["08:00", "20:00"],
+            },
+        )
+        self.assertEqual(added.status_code, 201)
+        self.assertEqual(added.json()["end_date"], "2026-08-11")
+
+        plan = self.client.get(f"/api/people/{person['id']}/daily-plan", params={"date": "2026-08-10"})
+        self.assertEqual(plan.status_code, 200)
+        self.assertEqual(len(plan.json()["doses"]), 2)
+
+        instance_id = plan.json()["doses"][0]["id"]
+        completed = self.client.post(
+            f"/api/dose-instances/{instance_id}",
+            json={"status": "taken", "occurred_at": "2026-08-10T08:01:00+09:00"},
+        )
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(completed.json()["status"], "taken")
+
+        dashboard = self.client.get(f"/api/people/{person['id']}/dashboard", params={"date": "2026-08-10"})
+        self.assertEqual(dashboard.json()["daily_plan"]["summary"]["taken"], 1)
 
 
 if __name__ == "__main__":

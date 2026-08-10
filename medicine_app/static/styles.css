@@ -343,3 +343,24 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .bottom-nav { bottom: 22px; border-radius: 0 0 32px 32px; }
   .bottom-sheet { bottom: 22px; border-radius: 28px; }
 }
+
+/* Structured prescription + daily dose state */
+.schedule-item.done { opacity: .72; }
+.dose-status { font-size: 12px; font-weight: 800; padding: 7px 9px; border-radius: 99px; }
+.dose-status.taken { background: var(--brand-soft); color: var(--brand); }
+.dose-status.skipped { background: #eceeed; color: var(--muted); }
+.prn-note { margin-top: 12px; padding: 12px 13px; border-radius: 15px; background: #f7f3e9; color: #725b2c; font-size: 12px; line-height: 1.5; }
+.prn-note strong { display: block; margin-bottom: 3px; }
+.chip.prn-chip { background: #f7ecd5; color: var(--warning); }
+.chip.caution-chip { background: var(--danger-soft); color: var(--danger); }
+.coverage-note { margin-bottom: 10px; padding: 11px 13px; border-radius: 14px; font-size: 12px; line-height: 1.5; }
+.coverage-note.matched { background: var(--brand-soft); color: var(--brand); }
+.coverage-note.limited { background: var(--warning-soft); color: #69440e; }
+.prescription-form { display: grid; gap: 13px; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--line); }
+.form-grid.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.prescription-form label { display: grid; gap: 7px; font-size: 13px; font-weight: 800; color: #536059; }
+.prescription-form input, .prescription-form select { width: 100%; min-height: 52px; border: 1px solid var(--line); border-radius: 15px; padding: 0 13px; background: #fbfcfb; color: var(--text); }
+.checkbox-row { grid-template-columns: 26px 1fr !important; align-items: start; padding: 12px 2px; }
+.checkbox-row input { width: 22px !important; min-height: 22px !important; margin-top: 2px; }
+.checkbox-row span { display: grid; gap: 3px; }
+.checkbox-row small { color: var(--muted); font-weight: 500; line-height: 1.45; }

@@ -13,6 +13,7 @@ from .core import MedicationApp
 
 DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
 DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
+DEFAULT_CATALOG_DB = Path("data/db/catalog.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
 
 
@@ -25,20 +26,35 @@ class PersonCreate(BaseModel):
 
 
 class MedicationPreviewRequest(BaseModel):
-    product_code: str
+    product_ref: str | None = None
+    product_code: str | None = None
 
 
 class MedicationCreate(BaseModel):
+    product_ref: str | None = None
     product_code: str | None = None
     manual_name: str | None = None
     ingredient_name: str | None = None
     dosage_text: str | None = None
+    dose_amount: float | None = None
+    dose_unit: str | None = None
+    frequency_per_day: int | None = None
+    meal_relation: str = "unspecified"
+    administration_route: str = "oral"
+    as_needed: bool = False
+    prescription_days: int | None = None
     schedule_times: list[str] = Field(default_factory=list)
     start_date: str | None = None
     end_date: str | None = None
 
 
 class DoseLogCreate(BaseModel):
+    status: str
+    occurred_at: str | None = None
+    note: str | None = None
+
+
+class DoseInstanceUpdate(BaseModel):
     status: str
     occurred_at: str | None = None
     note: str | None = None
@@ -55,8 +71,9 @@ def _translate_error(exc: Exception) -> HTTPException:
 def create_web_app(
     dur_db: Path | str = DEFAULT_DUR_DB,
     personal_db: Path | str = DEFAULT_PERSONAL_DB,
+    catalog_db: Path | str | None = DEFAULT_CATALOG_DB,
 ) -> FastAPI:
-    service = MedicationApp(dur_db, personal_db)
+    service = MedicationApp(dur_db, personal_db, catalog_db)
     app = FastAPI(title="Medicine", version="0.1.0")
     app.state.service = service
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -67,7 +84,7 @@ def create_web_app(
 
     @app.get("/api/health")
     def health() -> dict:
-        return {"ok": True}
+        return {"ok": True, "full_catalog": service.products.has_full_catalog()}
 
     @app.get("/api/people")
     def list_people() -> list[dict]:
@@ -88,20 +105,31 @@ def create_web_app(
             raise _translate_error(exc) from exc
 
     @app.get("/api/people/{person_id}/dashboard")
-    def dashboard(person_id: str) -> dict:
+    def dashboard(person_id: str, date: str | None = None) -> dict:
         try:
             return {
                 "person": service.get_person(person_id),
                 "medications": service.list_medications(person_id),
                 "recent_logs": service.list_dose_logs(person_id, limit=20),
+                "daily_plan": service.get_daily_plan(person_id, date),
             }
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @app.get("/api/people/{person_id}/daily-plan")
+    def daily_plan(person_id: str, date: str | None = None) -> dict:
+        try:
+            return service.get_daily_plan(person_id, date)
         except Exception as exc:
             raise _translate_error(exc) from exc
 
     @app.post("/api/people/{person_id}/medications/preview")
     def preview_medication(person_id: str, payload: MedicationPreviewRequest) -> dict:
         try:
-            return service.preview_medication(person_id, payload.product_code)
+            product_ref = payload.product_ref or payload.product_code
+            if not product_ref:
+                raise ValueError("product_ref or product_code is required")
+            return service.preview_medication(person_id, product_ref)
         except Exception as exc:
             raise _translate_error(exc) from exc
 
@@ -126,10 +154,18 @@ def create_web_app(
         except Exception as exc:
             raise _translate_error(exc) from exc
 
+    @app.post("/api/dose-instances/{instance_id}")
+    def update_dose_instance(instance_id: str, payload: DoseInstanceUpdate) -> dict:
+        try:
+            return service.record_dose_instance(instance_id, payload.status, payload.occurred_at, payload.note)
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
     return app
 
 
 app = create_web_app(
     os.environ.get("MEDICINE_DUR_DB", str(DEFAULT_DUR_DB)),
     os.environ.get("MEDICINE_PERSONAL_DB", str(DEFAULT_PERSONAL_DB)),
+    os.environ.get("MEDICINE_CATALOG_DB", str(DEFAULT_CATALOG_DB)),
 )
