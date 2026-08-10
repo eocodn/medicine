@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS medication_schedules (
 
 CREATE TABLE IF NOT EXISTS dose_logs (
     id TEXT PRIMARY KEY,
-    medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+    medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE RESTRICT,
     person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
     status TEXT NOT NULL,
     occurred_at TEXT NOT NULL,
