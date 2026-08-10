@@ -32,6 +32,11 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("복용", response.text)
         self.assertIn("약 검색", response.text)
         self.assertIn('id="include-inactive"', response.text)
+        script = self.client.get("/static/app.js")
+        self.assertEqual(script.status_code, 200)
+        self.assertIn("warning_token", script.text)
+        self.assertIn("openMedicationEdit", script.text)
+        self.assertIn("변경 이력", script.text)
 
     def test_product_search_can_include_inactive_permit_records(self) -> None:
         default = self.client.get("/api/products", params={"q": "과거취하약"})

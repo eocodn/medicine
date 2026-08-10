@@ -4,6 +4,9 @@ const state = {
   dashboard: null,
   fullCatalog: false,
   pendingProduct: null,
+  pendingRequestId: null,
+  warningToken: null,
+  editingMedicationId: null,
   searchTimer: null,
 };
 
@@ -34,11 +37,15 @@ async function api(path, options = {}) {
   });
   if (!response.ok) {
     let message = `요청 실패 (${response.status})`;
+    let body = null;
     try {
-      const body = await response.json();
+      body = await response.json();
       message = body.detail || message;
     } catch (_) {}
-    throw new Error(message);
+    const error = new Error(typeof message === "string" ? message : "요청을 처리하지 못했어요");
+    error.status = response.status;
+    error.body = body;
+    throw error;
   }
   return response.status === 204 ? null : response.json();
 }
@@ -227,6 +234,7 @@ function renderMedications() {
         ${med.source === "manual" ? `<span class="chip caution-chip">직접 입력 · DUR 제한</span>` : ""}
       </div>
       <div class="med-actions">
+        <button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>
         <button class="secondary-button" data-taken="${med.id}" type="button">복용 완료</button>
         <button class="danger-ghost" data-stop="${med.id}" type="button">복용 목록에서 종료</button>
       </div>
@@ -240,6 +248,7 @@ function renderMedications() {
     </div>`).join("") : `<div class="empty-state"><strong>기록이 아직 없어요</strong>약을 복용한 뒤 완료 버튼을 눌러보세요.</div>`;
 
   $$('[data-taken]', medsRoot).forEach((button) => button.addEventListener("click", () => logDose(button.dataset.taken, "taken")));
+  $$('[data-edit]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.edit)));
   $$('[data-stop]', medsRoot).forEach((button) => button.addEventListener("click", () => stopMedication(button.dataset.stop)));
 }
 
@@ -289,7 +298,9 @@ async function completeDoseInstance(instanceId, status) {
 async function stopMedication(medicationId) {
   if (!confirm("복용 중 목록에서 종료할까요? 처방 중단 판단은 의사·약사와 확인하세요.")) return;
   try {
-    await api(`/api/medications/${medicationId}`, { method: "DELETE" });
+    const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+    const query = medication ? `?expected_revision=${medication.revision}` : "";
+    await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
     await loadDashboard();
     renderAll();
     toast("복용 목록에서 종료했어요");
@@ -342,12 +353,15 @@ async function previewProduct(productRef) {
       method: "POST", body: JSON.stringify({ product_ref: productRef }),
     });
     state.pendingProduct = preview.product;
+    state.pendingRequestId = crypto.randomUUID();
+    state.warningToken = null;
+    state.editingMedicationId = null;
     renderRiskSheet(preview);
     openSheet("#risk-sheet");
   } catch (error) { toast(error.message); }
 }
 
-function renderRiskSheet(preview) {
+function renderRiskSheet(preview, medication = null) {
   const root = $("#risk-sheet-content");
   const risks = preview.risks || [];
   const dangerous = risks.some((risk) => risk.severity === "danger");
@@ -357,7 +371,7 @@ function renderRiskSheet(preview) {
       <button class="icon-button" data-close-sheet type="button">×</button>
     </div>
     <div class="risk-summary">
-      <h2>${dangerous ? "확인이 필요한 위험이 있어요" : risks.length ? "주의 정보를 확인하세요" : preview.coverage?.dur_match ? "현재 확인된 DUR 위험 정보가 없어요" : "DUR 자동 확인 범위가 제한돼요"}</h2>
+      <h2>${medication ? "처방 정보를 수정합니다" : dangerous ? "확인이 필요한 위험이 있어요" : risks.length ? "주의 정보를 확인하세요" : preview.coverage?.dur_match ? "현재 확인된 DUR 위험 정보가 없어요" : "DUR 자동 확인 범위가 제한돼요"}</h2>
       <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필과 현재 복용약 ${preview.current_medication_count}개를 기준으로 확인했습니다.</p>
     </div>
     ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 허가 상태와 실제 보유·유통 여부는 별개일 수 있어요.</div>` : ""}
@@ -400,35 +414,125 @@ function renderRiskSheet(preview) {
       <label>복용 시작일<input id="pending-start-date" type="date"></label>
       <label class="checkbox-row"><input id="pending-prn" type="checkbox"><span><strong>필요할 때만 복용</strong><small>정해진 오늘 일정에는 넣지 않아요.</small></span></label>
     </div>
+    <div id="quantitative-warning"></div>
+    <div id="revision-history"></div>
     <div class="risk-actions">
       <button class="secondary-button" data-close-sheet type="button">취소</button>
-      <button class="primary-button" id="confirm-add-med" type="button">복용약에 추가</button>
+      <button class="primary-button" id="${medication ? "confirm-edit-med" : "confirm-add-med"}" type="button">${medication ? "수정 내용 저장" : "복용약에 추가"}</button>
     </div>
     <p class="risk-disclaimer">DUR 금기·주의는 의료진 확인을 위한 안전 신호입니다. 결과를 근거로 처방약을 임의 중단하거나 변경하지 마세요.</p>`;
   $$('[data-close-sheet]', root).forEach((button) => button.addEventListener("click", closeSheets));
-  $("#pending-start-date", root).value = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date());
-  $("#confirm-add-med", root).addEventListener("click", confirmAddMedication);
+  if (medication) {
+    $("#pending-dose-amount", root).value = medication.dose_amount ?? "";
+    $("#pending-dose-unit", root).value = medication.dose_unit ?? "";
+    $("#pending-frequency", root).value = medication.frequency_per_day ?? "";
+    $("#pending-days", root).value = medication.prescription_days ?? "";
+    $("#pending-times", root).value = (medication.schedules || []).map((item) => item.time_of_day).join(", ");
+    $("#pending-meal", root).value = medication.meal_relation || "unspecified";
+    $("#pending-route", root).value = medication.administration_route || "oral";
+    $("#pending-start-date", root).value = medication.start_date || "";
+    $("#pending-prn", root).checked = Boolean(medication.as_needed);
+    $("#confirm-edit-med", root).addEventListener("click", confirmEditMedication);
+  } else {
+    $("#pending-start-date", root).value = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    $("#confirm-add-med", root).addEventListener("click", confirmAddMedication);
+  }
+}
+
+function prescriptionPayloadFromForm() {
+  const times = $("#pending-times").value.split(",").map((value) => value.trim()).filter(Boolean);
+  return {
+    dose_amount: $("#pending-dose-amount").value ? Number($("#pending-dose-amount").value) : null,
+    dose_unit: $("#pending-dose-unit").value.trim() || null,
+    frequency_per_day: $("#pending-frequency").value ? Number($("#pending-frequency").value) : (times.length || null),
+    meal_relation: $("#pending-meal").value,
+    administration_route: $("#pending-route").value,
+    as_needed: $("#pending-prn").checked,
+    prescription_days: $("#pending-days").value ? Number($("#pending-days").value) : null,
+    start_date: $("#pending-start-date").value || null,
+    schedule_times: times,
+  };
+}
+
+function quantitativeCheckHtml(label, check) {
+  if (!check) return "";
+  if (check.result === "exceeded") {
+    const requested = check.requested_days ?? check.daily_amount;
+    const maximum = check.maximum_days ?? check.maximum_daily_amount;
+    return `<div class="risk-card warning"><strong>${label} 기준 초과</strong><p>입력값 ${escapeHtml(requested)} · 기준 ${escapeHtml(maximum)}${check.unit ? ` ${escapeHtml(check.unit)}` : ""}</p></div>`;
+  }
+  if (check.result === "not_evaluable") {
+    return `<div class="risk-card info"><strong>${label} 자동 판정 불가</strong><p>${escapeHtml(check.reason || "기준을 정확히 비교할 수 없습니다.")}</p></div>`;
+  }
+  return `<div class="risk-card info"><strong>${label} 입력 기준 이내</strong></div>`;
+}
+
+function handleConfirmationRequired(error, buttonId) {
+  if (error.status !== 409 || !error.body?.confirmation_required) return false;
+  state.warningToken = error.body.warning_token;
+  const assessment = error.body.assessment || {};
+  $("#quantitative-warning").innerHTML = `
+    <div class="coverage-note limited"><strong>입력한 처방이 DUR 정량 기준을 초과합니다.</strong><br>의사·약사와 확인할 경고이며, 아래 버튼을 다시 누르면 경고 확인 이력과 함께 등록합니다.</div>
+    ${quantitativeCheckHtml("투여기간", assessment.duration)}
+    ${quantitativeCheckHtml("1일 용량", assessment.dose)}`;
+  const button = $(`#${buttonId}`);
+  if (button) button.textContent = "경고를 확인했고 계속 저장";
+  toast("기준 초과 경고를 확인해주세요");
+  return true;
+}
+
+async function openMedicationEdit(medicationId) {
+  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  if (!medication) return;
+  state.editingMedicationId = medicationId;
+  state.warningToken = null;
+  renderRiskSheet({
+    product: { product_name: medication.product_name }, person: currentPerson(),
+    current_medication_count: Math.max((state.dashboard?.medications || []).length - 1, 0),
+    risks: [], coverage: null,
+  }, medication);
+  openSheet("#risk-sheet");
+  try {
+    const history = await api(`/api/medications/${medicationId}/history`);
+    $("#revision-history").innerHTML = history.length ? `<div class="coverage-note matched"><strong>변경 이력 ${history.length}건</strong><br>${history.map((item) => `${item.revision}판 · ${item.action}`).join(" · ")}</div>` : "";
+  } catch (error) { toast(error.message); }
+}
+
+async function confirmEditMedication() {
+  const medication = (state.dashboard?.medications || []).find((item) => item.id === state.editingMedicationId);
+  if (!medication) return;
+  try {
+    await api(`/api/medications/${medication.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        expected_revision: medication.revision,
+        ...prescriptionPayloadFromForm(),
+        acknowledge_warnings: Boolean(state.warningToken),
+        warning_token: state.warningToken,
+      }),
+    });
+    state.editingMedicationId = null;
+    state.warningToken = null;
+    closeSheets();
+    await loadDashboard();
+    renderAll();
+    toast("처방 정보를 수정했어요");
+  } catch (error) {
+    if (handleConfirmationRequired(error, "confirm-edit-med")) return;
+    toast(error.message);
+  }
 }
 
 async function confirmAddMedication() {
   if (!state.pendingProduct || !state.currentPersonId) return;
-  const times = $("#pending-times").value.split(",").map((value) => value.trim()).filter(Boolean);
-  const doseAmount = $("#pending-dose-amount").value ? Number($("#pending-dose-amount").value) : null;
-  const frequency = $("#pending-frequency").value ? Number($("#pending-frequency").value) : (times.length || null);
-  const days = $("#pending-days").value ? Number($("#pending-days").value) : null;
   const payload = {
     product_ref: state.pendingProduct.product_ref,
-    dose_amount: doseAmount,
-    dose_unit: $("#pending-dose-unit").value.trim() || null,
-    frequency_per_day: frequency,
-    meal_relation: $("#pending-meal").value,
-    administration_route: $("#pending-route").value,
-    as_needed: $("#pending-prn").checked,
-    prescription_days: days,
-    start_date: $("#pending-start-date").value || null,
-    schedule_times: times,
+    ...prescriptionPayloadFromForm(),
+    request_id: state.pendingRequestId,
+    acknowledge_warnings: Boolean(state.warningToken),
+    warning_token: state.warningToken,
   };
   try {
     await api(`/api/people/${state.currentPersonId}/medications`, {
@@ -436,12 +540,17 @@ async function confirmAddMedication() {
       body: JSON.stringify(payload),
     });
     state.pendingProduct = null;
+    state.pendingRequestId = null;
+    state.warningToken = null;
     closeSheets();
     await loadDashboard();
     renderAll();
     showScreen("meds");
     toast("복용약에 추가했어요");
-  } catch (error) { toast(error.message); }
+  } catch (error) {
+    if (handleConfirmationRequired(error, "confirm-add-med")) return;
+    toast(error.message);
+  }
 }
 
 async function submitPerson(event) {

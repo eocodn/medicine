@@ -52,6 +52,15 @@ docker compose down
   - 경구·외용·흡입 등 투여 경로
   - 처방 일수와 시작·종료일
   - 필요시 복용(PRN)
+- 입력 처방의 정량 DUR 확인
+  - 투여기간 기준과 처방 일수를 자동 비교
+  - 단일 기준과 단위가 명확한 용량주의 항목은 1일 복용량을 자동 비교
+  - 복수·조건부 기준이나 환산할 수 없는 단위는 안전으로 간주하지 않고 판정 불가 사유 표시
+  - 기준 초과 시 경고를 먼저 표시하고, 동일 처방 경고를 확인한 경우에만 등록 허용
+- 처방 수정과 변경 이력
+  - revision 기반 동시 수정 충돌 방지
+  - 수정 시 미래의 미완료 일정만 교체하고 과거 완료·건너뜀 기록 보존
+  - 등록·수정·종료 당시 처방과 DUR 판정 스냅샷 보존
 - 오늘 복용 계획 자동 생성
   - 같은 날짜를 여러 번 조회해도 동일 복용 인스턴스 유지
   - 복용 완료 / 건너뜀 상태 추적
@@ -90,6 +99,8 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 `DUR 
 - `medication_schedules`: 명시적 복용 시간
 - `dose_instances`: 날짜별 실제 복용 예정 건과 상태
 - `dose_logs`: 실제 복용/건너뜀 기록
+- `medication_revisions`: 등록·수정·종료 처방 및 DUR 판정의 append-only 이력
+- `medication_requests`: 중복 등록을 방지하는 요청 ID와 처방 fingerprint
 
 기존 v1 `personal.sqlite`는 실행 시 누락 컬럼/테이블만 추가하는 방식으로 migration합니다.
 개인 DB는 Git에 포함하지 않습니다. 현재 로컬 버전에서는 암호화하지 않으므로 외부 공개 서버로
@@ -188,6 +199,7 @@ docker compose run --rm app drug-search 졸피뎀 --limit 10 --json
 docker compose run --rm app risk-preview \
   --person <PERSON_ID> \
   --product-ref <PRODUCT_REF> \
+  --dose-amount 1 --dose-unit 정 --frequency 2 --days 7 \
   --json
 
 # 구조화 처방으로 복용약 추가
@@ -203,7 +215,18 @@ docker compose run --rm app med-add \
   --start-date 2026-08-10 \
   --time 08:00 \
   --time 20:00 \
+  --request-id <UNIQUE_REQUEST_ID> \
   --json
+
+# 기준 초과 응답은 warning_token을 반환합니다. 내용을 확인한 뒤 위 med-add 명령을
+# 동일한 처방·요청 ID로 재실행하면서 다음 옵션을 추가합니다.
+# --acknowledge-warnings --warning-token <WARNING_TOKEN>
+
+# 처방 수정과 변경 이력
+docker compose run --rm app med-update \
+  --medication <MEDICATION_ID> --expected-revision <REVISION> \
+  --time 09:00 --time 21:00 --json
+docker compose run --rm app med-history --medication <MEDICATION_ID> --json
 
 # 하루 복용 계획
 docker compose run --rm app daily-plan \
@@ -230,7 +253,8 @@ docker compose run --rm dur search acemetacin --limit 20 --json
 docker compose run --rm --build test
 ```
 
-테스트는 개인 DB migration, 여러 사람 관리, 구조화 처방, 날짜별 복용 인스턴스 멱등성, PRN,
+테스트는 개인 DB migration, 여러 사람 관리, 구조화 처방, 정량 용량·기간 판정, 경고 확인 토큰,
+중복 등록 방지, 처방 revision·이력, 날짜별 복용 인스턴스 멱등성, 수정 후 완료 이력 보존, PRN,
 복용 기록, 전체 허가품목/허가상태 검색, 병용금기, 연령/임부/노인주의, 효능군 중복, DUR import 정규화,
 MFDS 카탈로그 동기화·허가상태 migration, 모바일 HTML/API 흐름을 포함합니다.
 
@@ -249,8 +273,7 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
   - 심평원 약가기준정보 API의 별도 활용신청 필요
 - 생산·수입·공급중단/공급부족 실제 동기화
   - 관련 식약처 API의 별도 활용신청 필요
-- 입력한 복용량 숫자/단위와 DUR 용량주의 기준의 자동 비교
-- 구조화 처방일수와 DUR 투여기간주의 기준의 자동 초과 판정
+- 복수 기준·적응증별 기준·환산 불가능 단위인 용량주의 항목의 자동 확정 판정
 - 수유 여부를 개인 프로필과 연결한 수유부주의 자동 판정
 - 로그인/클라우드 동기화/다기기 공유
 - 개인 DB 암호화
