@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS medications (
     end_date TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     source TEXT NOT NULL DEFAULT 'dur_search',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revision INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS medication_schedules (
@@ -47,6 +49,8 @@ CREATE TABLE IF NOT EXISTS dose_logs (
     status TEXT NOT NULL,
     occurred_at TEXT NOT NULL,
     note TEXT,
+    product_name_snapshot TEXT,
+    dosage_text_snapshot TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -63,10 +67,42 @@ MEDICATION_COLUMNS = {
     "administration_route": "TEXT",
     "as_needed": "INTEGER NOT NULL DEFAULT 0",
     "prescription_days": "INTEGER",
+    "revision": "INTEGER NOT NULL DEFAULT 1",
+    # SQLite cannot add a column with a CURRENT_TIMESTAMP default via ALTER
+    # TABLE. Existing rows are backfilled below and an insert trigger supplies
+    # the timestamp for legacy databases.
+    "updated_at": "TEXT",
 }
 
 DOSE_LOG_COLUMNS = {
     "dose_instance_id": "TEXT",
+    "product_name_snapshot": "TEXT",
+    "dosage_text_snapshot": "TEXT",
+}
+
+DOSE_INSTANCE_COLUMNS = {
+    "product_name_snapshot": "TEXT",
+    "ingredient_name_snapshot": "TEXT",
+}
+
+MEDICATION_REVISION_COLUMNS = {
+    "medication_id": "TEXT",
+    "revision": "INTEGER",
+    "action": "TEXT",
+    "snapshot_json": "TEXT",
+    "assessment_json": "TEXT",
+    "acknowledged": "INTEGER NOT NULL DEFAULT 0",
+    "request_id": "TEXT",
+    "payload_hash": "TEXT",
+    "created_at": "TEXT",
+}
+
+MEDICATION_REQUEST_COLUMNS = {
+    "request_id": "TEXT",
+    "person_id": "TEXT",
+    "payload_hash": "TEXT",
+    "medication_id": "TEXT",
+    "created_at": "TEXT",
 }
 
 
@@ -83,31 +119,157 @@ def _add_missing_columns(con: sqlite3.Connection, table: str, columns: dict[str,
 
 def ensure_personal_schema(con: sqlite3.Connection) -> None:
     con.executescript(BASE_SCHEMA)
-    _add_missing_columns(con, "medications", MEDICATION_COLUMNS)
-    _add_missing_columns(con, "dose_logs", DOSE_LOG_COLUMNS)
+    # Keep table creation separate from ALTER-based migration so databases
+    # created by older app versions retain every existing row.
     con.executescript(
         """
         CREATE TABLE IF NOT EXISTS dose_instances (
             id TEXT PRIMARY KEY,
-            medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+            medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE RESTRICT,
             person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
             scheduled_date TEXT NOT NULL,
             schedule_key TEXT NOT NULL,
             scheduled_time TEXT,
             slot_label TEXT,
             dose_text TEXT,
+            product_name_snapshot TEXT,
+            ingredient_name_snapshot TEXT,
             status TEXT NOT NULL DEFAULT 'planned',
             completed_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(medication_id, scheduled_date, schedule_key)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_medications_person_active ON medications(person_id, active);
-        CREATE INDEX IF NOT EXISTS idx_schedules_medication ON medication_schedules(medication_id);
-        CREATE INDEX IF NOT EXISTS idx_logs_person_time ON dose_logs(person_id, occurred_at DESC);
+        CREATE TABLE IF NOT EXISTS medication_revisions (
+            medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE RESTRICT,
+            revision INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            assessment_json TEXT,
+            acknowledged INTEGER NOT NULL DEFAULT 0,
+            request_id TEXT,
+            payload_hash TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(medication_id, revision)
+        );
+
+        CREATE TABLE IF NOT EXISTS medication_requests (
+            request_id TEXT PRIMARY KEY,
+            person_id TEXT NOT NULL REFERENCES people(id) ON DELETE RESTRICT,
+            payload_hash TEXT NOT NULL,
+            medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE RESTRICT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    _add_missing_columns(con, "medications", MEDICATION_COLUMNS)
+    _add_missing_columns(con, "dose_logs", DOSE_LOG_COLUMNS)
+    _add_missing_columns(con, "dose_instances", DOSE_INSTANCE_COLUMNS)
+    _add_missing_columns(con, "medication_revisions", MEDICATION_REVISION_COLUMNS)
+    _add_missing_columns(con, "medication_requests", MEDICATION_REQUEST_COLUMNS)
+
+    # ALTER TABLE cannot add a non-constant default. Backfill migrated rows,
+    # while leaving snapshot fields nullable when their source row is absent.
+    con.execute(
+        """
+        UPDATE medications
+        SET updated_at=COALESCE(updated_at, created_at, CURRENT_TIMESTAMP),
+            revision=COALESCE(revision, 1)
+        WHERE updated_at IS NULL OR revision IS NULL
+        """
+    )
+    con.execute(
+        """
+        UPDATE dose_instances
+        SET product_name_snapshot=COALESCE(
+                product_name_snapshot,
+                (SELECT product_name FROM medications WHERE medications.id=dose_instances.medication_id)
+            ),
+            ingredient_name_snapshot=COALESCE(
+                ingredient_name_snapshot,
+                (SELECT ingredient_name FROM medications WHERE medications.id=dose_instances.medication_id)
+            )
+        WHERE product_name_snapshot IS NULL OR ingredient_name_snapshot IS NULL
+        """
+    )
+    con.execute(
+        """
+        UPDATE dose_logs
+        SET product_name_snapshot=COALESCE(
+                product_name_snapshot,
+                (SELECT product_name FROM medications WHERE medications.id=dose_logs.medication_id)
+            ),
+            dosage_text_snapshot=COALESCE(
+                dosage_text_snapshot,
+                (SELECT dosage_text FROM medications WHERE medications.id=dose_logs.medication_id)
+            )
+        WHERE product_name_snapshot IS NULL OR dosage_text_snapshot IS NULL
+        """
+    )
+    con.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_medications_person_active
+            ON medications(person_id, active);
+        CREATE INDEX IF NOT EXISTS idx_schedules_medication
+            ON medication_schedules(medication_id);
+        CREATE INDEX IF NOT EXISTS idx_logs_person_time
+            ON dose_logs(person_id, occurred_at DESC);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_instance_unique
             ON dose_logs(dose_instance_id) WHERE dose_instance_id IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_instances_person_date
             ON dose_instances(person_id, scheduled_date, scheduled_time);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_medication_revisions_medication_revision
+            ON medication_revisions(medication_id, revision);
+        CREATE INDEX IF NOT EXISTS idx_medication_revisions_request
+            ON medication_revisions(request_id) WHERE request_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_medication_requests_person
+            ON medication_requests(person_id);
+        CREATE INDEX IF NOT EXISTS idx_medication_requests_medication
+            ON medication_requests(medication_id);
+
+        -- Legacy ALTER TABLE cannot provide a CURRENT_TIMESTAMP default.
+        CREATE TRIGGER IF NOT EXISTS trg_medications_set_updated_at_on_insert
+        AFTER INSERT ON medications
+        WHEN NEW.updated_at IS NULL
+        BEGIN
+            UPDATE medications SET updated_at=CURRENT_TIMESTAMP WHERE id=NEW.id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_medications_set_updated_at_on_update
+        AFTER UPDATE ON medications
+        WHEN NEW.updated_at IS OLD.updated_at
+        BEGIN
+            UPDATE medications SET updated_at=CURRENT_TIMESTAMP WHERE id=NEW.id;
+        END;
+
+        -- Revision rows are the audit trail and must never be rewritten or
+        -- removed. Medication deletion is consequently restricted by the FK.
+        CREATE TRIGGER IF NOT EXISTS trg_medication_revisions_append_only_update
+        BEFORE UPDATE ON medication_revisions
+        BEGIN
+            SELECT RAISE(ABORT, 'medication_revisions is append-only');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_medication_revisions_append_only_delete
+        BEFORE DELETE ON medication_revisions
+        BEGIN
+            SELECT RAISE(ABORT, 'medication_revisions is append-only');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_dose_instances_snapshots_immutable
+        BEFORE UPDATE OF product_name_snapshot, ingredient_name_snapshot ON dose_instances
+        WHEN NEW.product_name_snapshot IS NOT OLD.product_name_snapshot
+          OR NEW.ingredient_name_snapshot IS NOT OLD.ingredient_name_snapshot
+        BEGIN
+            SELECT RAISE(ABORT, 'dose instance snapshots are immutable');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_dose_logs_snapshots_immutable
+        BEFORE UPDATE OF product_name_snapshot, dosage_text_snapshot ON dose_logs
+        WHEN NEW.product_name_snapshot IS NOT OLD.product_name_snapshot
+          OR NEW.dosage_text_snapshot IS NOT OLD.dosage_text_snapshot
+        BEGIN
+            SELECT RAISE(ABORT, 'dose log snapshots are immutable');
+        END;
         """
     )
