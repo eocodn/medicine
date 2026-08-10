@@ -432,10 +432,14 @@ def evaluate_quantitative(con: sqlite3.Connection, product: dict, draft: dict) -
     duration_rows = _query_product_rows(con, product, "duration_caution")
     duration: dict[str, Any] = {"result": "not_evaluable"}
     raw_days = draft.get("prescription_days")
-    try:
-        prescription_days = int(raw_days) if raw_days is not None and not isinstance(raw_days, bool) else None
-    except (TypeError, ValueError):
-        prescription_days = None
+    prescription_days: int | None = None
+    if raw_days is not None and not isinstance(raw_days, bool):
+        try:
+            parsed_days = Decimal(str(raw_days).strip())
+            if parsed_days.is_finite() and parsed_days > 0 and parsed_days == parsed_days.to_integral_value():
+                prescription_days = int(parsed_days)
+        except (InvalidOperation, AttributeError, ValueError):
+            prescription_days = None
     distinct_days: set[int] = set()
     malformed_duration = False
     for row in duration_rows:
