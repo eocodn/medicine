@@ -130,6 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
     search = sub.add_parser("drug-search")
     search.add_argument("term")
     search.add_argument("--limit", type=int, default=20)
+    search.add_argument("--include-inactive", action="store_true")
     search.add_argument("--json", action="store_true")
 
     meds = sub.add_parser("meds")
@@ -191,7 +192,7 @@ def main(argv=None) -> int:
     elif args.command == "person-add":
         payload = app.create_person(args.name, args.birth_date, args.sex, args.pregnancy_status)
     elif args.command == "drug-search":
-        payload = app.search_products(args.term, args.limit)
+        payload = app.search_products(args.term, args.limit, include_inactive=args.include_inactive)
     elif args.command == "meds":
         payload = app.list_medications(args.person)
     elif args.command == "risk-preview":

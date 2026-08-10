@@ -118,6 +118,8 @@ def make_catalog_db(path: Path) -> None:
             edi_code TEXT,
             permit_date TEXT,
             cancel_date TEXT,
+            cancel_name TEXT,
+            permit_status TEXT NOT NULL,
             source TEXT NOT NULL,
             raw_json TEXT NOT NULL
         );
@@ -127,15 +129,16 @@ def make_catalog_db(path: Path) -> None:
         """
         INSERT INTO products(
             item_seq,product_name,manufacturer,ingredient_name,dosage_form,
-            edi_code,permit_date,cancel_date,source,raw_json
-        ) VALUES(?,?,?,?,?,?,?,?,?,?)
+            edi_code,permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         [
-            ("MFDS-A", "약A", "제약A", "drug-a", "정제", "P-A", "2020-01-01", None, "mfds", "{}"),
-            ("MFDS-B", "전체카탈로그약B", "제약B", "drug-b", "정제", "P-B", "2020-01-01", None, "mfds", "{}"),
-            ("MFDS-C", "약C", "제약C", "drug-c", "정제", "P-C", "2020-01-01", None, "mfds", "{}"),
-            ("MFDS-D", "약D", "제약D", "drug-d", "정제", "P-D", "2020-01-01", None, "mfds", "{}"),
-            ("MFDS-X", "비급여전체약X", "제약X", "drug-x", "캡슐", None, "2021-01-01", None, "mfds", "{}"),
+            ("MFDS-A", "약A", "제약A", "drug-a", "정제", "P-A", "2020-01-01", None, "정상", "active", "mfds", "{}"),
+            ("MFDS-B", "전체카탈로그약B", "제약B", "drug-b", "정제", "P-B", "2020-01-01", None, "정상", "active", "mfds", "{}"),
+            ("MFDS-C", "약C", "제약C", "drug-c", "정제", "P-C", "2020-01-01", None, "정상", "active", "mfds", "{}"),
+            ("MFDS-D", "약D", "제약D", "drug-d", "정제", "P-D", "2020-01-01", None, "정상", "active", "mfds", "{}"),
+            ("MFDS-X", "비급여전체약X", "제약X", "drug-x", "캡슐", None, "2021-01-01", None, "정상", "active", "mfds", "{}"),
+            ("MFDS-W", "과거취하약", "제약W", "drug-w", "정제", "P-W", "2019-01-01", "2025-07-01", "취하", "withdrawn", "mfds", "{}"),
         ],
     )
     con.commit()
@@ -234,11 +237,23 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(results[0]["product_code"], "P-B")
         self.assertTrue(results[0]["dur_match"])
         self.assertEqual(results[0]["catalog_source"], "mfds")
+        self.assertEqual(results[0]["permit_status"], "active")
 
         unmatched = self.app.search_products("비급여전체약X", limit=10)[0]
         self.assertEqual(unmatched["product_ref"], "MFDS-X")
         self.assertIsNone(unmatched["product_code"])
         self.assertFalse(unmatched["dur_match"])
+
+    def test_product_search_excludes_inactive_by_default_and_can_include_it(self) -> None:
+        self.assertEqual(self.app.search_products("과거취하약", limit=10), [])
+
+        results = self.app.search_products("과거취하약", limit=10, include_inactive=True)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["product_ref"], "MFDS-W")
+        self.assertEqual(results[0]["permit_status"], "withdrawn")
+        self.assertEqual(results[0]["permit_status_name"], "취하")
+        self.assertEqual(results[0]["cancel_date"], "2025-07-01")
 
     def test_search_does_not_fall_back_to_dur_catalog(self) -> None:
         con = sqlite3.connect(self.dur_db)

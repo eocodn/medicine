@@ -31,6 +31,21 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('class="bottom-nav"', response.text)
         self.assertIn("복용", response.text)
         self.assertIn("약 검색", response.text)
+        self.assertIn('id="include-inactive"', response.text)
+
+    def test_product_search_can_include_inactive_permit_records(self) -> None:
+        default = self.client.get("/api/products", params={"q": "과거취하약"})
+        self.assertEqual(default.status_code, 200)
+        self.assertEqual(default.json(), [])
+
+        response = self.client.get(
+            "/api/products",
+            params={"q": "과거취하약", "include_inactive": "true"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["permit_status"], "withdrawn")
+        self.assertEqual(response.json()[0]["permit_status_name"], "취하")
 
     def test_product_search_returns_service_unavailable_without_full_catalog(self) -> None:
         missing_catalog = self.catalog_db.with_name("missing-catalog.sqlite")

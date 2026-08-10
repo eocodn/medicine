@@ -38,10 +38,14 @@
         <div class="hero-card search-hero">
           <p class="eyebrow">ADD MEDICINE</p>
           <h2>먹는 약을 검색하세요</h2>
-          <p class="muted">전체 허가 의약품 카탈로그가 있으면 우선 검색하고, 현재 복용약과 프로필을 함께 확인해 DUR 위험 범위를 알려줘요.</p>
+          <p class="muted">식약처 허가 의약품에서 검색하고, 현재 복용약과 프로필을 함께 확인해 DUR 위험 범위를 알려줘요.</p>
           <label class="search-box">
             <span aria-hidden="true">⌕</span>
             <input id="drug-query" type="search" placeholder="제품명, 성분명, 제품코드" autocomplete="off">
+          </label>
+          <label class="search-toggle">
+            <input id="include-inactive" type="checkbox">
+            <span>취소·취하·만료 품목도 검색</span>
           </label>
           <button class="camera-placeholder" type="button" disabled>
             <span>▣</span>

@@ -100,9 +100,13 @@ def create_web_app(
             raise _translate_error(exc) from exc
 
     @app.get("/api/products")
-    def search_products(q: str = Query(min_length=1), limit: int = Query(default=30, ge=1, le=100)) -> list[dict]:
+    def search_products(
+        q: str = Query(min_length=1),
+        limit: int = Query(default=30, ge=1, le=100),
+        include_inactive: bool = False,
+    ) -> list[dict]:
         try:
-            return service.search_products(q, limit)
+            return service.search_products(q, limit, include_inactive=include_inactive)
         except Exception as exc:
             raise _translate_error(exc) from exc
 

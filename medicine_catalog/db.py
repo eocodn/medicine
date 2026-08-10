@@ -17,6 +17,16 @@ from zoneinfo import ZoneInfo
 API_BASE = "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnInq07"
 SOURCE_NAME = "mfds_product_permit_api"
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
+SCHEMA_VERSION = "2"
+
+PERMIT_STATUS_BY_CANCEL_NAME = {
+    "정상": "active",
+    "유효기간만료": "expired",
+    "취하": "withdrawn",
+    "폐업": "business_closed",
+    "행정(취소)": "canceled",
+    "취소": "canceled",
+}
 
 SCHEMA = """
 PRAGMA journal_mode = DELETE;
@@ -37,6 +47,8 @@ CREATE TABLE products (
     edi_code TEXT,
     permit_date TEXT,
     cancel_date TEXT,
+    cancel_name TEXT,
+    permit_status TEXT NOT NULL,
     source TEXT NOT NULL,
     raw_json TEXT NOT NULL
 );
@@ -46,6 +58,7 @@ CREATE INDEX idx_products_ingredient ON products(ingredient_name);
 CREATE INDEX idx_products_manufacturer ON products(manufacturer);
 CREATE INDEX idx_products_edi_code ON products(edi_code);
 CREATE INDEX idx_products_cancel_date ON products(cancel_date);
+CREATE INDEX idx_products_permit_status ON products(permit_status);
 """
 
 
@@ -77,6 +90,14 @@ def _date_text(value) -> str | None:
     return value
 
 
+def normalize_permit_status(cancel_name, cancel_date=None) -> str:
+    """Map MFDS cancellation labels to stable app-level permit statuses."""
+    raw = _text(cancel_name)
+    if raw in PERMIT_STATUS_BY_CANCEL_NAME:
+        return PERMIT_STATUS_BY_CANCEL_NAME[raw]
+    return "inactive_unknown" if _text(cancel_date) else "unknown"
+
+
 def _normalize_product(record: dict) -> tuple:
     item_seq = _text(
         _value(
@@ -106,6 +127,8 @@ def _normalize_product(record: dict) -> tuple:
     dosage_form = _text(
         _value(record, "FORM_CODE_NAME", "form_code_name", "DOSAGE_FORM", "dosage_form")
     )
+    cancel_date = _date_text(_value(record, "CANCEL_DATE", "cancel_date"))
+    cancel_name = _text(_value(record, "CANCEL_NAME", "cancel_name"))
     return (
         item_seq,
         product_name,
@@ -114,7 +137,9 @@ def _normalize_product(record: dict) -> tuple:
         dosage_form,
         _text(_value(record, "EDI_CODE", "edi_code")),
         _date_text(_value(record, "ITEM_PERMIT_DATE", "item_permit_date")),
-        _date_text(_value(record, "CANCEL_DATE", "cancel_date")),
+        cancel_date,
+        cancel_name,
+        normalize_permit_status(cancel_name, cancel_date),
         SOURCE_NAME,
         json.dumps(record, ensure_ascii=False, separators=(",", ":"), default=str),
     )
@@ -196,7 +221,11 @@ def sync_catalog(
     if temp_path.exists() and checkpoint_path.exists():
         try:
             checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-            if checkpoint.get("page_size") == page_size and checkpoint.get("source") == SOURCE_NAME:
+            if (
+                checkpoint.get("page_size") == page_size
+                and checkpoint.get("source") == SOURCE_NAME
+                and checkpoint.get("schema_version") == SCHEMA_VERSION
+            ):
                 next_page = int(checkpoint["next_page"])
                 total_count = int(checkpoint.get("total_count") or 0)
                 resumed = True
@@ -227,8 +256,8 @@ def sync_catalog(
                 """
                 INSERT INTO products(
                     item_seq,product_name,manufacturer,ingredient_name,dosage_form,
-                    edi_code,permit_date,cancel_date,source,raw_json
-                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                    edi_code,permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(item_seq) DO UPDATE SET
                     product_name=excluded.product_name,
                     manufacturer=excluded.manufacturer,
@@ -237,6 +266,8 @@ def sync_catalog(
                     edi_code=excluded.edi_code,
                     permit_date=excluded.permit_date,
                     cancel_date=excluded.cancel_date,
+                    cancel_name=excluded.cancel_name,
+                    permit_status=excluded.permit_status,
                     source=excluded.source,
                     raw_json=excluded.raw_json
                 """,
@@ -249,6 +280,7 @@ def sync_catalog(
                 checkpoint_path,
                 {
                     "source": SOURCE_NAME,
+                    "schema_version": SCHEMA_VERSION,
                     "page_size": page_size,
                     "next_page": next_page,
                     "total_count": total_count,
@@ -272,6 +304,7 @@ def sync_catalog(
             [
                 ("source", SOURCE_NAME),
                 ("api_base", API_BASE),
+                ("schema_version", SCHEMA_VERSION),
                 ("synced_at", synced_at),
                 ("reported_total_count", str(total_count)),
                 ("products", str(product_count)),
@@ -299,9 +332,18 @@ def catalog_stats(db_path: str | Path) -> dict:
     con = sqlite3.connect(db_path)
     try:
         products = con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-        active = con.execute(
-            "SELECT COUNT(*) FROM products WHERE cancel_date IS NULL OR TRIM(cancel_date)=''"
-        ).fetchone()[0]
+        columns = {row[1] for row in con.execute("PRAGMA table_info(products)").fetchall()}
+        if "permit_status" in columns:
+            status_rows = con.execute(
+                "SELECT permit_status,COUNT(*) FROM products GROUP BY permit_status ORDER BY permit_status"
+            ).fetchall()
+            permit_status_counts = {status: count for status, count in status_rows}
+            active = permit_status_counts.get("active", 0)
+        else:
+            active = con.execute(
+                "SELECT COUNT(*) FROM products WHERE cancel_date IS NULL OR TRIM(cancel_date)=''"
+            ).fetchone()[0]
+            permit_status_counts = {"legacy_unclassified": products}
         meta = dict(con.execute("SELECT key,value FROM catalog_meta").fetchall())
     finally:
         con.close()
@@ -309,8 +351,89 @@ def catalog_stats(db_path: str | Path) -> dict:
         "db_path": str(db_path),
         "products": products,
         "active_products": active,
+        "permit_status_counts": permit_status_counts,
         "size_bytes": db_path.stat().st_size,
         "source": meta.get("source"),
+        "schema_version": meta.get("schema_version"),
         "synced_at": meta.get("synced_at"),
         "reported_total_count": int(meta.get("reported_total_count") or 0),
     }
+
+
+def _upgrade_catalog_connection(con: sqlite3.Connection) -> bool:
+    columns = {row[1] for row in con.execute("PRAGMA table_info(products)").fetchall()}
+    changed = False
+    if "cancel_name" not in columns:
+        con.execute("ALTER TABLE products ADD COLUMN cancel_name TEXT")
+        changed = True
+    if "permit_status" not in columns:
+        con.execute("ALTER TABLE products ADD COLUMN permit_status TEXT")
+        changed = True
+
+    rows = con.execute("SELECT item_seq,cancel_date,raw_json FROM products").fetchall()
+    updates = []
+    for item_seq, cancel_date, raw_json in rows:
+        try:
+            record = json.loads(raw_json or "{}")
+        except json.JSONDecodeError:
+            record = {}
+        cancel_name = _text(_value(record, "CANCEL_NAME", "cancel_name"))
+        status = normalize_permit_status(cancel_name, cancel_date)
+        updates.append((cancel_name, status, item_seq))
+    con.executemany(
+        "UPDATE products SET cancel_name=?, permit_status=? WHERE item_seq=?",
+        updates,
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS idx_products_permit_status ON products(permit_status)")
+    con.execute(
+        "INSERT OR REPLACE INTO catalog_meta(key,value) VALUES('schema_version',?)",
+        (SCHEMA_VERSION,),
+    )
+    con.commit()
+    return changed
+
+
+def upgrade_catalog(db_path: str | Path) -> dict:
+    """Atomically upgrade an existing catalog from its preserved raw MFDS rows."""
+    db_path = Path(db_path)
+    if not db_path.exists():
+        raise FileNotFoundError(f"catalog database not found: {db_path}")
+
+    probe = sqlite3.connect(db_path)
+    try:
+        columns = {row[1] for row in probe.execute("PRAGMA table_info(products)").fetchall()}
+        meta = dict(probe.execute("SELECT key,value FROM catalog_meta").fetchall())
+        already_current = (
+            {"cancel_name", "permit_status"}.issubset(columns)
+            and meta.get("schema_version") == SCHEMA_VERSION
+        )
+    finally:
+        probe.close()
+    if already_current:
+        result = catalog_stats(db_path)
+        result["upgraded"] = False
+        return result
+
+    temp_path = db_path.with_name(db_path.name + ".upgrade.tmp")
+    temp_path.unlink(missing_ok=True)
+    source = sqlite3.connect(db_path)
+    target = sqlite3.connect(temp_path)
+    try:
+        source.backup(target)
+    finally:
+        source.close()
+        target.close()
+
+    con = sqlite3.connect(temp_path)
+    try:
+        _upgrade_catalog_connection(con)
+        integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity != "ok":
+            raise RuntimeError(f"catalog integrity check failed after upgrade: {integrity}")
+    finally:
+        con.close()
+
+    os.replace(temp_path, db_path)
+    result = catalog_stats(db_path)
+    result["upgraded"] = True
+    return result

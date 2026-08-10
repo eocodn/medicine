@@ -182,8 +182,8 @@ class MedicationApp:
         data["age"] = age_years(data["birth_date"])
         return data
 
-    def search_products(self, term: str, limit: int = 30) -> list[dict]:
-        return self.products.search(term, limit)
+    def search_products(self, term: str, limit: int = 30, include_inactive: bool = False) -> list[dict]:
+        return self.products.search(term, limit, include_inactive=include_inactive)
 
     def get_product(self, product_ref: str) -> dict:
         return self.products.get(product_ref)

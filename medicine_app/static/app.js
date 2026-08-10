@@ -77,6 +77,18 @@ function pregnancyLabel(value) {
   }[value] || value;
 }
 
+function permitStatusLabel(value, raw) {
+  return {
+    active: "허가 유효",
+    expired: "유효기간 만료",
+    withdrawn: "취하",
+    business_closed: "업체 폐업",
+    canceled: "허가 취소",
+    inactive_unknown: raw || "비활성",
+    unknown: raw || "상태 미확인",
+  }[value] || raw || value;
+}
+
 function mealRelationLabel(value) {
   return {
     before_meal: "식전",
@@ -297,13 +309,18 @@ async function runDrugSearch() {
   if (!term) { status.textContent = ""; root.innerHTML = ""; return; }
   status.textContent = state.fullCatalog ? "전체 허가 의약품에서 찾는 중…" : "전체 허가 의약품 카탈로그를 확인하는 중…";
   try {
-    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`);
+    const includeInactive = $("#include-inactive").checked;
+    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30&include_inactive=${includeInactive}`);
     state.fullCatalog = true;
-    status.textContent = `${results.length}개 결과 · 식약처 전체 카탈로그 + DUR 연결`;
+    status.textContent = `${results.length}개 결과 · 식약처 허가상태 + DUR 연결`;
     root.innerHTML = results.length ? results.map((item) => `
       <article class="card result-card">
         <div class="result-row">
-          <div class="result-copy"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(item.ingredient_name || "성분 정보 없음")}${item.manufacturer ? ` · ${escapeHtml(item.manufacturer)}` : ""}</span><span>${item.dur_match ? "DUR 연결됨" : "DUR 제품코드 매칭 없음"}</span></div>
+          <div class="result-copy">
+            <div class="result-title-line"><strong>${escapeHtml(item.product_name)}</strong><span class="permit-badge ${escapeHtml(item.permit_status)}">${escapeHtml(permitStatusLabel(item.permit_status, item.permit_status_name))}</span></div>
+            <span>${escapeHtml(item.ingredient_name || "성분 정보 없음")}${item.manufacturer ? ` · ${escapeHtml(item.manufacturer)}` : ""}</span>
+            <span>${item.dur_match ? "DUR 연결됨" : "DUR 제품코드 매칭 없음"}${item.cancel_date ? ` · 상태일 ${escapeHtml(item.cancel_date)}` : ""}</span>
+          </div>
           <button class="add-button" data-add-ref="${escapeHtml(item.product_ref)}" type="button">추가</button>
         </div>
       </article>`).join("") : `<div class="empty-state"><strong>검색 결과가 없어요</strong>${state.fullCatalog ? "다른 제품명이나 성분명으로 검색해보세요." : "전체 카탈로그를 동기화하면 검색 범위를 넓힐 수 있어요."}</div>`;
@@ -343,6 +360,7 @@ function renderRiskSheet(preview) {
       <h2>${dangerous ? "확인이 필요한 위험이 있어요" : risks.length ? "주의 정보를 확인하세요" : preview.coverage?.dur_match ? "현재 확인된 DUR 위험 정보가 없어요" : "DUR 자동 확인 범위가 제한돼요"}</h2>
       <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필과 현재 복용약 ${preview.current_medication_count}개를 기준으로 확인했습니다.</p>
     </div>
+    ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 허가 상태와 실제 보유·유통 여부는 별개일 수 있어요.</div>` : ""}
     ${preview.coverage ? `<div class="coverage-note ${preview.coverage.dur_match ? "matched" : "limited"}">${escapeHtml(preview.coverage.message)}</div>` : ""}
     <div>${risks.length ? risks.map((risk) => `
       <div class="risk-card ${escapeHtml(risk.severity)}"><strong>${escapeHtml(risk.title)}</strong><p>${escapeHtml(risk.details || "상세 설명 없음")}</p></div>`).join("") : `<div class="risk-card info"><strong>DUR 결과 없음</strong><p>현재 로컬 DUR 데이터에서 일치하는 금기·주의 신호가 발견되지 않았습니다. 이것이 모든 상호작용의 부재를 뜻하지는 않습니다.</p></div>`}</div>
@@ -454,6 +472,7 @@ function bindEvents() {
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runDrugSearch, 280);
   });
+  $("#include-inactive").addEventListener("change", runDrugSearch);
 }
 
 document.addEventListener("DOMContentLoaded", async () => {

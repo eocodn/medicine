@@ -56,7 +56,7 @@ class ProductRepository:
             ).fetchall()
         return {row["product_code"] for row in rows}
 
-    def search(self, term: str, limit: int = 30) -> list[dict]:
+    def search(self, term: str, limit: int = 30, include_inactive: bool = False) -> list[dict]:
         term = term.strip()
         if not term:
             return []
@@ -65,16 +65,20 @@ class ProductRepository:
 
         like = f"%{term}%"
         prefix = f"{term}%"
+        permit_filter = "" if include_inactive else "AND permit_status='active'"
         with self._catalog() as con:
             rows = con.execute(
-                """
+                f"""
                 SELECT item_seq, product_name, manufacturer, ingredient_name,
-                       dosage_form, edi_code, permit_date, cancel_date, source
+                       dosage_form, edi_code, permit_date, cancel_date,
+                       cancel_name, permit_status, source
                 FROM products
-                WHERE (cancel_date IS NULL OR TRIM(cancel_date)='')
-                  AND (product_name LIKE ? OR ingredient_name LIKE ? OR manufacturer LIKE ?
+                WHERE (product_name LIKE ? OR ingredient_name LIKE ? OR manufacturer LIKE ?
                        OR item_seq LIKE ? OR edi_code LIKE ?)
-                ORDER BY CASE WHEN product_name LIKE ? THEN 0 ELSE 1 END, product_name, item_seq
+                  {permit_filter}
+                ORDER BY CASE WHEN permit_status='active' THEN 0 ELSE 1 END,
+                         CASE WHEN product_name LIKE ? THEN 0 ELSE 1 END,
+                         product_name, item_seq
                 LIMIT ?
                 """,
                 (like, like, like, prefix, prefix, prefix, limit),
@@ -94,6 +98,9 @@ class ProductRepository:
                     "manufacturer": row["manufacturer"],
                     "dosage_form": row["dosage_form"],
                     "permit_date": row["permit_date"],
+                    "cancel_date": row["cancel_date"],
+                    "permit_status_name": row["cancel_name"],
+                    "permit_status": row["permit_status"],
                     "catalog_source": row["source"] or "mfds",
                     "dur_match": bool(edi_code and edi_code in dur_codes),
                 }
@@ -109,7 +116,8 @@ class ProductRepository:
             row = con.execute(
                 """
                 SELECT item_seq, product_name, manufacturer, ingredient_name,
-                       dosage_form, edi_code, permit_date, cancel_date, source
+                       dosage_form, edi_code, permit_date, cancel_date,
+                       cancel_name, permit_status, source
                 FROM products WHERE item_seq=? OR edi_code=?
                 ORDER BY CASE WHEN item_seq=? THEN 0 ELSE 1 END
                 LIMIT 1
@@ -130,6 +138,9 @@ class ProductRepository:
             "manufacturer": row["manufacturer"],
             "dosage_form": row["dosage_form"],
             "permit_date": row["permit_date"],
+            "cancel_date": row["cancel_date"],
+            "permit_status_name": row["cancel_name"],
+            "permit_status": row["permit_status"],
             "catalog_source": row["source"] or "mfds",
             "dur_match": dur_match,
         }
