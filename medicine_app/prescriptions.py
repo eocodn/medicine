@@ -43,9 +43,18 @@ def normalize_draft(values: dict) -> dict:
         amount = format(amount_decimal, "f")
     dose_unit = (values.get("dose_unit") or "").strip() or None
     if frequency is not None:
-        frequency = int(frequency)
-        if frequency < 1 or frequency > 24:
+        try:
+            frequency_decimal = Decimal(str(frequency))
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("frequency_per_day must be a positive integer") from exc
+        if (
+            not frequency_decimal.is_finite()
+            or frequency_decimal != frequency_decimal.to_integral_value()
+            or frequency_decimal < 1
+            or frequency_decimal > 24
+        ):
             raise ValueError("frequency_per_day must be between 1 and 24")
+        frequency = int(frequency_decimal)
         if schedule_times and frequency != len(schedule_times):
             raise ValueError("frequency_per_day must match the number of schedule_times")
     meal_relation = values.get("meal_relation", "unspecified")
@@ -56,9 +65,18 @@ def normalize_draft(values: dict) -> dict:
         raise ValueError(f"invalid administration_route: {route}")
     days = values.get("prescription_days")
     if days is not None:
-        days = int(days)
-        if days < 1 or days > 3650:
+        try:
+            days_decimal = Decimal(str(days))
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("prescription_days must be a positive integer") from exc
+        if (
+            not days_decimal.is_finite()
+            or days_decimal != days_decimal.to_integral_value()
+            or days_decimal < 1
+            or days_decimal > 3650
+        ):
             raise ValueError("prescription_days must be between 1 and 3650")
+        days = int(days_decimal)
     start = date.fromisoformat(values["start_date"]) if values.get("start_date") else datetime.now(APP_TIMEZONE).date()
     finish = date.fromisoformat(values["end_date"]) if values.get("end_date") else None
     if days is not None:

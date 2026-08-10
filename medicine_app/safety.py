@@ -316,6 +316,11 @@ def _quantity(value: Any, inherited_unit: str | None = None) -> tuple[Decimal, s
     if len(matches) != 1:
         return None
     match = matches[0]
+    # If the number is immediately followed by an unknown word, the optional
+    # unit group must not silently discard it (for example, ``10 tablets``).
+    trailing = text[match.end():].lstrip()
+    if trailing and re.match(r"[A-Za-z가-힣μ]", trailing):
+        return None
     # A single numeric token may be surrounded by an ingredient name, but a
     # second number or a conditional/alternative marker is never guessable.
     if len(re.findall(r"(?<![\d.])\d+(?:\.\d+)?", text)) != 1:

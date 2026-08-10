@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import sqlite3
 import uuid
@@ -49,6 +50,20 @@ class IdempotencyConflict(ValueError):
     pass
 
 
+@contextmanager
+def _schema_lock(db_path: Path) -> Iterator[None]:
+    # SQLite serializes DDL after a connection is established, but concurrent
+    # legacy migrations can still race while toggling WAL and adding columns.
+    # A retained per-database lock file provides a cross-process boundary.
+    lock_path = db_path.with_name(db_path.name + ".schema.lock")
+    with lock_path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 class MedicationApp:
     def __init__(
         self,
@@ -63,8 +78,9 @@ class MedicationApp:
             raise FileNotFoundError(f"DUR database not found: {self.dur_db}")
         self.personal_db.parent.mkdir(parents=True, exist_ok=True)
         self.products = ProductRepository(self.dur_db, self.catalog_db)
-        with self._personal() as con:
-            ensure_personal_schema(con)
+        with _schema_lock(self.personal_db):
+            with self._personal() as con:
+                ensure_personal_schema(con)
 
     @contextmanager
     def _personal(self, *, write_lock: bool = False) -> Iterator[sqlite3.Connection]:

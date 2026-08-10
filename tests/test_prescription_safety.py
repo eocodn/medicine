@@ -4,8 +4,10 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 from zoneinfo import ZoneInfo
 
 from medicine_app.core import ConfirmationRequired, MedicationApp
@@ -225,6 +227,70 @@ class PrescriptionSafetyTest(unittest.TestCase):
             dimension = self._dimension(preview, name)
             self.assertEqual(dimension["result"], "not_evaluable")
             self.assertTrue(dimension["reason"])
+
+    def test_fractional_frequency_and_duration_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.app.add_medication(
+                self.person["id"], **self._draft(frequency_per_day=1.5), request_id="fraction-frequency"
+            )
+        with self.assertRaises(ValueError):
+            self.app.add_medication(
+                self.person["id"], **self._draft(prescription_days=1.5), request_id="fraction-days"
+            )
+
+    def test_unsupported_source_unit_is_not_evaluable(self) -> None:
+        con = sqlite3.connect(self.dur_db)
+        con.execute(
+            "UPDATE product_dur SET rule_value='10 tablets' WHERE product_code='P-SAFE' AND category='dose_caution'"
+        )
+        con.commit()
+        con.close()
+
+        preview = self.app.preview_medication(
+            self.person["id"], self._draft(dose_amount=5, dose_unit="정")
+        )
+
+        self.assertEqual(self._dimension(preview, "dose")["result"], "not_evaluable")
+
+    def test_concurrent_schema_initialization_is_serialized(self) -> None:
+        concurrent_db = Path(self.tmp.name) / "concurrent.sqlite"
+        con = sqlite3.connect(concurrent_db)
+        con.executescript(
+            """
+            CREATE TABLE people (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, birth_date TEXT NOT NULL,
+                sex TEXT NOT NULL, pregnancy_status TEXT NOT NULL, notes TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE medications (
+                id TEXT PRIMARY KEY, person_id TEXT NOT NULL, product_code TEXT,
+                product_name TEXT NOT NULL, ingredient_code TEXT, ingredient_name TEXT,
+                dosage_text TEXT, start_date TEXT, end_date TEXT, active INTEGER NOT NULL DEFAULT 1,
+                source TEXT NOT NULL DEFAULT 'dur_search', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE medication_schedules (
+                id TEXT PRIMARY KEY, medication_id TEXT NOT NULL, time_of_day TEXT NOT NULL,
+                dose_text TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE dose_logs (
+                id TEXT PRIMARY KEY, medication_id TEXT NOT NULL, person_id TEXT NOT NULL,
+                status TEXT NOT NULL, occurred_at TEXT NOT NULL, note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        con.commit()
+        con.close()
+        barrier = Barrier(12)
+
+        def initialize(_: int) -> MedicationApp:
+            barrier.wait()
+            return MedicationApp(self.dur_db, concurrent_db, self.catalog_db)
+
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            apps = list(executor.map(initialize, range(12)))
+
+        self.assertEqual(len(apps), 12)
 
     def test_exceeded_create_requires_acknowledgement(self) -> None:
         draft = self._draft(prescription_days=35, dose_amount=11)
