@@ -36,3 +36,17 @@ test("does not invent a product from unrelated text", () => {
   assert.ok(hints.ambiguity_codes.includes("MISSING_PRODUCT"));
   assert.equal(hints.frequency_per_day, 3);
 });
+
+test("prefers labeled medication-bag values over numeric row headings", () => {
+  const hints = parsePrescriptionHints([
+    "약명: 타이레놀정",
+    "1회 복용량: 1정",
+    "1일 복용횟수: 2회",
+    "총 복용일수: 7일",
+    "복용시간: 오전 8시 오후 8시",
+  ].join("\n"));
+
+  assert.equal(hints.dose_quantity, 1);
+  assert.equal(hints.frequency_per_day, 2);
+  assert.equal(hints.duration_days, 7);
+});

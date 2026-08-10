@@ -4,16 +4,22 @@ WORKDIR /build
 
 COPY browser_ocr/package.json browser_ocr/package-lock.json ./
 COPY browser_ocr/THIRD_PARTY_NOTICES.md ./
+COPY browser_ocr/fetch_assets.mjs ./
 
-RUN npm ci --ignore-scripts --no-audit --no-fund \
-    && mkdir -p /out/core /out/lang /out/licenses \
-    && cp node_modules/tesseract.js/dist/tesseract.min.js /out/ \
-    && cp node_modules/tesseract.js/dist/worker.min.js /out/ \
-    && cp node_modules/tesseract.js-core/tesseract-core*.wasm.js /out/core/ \
-    && cp node_modules/@tesseract.js-data/kor/4.0.0_best_int/kor.traineddata.gz /out/lang/ \
-    && cp node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz /out/lang/ \
-    && cp node_modules/tesseract.js/LICENSE.md /out/licenses/tesseract.js-Apache-2.0.txt \
-    && cp node_modules/tesseract.js-core/LICENSE /out/licenses/tesseract.js-core-Apache-2.0.txt \
+RUN npm ci --ignore-scripts --no-audit --no-fund
+
+RUN mkdir -p /out/models \
+    && node fetch_assets.mjs /out/models
+
+RUN mkdir -p /out/paddle/assets /out/ort /out/licenses \
+    && node_modules/.bin/esbuild node_modules/@paddleocr/paddleocr-js/dist/index.mjs \
+        --bundle --format=esm --platform=browser --external:fs --external:path \
+        --outfile=/out/paddle/index.mjs \
+    && cp node_modules/@paddleocr/paddleocr-js/dist/assets/worker-entry-C9UNuyOJ.js /out/paddle/assets/ \
+    && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs /out/ort/ \
+    && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm /out/ort/ \
+    && cp node_modules/@techstark/opencv-js/LICENSE /out/licenses/opencv-js-Apache-2.0.txt \
+    && cp node_modules/js-yaml/LICENSE /out/licenses/js-yaml-MIT.txt \
     && cp THIRD_PARTY_NOTICES.md /out/licenses/
 
 FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6

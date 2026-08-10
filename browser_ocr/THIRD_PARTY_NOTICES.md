@@ -1,9 +1,16 @@
 # Browser OCR third-party notices
 
-- Tesseract.js 7.0.0: Apache License 2.0, <https://github.com/naptha/tesseract.js>
-- tesseract.js-core 7.0.0: Apache License 2.0, <https://github.com/naptha/tesseract.js-core>
-- `@tesseract.js-data/kor` 1.0.0 and `@tesseract.js-data/eng` 1.0.0:
-  MIT License metadata, <https://github.com/naptha/tessdata>
+- `@paddleocr/paddleocr-js` 0.4.2 and PP-OCRv5 model assets: Apache License 2.0,
+  <https://github.com/PaddlePaddle/PaddleOCR>
+- ONNX Runtime Web 1.27.0: MIT License,
+  <https://github.com/microsoft/onnxruntime>
+- `@techstark/opencv-js` 4.10.0-release.1: Apache License 2.0,
+  <https://github.com/TechStark/opencv-js>
+- `clipper-lib` 6.4.2: Boost Software License 1.0,
+  <https://sourceforge.net/projects/jsclipper/>
+- `js-yaml` 4.3.1: MIT License,
+  <https://github.com/nodeca/js-yaml>
 
-The Docker image carries the upstream Apache license texts beside the OCR assets. Package
-versions, resolved archives, and integrity hashes are fixed in `package-lock.json`.
+The browser provider forces the ONNX Runtime WebAssembly CPU backend and loads all runtime
+and model assets from the application origin. Package versions and integrity hashes are fixed
+in `package-lock.json`; model archives are verified by SHA-256 during the Docker build.

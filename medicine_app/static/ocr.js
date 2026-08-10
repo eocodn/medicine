@@ -236,7 +236,7 @@
     if (nextState === "capabilities") {
       button.disabled = false;
       button.textContent = "처방전 사진으로 추가";
-      status.textContent = state.capabilities?.provider === "browser-wasm"
+      status.textContent = state.capabilities?.provider === "paddleocr-wasm-cpu"
         ? "브라우저 안에서 사진을 인식할 수 있어요. 사진은 서버로 전송되지 않아요."
         : "Android 스캔 기능을 사용할 수 있어요.";
     } else if (nextState === "unsupported") {

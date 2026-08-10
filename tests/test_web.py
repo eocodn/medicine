@@ -93,39 +93,43 @@ class WebApiTest(unittest.TestCase):
         policy = page.headers.get("content-security-policy", "")
         self.assertIn("connect-src 'self'", policy)
         self.assertIn("worker-src 'self' blob:", policy)
+        self.assertIn("script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'", policy)
         self.assertNotIn("https:", policy)
         self.assertNotIn("content-security-policy", self.client.get("/api/health").headers)
         self.assertIn('id="ocr-image-input"', page.text)
         self.assertIn('accept="image/*"', page.text)
         self.assertIn('capture="environment"', page.text)
         for source in (
-            "/ocr-assets/tesseract.min.js",
             "/static/browser-ocr-parser.js",
             "/static/browser-ocr.js",
         ):
             self.assertIn(f'src="{source}"', page.text)
+        self.assertNotIn("tesseract.min.js", page.text)
 
         for asset in (
-            "/ocr-assets/tesseract.min.js",
-            "/ocr-assets/worker.min.js",
-            "/ocr-assets/core/tesseract-core-lstm.wasm.js",
-            "/ocr-assets/core/tesseract-core-relaxedsimd-lstm.wasm.js",
-            "/ocr-assets/core/tesseract-core-simd-lstm.wasm.js",
-            "/ocr-assets/lang/kor.traineddata.gz",
-            "/ocr-assets/lang/eng.traineddata.gz",
+            "/ocr-assets/paddle/index.mjs",
+            "/ocr-assets/paddle/assets/worker-entry-C9UNuyOJ.js",
+            "/ocr-assets/ort/ort-wasm-simd-threaded.jsep.mjs",
+            "/ocr-assets/ort/ort-wasm-simd-threaded.jsep.wasm",
+            "/ocr-assets/models/PP-OCRv5_mobile_det_onnx_infer.tar",
+            "/ocr-assets/models/korean_PP-OCRv5_mobile_rec_onnx_infer.tar",
         ):
             response = self.client.get(asset)
             self.assertEqual(response.status_code, 200, asset)
             self.assertTrue(response.content, asset)
         browser = self.client.get("/static/browser-ocr.js")
         self.assertEqual(browser.status_code, 200)
-        for contract in ("MedicineBrowserOcr", "createWorker", "kor", "eng", "90_000", "terminate"):
+        for contract in (
+            "MedicineBrowserOcr", "PaddleOCR", "PP-OCRv5_mobile_det",
+            "korean_PP-OCRv5_mobile_rec", "120_000", "dispose",
+        ):
             self.assertIn(contract, browser.text)
         for forbidden in ("FormData", "XMLHttpRequest", "sendBeacon", "localStorage", "sessionStorage"):
             self.assertNotIn(forbidden, browser.text)
-        self.assertIn('langPath: "/ocr-assets/lang"', browser.text)
-        self.assertIn('workerPath: "/ocr-assets/worker.min.js"', browser.text)
-        self.assertIn('corePath: "/ocr-assets/core"', browser.text)
+        self.assertIn('backend: "wasm"', browser.text)
+        self.assertIn('wasmPaths: "/ocr-assets/ort/"', browser.text)
+        self.assertIn("numThreads: 1", browser.text)
+        self.assertNotIn("Tesseract", browser.text)
 
         bridge = self.client.get("/static/ocr.js")
         self.assertIn("MedicineBrowserOcr", bridge.text)

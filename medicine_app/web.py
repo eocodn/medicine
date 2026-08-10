@@ -18,10 +18,13 @@ DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
 DEFAULT_CATALOG_DB = Path("data/db/catalog.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
 BROWSER_OCR_DIR = Path(os.environ.get("MEDICINE_BROWSER_OCR_ASSETS", "/opt/medicine-browser-ocr"))
-# Tesseract contains upstream CDN defaults, so the response policy is the final
-# invariant that prevents any fallback request from leaving the local app origin.
+# PaddleOCR.js and ONNX Runtime have upstream asset defaults. The response policy is the
+# final invariant that prevents a configuration regression from sending images or models
+# outside the local app origin.
+# OpenCV.js uses generated binding functions and therefore requires unsafe-eval. Keeping
+# connect-src and every asset source at 'self' is the privacy boundary for this local OCR.
 BROWSER_CSP = (
-    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; style-src 'self'; "
     "img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; "
     "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 )

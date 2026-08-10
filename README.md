@@ -280,11 +280,11 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 
 ## Android / OCR 빌드·실행
 
-일반 브라우저에서는 자체 호스팅한 Tesseract.js WASM과 한글·영문 모델을 사용합니다. 사진과
-인식 원문은 브라우저 메모리 안에서만 처리하고 서버·DB·웹 저장소로 보내지 않으며, 구조화된
-복용 힌트만 기존 사용자 확인 흐름으로 넘깁니다. 모델 자산은 첫 실행 때 같은 로컬 웹 origin에서
-받고 브라우저 캐시에 저장될 수 있습니다. 브라우저 파서 테스트와 헤드리스 확인 CLI는 다음과
-같이 실행합니다.
+일반 브라우저에서는 자체 호스팅한 PaddleOCR.js와 PP-OCRv5 모바일 탐지·한국어 인식 모델을
+ONNX Runtime WebAssembly CPU backend로 실행합니다. 사진과 인식 원문은 브라우저 메모리
+안에서만 처리하고 서버·DB·웹 저장소로 보내지 않으며, 구조화된 복용 힌트만 기존 사용자 확인
+흐름으로 넘깁니다. 모델 자산은 첫 실행 때 같은 로컬 웹 origin에서 받고 브라우저 캐시에 저장될
+수 있습니다. 브라우저 파서 테스트와 헤드리스 확인 CLI는 다음과 같이 실행합니다.
 
 ```bash
 docker compose run --rm browser-test
