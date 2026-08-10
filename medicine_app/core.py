@@ -14,7 +14,8 @@ from .planning import materialize_daily_plan, record_instance
 from .prescriptions import draft_hash, normalize_draft
 from .products import ProductRepository
 from .ocr import OCRReviewStore, preview_ocr, validate_ocr_create
-from .safety import APP_TIMEZONE, age_years, collect_qualitative_risks, evaluate_quantitative
+from .assessment import assess_medication, bind_warning_token, requires_acknowledgement
+from .safety import APP_TIMEZONE, age_years
 
 SEX_VALUES = {"female", "male", "other", "unknown"}
 PREGNANCY_VALUES = {"pregnant", "not_pregnant", "unknown", "not_applicable"}
@@ -207,10 +208,10 @@ class MedicationApp:
                 return self._get_medication_from_connection(con, existing["medication_id"])
             validate_ocr_create(self, ocr_review_token, ocr_origin or source == "ocr", person_id, product, draft, request_id)
             person = self._get_person_from_connection(con, person_id)
-            assessment = self._assessment(con, person, product, draft, acknowledge_warnings)
-            assessment["draft_fingerprint"] = payload_hash
-            if self._has_exceeded(assessment) and (
-                not acknowledge_warnings or warning_token != payload_hash
+            assessment = assess_medication(self, con, person, product, draft, acknowledge_warnings)
+            expected_warning_token = bind_warning_token(assessment, payload_hash)
+            if requires_acknowledgement(assessment) and (
+                not acknowledge_warnings or warning_token != expected_warning_token
             ):
                 raise ConfirmationRequired(request_id, assessment)
             medication_id = _uuid()
@@ -397,12 +398,13 @@ class MedicationApp:
             draft = normalize_draft(values)
             payload_hash = draft_hash(current["person_id"], product, draft)
             person = self._get_person_from_connection(con, current["person_id"])
-            assessment = self._assessment(
+            assessment = assess_medication(
+                self,
                 con, person, product, draft, acknowledge_warnings, exclude_medication_id=medication_id
             )
-            assessment["draft_fingerprint"] = payload_hash
-            if self._has_exceeded(assessment) and (
-                not acknowledge_warnings or warning_token != payload_hash
+            expected_warning_token = bind_warning_token(assessment, payload_hash)
+            if requires_acknowledgement(assessment) and (
+                not acknowledge_warnings or warning_token != expected_warning_token
             ):
                 raise ConfirmationRequired(None, assessment)
             next_revision = current["revision"] + 1
@@ -503,10 +505,10 @@ class MedicationApp:
         draft = normalize_draft(raw)
         with self._personal() as con:
             person = self._get_person_from_connection(con, person_id)
-            assessment = self._assessment(con, person, product, draft, False, as_of=as_of)
+            assessment = assess_medication(self, con, person, product, draft, False, as_of=as_of)
             current_count = len(self._list_medications_from_connection(con, person_id))
         fingerprint = draft_hash(person_id, product, draft)
-        assessment["draft_fingerprint"] = fingerprint
+        warning_token = bind_warning_token(assessment, fingerprint)
         return {
             "person": person, "product": product, "draft": draft,
             "current_medication_count": current_count,
@@ -514,42 +516,9 @@ class MedicationApp:
             "quantitative_checks": {
                 "duration": assessment["duration"], "dose": assessment["dose"]
             },
-            "warning_token": fingerprint if self._has_exceeded(assessment) else None,
-            "coverage": {
-                "dur_match": bool(product.get("dur_match")),
-                "message": (
-                    "DUR 제품코드와 연결되어 개인별 금기·주의를 확인했습니다."
-                    if product.get("dur_match")
-                    else "전체 의약품 카탈로그에는 있지만 DUR 제품코드와 연결되지 않아 자동 위험 확인 범위가 제한됩니다."
-                ),
-            },
+            "warning_token": warning_token,
+            "coverage": assessment["coverage"],
         }
-
-    def _assessment(
-        self, personal_con: sqlite3.Connection, person: dict, product: dict, draft: dict,
-        acknowledged: bool, *, exclude_medication_id: str | None = None, as_of: date | None = None,
-    ) -> dict:
-        current = self._list_medications_from_connection(
-            personal_con, person["id"], exclude_id=exclude_medication_id
-        )
-        risks: list[dict] = []
-        quantitative = {
-            "duration": {"result": "not_evaluable", "reason": "DUR product code is not linked"},
-            "dose": {"result": "not_evaluable", "reason": "DUR product code is not linked"},
-        }
-        if product.get("dur_match"):
-            with self._dur() as dur_con:
-                risks = collect_qualitative_risks(dur_con, product, person, current, as_of)
-                quantitative = evaluate_quantitative(dur_con, product, draft)
-        return {
-            "evaluator_version": "1", "risks": risks,
-            "duration": quantitative["duration"], "dose": quantitative["dose"],
-            "acknowledged": bool(acknowledged),
-        }
-
-    @staticmethod
-    def _has_exceeded(assessment: dict) -> bool:
-        return any(assessment[name].get("result") == "exceeded" for name in ("duration", "dose"))
 
     @staticmethod
     def _replace_schedules(

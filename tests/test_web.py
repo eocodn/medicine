@@ -193,8 +193,17 @@ class WebApiTest(unittest.TestCase):
             f"/api/people/{person['id']}/medications",
             json={"product_code": "P-B", "dosage_text": "1정", "schedule_times": ["20:00"]},
         )
-        self.assertEqual(added.status_code, 201)
-        medication = added.json()
+        self.assertEqual(added.status_code, 409)
+        warning = added.json()
+        acknowledged = self.client.post(
+            f"/api/people/{person['id']}/medications",
+            json={
+                "product_code": "P-B", "dosage_text": "1정", "schedule_times": ["20:00"],
+                "acknowledge_warnings": True, "warning_token": warning["warning_token"],
+            },
+        )
+        self.assertEqual(acknowledged.status_code, 201)
+        medication = acknowledged.json()
 
         logged = self.client.post(
             f"/api/medications/{medication['id']}/logs",

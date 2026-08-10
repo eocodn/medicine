@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from .coverage import ingredient_index, resolve_safety_mapping
+
 
 class ProductRepository:
     def __init__(self, dur_db: Path | str, catalog_db: Path | str | None = None):
@@ -44,17 +46,42 @@ class ProductRepository:
         except sqlite3.DatabaseError:
             return False
 
-    def _dur_codes(self, codes: list[str]) -> set[str]:
-        codes = [code for code in codes if code]
-        if not codes:
-            return set()
-        placeholders = ",".join("?" for _ in codes)
-        with self._dur() as con:
-            rows = con.execute(
-                f"SELECT product_code FROM product_catalog WHERE product_code IN ({placeholders})",
-                codes,
-            ).fetchall()
-        return {row["product_code"] for row in rows}
+    @staticmethod
+    def _decorate_product(
+        row: sqlite3.Row,
+        dur_con: sqlite3.Connection,
+        known_ingredients: set[str] | None = None,
+    ) -> dict:
+        mapping = resolve_safety_mapping(
+            dur_con,
+            edi_value=row["edi_code"],
+            catalog_ingredient=row["ingredient_name"],
+            known_ingredients=known_ingredients,
+        )
+        return {
+            "product_ref": row["item_seq"],
+            "catalog_item_seq": row["item_seq"],
+            "product_code": mapping["product_code"],
+            "edi_codes": mapping["edi_codes"],
+            "matched_product_codes": mapping["matched_product_codes"],
+            "product_mapping_status": mapping["product_status"],
+            "product_name": row["product_name"],
+            "ingredient_code": mapping["ingredient_code"],
+            "ingredient_name": row["ingredient_name"],
+            "safety_ingredients": mapping["ingredients"],
+            "ingredient_mapping_status": mapping["ingredient_status"],
+            "ingredient_mapping_method": mapping["ingredient_mapping_method"],
+            "ingredient_mapping_reason": mapping["ingredient_reason"],
+            "unmapped_ingredients": mapping["unmapped_ingredients"],
+            "manufacturer": row["manufacturer"],
+            "dosage_form": row["dosage_form"],
+            "permit_date": row["permit_date"],
+            "cancel_date": row["cancel_date"],
+            "permit_status_name": row["cancel_name"],
+            "permit_status": row["permit_status"],
+            "catalog_source": row["source"] or "mfds",
+            "dur_match": mapping["product_status"] == "matched",
+        }
 
     def search(self, term: str, limit: int = 30, include_inactive: bool = False) -> list[dict]:
         term = term.strip()
@@ -83,29 +110,9 @@ class ProductRepository:
                 """,
                 (like, like, like, prefix, prefix, prefix, limit),
             ).fetchall()
-        dur_codes = self._dur_codes([row["edi_code"] for row in rows if row["edi_code"]])
-        results: list[dict] = []
-        for row in rows:
-            edi_code = row["edi_code"]
-            results.append(
-                {
-                    "product_ref": row["item_seq"],
-                    "catalog_item_seq": row["item_seq"],
-                    "product_code": edi_code,
-                    "product_name": row["product_name"],
-                    "ingredient_code": None,
-                    "ingredient_name": row["ingredient_name"],
-                    "manufacturer": row["manufacturer"],
-                    "dosage_form": row["dosage_form"],
-                    "permit_date": row["permit_date"],
-                    "cancel_date": row["cancel_date"],
-                    "permit_status_name": row["cancel_name"],
-                    "permit_status": row["permit_status"],
-                    "catalog_source": row["source"] or "mfds",
-                    "dur_match": bool(edi_code and edi_code in dur_codes),
-                }
-            )
-        return results
+        with self._dur() as dur_con:
+            known_ingredients = ingredient_index(dur_con)
+            return [self._decorate_product(row, dur_con, known_ingredients) for row in rows]
 
     def get(self, product_ref: str) -> dict:
         product_ref = product_ref.strip()
@@ -126,21 +133,5 @@ class ProductRepository:
             ).fetchone()
         if row is None:
             raise KeyError("product not found")
-        edi_code = row["edi_code"]
-        dur_match = bool(edi_code and edi_code in self._dur_codes([edi_code]))
-        return {
-            "product_ref": row["item_seq"],
-            "catalog_item_seq": row["item_seq"],
-            "product_code": edi_code,
-            "product_name": row["product_name"],
-            "ingredient_code": None,
-            "ingredient_name": row["ingredient_name"],
-            "manufacturer": row["manufacturer"],
-            "dosage_form": row["dosage_form"],
-            "permit_date": row["permit_date"],
-            "cancel_date": row["cancel_date"],
-            "permit_status_name": row["cancel_name"],
-            "permit_status": row["permit_status"],
-            "catalog_source": row["source"] or "mfds",
-            "dur_match": dur_match,
-        }
+        with self._dur() as dur_con:
+            return self._decorate_product(row, dur_con)

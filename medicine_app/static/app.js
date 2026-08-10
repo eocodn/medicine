@@ -370,11 +370,12 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
       <button class="icon-button" data-close-sheet type="button">×</button>
     </div>
     <div class="risk-summary">
-      <h2>${medication ? "처방 정보를 수정합니다" : dangerous ? "확인이 필요한 위험이 있어요" : risks.length ? "주의 정보를 확인하세요" : preview.coverage?.dur_match ? "현재 확인된 DUR 위험 정보가 없어요" : "DUR 자동 확인 범위가 제한돼요"}</h2>
+      <h2>${medication ? "처방 정보를 수정합니다" : dangerous ? "확인이 필요한 위험이 있어요" : risks.length ? "주의 정보를 확인하세요" : preview.coverage?.status === "complete" ? "현재 확인된 DUR 위험 정보가 없어요" : "DUR 자동 확인 범위가 제한돼요"}</h2>
       <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필과 현재 복용약 ${preview.current_medication_count}개를 기준으로 확인했습니다.</p>
     </div>
     ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 허가 상태와 실제 보유·유통 여부는 별개일 수 있어요.</div>` : ""}
-    ${preview.coverage ? `<div class="coverage-note ${preview.coverage.dur_match ? "matched" : "limited"}">${escapeHtml(preview.coverage.message)}</div>` : ""}
+    ${preview.coverage ? `<div class="coverage-note ${preview.coverage.status === "complete" ? "matched" : "limited"}">${escapeHtml(preview.coverage.message)}</div>` : ""}
+    ${coverageLimitHtml(preview.coverage)}
     <div>${risks.length ? risks.map((risk) => `
       <div class="risk-card ${escapeHtml(risk.severity)}"><strong>${escapeHtml(risk.title)}</strong><p>${escapeHtml(risk.details || "상세 설명 없음")}</p></div>`).join("") : `<div class="risk-card info"><strong>DUR 결과 없음</strong><p>현재 로컬 DUR 데이터에서 일치하는 금기·주의 신호가 발견되지 않았습니다. 이것이 모든 상호작용의 부재를 뜻하지는 않습니다.</p></div>`}</div>
     <div class="prescription-form">

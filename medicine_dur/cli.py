@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .db import build_database, database_stats, search_records
+from .verification import verify_database
 
 
 DEFAULT_DB = Path("data/db/dur.sqlite")
@@ -52,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--json", action="store_true")
 
+    verify = sub.add_parser("verify", help="Verify DUR dataset release readiness and identity")
+    verify.add_argument("--db", type=Path, default=DEFAULT_DB)
+    verify.add_argument("--max-age-days", type=int, default=730)
+    verify.add_argument("--max-snapshot-age-days", type=int, default=90)
+    verify.add_argument("--json", action="store_true")
+
     return parser
 
 
@@ -67,6 +74,14 @@ def main(argv=None) -> int:
         if args.limit < 1:
             raise SystemExit("--limit must be >= 1")
         _emit(search_records(args.db, args.term, limit=args.limit), args.json)
+    elif args.command == "verify":
+        result = verify_database(
+            args.db,
+            max_age_days=args.max_age_days,
+            max_snapshot_age_days=args.max_snapshot_age_days,
+        )
+        _emit(result, args.json)
+        return 0 if result["status"] == "verified" else 2
 
     return 0
 

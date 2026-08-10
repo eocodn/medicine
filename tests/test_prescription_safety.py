@@ -314,7 +314,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
             **draft,
             request_id="create-exceeded-2",
             acknowledge_warnings=True,
-            warning_token=warning.exception.assessment["draft_fingerprint"],
+            warning_token=warning.exception.assessment["warning_token"],
         )
 
         self.assertEqual(medication["assessment"]["duration"]["result"], "exceeded")

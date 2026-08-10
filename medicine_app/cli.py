@@ -326,7 +326,7 @@ def main(argv=None) -> int:
         emit({
             "confirmation_required": True,
             "request_id": exc.request_id,
-            "warning_token": exc.assessment.get("draft_fingerprint"),
+            "warning_token": exc.assessment.get("warning_token"),
             "assessment": exc.assessment,
         }, getattr(args, "json", False))
         return 2

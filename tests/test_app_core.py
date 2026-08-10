@@ -327,8 +327,13 @@ class MedicationAppTest(unittest.TestCase):
     def test_daily_plan_uses_unscheduled_frequency_slots_and_separates_prn(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
         self.app.add_medication(person["id"], product_code="P-A", frequency_per_day=3, start_date="2026-08-10")
+        prn_preview = self.app.preview_medication(
+            person["id"],
+            {"product_code": "P-B", "as_needed": True, "dose_amount": 1, "dose_unit": "정", "start_date": "2026-08-10"},
+        )
         prn = self.app.add_medication(
-            person["id"], product_code="P-B", as_needed=True, dose_amount=1, dose_unit="정", start_date="2026-08-10"
+            person["id"], product_code="P-B", as_needed=True, dose_amount=1, dose_unit="정", start_date="2026-08-10",
+            acknowledge_warnings=True, warning_token=prn_preview["warning_token"],
         )
 
         plan = self.app.get_daily_plan(person["id"], "2026-08-10")

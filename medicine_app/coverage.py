@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+import re
+import sqlite3
+import unicodedata
+from typing import Any, Mapping
+
+
+_ANNOTATION_RE = re.compile(r"\(\s*분류번호\s*:[^)]+\)\s*$", re.IGNORECASE)
+
+
+def normalize_ingredient_name(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+    text = _ANNOTATION_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s*([+/])\s*", r"\1", text)
+    return text.strip()
+
+
+def split_edi_codes(value: Any) -> list[str]:
+    if not value:
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for part in str(value).split(","):
+        code = part.strip()
+        if code and code not in seen:
+            seen.add(code)
+            result.append(code)
+    return result
+
+
+def ingredient_index(con: sqlite3.Connection) -> set[str]:
+    names: set[str] = set()
+    try:
+        rows = con.execute(
+            "SELECT ingredient_name,paired_ingredient_name FROM ingredient_dur"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return names
+    for row in rows:
+        for value in row:
+            normalized = normalize_ingredient_name(value)
+            if normalized:
+                names.add(normalized)
+    return names
+
+
+def _candidate_parts(value: Any, ingredient_index: set[str]) -> tuple[list[str], list[str]]:
+    normalized = normalize_ingredient_name(value)
+    if not normalized:
+        return [], []
+    if normalized in ingredient_index:
+        return [normalized], []
+    if re.search(r"\d", normalized):
+        return [], [normalized]
+    parts = [normalize_ingredient_name(part) for part in re.split(r"[+/]", normalized)]
+    parts = [part for part in parts if part]
+    matched = [part for part in parts if part in ingredient_index]
+    unmatched = [part for part in parts if part not in ingredient_index]
+    return matched, unmatched
+
+
+def resolve_safety_mapping(
+    con: sqlite3.Connection,
+    *,
+    edi_value: Any,
+    catalog_ingredient: Any,
+    known_ingredients: set[str] | None = None,
+) -> dict[str, Any]:
+    edi_codes = split_edi_codes(edi_value)
+    product_rows: list[Mapping[str, Any]] = []
+    if edi_codes:
+        placeholders = ",".join("?" for _ in edi_codes)
+        con.row_factory = sqlite3.Row
+        product_rows = list(con.execute(
+            f"""SELECT product_code,ingredient_code,ingredient_name
+                FROM product_catalog WHERE product_code IN ({placeholders})
+                ORDER BY product_code""",
+            edi_codes,
+        ).fetchall())
+    matched_product_codes = sorted({str(row["product_code"]) for row in product_rows})
+    selected_product_code = matched_product_codes[0] if len(matched_product_codes) == 1 else None
+
+    canonical_names = [row["ingredient_name"] for row in product_rows if row["ingredient_name"]]
+    known_ingredients = known_ingredients if known_ingredients is not None else ingredient_index(con)
+    matched_ingredients: list[str] = []
+    unmatched_ingredients: list[str] = []
+
+    if canonical_names:
+        # The product-code row is authoritative about the product's ingredient
+        # label, but it is not proof that this label is the same identity used
+        # by the separate ingredient-level DUR dataset. Only exact normalized
+        # names/components present in ingredient_dur establish that bridge.
+        for name in canonical_names:
+            matched, unmatched = _candidate_parts(name, known_ingredients)
+            matched_ingredients.extend(matched)
+            unmatched_ingredients.extend(unmatched)
+        matched_ingredients = sorted(set(matched_ingredients))
+        unmatched_ingredients = sorted(set(unmatched_ingredients))
+        mapping_method = "product_code_exact"
+        if matched_ingredients and not unmatched_ingredients:
+            ingredient_status = "matched"
+        elif matched_ingredients:
+            ingredient_status = "partial"
+        else:
+            ingredient_status = "not_evaluable"
+    else:
+        matched, unmatched = _candidate_parts(catalog_ingredient, known_ingredients)
+        matched_ingredients = sorted(set(matched))
+        unmatched_ingredients = sorted(set(unmatched))
+        mapping_method = "catalog_exact"
+        if matched_ingredients and not unmatched_ingredients:
+            ingredient_status = "matched"
+        elif matched_ingredients:
+            ingredient_status = "partial"
+        else:
+            ingredient_status = "not_evaluable"
+
+    reason = None
+    if ingredient_status == "not_evaluable":
+        reason = "식약처 성분명을 DUR 성분 기준에 단일하게 연결하지 못했습니다."
+    elif ingredient_status == "partial":
+        reason = "일부 성분만 DUR 성분 기준에 단일하게 연결되었습니다."
+
+    ingredient_code = None
+    if selected_product_code:
+        codes = {row["ingredient_code"] for row in product_rows if row["product_code"] == selected_product_code and row["ingredient_code"]}
+        if len(codes) == 1:
+            ingredient_code = next(iter(codes))
+
+    return {
+        "edi_codes": edi_codes,
+        "matched_product_codes": matched_product_codes,
+        "product_code": selected_product_code,
+        "product_status": (
+            "matched" if selected_product_code else "ambiguous" if len(matched_product_codes) > 1 else "not_matched"
+        ),
+        "ingredient_code": ingredient_code,
+        "ingredients": matched_ingredients,
+        "ingredient_status": ingredient_status,
+        "ingredient_mapping_method": mapping_method,
+        "unmapped_ingredients": unmatched_ingredients,
+        "ingredient_reason": reason,
+    }
+
+
+def coverage_summary(product: Mapping[str, Any], dataset: Mapping[str, Any], person: Mapping[str, Any]) -> dict[str, Any]:
+    ingredient_status = product.get("ingredient_mapping_status") or "not_evaluable"
+    product_status = product.get("product_mapping_status") or "not_matched"
+    profile_gaps: list[str] = []
+    if person.get("pregnancy_status") == "unknown":
+        profile_gaps.append("pregnancy_contraindication")
+    if person.get("sex") in {"female", "unknown", None}:
+        profile_gaps.append("lactation_caution")
+
+    not_evaluable_checks: list[dict[str, Any]] = []
+    if dataset.get("status") != "verified":
+        not_evaluable_checks.append({
+            "category": "dataset",
+            "result": "not_evaluable",
+            "reason": "필수 DUR 원본 manifest를 검증하지 못했습니다.",
+        })
+    if product_status == "ambiguous":
+        not_evaluable_checks.append({
+            "category": "product_mapping",
+            "result": "not_evaluable",
+            "reason": "여러 DUR 제품코드가 연결되어 제품 단위 규칙을 하나로 확정할 수 없습니다.",
+        })
+    elif product_status != "matched":
+        not_evaluable_checks.append({
+            "category": "product_mapping",
+            "result": "not_evaluable",
+            "reason": "DUR 제품코드가 연결되지 않아 제품 단위 규칙을 확인할 수 없습니다.",
+        })
+    if ingredient_status != "matched":
+        not_evaluable_checks.append({
+            "category": "ingredient_mapping",
+            "result": "not_evaluable",
+            "reason": product.get("ingredient_mapping_reason") or "DUR 성분 기준과의 연결을 확정할 수 없습니다.",
+        })
+    for category in profile_gaps:
+        reason = (
+            "임신 여부가 미확정이라 임부금기 적용 여부를 판정할 수 없습니다."
+            if category == "pregnancy_contraindication"
+            else "수유 여부를 프로필에서 관리하지 않아 수유부주의 적용 여부를 판정할 수 없습니다."
+        )
+        not_evaluable_checks.append({"category": category, "result": "not_evaluable", "reason": reason})
+
+    limited = (
+        dataset.get("status") != "verified"
+        or product_status != "matched"
+        or ingredient_status not in {"matched"}
+        or bool(profile_gaps)
+    )
+    if limited:
+        message = "DUR 자동 확인 범위에 제한이 있습니다. 아래 커버리지와 판정 불가 항목을 확인해주세요."
+    else:
+        message = "제품·성분 DUR 데이터와 현재 프로필 범위에서 자동 확인했습니다."
+    return {
+        "status": "limited" if limited else "complete",
+        "message": message,
+        "dataset": dict(dataset),
+        "product": {
+            "status": product_status,
+            "edi_codes": list(product.get("edi_codes") or []),
+            "matched_product_codes": list(product.get("matched_product_codes") or []),
+        },
+        "ingredient": {
+            "status": ingredient_status,
+            "mapping_method": product.get("ingredient_mapping_method"),
+            "ingredients": list(product.get("safety_ingredients") or []),
+            "unmapped_ingredients": list(product.get("unmapped_ingredients") or []),
+            "reason": product.get("ingredient_mapping_reason"),
+        },
+        "profile": {
+            "not_evaluable_categories": profile_gaps,
+        },
+        "not_evaluable_checks": not_evaluable_checks,
+    }
+
+
+__all__ = [
+    "coverage_summary", "ingredient_index", "normalize_ingredient_name", "resolve_safety_mapping", "split_edi_codes",
+]
