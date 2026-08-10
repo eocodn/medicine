@@ -220,7 +220,7 @@ class MedicationApp:
             catalog_item_seq = product["catalog_item_seq"]
             manufacturer = product["manufacturer"]
             catalog_source = product["catalog_source"]
-            med_source = source or ("catalog_search" if catalog_source != "dur" else "dur_search")
+            med_source = source or "catalog_search"
         else:
             product_name = (manual_name or "").strip()
             if not product_name:

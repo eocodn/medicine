@@ -295,12 +295,11 @@ async function runDrugSearch() {
   const status = $("#search-status");
   const root = $("#drug-results");
   if (!term) { status.textContent = ""; root.innerHTML = ""; return; }
-  status.textContent = state.fullCatalog ? "전체 허가 의약품에서 찾는 중…" : "DUR 수록 제품에서 찾는 중…";
+  status.textContent = state.fullCatalog ? "전체 허가 의약품에서 찾는 중…" : "전체 허가 의약품 카탈로그를 확인하는 중…";
   try {
     const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`);
-    status.textContent = state.fullCatalog
-      ? `${results.length}개 결과 · 식약처 전체 카탈로그 + DUR 연결`
-      : `${results.length}개 결과 · 전체 카탈로그 미동기화, DUR 수록 제품 기준`;
+    state.fullCatalog = true;
+    status.textContent = `${results.length}개 결과 · 식약처 전체 카탈로그 + DUR 연결`;
     root.innerHTML = results.length ? results.map((item) => `
       <article class="card result-card">
         <div class="result-row">

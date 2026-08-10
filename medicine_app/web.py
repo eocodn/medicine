@@ -61,6 +61,8 @@ class DoseInstanceUpdate(BaseModel):
 
 
 def _translate_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, FileNotFoundError):
+        return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, KeyError):
         return HTTPException(status_code=404, detail=str(exc).strip("'"))
     if isinstance(exc, ValueError):

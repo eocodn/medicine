@@ -32,6 +32,18 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("복용", response.text)
         self.assertIn("약 검색", response.text)
 
+    def test_product_search_returns_service_unavailable_without_full_catalog(self) -> None:
+        missing_catalog = self.catalog_db.with_name("missing-catalog.sqlite")
+        client = TestClient(create_web_app(self.dur_db, self.personal_db.with_name("other.sqlite"), missing_catalog))
+
+        health = client.get("/api/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertFalse(health.json()["full_catalog"])
+
+        response = client.get("/api/products", params={"q": "약A"})
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("catalog database not available", response.json()["detail"])
+
     def test_person_search_preview_add_and_log_flow(self) -> None:
         person_response = self.client.post(
             "/api/people",

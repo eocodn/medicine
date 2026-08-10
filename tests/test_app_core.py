@@ -131,7 +131,10 @@ def make_catalog_db(path: Path) -> None:
         ) VALUES(?,?,?,?,?,?,?,?,?,?)
         """,
         [
+            ("MFDS-A", "약A", "제약A", "drug-a", "정제", "P-A", "2020-01-01", None, "mfds", "{}"),
             ("MFDS-B", "전체카탈로그약B", "제약B", "drug-b", "정제", "P-B", "2020-01-01", None, "mfds", "{}"),
+            ("MFDS-C", "약C", "제약C", "drug-c", "정제", "P-C", "2020-01-01", None, "mfds", "{}"),
+            ("MFDS-D", "약D", "제약D", "drug-d", "정제", "P-D", "2020-01-01", None, "mfds", "{}"),
             ("MFDS-X", "비급여전체약X", "제약X", "drug-x", "캡슐", None, "2021-01-01", None, "mfds", "{}"),
         ],
     )
@@ -236,6 +239,24 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(unmatched["product_ref"], "MFDS-X")
         self.assertIsNone(unmatched["product_code"])
         self.assertFalse(unmatched["dur_match"])
+
+    def test_search_does_not_fall_back_to_dur_catalog(self) -> None:
+        con = sqlite3.connect(self.dur_db)
+        con.execute(
+            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
+            ("P-ONLY-DUR", "DUR에만있는약", "ING-ONLY-DUR", "only-dur"),
+        )
+        con.commit()
+        con.close()
+
+        self.assertEqual(self.app.search_products("DUR에만있는약", limit=10), [])
+
+    def test_search_requires_full_catalog_database(self) -> None:
+        missing = self.catalog_db.with_name("missing-catalog.sqlite")
+        app = MedicationApp(self.dur_db, self.personal_db.with_name("other-personal.sqlite"), missing)
+
+        with self.assertRaisesRegex(FileNotFoundError, "catalog database not available"):
+            app.search_products("약A", limit=10)
 
     def test_adds_structured_prescription_and_computes_end_date(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
