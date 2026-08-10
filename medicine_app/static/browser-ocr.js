@@ -3,6 +3,9 @@
 
   const SCHEMA_VERSION = 1;
   const TIMEOUT_MS = 120_000;
+  const MAX_INPUT_EDGE = 1280;
+  const DETECTION_INPUT_EDGE = 640;
+  const WORKER_PATH = "/ocr-assets/paddle/assets/worker-entry-C9UNuyOJ.js";
   const SDK_PATH = "/ocr-assets/paddle/index.mjs";
   const DETECTION_MODEL = {
     name: "PP-OCRv5_mobile_det",
@@ -18,7 +21,7 @@
 
   function supported() {
     return Boolean(input && global.MedicineBrowserOcrParser?.parsePrescriptionHints
-      && global.Worker && global.WebAssembly && global.File);
+      && global.Worker && global.WebAssembly && global.File && global.createImageBitmap);
   }
 
   function dispatch(event) {
@@ -67,13 +70,38 @@
     }, 2_000);
   }
 
+  function terminateWorker(target, reason = "") {
+    const worker = target.worker;
+    target.worker = null;
+    if (!worker) return;
+    // PaddleOCR's transport rejects outstanding requests through onerror. Signalling it
+    // before terminate prevents an abandoned init/predict promise on cancellation.
+    if (reason && typeof worker.onerror === "function") worker.onerror({ message: reason });
+    worker.terminate();
+  }
+
   async function disposeEngine(target) {
     if (target.disposing) return target.disposing;
     const engine = target.engine;
     target.engine = null;
-    if (!engine || typeof engine.dispose !== "function") return null;
-    target.disposing = Promise.resolve(engine.dispose()).catch(() => null);
+    target.disposing = Promise.resolve(
+      engine && typeof engine.dispose === "function" ? engine.dispose() : null,
+    ).catch(() => null).finally(() => terminateWorker(target));
     return target.disposing;
+  }
+
+  function abortEngine(target) {
+    if (target.disposing) {
+      terminateWorker(target, "OCR operation aborted.");
+      return;
+    }
+    const engine = target.engine;
+    target.engine = null;
+    // Start SDK disposal first so its pending dispose request is rejected by the
+    // explicit worker error below and the SDK can finish its own cleanup path.
+    const disposal = engine && typeof engine.dispose === "function" ? engine.dispose() : null;
+    terminateWorker(target, "OCR operation aborted.");
+    target.disposing = Promise.resolve(disposal).catch(() => null);
   }
 
   function finishTerminal(target, state, detail = {}) {
@@ -84,8 +112,41 @@
     clearInput();
     emit(target, state, detail);
     active = null;
-    void disposeEngine(target);
+    abortEngine(target);
     return true;
+  }
+
+  async function prepareInput(file) {
+    const bitmap = await global.createImageBitmap(file);
+    try {
+      const longestEdge = Math.max(bitmap.width, bitmap.height);
+      if (longestEdge <= MAX_INPUT_EDGE) return file;
+      const scale = MAX_INPUT_EDGE / longestEdge;
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = global.document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Canvas 2D is unavailable");
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(bitmap, 0, 0, width, height);
+      try {
+        return await new Promise((resolve, reject) => {
+          canvas.toBlob(
+            (blob) => blob ? resolve(blob) : reject(new Error("Image resize failed")),
+            "image/jpeg",
+            0.9,
+          );
+        });
+      } finally {
+        canvas.width = 1;
+        canvas.height = 1;
+      }
+    } finally {
+      bitmap.close();
+    }
   }
 
   function loadPaddleSdk() {
@@ -93,9 +154,15 @@
     return import(SDK_PATH);
   }
 
-  function createOptions() {
+  function createOptions(target) {
     return {
-      worker: true,
+      worker: {
+        createWorker() {
+          const worker = new global.Worker(WORKER_PATH, { type: "module" });
+          target.worker = worker;
+          return worker;
+        },
+      },
       textDetectionModelName: DETECTION_MODEL.name,
       textDetectionModelAsset: { url: DETECTION_MODEL.url },
       textRecognitionModelName: RECOGNITION_MODEL.name,
@@ -114,11 +181,15 @@
   async function recognize(file, target, generation) {
     let results = null;
     let recognized = "";
+    let preparedInput = null;
     try {
       emit(target, "scanning");
       target.progress = 0;
       emit(target, "recognizing", { progress: target.progress });
       startHeartbeat(target, generation);
+
+      preparedInput = await prepareInput(file);
+      if (active !== target || generation !== epoch) return;
 
       const sdk = await loadPaddleSdk();
       if (active !== target || generation !== epoch) return;
@@ -126,7 +197,7 @@
       target.progress = 10;
       emit(target, "recognizing", { progress: target.progress });
 
-      const engine = await sdk.PaddleOCR.create(createOptions());
+      const engine = await sdk.PaddleOCR.create(createOptions(target));
       target.engine = engine;
       if (active !== target || generation !== epoch) {
         await disposeEngine(target);
@@ -135,7 +206,10 @@
       target.progress = 55;
       emit(target, "recognizing", { progress: target.progress });
 
-      results = await engine.predict(file);
+      results = await engine.predict(preparedInput, {
+        text_det_limit_side_len: DETECTION_INPUT_EDGE,
+      });
+      preparedInput = null;
       if (active !== target || generation !== epoch) {
         results = null;
         await disposeEngine(target);
@@ -190,6 +264,7 @@
       operationId,
       sequence: -1,
       engine: null,
+      worker: null,
       disposing: null,
       timeoutId: null,
       heartbeatId: null,

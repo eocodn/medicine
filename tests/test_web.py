@@ -129,6 +129,9 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('backend: "wasm"', browser.text)
         self.assertIn('wasmPaths: "/ocr-assets/ort/"', browser.text)
         self.assertIn("numThreads: 1", browser.text)
+        self.assertIn("MAX_INPUT_EDGE = 1280", browser.text)
+        self.assertIn("DETECTION_INPUT_EDGE = 640", browser.text)
+        self.assertIn("worker.terminate()", browser.text)
         self.assertNotIn("Tesseract", browser.text)
 
         bridge = self.client.get("/static/ocr.js")
