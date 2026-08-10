@@ -477,6 +477,8 @@ class MedicationApp:
             person = self._get_person_from_connection(con, person_id)
             assessment = self._assessment(con, person, product, draft, False, as_of=as_of)
             current_count = len(self._list_medications_from_connection(con, person_id))
+        fingerprint = draft_hash(person_id, product, draft)
+        assessment["draft_fingerprint"] = fingerprint
         return {
             "person": person, "product": product, "draft": draft,
             "current_medication_count": current_count,
@@ -484,6 +486,7 @@ class MedicationApp:
             "quantitative_checks": {
                 "duration": assessment["duration"], "dose": assessment["dose"]
             },
+            "warning_token": fingerprint if self._has_exceeded(assessment) else None,
             "coverage": {
                 "dur_match": bool(product.get("dur_match")),
                 "message": (

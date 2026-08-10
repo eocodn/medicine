@@ -6,6 +6,7 @@ const state = {
   pendingProduct: null,
   pendingRequestId: null,
   warningToken: null,
+  reviewedDraftKey: null,
   editingMedicationId: null,
   searchTimer: null,
 };
@@ -355,6 +356,7 @@ async function previewProduct(productRef) {
     state.pendingProduct = preview.product;
     state.pendingRequestId = crypto.randomUUID();
     state.warningToken = null;
+    state.reviewedDraftKey = null;
     state.editingMedicationId = null;
     renderRiskSheet(preview);
     openSheet("#risk-sheet");
@@ -441,53 +443,16 @@ function renderRiskSheet(preview, medication = null) {
   }
 }
 
-function prescriptionPayloadFromForm() {
-  const times = $("#pending-times").value.split(",").map((value) => value.trim()).filter(Boolean);
-  return {
-    dose_amount: $("#pending-dose-amount").value ? Number($("#pending-dose-amount").value) : null,
-    dose_unit: $("#pending-dose-unit").value.trim() || null,
-    frequency_per_day: $("#pending-frequency").value ? Number($("#pending-frequency").value) : (times.length || null),
-    meal_relation: $("#pending-meal").value,
-    administration_route: $("#pending-route").value,
-    as_needed: $("#pending-prn").checked,
-    prescription_days: $("#pending-days").value ? Number($("#pending-days").value) : null,
-    start_date: $("#pending-start-date").value || null,
-    schedule_times: times,
-  };
-}
-
-function quantitativeCheckHtml(label, check) {
-  if (!check) return "";
-  if (check.result === "exceeded") {
-    const requested = check.requested_days ?? check.daily_amount;
-    const maximum = check.maximum_days ?? check.maximum_daily_amount;
-    return `<div class="risk-card warning"><strong>${label} 기준 초과</strong><p>입력값 ${escapeHtml(requested)} · 기준 ${escapeHtml(maximum)}${check.unit ? ` ${escapeHtml(check.unit)}` : ""}</p></div>`;
-  }
-  if (check.result === "not_evaluable") {
-    return `<div class="risk-card info"><strong>${label} 자동 판정 불가</strong><p>${escapeHtml(check.reason || "기준을 정확히 비교할 수 없습니다.")}</p></div>`;
-  }
-  return `<div class="risk-card info"><strong>${label} 입력 기준 이내</strong></div>`;
-}
-
-function handleConfirmationRequired(error, buttonId) {
-  if (error.status !== 409 || !error.body?.confirmation_required) return false;
-  state.warningToken = error.body.warning_token;
-  const assessment = error.body.assessment || {};
-  $("#quantitative-warning").innerHTML = `
-    <div class="coverage-note limited"><strong>입력한 처방이 DUR 정량 기준을 초과합니다.</strong><br>의사·약사와 확인할 경고이며, 아래 버튼을 다시 누르면 경고 확인 이력과 함께 등록합니다.</div>
-    ${quantitativeCheckHtml("투여기간", assessment.duration)}
-    ${quantitativeCheckHtml("1일 용량", assessment.dose)}`;
-  const button = $(`#${buttonId}`);
-  if (button) button.textContent = "경고를 확인했고 계속 저장";
-  toast("기준 초과 경고를 확인해주세요");
-  return true;
-}
-
 async function openMedicationEdit(medicationId) {
   const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
   if (!medication) return;
   state.editingMedicationId = medicationId;
   state.warningToken = null;
+  state.reviewedDraftKey = null;
+  state.pendingProduct = {
+    product_ref: medication.catalog_item_seq || medication.product_code,
+    product_name: medication.product_name,
+  };
   renderRiskSheet({
     product: { product_name: medication.product_name }, person: currentPerson(),
     current_medication_count: Math.max((state.dashboard?.medications || []).length - 1, 0),
@@ -503,18 +468,26 @@ async function openMedicationEdit(medicationId) {
 async function confirmEditMedication() {
   const medication = (state.dashboard?.medications || []).find((item) => item.id === state.editingMedicationId);
   if (!medication) return;
+  const draft = prescriptionPayloadFromForm();
+  const draftKey = JSON.stringify(draft);
+  if (state.reviewedDraftKey !== draftKey) {
+    try { await reviewPrescriptionDraft(state.pendingProduct.product_ref, draft, "confirm-edit-med"); }
+    catch (error) { toast(error.message); }
+    return;
+  }
   try {
     await api(`/api/medications/${medication.id}`, {
       method: "PATCH",
       body: JSON.stringify({
         expected_revision: medication.revision,
-        ...prescriptionPayloadFromForm(),
+        ...draft,
         acknowledge_warnings: Boolean(state.warningToken),
         warning_token: state.warningToken,
       }),
     });
     state.editingMedicationId = null;
     state.warningToken = null;
+    state.reviewedDraftKey = null;
     closeSheets();
     await loadDashboard();
     renderAll();
@@ -527,9 +500,16 @@ async function confirmEditMedication() {
 
 async function confirmAddMedication() {
   if (!state.pendingProduct || !state.currentPersonId) return;
+  const draft = prescriptionPayloadFromForm();
+  const draftKey = JSON.stringify(draft);
+  if (state.reviewedDraftKey !== draftKey) {
+    try { await reviewPrescriptionDraft(state.pendingProduct.product_ref, draft, "confirm-add-med"); }
+    catch (error) { toast(error.message); }
+    return;
+  }
   const payload = {
     product_ref: state.pendingProduct.product_ref,
-    ...prescriptionPayloadFromForm(),
+    ...draft,
     request_id: state.pendingRequestId,
     acknowledge_warnings: Boolean(state.warningToken),
     warning_token: state.warningToken,
@@ -542,6 +522,7 @@ async function confirmAddMedication() {
     state.pendingProduct = null;
     state.pendingRequestId = null;
     state.warningToken = null;
+    state.reviewedDraftKey = null;
     closeSheets();
     await loadDashboard();
     renderAll();

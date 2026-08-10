@@ -79,6 +79,7 @@ class PrescriptionWebApiTest(unittest.TestCase):
         self.assertEqual(checks["duration"]["maximum_days"], 28)
         self.assertEqual(checks["dose"]["result"], "not_evaluable")
         self.assertTrue(checks["dose"]["reason"])
+        self.assertTrue(body["warning_token"])
 
     def test_create_requires_acknowledgement_for_threshold_exceedance(self) -> None:
         blocked = self._create(request_id="threshold-1")

@@ -37,6 +37,10 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("warning_token", script.text)
         self.assertIn("openMedicationEdit", script.text)
         self.assertIn("변경 이력", script.text)
+        prescription_script = self.client.get("/static/prescription.js")
+        self.assertEqual(prescription_script.status_code, 200)
+        self.assertIn("reviewPrescriptionDraft", prescription_script.text)
+        self.assertIn("자동 판정 불가", prescription_script.text)
 
     def test_product_search_can_include_inactive_permit_records(self) -> None:
         default = self.client.get("/api/products", params={"q": "과거취하약"})
