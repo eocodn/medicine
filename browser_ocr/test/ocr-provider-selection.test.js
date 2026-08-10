@@ -33,7 +33,7 @@ test("uses browser provider when native bridge is absent", () => {
   assert.equal(messages[1].operation_id, "operation-1");
 });
 
-test("keeps Android native bridge ahead of browser provider", () => {
+test("uses the same browser provider when a legacy native bridge exists", () => {
   const nativeMessages = [];
   const browserMessages = [];
   const { ocr } = loadBridge({
@@ -42,15 +42,15 @@ test("keeps Android native bridge ahead of browser provider", () => {
   });
   ocr.init();
   ocr.start();
-  assert.deepEqual(nativeMessages.map((message) => message.command), ["get_capabilities", "start_scan"]);
-  assert.deepEqual(browserMessages, []);
+  assert.deepEqual(nativeMessages, []);
+  assert.deepEqual(browserMessages.map((message) => message.command), ["get_capabilities", "start_scan"]);
 });
 
-test("labels the Paddle CPU provider as private browser OCR", () => {
+test("labels the direct ONNX CPU provider as private browser OCR", () => {
   const { ocr, nodes } = loadBridge({ browser: { postMessage() {} } });
   ocr.handleEvent({
     schema_version: 1,
-    capabilities: { supported: true, provider: "paddleocr-wasm-cpu", backend: "wasm" },
+    capabilities: { supported: true, provider: "direct-onnx-wasm-cpu", backend: "wasm" },
   });
   ocr.renderState("capabilities");
 

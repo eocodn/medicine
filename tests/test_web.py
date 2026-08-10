@@ -42,7 +42,7 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("reviewPrescriptionDraft", prescription_script.text)
         self.assertIn("자동 판정 불가", prescription_script.text)
 
-    def test_android_ocr_bridge_contract_is_exposed_without_raw_artifacts(self) -> None:
+    def test_ocr_review_contract_is_exposed_without_raw_artifacts(self) -> None:
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
         self.assertIn('id="ocr-scan-button"', page.text)
@@ -93,7 +93,8 @@ class WebApiTest(unittest.TestCase):
         policy = page.headers.get("content-security-policy", "")
         self.assertIn("connect-src 'self'", policy)
         self.assertIn("worker-src 'self' blob:", policy)
-        self.assertIn("script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'", policy)
+        self.assertIn("script-src 'self' 'wasm-unsafe-eval'", policy)
+        self.assertNotIn("'unsafe-eval'", policy)
         self.assertNotIn("https:", policy)
         self.assertNotIn("content-security-policy", self.client.get("/api/health").headers)
         self.assertIn('id="ocr-image-input"', page.text)
@@ -107,12 +108,12 @@ class WebApiTest(unittest.TestCase):
         self.assertNotIn("tesseract.min.js", page.text)
 
         for asset in (
-            "/ocr-assets/paddle/index.mjs",
-            "/ocr-assets/paddle/assets/worker-entry-C9UNuyOJ.js",
-            "/ocr-assets/ort/ort-wasm-simd-threaded.jsep.mjs",
-            "/ocr-assets/ort/ort-wasm-simd-threaded.jsep.wasm",
-            "/ocr-assets/models/PP-OCRv5_mobile_det_onnx_infer.tar",
-            "/ocr-assets/models/korean_PP-OCRv5_mobile_rec_onnx_infer.tar",
+            "/ocr-assets/direct/ocr-worker.js",
+            "/ocr-assets/ort/ort-wasm-simd-threaded.mjs",
+            "/ocr-assets/ort/ort-wasm-simd-threaded.wasm",
+            "/ocr-assets/models/detection.onnx",
+            "/ocr-assets/models/korean-recognition.onnx",
+            "/ocr-assets/models/korean-recognition-dictionary.json",
         ):
             response = self.client.get(asset)
             self.assertEqual(response.status_code, 200, asset)
@@ -120,18 +121,15 @@ class WebApiTest(unittest.TestCase):
         browser = self.client.get("/static/browser-ocr.js")
         self.assertEqual(browser.status_code, 200)
         for contract in (
-            "MedicineBrowserOcr", "PaddleOCR", "PP-OCRv5_mobile_det",
-            "korean_PP-OCRv5_mobile_rec", "120_000", "dispose",
+            "MedicineBrowserOcr", "direct-onnx-wasm-cpu",
+            "korean_PP-OCRv5_mobile_rec", "120_000", "worker.terminate()",
         ):
             self.assertIn(contract, browser.text)
         for forbidden in ("FormData", "XMLHttpRequest", "sendBeacon", "localStorage", "sessionStorage"):
             self.assertNotIn(forbidden, browser.text)
         self.assertIn('backend: "wasm"', browser.text)
-        self.assertIn('wasmPaths: "/ocr-assets/ort/"', browser.text)
-        self.assertIn("numThreads: 1", browser.text)
-        self.assertIn("MAX_INPUT_EDGE = 1280", browser.text)
-        self.assertIn("DETECTION_INPUT_EDGE = 640", browser.text)
-        self.assertIn("worker.terminate()", browser.text)
+        self.assertNotIn("PaddleOCR", browser.text)
+        self.assertNotIn("OpenCV", browser.text)
         self.assertNotIn("Tesseract", browser.text)
 
         bridge = self.client.get("/static/ocr.js")

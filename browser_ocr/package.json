@@ -5,12 +5,14 @@
   "license": "UNLICENSED",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "inspect": "node cli.js"
+    "inspect": "node cli.js",
+    "probe-browser": "node probe_browser.mjs"
   },
   "dependencies": {
-    "@paddleocr/paddleocr-js": "0.4.2"
+    "onnxruntime-web": "1.27.0"
   },
   "devDependencies": {
-    "esbuild": "0.25.8"
+    "esbuild": "0.25.8",
+    "js-yaml": "4.3.1"
   }
 }

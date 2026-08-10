@@ -25,7 +25,6 @@
   };
 
   function bridge() {
-    if (global.MedicineNative && typeof global.MedicineNative.postMessage === "function") return global.MedicineNative;
     return global.MedicineBrowserOcr && typeof global.MedicineBrowserOcr.postMessage === "function"
       ? global.MedicineBrowserOcr : null;
   }
@@ -43,7 +42,7 @@
       nativeBridge.postMessage(JSON.stringify(message));
       return true;
     } catch (error) {
-      notify("failed", { message: "Android 브리지 요청을 보낼 수 없어요." });
+      notify("failed", { message: "브라우저 OCR 요청을 보낼 수 없어요." });
       return false;
     }
   }
@@ -236,9 +235,9 @@
     if (nextState === "capabilities") {
       button.disabled = false;
       button.textContent = "처방전 사진으로 추가";
-      status.textContent = state.capabilities?.provider === "paddleocr-wasm-cpu"
+      status.textContent = state.capabilities?.provider === "direct-onnx-wasm-cpu"
         ? "브라우저 안에서 사진을 인식할 수 있어요. 사진은 서버로 전송되지 않아요."
-        : "Android 스캔 기능을 사용할 수 있어요.";
+        : "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요.";
     } else if (nextState === "unsupported") {
       button.disabled = true;
       status.textContent = detail?.message || "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요.";
@@ -286,8 +285,7 @@
     if (state.initialized) return;
     state.initialized = true;
     global.addEventListener("message", (event) => acceptEvent(event.data));
-    global.onMedicineNativeEvent = acceptEvent;
-    global.__medicineOcrEvent = acceptEvent;
+    global.onMedicineOcrEvent = acceptEvent;
     if (!bridge()) {
       notify("unsupported", { message: "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요." });
       return;

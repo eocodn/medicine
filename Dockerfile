@@ -5,20 +5,23 @@ WORKDIR /build
 COPY browser_ocr/package.json browser_ocr/package-lock.json ./
 COPY browser_ocr/THIRD_PARTY_NOTICES.md ./
 COPY browser_ocr/fetch_assets.mjs ./
+COPY browser_ocr/prepare_models.mjs ./
+COPY browser_ocr/src ./src
 
 RUN npm ci --ignore-scripts --no-audit --no-fund
 
-RUN mkdir -p /out/models \
-    && node fetch_assets.mjs /out/models
+RUN mkdir -p /downloads \
+    && node fetch_assets.mjs /downloads
 
-RUN mkdir -p /out/paddle/assets /out/ort /out/licenses \
-    && node_modules/.bin/esbuild node_modules/@paddleocr/paddleocr-js/dist/index.mjs \
-        --bundle --format=esm --platform=browser --external:fs --external:path \
-        --outfile=/out/paddle/index.mjs \
-    && cp node_modules/@paddleocr/paddleocr-js/dist/assets/worker-entry-C9UNuyOJ.js /out/paddle/assets/ \
-    && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs /out/ort/ \
-    && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm /out/ort/ \
-    && cp node_modules/@techstark/opencv-js/LICENSE /out/licenses/opencv-js-Apache-2.0.txt \
+RUN mkdir -p /tmp/detection /tmp/recognition /out/direct /out/models /out/ort /out/licenses \
+    && tar -xf /downloads/PP-OCRv5_mobile_det_onnx_infer.tar -C /tmp/detection --strip-components=1 \
+    && tar -xf /downloads/korean_PP-OCRv5_mobile_rec_onnx_infer.tar -C /tmp/recognition --strip-components=1 \
+    && node prepare_models.mjs /tmp/detection /tmp/recognition /out/models \
+    && node_modules/.bin/esbuild src/direct-ocr-worker.js \
+        --bundle --format=iife --platform=browser \
+        --outfile=/out/direct/ocr-worker.js \
+    && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs /out/ort/ \
+    && cp node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm /out/ort/ \
     && cp node_modules/js-yaml/LICENSE /out/licenses/js-yaml-MIT.txt \
     && cp THIRD_PARTY_NOTICES.md /out/licenses/
 

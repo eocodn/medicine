@@ -280,11 +280,12 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 
 ## Android / OCR 빌드·실행
 
-일반 브라우저에서는 자체 호스팅한 PaddleOCR.js와 PP-OCRv5 모바일 탐지·한국어 인식 모델을
-ONNX Runtime WebAssembly CPU backend로 실행합니다. 사진과 인식 원문은 브라우저 메모리
-안에서만 처리하고 서버·DB·웹 저장소로 보내지 않으며, 구조화된 복용 힌트만 기존 사용자 확인
-흐름으로 넘깁니다. 모델 자산은 첫 실행 때 같은 로컬 웹 origin에서 받고 브라우저 캐시에 저장될
-수 있습니다. 브라우저 파서 테스트와 헤드리스 확인 CLI는 다음과 같이 실행합니다.
+PC·모바일 브라우저와 Android WebView 모두 자체 호스팅한 단일 OCR 경로를 사용합니다.
+전용 Worker가 PP-OCRv5 모바일 탐지·한국어 인식 ONNX 모델을 ONNX Runtime WebAssembly CPU
+backend로 직접 실행하며 PaddleOCR.js, OpenCV, ML Kit은 사용하지 않습니다. 사진과 인식 원문은
+Worker 메모리 안에서만 처리하고 서버·DB·웹 저장소로 보내지 않으며, 구조화된 복용 힌트만 기존
+사용자 확인 흐름으로 넘깁니다. 모델 자산은 첫 실행 때 같은 로컬 웹 origin에서 받고 브라우저
+캐시에 저장될 수 있습니다. 브라우저 파서 테스트와 헤드리스 확인 CLI는 다음과 같이 실행합니다.
 
 ```bash
 docker compose run --rm browser-test
@@ -292,14 +293,10 @@ printf '약명: 타이레놀정\n1정 1일 2회 7일\n오전 8시 오후 8시\n'
   | docker compose run -T --rm browser-ocr --input - --json
 ```
 
-Android 셸은 최소 WebView 화면과 ML Kit Document Scanner를 사용합니다. 스캐너는 JPEG만
-최대 2페이지를 넘기고, bundled Korean/Latin Text Recognition 모델로 기기 안에서 인식합니다.
-네이티브 브리지는 `schema_version=1`, operation ID, 단조 sequence, 명시적 상태를 가진
-구조화 힌트만 WebView에 전달하며 이미지·content URI·경로·전체 OCR 텍스트를 저장하거나
-로그·네트워크·WebView로 보내지 않습니다. GMS 미지원, 동시 실행(`OCR_BUSY`), 취소·stale·
-timeout은 성공으로 처리하지 않고 명시적 오류 상태로 반환합니다. 브리지 객체는 AndroidX
-WebMessageListener로 main-frame과 허용 origin을 함께 검사하며, subframe·타 origin 호출은
-차단합니다. HTTP cleartext는 debug manifest에서만 허용되고 release manifest에서는 꺼집니다.
+Android 셸은 최소 WebView와 시스템 사진 선택기만 제공합니다. OCR은 WebView 안의 동일한
+브라우저 Worker가 담당하므로 별도 네이티브 모델이나 메시지 브리지가 없습니다. WebView 탐색은
+설정된 동일 origin으로 제한되며 HTTP cleartext는 debug manifest에서만 허용되고 release
+manifest에서는 꺼집니다.
 
 Docker에서 단위 테스트와 debug APK를 함께 빌드합니다.
 
