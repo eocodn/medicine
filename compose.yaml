@@ -28,7 +28,7 @@ services:
     volumes:
       - .:/app
     ports:
-      - "127.0.0.1:${MEDICINE_PORT:-18787}:8000"
+      - "${MEDICINE_BIND_IP:-127.0.0.1}:${MEDICINE_PORT:-18787}:8000"
     command: ["uvicorn", "medicine_app.web:app", "--host", "0.0.0.0", "--port", "8000"]
 
   ui:

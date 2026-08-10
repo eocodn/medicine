@@ -268,7 +268,6 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 
 ## 아직 하지 않는 것
 
-- 처방전 사진 OCR/약 자동 추출
 - 건강보험 급여여부 실제 동기화
   - 심평원 약가기준정보 API의 별도 활용신청 필요
 - 생산·수입·공급중단/공급부족 실제 동기화
@@ -278,9 +277,6 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 - 로그인/클라우드 동기화/다기기 공유
 - 개인 DB 암호화
 - 네이티브 Android UI
-
-처방전 사진 입력은 이후 `사진 → OCR/구조화 → 전체 의약품 후보 매칭 → 사용자 확인 → 기존
-preview/add → 오늘 일정 생성` 흐름으로 연결합니다.
 
 ## Android / OCR 빌드·실행
 
@@ -307,7 +303,18 @@ Android 에뮬레이터에서 호스트 loopback으로 연결하는 `http://10.0
 MEDICINE_WEB_URL=http://10.0.2.2:19000/ docker compose run --rm android
 ```
 
-실기기에서는 `10.0.2.2` 대신 기기에서 접근 가능한 LAN 주소와 HTTPS를 사용해야 합니다.
+실기기 debug 빌드는 PC와 휴대폰을 같은 신뢰 가능한 LAN에 연결하고, 웹 서비스를 명시적으로
+LAN에 공개한 뒤 해당 PC 주소로 APK를 빌드합니다. 방화벽에서도 선택한 포트만 허용합니다.
+
+```bash
+MEDICINE_BIND_IP=0.0.0.0 docker compose up -d web
+MEDICINE_WEB_URL=http://192.168.0.10:18787/ docker compose run --rm android
+```
+
+`192.168.0.10`은 PC의 실제 LAN 주소로 바꿉니다. 사용 후 `docker compose down`으로 LAN 공개를
+종료합니다. release 빌드는 cleartext가 차단되므로, 배포 시에는 접근 가능한 HTTPS URL과 서명
+구성이 필요합니다.
+
 Document Scanner와 bundled 모델의 첫 실행 조건 및 GMS 지원 여부에 따라 실기기 결과가
 달라질 수 있습니다.
 
