@@ -95,6 +95,7 @@ class PrescriptionWebApiTest(unittest.TestCase):
         acknowledged = self._create(
             request_id="threshold-1",
             acknowledge_warnings=True,
+            warning_token=blocked_body["warning_token"],
         )
 
         self.assertEqual(acknowledged.status_code, 201)
@@ -126,7 +127,7 @@ class PrescriptionWebApiTest(unittest.TestCase):
 
     def test_patch_uses_expected_revision_and_requires_warning_acknowledgement(self) -> None:
         created = self._create(
-            product_ref="MFDS-A",
+            product_ref="MFDS-B",
             frequency_per_day=1,
             prescription_days=5,
             schedule_times=["08:00"],
@@ -148,6 +149,7 @@ class PrescriptionWebApiTest(unittest.TestCase):
                 "expected_revision": medication["revision"],
                 "prescription_days": 29,
                 "acknowledge_warnings": True,
+                "warning_token": blocked.json()["warning_token"],
             },
         )
         self.assertEqual(updated.status_code, 200)

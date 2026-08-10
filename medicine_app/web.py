@@ -5,10 +5,11 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .core import MedicationApp
+from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, RevisionConflict
 
 
 DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
@@ -28,6 +29,17 @@ class PersonCreate(BaseModel):
 class MedicationPreviewRequest(BaseModel):
     product_ref: str | None = None
     product_code: str | None = None
+    dosage_text: str | None = None
+    dose_amount: float | None = None
+    dose_unit: str | None = None
+    frequency_per_day: int | None = None
+    meal_relation: str = "unspecified"
+    administration_route: str = "oral"
+    as_needed: bool = False
+    prescription_days: int | None = None
+    schedule_times: list[str] = Field(default_factory=list)
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 class MedicationCreate(BaseModel):
@@ -46,6 +58,26 @@ class MedicationCreate(BaseModel):
     schedule_times: list[str] = Field(default_factory=list)
     start_date: str | None = None
     end_date: str | None = None
+    request_id: str | None = None
+    acknowledge_warnings: bool = False
+    warning_token: str | None = None
+
+
+class MedicationUpdate(BaseModel):
+    expected_revision: int
+    dosage_text: str | None = None
+    dose_amount: float | None = None
+    dose_unit: str | None = None
+    frequency_per_day: int | None = None
+    meal_relation: str | None = None
+    administration_route: str | None = None
+    as_needed: bool | None = None
+    prescription_days: int | None = None
+    schedule_times: list[str] | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    acknowledge_warnings: bool = False
+    warning_token: str | None = None
 
 
 class DoseLogCreate(BaseModel):
@@ -61,6 +93,8 @@ class DoseInstanceUpdate(BaseModel):
 
 
 def _translate_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, (RevisionConflict, IdempotencyConflict)):
+        return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, FileNotFoundError):
         return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, KeyError):
@@ -68,6 +102,18 @@ def _translate_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
     return HTTPException(status_code=500, detail="unexpected server error")
+
+
+def _confirmation_response(exc: ConfirmationRequired) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={
+            "confirmation_required": True,
+            "request_id": exc.request_id,
+            "warning_token": exc.assessment.get("draft_fingerprint"),
+            "assessment": exc.assessment,
+        },
+    )
 
 
 def create_web_app(
@@ -132,10 +178,9 @@ def create_web_app(
     @app.post("/api/people/{person_id}/medications/preview")
     def preview_medication(person_id: str, payload: MedicationPreviewRequest) -> dict:
         try:
-            product_ref = payload.product_ref or payload.product_code
-            if not product_ref:
+            if not (payload.product_ref or payload.product_code):
                 raise ValueError("product_ref or product_code is required")
-            return service.preview_medication(person_id, product_ref)
+            return service.preview_medication(person_id, payload.model_dump())
         except Exception as exc:
             raise _translate_error(exc) from exc
 
@@ -143,13 +188,43 @@ def create_web_app(
     def add_medication(person_id: str, payload: MedicationCreate) -> dict:
         try:
             return service.add_medication(person_id, **payload.model_dump())
+        except ConfirmationRequired as exc:
+            return _confirmation_response(exc)
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @app.patch("/api/medications/{medication_id}")
+    def update_medication(medication_id: str, payload: MedicationUpdate) -> dict:
+        values = payload.model_dump(exclude_unset=True)
+        expected_revision = values.pop("expected_revision")
+        acknowledge = values.pop("acknowledge_warnings", False)
+        warning_token = values.pop("warning_token", None)
+        try:
+            return service.update_medication(
+                medication_id,
+                expected_revision=expected_revision,
+                acknowledge_warnings=acknowledge,
+                warning_token=warning_token,
+                **values,
+            )
+        except ConfirmationRequired as exc:
+            return _confirmation_response(exc)
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @app.get("/api/medications/{medication_id}/history")
+    def medication_history(medication_id: str) -> list[dict]:
+        try:
+            return service.list_medication_revisions(medication_id)
         except Exception as exc:
             raise _translate_error(exc) from exc
 
     @app.delete("/api/medications/{medication_id}")
-    def stop_medication(medication_id: str) -> dict:
+    def stop_medication(medication_id: str, expected_revision: int | None = None) -> dict:
         try:
-            return service.deactivate_medication(medication_id)
+            if expected_revision is None:
+                return service.deactivate_medication(medication_id)
+            return service.stop_medication(medication_id, expected_revision=expected_revision)
         except Exception as exc:
             raise _translate_error(exc) from exc
 

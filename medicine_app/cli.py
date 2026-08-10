@@ -11,7 +11,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from .core import MedicationApp
+from .core import ConfirmationRequired, MedicationApp
 
 
 DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
@@ -140,6 +140,16 @@ def build_parser() -> argparse.ArgumentParser:
     preview = sub.add_parser("risk-preview")
     preview.add_argument("--person", required=True)
     preview.add_argument("--product-ref", "--product-code", dest="product_ref", required=True)
+    preview.add_argument("--dose-amount", type=float)
+    preview.add_argument("--dose-unit")
+    preview.add_argument("--frequency", type=int)
+    preview.add_argument("--meal-relation", default="unspecified")
+    preview.add_argument("--route", default="oral")
+    preview.add_argument("--prn", action="store_true")
+    preview.add_argument("--days", type=int)
+    preview.add_argument("--start-date")
+    preview.add_argument("--end-date")
+    preview.add_argument("--time", action="append", default=[])
     preview.add_argument("--json", action="store_true")
 
     add = sub.add_parser("med-add")
@@ -154,8 +164,42 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--prn", action="store_true")
     add.add_argument("--days", type=int)
     add.add_argument("--start-date")
+    add.add_argument("--end-date")
     add.add_argument("--time", action="append", default=[])
+    add.add_argument("--request-id")
+    add.add_argument("--acknowledge-warnings", action="store_true")
+    add.add_argument("--warning-token")
     add.add_argument("--json", action="store_true")
+
+    update = sub.add_parser("med-update")
+    update.add_argument("--medication", required=True)
+    update.add_argument("--expected-revision", type=int, required=True)
+    update.add_argument("--dose")
+    update.add_argument("--dose-amount", type=float)
+    update.add_argument("--dose-unit")
+    update.add_argument("--frequency", type=int)
+    update.add_argument("--meal-relation")
+    update.add_argument("--route")
+    prn = update.add_mutually_exclusive_group()
+    prn.add_argument("--prn", dest="as_needed", action="store_true")
+    prn.add_argument("--scheduled", dest="as_needed", action="store_false")
+    update.set_defaults(as_needed=None)
+    update.add_argument("--days", type=int)
+    update.add_argument("--start-date")
+    update.add_argument("--end-date")
+    update.add_argument("--time", action="append")
+    update.add_argument("--acknowledge-warnings", action="store_true")
+    update.add_argument("--warning-token")
+    update.add_argument("--json", action="store_true")
+
+    history = sub.add_parser("med-history")
+    history.add_argument("--medication", required=True)
+    history.add_argument("--json", action="store_true")
+
+    stop = sub.add_parser("med-stop")
+    stop.add_argument("--medication", required=True)
+    stop.add_argument("--expected-revision", type=int, required=True)
+    stop.add_argument("--json", action="store_true")
 
     plan = sub.add_parser("daily-plan")
     plan.add_argument("--person", required=True)
@@ -183,10 +227,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
-    app = MedicationApp(args.dur_db, args.personal_db, args.catalog_db)
-
+def _dispatch(args, app: MedicationApp):
     if args.command == "people":
         payload = app.list_people()
     elif args.command == "person-add":
@@ -196,7 +237,14 @@ def main(argv=None) -> int:
     elif args.command == "meds":
         payload = app.list_medications(args.person)
     elif args.command == "risk-preview":
-        payload = app.preview_medication(args.person, args.product_ref)
+        payload = app.preview_medication(args.person, {
+            "product_ref": args.product_ref, "dose_amount": args.dose_amount,
+            "dose_unit": args.dose_unit, "frequency_per_day": args.frequency,
+            "meal_relation": args.meal_relation, "administration_route": args.route,
+            "as_needed": args.prn, "prescription_days": args.days,
+            "start_date": args.start_date, "end_date": args.end_date,
+            "schedule_times": args.time,
+        })
     elif args.command == "med-add":
         payload = app.add_medication(
             args.person,
@@ -210,8 +258,30 @@ def main(argv=None) -> int:
             as_needed=args.prn,
             prescription_days=args.days,
             start_date=args.start_date,
+            end_date=args.end_date,
             schedule_times=args.time,
+            request_id=args.request_id,
+            acknowledge_warnings=args.acknowledge_warnings,
+            warning_token=args.warning_token,
         )
+    elif args.command == "med-update":
+        mapping = {
+            "dosage_text": args.dose, "dose_amount": args.dose_amount,
+            "dose_unit": args.dose_unit, "frequency_per_day": args.frequency,
+            "meal_relation": args.meal_relation, "administration_route": args.route,
+            "as_needed": args.as_needed, "prescription_days": args.days,
+            "start_date": args.start_date, "end_date": args.end_date,
+            "schedule_times": args.time,
+        }
+        payload = app.update_medication(
+            args.medication, expected_revision=args.expected_revision,
+            acknowledge_warnings=args.acknowledge_warnings, warning_token=args.warning_token,
+            **{key: value for key, value in mapping.items() if value is not None},
+        )
+    elif args.command == "med-history":
+        payload = app.list_medication_revisions(args.medication)
+    elif args.command == "med-stop":
+        payload = app.stop_medication(args.medication, expected_revision=args.expected_revision)
     elif args.command == "daily-plan":
         payload = app.get_daily_plan(args.person, args.date)
     elif args.command == "dose-instance":
@@ -224,6 +294,23 @@ def main(argv=None) -> int:
         payload = capture_screenshot(args.dur_db, args.personal_db, args.catalog_db, args.output, args.width, args.height)
     else:
         raise AssertionError(args.command)
+
+    return payload
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    app = MedicationApp(args.dur_db, args.personal_db, args.catalog_db)
+    try:
+        payload = _dispatch(args, app)
+    except ConfirmationRequired as exc:
+        emit({
+            "confirmation_required": True,
+            "request_id": exc.request_id,
+            "warning_token": exc.assessment.get("draft_fingerprint"),
+            "assessment": exc.assessment,
+        }, getattr(args, "json", False))
+        return 2
 
     emit(payload, args.json)
     return 0

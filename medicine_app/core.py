@@ -1,25 +1,22 @@
 from __future__ import annotations
 
-import calendar
-import re
+import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterator
-from zoneinfo import ZoneInfo
 
 from .persistence import ensure_personal_schema
 from .planning import materialize_daily_plan, record_instance
+from .prescriptions import draft_hash, normalize_draft
 from .products import ProductRepository
+from .safety import APP_TIMEZONE, age_years, collect_qualitative_risks, evaluate_quantitative
 
 SEX_VALUES = {"female", "male", "other", "unknown"}
 PREGNANCY_VALUES = {"pregnant", "not_pregnant", "unknown", "not_applicable"}
 DOSE_STATUS_VALUES = {"taken", "skipped"}
-MEAL_RELATION_VALUES = {"unspecified", "before_meal", "after_meal", "with_meal", "empty_stomach", "regardless"}
-ADMINISTRATION_ROUTE_VALUES = {"oral", "topical", "inhaled", "ophthalmic", "otic", "nasal", "injection", "other", "unknown"}
-APP_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 
 def _uuid() -> str:
@@ -37,64 +34,19 @@ def _parse_birth_date(value: str) -> date:
         raise ValueError("birth_date must be YYYY-MM-DD") from exc
 
 
-def _add_months(value: date, months: int) -> date:
-    month_index = value.month - 1 + months
-    year = value.year + month_index // 12
-    month = month_index % 12 + 1
-    day = min(value.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
+class ConfirmationRequired(ValueError):
+    def __init__(self, request_id: str | None, assessment: dict):
+        super().__init__("warning acknowledgement is required")
+        self.request_id = request_id
+        self.assessment = assessment
 
 
-def _add_years(value: date, years: int) -> date:
-    try:
-        return value.replace(year=value.year + years)
-    except ValueError:
-        return value.replace(month=2, day=28, year=value.year + years)
+class RevisionConflict(ValueError):
+    pass
 
 
-def age_years(birth_date: str, as_of: date | None = None) -> int:
-    birth = _parse_birth_date(birth_date)
-    today = as_of or datetime.now(APP_TIMEZONE).date()
-    years = today.year - birth.year
-    if (today.month, today.day) < (birth.month, birth.day):
-        years -= 1
-    return max(years, 0)
-
-
-AGE_RULE_RE = re.compile(r"(?P<n>\d+)\s*(?P<unit>세|개월|주)\s*(?P<op>미만|이하|이상|초과)")
-
-
-def age_rule_matches(birth_date: str, rule: str | None, as_of: date | None = None) -> bool:
-    if not rule:
-        return False
-    match = AGE_RULE_RE.search(rule)
-    if not match:
-        return False
-    birth = _parse_birth_date(birth_date)
-    today = as_of or datetime.now(APP_TIMEZONE).date()
-    amount = int(match.group("n"))
-    unit = match.group("unit")
-    op = match.group("op")
-
-    if unit == "세":
-        threshold = _add_years(birth, amount)
-        next_threshold = _add_years(birth, amount + 1)
-    elif unit == "개월":
-        threshold = _add_months(birth, amount)
-        next_threshold = _add_months(birth, amount + 1)
-    else:
-        threshold = birth + timedelta(weeks=amount)
-        next_threshold = birth + timedelta(weeks=amount + 1)
-
-    if op == "미만":
-        return today < threshold
-    if op == "이하":
-        return today < next_threshold
-    if op == "이상":
-        return today >= threshold
-    if op == "초과":
-        return today >= next_threshold
-    return False
+class IdempotencyConflict(ValueError):
+    pass
 
 
 class MedicationApp:
@@ -115,12 +67,14 @@ class MedicationApp:
             ensure_personal_schema(con)
 
     @contextmanager
-    def _personal(self) -> Iterator[sqlite3.Connection]:
+    def _personal(self, *, write_lock: bool = False) -> Iterator[sqlite3.Connection]:
         con = sqlite3.connect(self.personal_db, timeout=10)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys = ON")
         con.execute("PRAGMA busy_timeout = 5000")
         try:
+            if write_lock:
+                con.execute("BEGIN IMMEDIATE")
             yield con
             con.commit()
         except Exception:
@@ -208,129 +162,140 @@ class MedicationApp:
         start_date: str | None = None,
         end_date: str | None = None,
         source: str | None = None,
+        request_id: str | None = None,
+        acknowledge_warnings: bool = False,
+        warning_token: str | None = None,
     ) -> dict:
-        self.get_person(person_id)
-        resolved_ref = product_ref or product_code
-        if resolved_ref:
-            product = self.get_product(resolved_ref)
-            product_code = product["product_code"]
-            product_name = product["product_name"] or resolved_ref
-            ingredient_code = product["ingredient_code"]
-            resolved_ingredient = product["ingredient_name"]
-            catalog_item_seq = product["catalog_item_seq"]
-            manufacturer = product["manufacturer"]
-            catalog_source = product["catalog_source"]
-            med_source = source or "catalog_search"
-        else:
-            product_name = (manual_name or "").strip()
-            if not product_name:
-                raise ValueError("product_ref, product_code or manual_name is required")
-            ingredient_code = None
-            resolved_ingredient = ingredient_name
-            catalog_item_seq = None
-            manufacturer = None
-            catalog_source = "manual"
-            med_source = source or "manual"
-
-        schedule_times = schedule_times or []
-        for value in schedule_times:
-            self._validate_time(value)
-        if frequency_per_day is None and schedule_times:
-            frequency_per_day = len(schedule_times)
-        if dose_amount is not None:
-            dose_amount = float(dose_amount)
-            if dose_amount <= 0:
-                raise ValueError("dose_amount must be > 0")
-        dose_unit = (dose_unit or "").strip() or None
-        if frequency_per_day is not None:
-            frequency_per_day = int(frequency_per_day)
-            if frequency_per_day < 1 or frequency_per_day > 24:
-                raise ValueError("frequency_per_day must be between 1 and 24")
-            if schedule_times and frequency_per_day != len(schedule_times):
-                raise ValueError("frequency_per_day must match the number of schedule_times")
-        if meal_relation not in MEAL_RELATION_VALUES:
-            raise ValueError(f"invalid meal_relation: {meal_relation}")
-        if administration_route not in ADMINISTRATION_ROUTE_VALUES:
-            raise ValueError(f"invalid administration_route: {administration_route}")
-        if prescription_days is not None:
-            prescription_days = int(prescription_days)
-            if prescription_days < 1 or prescription_days > 3650:
-                raise ValueError("prescription_days must be between 1 and 3650")
-
-        start = date.fromisoformat(start_date) if start_date else datetime.now(APP_TIMEZONE).date()
-        finish = date.fromisoformat(end_date) if end_date else None
-        if prescription_days is not None:
-            computed_finish = start + timedelta(days=prescription_days - 1)
-            if finish is not None and finish != computed_finish:
-                raise ValueError("end_date conflicts with start_date and prescription_days")
-            finish = computed_finish
-        if start is not None and finish is not None and finish < start:
-            raise ValueError("end_date must be on or after start_date")
-        start_date = start.isoformat() if start else None
-        end_date = finish.isoformat() if finish else None
-
-        if dosage_text is None and dose_amount is not None:
-            amount_text = f"{dose_amount:g}"
-            dosage_text = f"{amount_text}{dose_unit or ''}"
-
-        medication_id = _uuid()
-        with self._personal() as con:
+        product = self._resolve_product(product_ref or product_code, manual_name, ingredient_name, source)
+        draft = normalize_draft(dict(
+            dosage_text=dosage_text, dose_amount=dose_amount, dose_unit=dose_unit,
+            frequency_per_day=frequency_per_day, meal_relation=meal_relation,
+            administration_route=administration_route, as_needed=as_needed,
+            prescription_days=prescription_days, schedule_times=schedule_times,
+            start_date=start_date, end_date=end_date,
+        ))
+        payload_hash = draft_hash(person_id, product, draft)
+        request_id = (request_id or "").strip() or None
+        with self._personal(write_lock=True) as con:
+            existing = con.execute(
+                "SELECT person_id,payload_hash,medication_id FROM medication_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone() if request_id else None
+            if existing:
+                if existing["person_id"] != person_id or existing["payload_hash"] != payload_hash:
+                    raise IdempotencyConflict("request_id was already used with a different prescription payload")
+                return self._get_medication_from_connection(con, existing["medication_id"])
+            person = self._get_person_from_connection(con, person_id)
+            assessment = self._assessment(con, person, product, draft, acknowledge_warnings)
+            assessment["draft_fingerprint"] = payload_hash
+            if self._has_exceeded(assessment) and (
+                not acknowledge_warnings or warning_token != payload_hash
+            ):
+                raise ConfirmationRequired(request_id, assessment)
+            medication_id = _uuid()
             con.execute(
                 """
                 INSERT INTO medications(
                     id,person_id,catalog_item_seq,product_code,product_name,ingredient_code,ingredient_name,
                     manufacturer,catalog_source,dosage_text,dose_amount,dose_unit,frequency_per_day,
                     meal_relation,administration_route,as_needed,prescription_days,
-                    start_date,end_date,active,source
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+                    start_date,end_date,active,source,revision
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,1)
                 """,
                 (
-                    medication_id, person_id, catalog_item_seq, product_code, product_name, ingredient_code,
-                    resolved_ingredient, manufacturer, catalog_source, dosage_text, dose_amount, dose_unit,
-                    frequency_per_day, meal_relation, administration_route, int(bool(as_needed)),
-                    prescription_days, start_date, end_date, med_source,
+                    medication_id, person_id, product["catalog_item_seq"], product["product_code"],
+                    product["product_name"], product.get("ingredient_code"), product.get("ingredient_name"),
+                    product.get("manufacturer"), product["catalog_source"], draft["dosage_text"],
+                    draft["dose_amount"], draft["dose_unit"], draft["frequency_per_day"],
+                    draft["meal_relation"], draft["administration_route"], int(draft["as_needed"]),
+                    draft["prescription_days"], draft["start_date"], draft["end_date"], product["med_source"],
                 ),
             )
-            for time_of_day in schedule_times:
+            self._replace_schedules(con, medication_id, draft["schedule_times"], draft["dosage_text"])
+            medication = self._get_medication_from_connection(con, medication_id)
+            self._append_revision(
+                con, medication, "create", assessment, acknowledge_warnings, request_id, payload_hash
+            )
+            if request_id:
                 con.execute(
-                    "INSERT INTO medication_schedules(id,medication_id,time_of_day,dose_text) VALUES(?,?,?,?)",
-                    (_uuid(), medication_id, time_of_day, dosage_text),
+                    "INSERT INTO medication_requests(request_id,person_id,payload_hash,medication_id) VALUES(?,?,?,?)",
+                    (request_id, person_id, payload_hash, medication_id),
                 )
-        return self.get_medication(medication_id)
+            medication["assessment"] = assessment
+            return medication
 
-    @staticmethod
-    def _validate_time(value: str) -> None:
-        try:
-            datetime.strptime(value, "%H:%M")
-        except ValueError as exc:
-            raise ValueError("schedule time must be HH:MM") from exc
+    def _resolve_product(
+        self, resolved_ref: str | None, manual_name: str | None, ingredient_name: str | None, source: str | None
+    ) -> dict:
+        if resolved_ref:
+            product = self.get_product(resolved_ref)
+            return {**product, "med_source": source or "catalog_search"}
+        name = (manual_name or "").strip()
+        if not name:
+            raise ValueError("product_ref, product_code or manual_name is required")
+        return {
+            "product_ref": None, "catalog_item_seq": None, "product_code": None,
+            "product_name": name, "ingredient_code": None, "ingredient_name": ingredient_name,
+            "manufacturer": None, "dosage_form": None, "catalog_source": "manual",
+            "dur_match": False, "med_source": source or "manual",
+        }
+
 
     def get_medication(self, medication_id: str) -> dict:
         with self._personal() as con:
-            row = con.execute("SELECT * FROM medications WHERE id=?", (medication_id,)).fetchone()
-            if row is None:
-                raise KeyError("medication not found")
-            schedules = con.execute(
-                "SELECT time_of_day,dose_text FROM medication_schedules WHERE medication_id=? ORDER BY time_of_day",
-                (medication_id,),
-            ).fetchall()
+            return self._get_medication_from_connection(con, medication_id)
+
+    @staticmethod
+    def _get_medication_from_connection(con: sqlite3.Connection, medication_id: str) -> dict:
+        row = con.execute("SELECT * FROM medications WHERE id=?", (medication_id,)).fetchone()
+        if row is None:
+            raise KeyError("medication not found")
+        schedules = con.execute(
+            "SELECT time_of_day,dose_text FROM medication_schedules WHERE medication_id=? ORDER BY time_of_day",
+            (medication_id,),
+        ).fetchall()
         data = dict(row)
         data["active"] = bool(data["active"])
         data["as_needed"] = bool(data.get("as_needed") or 0)
         data["meal_relation"] = data.get("meal_relation") or "unspecified"
         data["administration_route"] = data.get("administration_route") or "oral"
         data["schedules"] = [dict(item) for item in schedules]
+        revision = con.execute(
+            "SELECT assessment_json,acknowledged FROM medication_revisions WHERE medication_id=? AND revision=?",
+            (medication_id, data.get("revision", 1)),
+        ).fetchone()
+        if revision and revision["assessment_json"]:
+            data["assessment"] = json.loads(revision["assessment_json"])
         return data
 
-    def list_medications(self, person_id: str, active_only: bool = True) -> list[dict]:
-        self.get_person(person_id)
-        where = "WHERE person_id=?"
-        params: tuple = (person_id,)
+    @staticmethod
+    def _get_person_from_connection(con: sqlite3.Connection, person_id: str) -> dict:
+        row = con.execute("SELECT * FROM people WHERE id=?", (person_id,)).fetchone()
+        if row is None:
+            raise KeyError("person not found")
+        data = dict(row)
+        data["age"] = age_years(data["birth_date"])
+        return data
+
+    def _list_medications_from_connection(
+        self, con: sqlite3.Connection, person_id: str, *, active_only: bool = True, exclude_id: str | None = None
+    ) -> list[dict]:
+        where = ["person_id=?"]
+        params: list = [person_id]
         if active_only:
-            where += " AND active=1"
+            where.append("active=1")
+        if exclude_id:
+            where.append("id<>?")
+            params.append(exclude_id)
+        rows = con.execute(
+            f"SELECT id FROM medications WHERE {' AND '.join(where)} ORDER BY rowid", params
+        ).fetchall()
+        return [self._get_medication_from_connection(con, row["id"]) for row in rows]
+
+    def list_medications(self, person_id: str, active_only: bool = True) -> list[dict]:
         with self._personal() as con:
-            rows = con.execute(f"SELECT id FROM medications {where} ORDER BY rowid", params).fetchall()
-        return [self.get_medication(row["id"]) for row in rows]
+            self._get_person_from_connection(con, person_id)
+            return self._list_medications_from_connection(con, person_id, active_only=active_only)
 
     def get_daily_plan(self, person_id: str, target_date: str | date | None = None) -> dict:
         self.get_person(person_id)
@@ -358,12 +323,115 @@ class MedicationApp:
         with self._personal() as con:
             return record_instance(con, instance_id, status, when, note, _uuid)
 
+    def update_medication(
+        self,
+        medication_id: str,
+        *,
+        expected_revision: int,
+        acknowledge_warnings: bool = False,
+        warning_token: str | None = None,
+        **changes,
+    ) -> dict:
+        before = self.get_medication(medication_id)
+        product = self._resolve_product(
+            before.get("catalog_item_seq") or before.get("product_code"),
+            before["product_name"] if before.get("catalog_source") == "manual" else None,
+            before.get("ingredient_name"), before.get("source"),
+        )
+        allowed = {
+            "dosage_text", "dose_amount", "dose_unit", "frequency_per_day", "meal_relation",
+            "administration_route", "as_needed", "prescription_days", "schedule_times",
+            "start_date", "end_date",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError(f"unsupported medication fields: {', '.join(sorted(unknown))}")
+        with self._personal(write_lock=True) as con:
+            current = self._get_medication_from_connection(con, medication_id)
+            if current["revision"] != int(expected_revision):
+                raise RevisionConflict(
+                    f"expected revision {expected_revision}, current revision is {current['revision']}"
+                )
+            values = {
+                "dosage_text": current.get("dosage_text"), "dose_amount": current.get("dose_amount"),
+                "dose_unit": current.get("dose_unit"), "frequency_per_day": current.get("frequency_per_day"),
+                "meal_relation": current.get("meal_relation"),
+                "administration_route": current.get("administration_route"),
+                "as_needed": current.get("as_needed"), "prescription_days": current.get("prescription_days"),
+                "schedule_times": [item["time_of_day"] for item in current["schedules"]],
+                "start_date": current.get("start_date"), "end_date": current.get("end_date"),
+            }
+            values.update(changes)
+            if "schedule_times" in changes and "frequency_per_day" not in changes:
+                values["frequency_per_day"] = None
+            if ("prescription_days" in changes or "start_date" in changes) and "end_date" not in changes:
+                values["end_date"] = None
+            draft = normalize_draft(values)
+            payload_hash = draft_hash(current["person_id"], product, draft)
+            person = self._get_person_from_connection(con, current["person_id"])
+            assessment = self._assessment(
+                con, person, product, draft, acknowledge_warnings, exclude_medication_id=medication_id
+            )
+            assessment["draft_fingerprint"] = payload_hash
+            if self._has_exceeded(assessment) and (
+                not acknowledge_warnings or warning_token != payload_hash
+            ):
+                raise ConfirmationRequired(None, assessment)
+            next_revision = current["revision"] + 1
+            result = con.execute(
+                """
+                UPDATE medications SET dosage_text=?,dose_amount=?,dose_unit=?,frequency_per_day=?,
+                    meal_relation=?,administration_route=?,as_needed=?,prescription_days=?,
+                    start_date=?,end_date=?,revision=?,updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND revision=?
+                """,
+                (
+                    draft["dosage_text"], draft["dose_amount"], draft["dose_unit"],
+                    draft["frequency_per_day"], draft["meal_relation"], draft["administration_route"],
+                    int(draft["as_needed"]), draft["prescription_days"], draft["start_date"],
+                    draft["end_date"], next_revision, medication_id, expected_revision,
+                ),
+            )
+            if result.rowcount != 1:
+                raise RevisionConflict("medication revision changed during update")
+            self._replace_schedules(con, medication_id, draft["schedule_times"], draft["dosage_text"])
+            con.execute(
+                "DELETE FROM dose_instances WHERE medication_id=? AND status='planned' AND scheduled_date>=?",
+                (medication_id, datetime.now(APP_TIMEZONE).date().isoformat()),
+            )
+            updated = self._get_medication_from_connection(con, medication_id)
+            self._append_revision(
+                con, updated, "update", assessment, acknowledge_warnings, None, payload_hash
+            )
+            updated["assessment"] = assessment
+            return updated
+
+    def stop_medication(self, medication_id: str, *, expected_revision: int) -> dict:
+        with self._personal(write_lock=True) as con:
+            current = self._get_medication_from_connection(con, medication_id)
+            if current["revision"] != int(expected_revision):
+                raise RevisionConflict(
+                    f"expected revision {expected_revision}, current revision is {current['revision']}"
+                )
+            next_revision = current["revision"] + 1
+            result = con.execute(
+                "UPDATE medications SET active=0,revision=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND revision=?",
+                (next_revision, medication_id, expected_revision),
+            )
+            if result.rowcount != 1:
+                raise RevisionConflict("medication revision changed during stop")
+            con.execute(
+                "DELETE FROM dose_instances WHERE medication_id=? AND status='planned' AND scheduled_date>=?",
+                (medication_id, datetime.now(APP_TIMEZONE).date().isoformat()),
+            )
+            stopped = self._get_medication_from_connection(con, medication_id)
+            assessment = current.get("assessment") or {}
+            self._append_revision(con, stopped, "stop", assessment, False, None, None)
+            return stopped
+
     def deactivate_medication(self, medication_id: str) -> dict:
-        with self._personal() as con:
-            result = con.execute("UPDATE medications SET active=0 WHERE id=?", (medication_id,))
-            if result.rowcount == 0:
-                raise KeyError("medication not found")
-        return self.get_medication(medication_id)
+        current = self.get_medication(medication_id)
+        return self.stop_medication(medication_id, expected_revision=current["revision"])
 
     def record_dose(self, medication_id: str, status: str, occurred_at: str | None = None, note: str | None = None) -> dict:
         if status not in DOSE_STATUS_VALUES:
@@ -374,8 +442,13 @@ class MedicationApp:
         log_id = _uuid()
         with self._personal() as con:
             con.execute(
-                "INSERT INTO dose_logs(id,medication_id,person_id,status,occurred_at,note) VALUES(?,?,?,?,?,?)",
-                (log_id, medication_id, medication["person_id"], status, when, note),
+                """INSERT INTO dose_logs(
+                    id,medication_id,person_id,status,occurred_at,note,product_name_snapshot,dosage_text_snapshot
+                ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    log_id, medication_id, medication["person_id"], status, when, note,
+                    medication["product_name"], medication.get("dosage_text"),
+                ),
             )
             row = con.execute("SELECT * FROM dose_logs WHERE id=?", (log_id,)).fetchone()
         return dict(row)
@@ -385,7 +458,9 @@ class MedicationApp:
         with self._personal() as con:
             rows = con.execute(
                 """
-                SELECT l.*, m.product_name, m.dosage_text
+                SELECT l.*,
+                       COALESCE(l.product_name_snapshot,m.product_name) AS product_name,
+                       COALESCE(l.dosage_text_snapshot,m.dosage_text) AS dosage_text
                 FROM dose_logs l JOIN medications m ON m.id=l.medication_id
                 WHERE l.person_id=? ORDER BY l.occurred_at DESC, l.rowid DESC LIMIT ?
                 """,
@@ -393,22 +468,22 @@ class MedicationApp:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def preview_medication(self, person_id: str, product_code: str, as_of: date | None = None) -> dict:
-        person = self.get_person(person_id)
-        product = self.get_product(product_code)
-        current = self.list_medications(person_id)
-        risks: list[dict] = []
-        if product.get("dur_match"):
-            with self._dur() as con:
-                risks.extend(self._combination_risks(con, product, current))
-                risks.extend(self._person_specific_risks(con, person, product, as_of))
-                risks.extend(self._duplication_risks(con, product, current))
-                risks.extend(self._rule_presence_risks(con, product))
+    def preview_medication(self, person_id: str, draft_or_ref, as_of: date | None = None) -> dict:
+        raw = dict(draft_or_ref) if isinstance(draft_or_ref, dict) else {"product_ref": draft_or_ref}
+        product_ref = raw.pop("product_ref", None) or raw.pop("product_code", None)
+        product = self._resolve_product(product_ref, raw.pop("manual_name", None), raw.pop("ingredient_name", None), None)
+        draft = normalize_draft(raw)
+        with self._personal() as con:
+            person = self._get_person_from_connection(con, person_id)
+            assessment = self._assessment(con, person, product, draft, False, as_of=as_of)
+            current_count = len(self._list_medications_from_connection(con, person_id))
         return {
-            "person": person,
-            "product": product,
-            "current_medication_count": len(current),
-            "risks": self._dedupe_risks(risks),
+            "person": person, "product": product, "draft": draft,
+            "current_medication_count": current_count,
+            "risks": assessment["risks"],
+            "quantitative_checks": {
+                "duration": assessment["duration"], "dose": assessment["dose"]
+            },
             "coverage": {
                 "dur_match": bool(product.get("dur_match")),
                 "message": (
@@ -419,154 +494,73 @@ class MedicationApp:
             },
         }
 
-    def _combination_risks(self, con: sqlite3.Connection, product: dict, current: list[dict]) -> list[dict]:
+    def _assessment(
+        self, personal_con: sqlite3.Connection, person: dict, product: dict, draft: dict,
+        acknowledged: bool, *, exclude_medication_id: str | None = None, as_of: date | None = None,
+    ) -> dict:
+        current = self._list_medications_from_connection(
+            personal_con, person["id"], exclude_id=exclude_medication_id
+        )
         risks: list[dict] = []
-        for medication in current:
-            if not medication.get("product_code"):
-                continue
-            rows = con.execute(
-                """
-                SELECT details, notice_no, notice_date, product_name, paired_product_name
-                FROM product_dur
-                WHERE category='combination_contraindication'
-                  AND ((product_code=? AND paired_product_code=?) OR (product_code=? AND paired_product_code=?))
-                LIMIT 10
-                """,
-                (product["product_code"], medication["product_code"], medication["product_code"], product["product_code"]),
-            ).fetchall()
-            for row in rows:
-                risks.append(
-                    {
-                        "type": "combination_contraindication",
-                        "severity": "danger",
-                        "title": f"{medication['product_name']}와 병용금기",
-                        "details": row["details"] or "DUR 병용금기 조합에 해당합니다.",
-                        "related_medication_id": medication["id"],
-                        "notice_no": row["notice_no"],
-                        "notice_date": row["notice_date"],
-                    }
-                )
-        return risks
-
-    def _person_specific_risks(
-        self, con: sqlite3.Connection, person: dict, product: dict, as_of: date | None
-    ) -> list[dict]:
-        risks: list[dict] = []
-        rows = con.execute(
-            """
-            SELECT category, rule_value, details, notice_no, notice_date
-            FROM product_dur
-            WHERE product_code=? AND category IN ('age_contraindication','pregnancy_contraindication','elderly_caution')
-            """,
-            (product["product_code"],),
-        ).fetchall()
-        current_age = age_years(person["birth_date"], as_of)
-        for row in rows:
-            category = row["category"]
-            if category == "age_contraindication":
-                if not age_rule_matches(person["birth_date"], row["rule_value"], as_of):
-                    continue
-                title = f"연령금기 · {row['rule_value']}"
-                severity = "danger"
-            elif category == "pregnancy_contraindication":
-                if person["pregnancy_status"] != "pregnant":
-                    continue
-                title = f"임부금기 · {row['rule_value'] or '등급 미표기'}"
-                severity = "danger"
-            else:
-                if current_age < 65:
-                    continue
-                title = "노인주의 대상"
-                severity = "warning"
-            risks.append(
-                {
-                    "type": category,
-                    "severity": severity,
-                    "title": title,
-                    "details": row["details"],
-                    "notice_no": row["notice_no"],
-                    "notice_date": row["notice_date"],
-                }
-            )
-        return risks
-
-    def _duplication_risks(self, con: sqlite3.Connection, product: dict, current: list[dict]) -> list[dict]:
-        new_groups = {
-            row["rule_value"]
-            for row in con.execute(
-                "SELECT DISTINCT rule_value FROM product_dur WHERE category='therapeutic_duplication_caution' AND product_code=?",
-                (product["product_code"],),
-            ).fetchall()
-            if row["rule_value"]
+        quantitative = {
+            "duration": {"result": "not_evaluable", "reason": "DUR product code is not linked"},
+            "dose": {"result": "not_evaluable", "reason": "DUR product code is not linked"},
         }
-        if not new_groups:
-            return []
-        risks: list[dict] = []
-        for medication in current:
-            code = medication.get("product_code")
-            if not code:
-                continue
-            groups = {
-                row["rule_value"]
-                for row in con.execute(
-                    "SELECT DISTINCT rule_value FROM product_dur WHERE category='therapeutic_duplication_caution' AND product_code=?",
-                    (code,),
-                ).fetchall()
-                if row["rule_value"]
-            }
-            for group in sorted(new_groups & groups):
-                risks.append(
-                    {
-                        "type": "therapeutic_duplication_caution",
-                        "severity": "warning",
-                        "title": f"효능군 중복주의 · {group}",
-                        "details": f"현재 복용 중인 {medication['product_name']}와 같은 효능군입니다.",
-                        "related_medication_id": medication["id"],
-                    }
-                )
-        return risks
-
-    def _rule_presence_risks(self, con: sqlite3.Connection, product: dict) -> list[dict]:
-        labels = {
-            "dose_caution": "용량주의 대상",
-            "duration_caution": "투여기간주의 대상",
+        if product.get("dur_match"):
+            with self._dur() as dur_con:
+                risks = collect_qualitative_risks(dur_con, product, person, current, as_of)
+                quantitative = evaluate_quantitative(dur_con, product, draft)
+        return {
+            "evaluator_version": "1", "risks": risks,
+            "duration": quantitative["duration"], "dose": quantitative["dose"],
+            "acknowledged": bool(acknowledged),
         }
-        rows = con.execute(
-            """
-            SELECT category, rule_value, details, notice_no, notice_date
-            FROM product_dur
-            WHERE product_code=? AND category IN ('dose_caution','duration_caution')
-            """,
-            (product["product_code"],),
-        ).fetchall()
-        risks = []
-        for row in rows:
-            value = row["rule_value"]
-            detail = row["details"]
-            if value:
-                detail = f"기준: {value}. " + (detail or "입력한 복용량/기간과의 자동 비교는 아직 지원하지 않습니다.")
-            risks.append(
-                {
-                    "type": row["category"],
-                    "severity": "info",
-                    "title": labels[row["category"]],
-                    "details": detail,
-                    "notice_no": row["notice_no"],
-                    "notice_date": row["notice_date"],
-                }
-            )
-        return risks
 
     @staticmethod
-    def _dedupe_risks(risks: list[dict]) -> list[dict]:
-        seen: set[tuple] = set()
-        result: list[dict] = []
-        for risk in risks:
-            key = (risk.get("type"), risk.get("title"), risk.get("details"), risk.get("related_medication_id"))
-            if key in seen:
-                continue
-            seen.add(key)
-            result.append(risk)
-        order = {"danger": 0, "warning": 1, "info": 2}
-        result.sort(key=lambda item: (order.get(item.get("severity"), 9), item.get("title") or ""))
+    def _has_exceeded(assessment: dict) -> bool:
+        return any(assessment[name].get("result") == "exceeded" for name in ("duration", "dose"))
+
+    @staticmethod
+    def _replace_schedules(
+        con: sqlite3.Connection, medication_id: str, schedule_times: list[str], dosage_text: str | None
+    ) -> None:
+        con.execute("DELETE FROM medication_schedules WHERE medication_id=?", (medication_id,))
+        con.executemany(
+            "INSERT INTO medication_schedules(id,medication_id,time_of_day,dose_text) VALUES(?,?,?,?)",
+            [(_uuid(), medication_id, value, dosage_text) for value in schedule_times],
+        )
+
+    @staticmethod
+    def _append_revision(
+        con: sqlite3.Connection, medication: dict, action: str, assessment: dict,
+        acknowledged: bool, request_id: str | None, payload_hash: str | None,
+    ) -> None:
+        snapshot = {key: value for key, value in medication.items() if key != "assessment"}
+        con.execute(
+            """INSERT INTO medication_revisions(
+                medication_id,revision,action,snapshot_json,assessment_json,acknowledged,request_id,payload_hash
+            ) VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                medication["id"], medication["revision"], action,
+                json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+                json.dumps(assessment, ensure_ascii=False, sort_keys=True),
+                int(bool(acknowledged)), request_id, payload_hash,
+            ),
+        )
+
+    def list_medication_revisions(self, medication_id: str) -> list[dict]:
+        self.get_medication(medication_id)
+        with self._personal() as con:
+            rows = con.execute(
+                "SELECT * FROM medication_revisions WHERE medication_id=? ORDER BY revision",
+                (medication_id,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["acknowledged"] = bool(item["acknowledged"])
+            item["snapshot"] = json.loads(item.pop("snapshot_json"))
+            item["assessment"] = json.loads(item.pop("assessment_json")) if item.get("assessment_json") else None
+            item.pop("assessment_json", None)
+            result.append(item)
         return result

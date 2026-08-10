@@ -293,6 +293,7 @@ _AMBIGUOUS_MARKERS = (
     "성인", "소아", "신장", "간장애", "체중", "경우", "일때", "일 때", "이상", "이하", "미만", "초과",
 )
 _MAX_DETAIL_KEYS = ("1일최대투여기준량", "1일최대용량", "일일최대용량", "dailymax", "maximumdaily")
+_CONTENT_DETAIL_KEYS = ("점검기준성분함량총함량", "성분함량총함량", "ingredientcontent")
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -354,6 +355,21 @@ def _detail_maximum(details: Any) -> tuple[Decimal, str | None] | None:
     if len(candidates) != 1:
         return None
     return _quantity(candidates[0])
+
+
+def _detail_content(details: Any) -> Decimal | None:
+    parsed = _details_object(details)
+    if parsed is None:
+        return None
+    candidates = []
+    for key, value in parsed.items():
+        normalized = re.sub(r"[^0-9a-z가-힣]", "", str(key).lower())
+        if normalized in _CONTENT_DETAIL_KEYS or ("성분함량" in normalized and "총함량" in normalized):
+            candidates.append(value)
+    if len(candidates) != 1:
+        return None
+    quantity = _quantity(candidates[0], inherited_unit="mg")
+    return quantity[0] if quantity and quantity[1] == "mg" else None
 
 
 def _source_quantity(rows: list[dict[str, Any]]) -> tuple[tuple[Decimal, str | None] | None, str | None]:
@@ -482,6 +498,14 @@ def evaluate_quantitative(con: sqlite3.Connection, product: dict, draft: dict) -
             threshold_unit = entered_unit
         if threshold_unit == "mg" and entered_unit == "mg":
             daily_amount = entered_amount * frequency
+        elif threshold_unit == "mg" and entered_unit in _COUNT_UNITS:
+            content = _detail_content(dose_rows[0].get("details")) if len(dose_rows) == 1 else None
+            if content is None:
+                dose["reason"] = "count dose requires an unambiguous per-unit ingredient content"
+                daily_amount = None
+            else:
+                daily_amount = entered_amount * frequency * content
+                dose["per_unit_ingredient_amount"] = float(content)
         elif threshold_unit in _COUNT_UNITS and entered_unit == threshold_unit:
             daily_amount = entered_amount * frequency
         else:

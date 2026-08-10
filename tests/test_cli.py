@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+import io
+import json
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
+
+from medicine_app.cli import main
+from medicine_app.core import MedicationApp
+from tests.test_prescription_safety import make_catalog_db, make_dur_db
+
+
+class PrescriptionCliTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.dur_db = root / "dur.sqlite"
+        self.personal_db = root / "personal.sqlite"
+        self.catalog_db = root / "catalog.sqlite"
+        make_dur_db(self.dur_db)
+        make_catalog_db(self.catalog_db)
+        app = MedicationApp(self.dur_db, self.personal_db, self.catalog_db)
+        self.person = app.create_person("CLI", "1990-01-01")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def run_cli(self, *arguments: str) -> tuple[int, object]:
+        stdout = io.StringIO()
+        base = [
+            "--dur-db", str(self.dur_db), "--personal-db", str(self.personal_db),
+            "--catalog-db", str(self.catalog_db),
+        ]
+        with redirect_stdout(stdout):
+            result = main([*base, *arguments, "--json"])
+        return result, json.loads(stdout.getvalue())
+
+    def test_warning_token_create_update_and_history_flow(self) -> None:
+        request = [
+            "med-add", "--person", self.person["id"], "--product-ref", "MFDS-SAFE",
+            "--dose-amount", "11", "--dose-unit", "mg", "--frequency", "1",
+            "--days", "35", "--time", "08:00", "--request-id", "cli-create-1",
+        ]
+        status, warning = self.run_cli(*request)
+        self.assertEqual(status, 2)
+        self.assertTrue(warning["confirmation_required"])
+
+        status, medication = self.run_cli(
+            *request, "--acknowledge-warnings", "--warning-token", warning["warning_token"]
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(medication["revision"], 1)
+
+        status, updated = self.run_cli(
+            "med-update", "--medication", medication["id"], "--expected-revision", "1",
+            "--time", "09:00",
+        )
+        self.assertEqual(status, 2)
+        status, updated = self.run_cli(
+            "med-update", "--medication", medication["id"], "--expected-revision", "1",
+            "--time", "09:00", "--acknowledge-warnings", "--warning-token", updated["warning_token"],
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(updated["revision"], 2)
+
+        status, history = self.run_cli("med-history", "--medication", medication["id"])
+        self.assertEqual(status, 0)
+        self.assertEqual([entry["revision"] for entry in history], [1, 2])
+
+
+if __name__ == "__main__":
+    unittest.main()

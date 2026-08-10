@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from medicine_app.core import MedicationApp
+from medicine_app.core import ConfirmationRequired, MedicationApp
 
 
 APP_TZ = ZoneInfo("Asia/Seoul")
@@ -199,6 +199,17 @@ class PrescriptionSafetyTest(unittest.TestCase):
         self.assertEqual(self._dimension(preview, "duration")["result"], "within")
         self.assertEqual(self._dimension(preview, "dose")["result"], "exceeded")
 
+    def test_countable_dose_uses_product_ingredient_content(self) -> None:
+        preview = self.app.preview_medication(
+            self.person["id"],
+            self._draft(dose_amount=1, dose_unit="정", frequency_per_day=3, schedule_times=[]),
+        )
+
+        dose = self._dimension(preview, "dose")
+        self.assertEqual(dose["result"], "exceeded")
+        self.assertEqual(dose["daily_amount"], 15.0)
+        self.assertEqual(dose["maximum_daily_amount"], 10.0)
+
     def test_full_preview_marks_each_dimension_not_evaluable_with_reason(self) -> None:
         preview = self.app.preview_medication(
             self.person["id"],
@@ -228,11 +239,16 @@ class PrescriptionSafetyTest(unittest.TestCase):
 
     def test_exceeded_create_succeeds_only_after_explicit_acknowledgement(self) -> None:
         draft = self._draft(prescription_days=35, dose_amount=11)
+        with self.assertRaises(ConfirmationRequired) as warning:
+            self.app.add_medication(
+                self.person["id"], **draft, request_id="create-exceeded-2"
+            )
         medication = self.app.add_medication(
             self.person["id"],
             **draft,
             request_id="create-exceeded-2",
             acknowledge_warnings=True,
+            warning_token=warning.exception.assessment["draft_fingerprint"],
         )
 
         self.assertEqual(medication["assessment"]["duration"]["result"], "exceeded")
@@ -285,6 +301,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
             **self._draft(
                 start_date=(today - timedelta(days=1)).isoformat(),
                 prescription_days=4,
+                frequency_per_day=2,
                 schedule_times=["08:00", "20:00"],
             ),
             request_id="schedule-replacement-create",

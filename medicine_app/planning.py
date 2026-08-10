@@ -81,12 +81,14 @@ def materialize_daily_plan(
             """
             INSERT OR IGNORE INTO dose_instances(
                 id,medication_id,person_id,scheduled_date,schedule_key,scheduled_time,
-                slot_label,dose_text,status
-            ) VALUES(?,?,?,?,?,?,?,?, 'planned')
+                slot_label,dose_text,product_name_snapshot,ingredient_name_snapshot,status
+            ) VALUES(?,?,?,?,?,?,?,?,?,?, 'planned')
             """,
             (
                 uuid_factory(), item["medication_id"], person_id, item["scheduled_date"],
                 item["schedule_key"], item["scheduled_time"], item["slot_label"], item["dose_text"],
+                next(med["product_name"] for med in scheduled if med["id"] == item["medication_id"]),
+                next((med.get("ingredient_name") for med in scheduled if med["id"] == item["medication_id"]), None),
             ),
         )
         con.execute(
@@ -103,7 +105,10 @@ def materialize_daily_plan(
 
     rows = con.execute(
         """
-        SELECT i.*, m.product_name, m.ingredient_name, m.meal_relation, m.administration_route
+        SELECT i.*,
+               COALESCE(i.product_name_snapshot,m.product_name) AS product_name,
+               COALESCE(i.ingredient_name_snapshot,m.ingredient_name) AS ingredient_name,
+               m.meal_relation, m.administration_route
         FROM dose_instances i JOIN medications m ON m.id=i.medication_id
         WHERE i.person_id=? AND i.scheduled_date=?
         ORDER BY CASE WHEN i.scheduled_time IS NULL THEN 1 ELSE 0 END,
@@ -147,10 +152,14 @@ def record_instance(
         con.execute(
             """
             INSERT INTO dose_logs(
-                id,medication_id,person_id,status,occurred_at,note,dose_instance_id
-            ) VALUES(?,?,?,?,?,?,?)
+                id,medication_id,person_id,status,occurred_at,note,dose_instance_id,
+                product_name_snapshot,dosage_text_snapshot
+            ) VALUES(?,?,?,?,?,?,?,?,?)
             """,
-            (uuid_factory(), row["medication_id"], row["person_id"], status, occurred_at, note, instance_id),
+            (
+                uuid_factory(), row["medication_id"], row["person_id"], status, occurred_at,
+                note, instance_id, row["product_name_snapshot"], row["dose_text"],
+            ),
         )
     else:
         con.execute(
