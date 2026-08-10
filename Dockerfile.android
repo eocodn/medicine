@@ -1,0 +1,24 @@
+FROM gradle:9.4.1-jdk17
+
+ENV ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk \
+    GRADLE_USER_HOME=/opt/gradle-cache \
+    PATH=/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:$PATH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates unzip wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p "$ANDROID_HOME/cmdline-tools" \
+    && wget -q -O /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+    && unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools" \
+    && mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest" \
+    && rm /tmp/cmdline-tools.zip \
+    && yes | sdkmanager --licenses >/dev/null \
+    && sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
+    && chmod -R a+rX "$ANDROID_HOME"
+
+WORKDIR /workspace/android
+COPY android/settings.gradle.kts android/build.gradle.kts android/gradle.properties ./
+COPY android/app ./app
+
+CMD ["gradle", "--no-daemon", "testDebugUnitTest", "assembleDebug"]

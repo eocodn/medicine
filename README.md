@@ -282,6 +282,35 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 처방전 사진 입력은 이후 `사진 → OCR/구조화 → 전체 의약품 후보 매칭 → 사용자 확인 → 기존
 preview/add → 오늘 일정 생성` 흐름으로 연결합니다.
 
+## Android / OCR 빌드·실행
+
+Android 셸은 최소 WebView 화면과 ML Kit Document Scanner를 사용합니다. 스캐너는 JPEG만
+최대 2페이지를 넘기고, bundled Korean/Latin Text Recognition 모델로 기기 안에서 인식합니다.
+네이티브 브리지는 `schema_version=1`, operation ID, 단조 sequence, 명시적 상태를 가진
+구조화 힌트만 WebView에 전달하며 이미지·content URI·경로·전체 OCR 텍스트를 저장하거나
+로그·네트워크·WebView로 보내지 않습니다. GMS 미지원, 동시 실행(`OCR_BUSY`), 취소·stale·
+timeout은 성공으로 처리하지 않고 명시적 오류 상태로 반환합니다. 브리지 객체는 AndroidX
+WebMessageListener로 main-frame과 허용 origin을 함께 검사하며, subframe·타 origin 호출은
+차단합니다. HTTP cleartext는 debug manifest에서만 허용되고 release manifest에서는 꺼집니다.
+
+Docker에서 단위 테스트와 debug APK를 함께 빌드합니다.
+
+```bash
+docker compose run --rm android
+```
+
+APK는 `android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. 기본 WebView URL은
+Android 에뮬레이터에서 호스트 loopback으로 연결하는 `http://10.0.2.2:18787/`이며, 기존
+웹 서비스는 계속 `127.0.0.1`에 바인딩됩니다. URL은 debug 빌드 시 바꿀 수 있습니다.
+
+```bash
+MEDICINE_WEB_URL=http://10.0.2.2:19000/ docker compose run --rm android
+```
+
+실기기에서는 `10.0.2.2` 대신 기기에서 접근 가능한 LAN 주소와 HTTPS를 사용해야 합니다.
+Document Scanner와 bundled 모델의 첫 실행 조건 및 GMS 지원 여부에 따라 실기기 결과가
+달라질 수 있습니다.
+
 ## 의료 정보 주의
 
 DUR 결과는 금기·주의 여부를 확인하기 위한 안전 신호입니다. 앱 결과만을 근거로 처방약을

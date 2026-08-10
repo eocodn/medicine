@@ -7,3 +7,8 @@ __pycache__/
 data/raw/
 data/kids/
 data/db/
+
+# Android Gradle outputs and local caches.
+android/.gradle/
+android/build/
+android/app/build/

@@ -45,3 +45,18 @@ services:
     volumes:
       - .:/app
     entrypoint: ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]
+
+  android:
+    build:
+      context: .
+      dockerfile: Dockerfile.android
+    working_dir: /workspace/android
+    volumes:
+      - .:/workspace
+      - android-gradle-cache:/opt/gradle-cache
+    environment:
+      MEDICINE_WEB_URL: ${MEDICINE_WEB_URL:-http://10.0.2.2:18787/}
+    command: ["gradle", "--no-daemon", "testDebugUnitTest", "assembleDebug", "-PmedicineWebUrl=${MEDICINE_WEB_URL:-http://10.0.2.2:18787/}"]
+
+volumes:
+  android-gradle-cache:

@@ -3,3 +3,6 @@ data
 tests
 __pycache__
 *.pyc
+android/.gradle
+android/build
+android/app/build
