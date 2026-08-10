@@ -91,6 +91,7 @@ def capture_screenshot(
                 "--no-sandbox",
                 "--disable-gpu",
                 "--hide-scrollbars",
+                "--virtual-time-budget=2000",
                 f"--window-size={width},{height}",
                 f"--screenshot={output}",
                 url,
