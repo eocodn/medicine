@@ -214,6 +214,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-weight: 700;
 }
 .camera-placeholder span { margin-right: 6px; }
+.ocr-status { margin: 8px 2px 0; }
 .search-status { padding: 14px 4px 8px; min-height: 40px; }
 .result-card { padding: 15px 16px; }
 .result-row { align-items: start; }

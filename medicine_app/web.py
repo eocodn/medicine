@@ -7,9 +7,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, RevisionConflict
+from .ocr import split_ocr_request
 
 
 DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
@@ -27,6 +28,7 @@ class PersonCreate(BaseModel):
 
 
 class MedicationPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     product_ref: str | None = None
     product_code: str | None = None
     dosage_text: str | None = None
@@ -40,9 +42,12 @@ class MedicationPreviewRequest(BaseModel):
     schedule_times: list[str] = Field(default_factory=list)
     start_date: str | None = None
     end_date: str | None = None
+    envelope: dict | None = None
+    ocr_envelope: dict | None = None
 
 
 class MedicationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     product_ref: str | None = None
     product_code: str | None = None
     manual_name: str | None = None
@@ -61,6 +66,9 @@ class MedicationCreate(BaseModel):
     request_id: str | None = None
     acknowledge_warnings: bool = False
     warning_token: str | None = None
+    source: str | None = None
+    ocr_review_token: str | None = None
+    ocr_origin: bool = False
 
 
 class MedicationUpdate(BaseModel):
@@ -178,9 +186,20 @@ def create_web_app(
     @app.post("/api/people/{person_id}/medications/preview")
     def preview_medication(person_id: str, payload: MedicationPreviewRequest) -> dict:
         try:
+            envelope = payload.ocr_envelope or payload.envelope
+            if envelope is not None:
+                return service.preview_ocr(person_id, envelope, envelope.get("product_ref"))
             if not (payload.product_ref or payload.product_code):
                 raise ValueError("product_ref or product_code is required")
             return service.preview_medication(person_id, payload.model_dump())
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @app.post("/api/people/{person_id}/medications/ocr-preview")
+    def preview_ocr_medication(person_id: str, payload: dict) -> dict:
+        try:
+            envelope, product_ref = split_ocr_request(payload)
+            return service.preview_ocr(person_id, envelope, product_ref)
         except Exception as exc:
             raise _translate_error(exc) from exc
 

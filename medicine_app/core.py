@@ -13,6 +13,7 @@ from .persistence import ensure_personal_schema
 from .planning import materialize_daily_plan, record_instance
 from .prescriptions import draft_hash, normalize_draft
 from .products import ProductRepository
+from .ocr import OCRReviewStore, preview_ocr, validate_ocr_create
 from .safety import APP_TIMEZONE, age_years, collect_qualitative_risks, evaluate_quantitative
 
 SEX_VALUES = {"female", "male", "other", "unknown"}
@@ -78,6 +79,7 @@ class MedicationApp:
             raise FileNotFoundError(f"DUR database not found: {self.dur_db}")
         self.personal_db.parent.mkdir(parents=True, exist_ok=True)
         self.products = ProductRepository(self.dur_db, self.catalog_db)
+        self.ocr_reviews = OCRReviewStore()
         with _schema_lock(self.personal_db):
             with self._personal() as con:
                 ensure_personal_schema(con)
@@ -181,6 +183,8 @@ class MedicationApp:
         request_id: str | None = None,
         acknowledge_warnings: bool = False,
         warning_token: str | None = None,
+        ocr_review_token: str | None = None,
+        ocr_origin: bool = False,
     ) -> dict:
         product = self._resolve_product(product_ref or product_code, manual_name, ingredient_name, source)
         draft = normalize_draft(dict(
@@ -201,6 +205,7 @@ class MedicationApp:
                 if existing["person_id"] != person_id or existing["payload_hash"] != payload_hash:
                     raise IdempotencyConflict("request_id was already used with a different prescription payload")
                 return self._get_medication_from_connection(con, existing["medication_id"])
+            validate_ocr_create(self, ocr_review_token, ocr_origin or source == "ocr", person_id, product, draft, request_id)
             person = self._get_person_from_connection(con, person_id)
             assessment = self._assessment(con, person, product, draft, acknowledge_warnings)
             assessment["draft_fingerprint"] = payload_hash
@@ -238,7 +243,14 @@ class MedicationApp:
                     (request_id, person_id, payload_hash, medication_id),
                 )
             medication["assessment"] = assessment
+            if ocr_review_token:
+                self.ocr_reviews.invalidate(ocr_review_token)
             return medication
+
+    def preview_ocr(self, person_id: str, envelope: dict, product_ref: str | None = None) -> dict:
+        return preview_ocr(self, person_id, envelope, product_ref)
+
+    ocr_preview = preview_ocr
 
     def _resolve_product(
         self, resolved_ref: str | None, manual_name: str | None, ingredient_name: str | None, source: str | None

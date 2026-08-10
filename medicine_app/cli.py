@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 
 from .core import ConfirmationRequired, MedicationApp
+from .ocr import OCRValidationError, inspect_envelope
 
 
 DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
@@ -225,6 +226,10 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot.add_argument("--height", type=int, default=844)
     screenshot.add_argument("--json", action="store_true")
 
+    ocr = sub.add_parser("ocr-inspect")
+    ocr.add_argument("--input", required=True, metavar="FILE|-", type=Path)
+    ocr.add_argument("--json", action="store_true")
+
     return parser
 
 
@@ -301,6 +306,19 @@ def _dispatch(args, app: MedicationApp):
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "ocr-inspect":
+        try:
+            raw = sys.stdin.read() if str(args.input) == "-" else args.input.read_text(encoding="utf-8")
+            payload = inspect_envelope(json.loads(raw))
+            if not payload.get("valid", False):
+                emit(payload, args.json)
+                return 2
+        except (OSError, UnicodeError, json.JSONDecodeError, OCRValidationError) as exc:
+            payload = {"valid": False, "error": str(exc), "issues": getattr(exc, "issues", [])}
+            emit(payload, args.json)
+            return 2
+        emit(payload, args.json)
+        return 0
     app = MedicationApp(args.dur_db, args.personal_db, args.catalog_db)
     try:
         payload = _dispatch(args, app)

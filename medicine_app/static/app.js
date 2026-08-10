@@ -10,7 +10,6 @@ const state = {
   editingMedicationId: null,
   searchTimer: null,
 };
-
 const titles = {
   home: "오늘의 복약",
   meds: "복용 관리",
@@ -76,6 +75,11 @@ function showScreen(name) {
   if (name === "search") setTimeout(() => $("#drug-query").focus(), 80);
 }
 
+function handleOcrReviewRequired(hints, productQueries, operationId, issues) {
+  showScreen("search");
+  const query = MedicineOcr.renderReview(productQueries, hints?.product_name, issues);
+  if (query) runDrugSearch();
+}
 function pregnancyLabel(value) {
   return {
     pregnant: "임신 중",
@@ -84,7 +88,6 @@ function pregnancyLabel(value) {
     unknown: "임신 여부 미입력",
   }[value] || value;
 }
-
 function permitStatusLabel(value, raw) {
   return {
     active: "허가 유효",
@@ -96,7 +99,6 @@ function permitStatusLabel(value, raw) {
     unknown: raw || "상태 미확인",
   }[value] || raw || value;
 }
-
 function mealRelationLabel(value) {
   return {
     before_meal: "식전",
@@ -107,7 +109,6 @@ function mealRelationLabel(value) {
     unspecified: "복용 시점 미지정",
   }[value] || value;
 }
-
 function routeLabel(value) {
   return {
     oral: "경구",
@@ -121,11 +122,9 @@ function routeLabel(value) {
     unknown: "경로 미지정",
   }[value] || value;
 }
-
 function currentPerson() {
   return state.people.find((person) => person.id === state.currentPersonId) || null;
 }
-
 async function loadPeople() {
   state.people = await api("/api/people");
   if (!state.people.some((person) => person.id === state.currentPersonId)) {
@@ -140,12 +139,10 @@ async function loadPeople() {
   }
   renderAll();
 }
-
 async function loadHealth() {
   const health = await api("/api/health");
   state.fullCatalog = Boolean(health.full_catalog);
 }
-
 async function loadDashboard() {
   if (!state.currentPersonId) return;
   state.dashboard = await api(`/api/people/${state.currentPersonId}/dashboard`);
@@ -358,12 +355,12 @@ async function previewProduct(productRef) {
     state.warningToken = null;
     state.reviewedDraftKey = null;
     state.editingMedicationId = null;
-    renderRiskSheet(preview);
+    renderRiskSheet(preview, null, MedicineOcr.getReview()?.hints);
     openSheet("#risk-sheet");
   } catch (error) { toast(error.message); }
 }
 
-function renderRiskSheet(preview, medication = null) {
+function renderRiskSheet(preview, medication = null, ocrHints = null) {
   const root = $("#risk-sheet-content");
   const risks = preview.risks || [];
   const dangerous = risks.some((risk) => risk.severity === "danger");
@@ -410,12 +407,14 @@ function renderRiskSheet(preview, medication = null) {
             <option value="nasal">비강</option>
             <option value="injection">주사</option>
             <option value="other">기타</option>
+            <option value="unknown">미지원·확인 필요</option>
           </select>
         </label>
       </div>
       <label>복용 시작일<input id="pending-start-date" type="date"></label>
       <label class="checkbox-row"><input id="pending-prn" type="checkbox"><span><strong>필요할 때만 복용</strong><small>정해진 오늘 일정에는 넣지 않아요.</small></span></label>
     </div>
+    <div id="ocr-issue-warning"></div>
     <div id="quantitative-warning"></div>
     <div id="revision-history"></div>
     <div class="risk-actions">
@@ -440,6 +439,7 @@ function renderRiskSheet(preview, medication = null) {
       timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
     }).format(new Date());
     $("#confirm-add-med", root).addEventListener("click", confirmAddMedication);
+    MedicineOcr.prefillForm(ocrHints, MedicineOcr.getReview()?.issues);
   }
 }
 
@@ -502,7 +502,15 @@ async function confirmAddMedication() {
   if (!state.pendingProduct || !state.currentPersonId) return;
   const draft = prescriptionPayloadFromForm();
   const draftKey = JSON.stringify(draft);
+  const ocrReview = MedicineOcr.getReview();
   if (state.reviewedDraftKey !== draftKey) {
+    if (ocrReview) {
+      const envelope = { version: 1, operation_id: ocrReview.operation_id, hints: { ...ocrReview.hints, ...draft, product_ref: state.pendingProduct.product_ref } };
+      try {
+        const reviewed = await api(`/api/people/${state.currentPersonId}/medications/ocr-preview`, { method: "POST", body: JSON.stringify(envelope) });
+        MedicineOcr.setReviewToken(reviewed.ocr_review_token);
+      } catch (error) { toast(error.message); return; }
+    }
     try { await reviewPrescriptionDraft(state.pendingProduct.product_ref, draft, "confirm-add-med"); }
     catch (error) { toast(error.message); }
     return;
@@ -513,12 +521,14 @@ async function confirmAddMedication() {
     request_id: state.pendingRequestId,
     acknowledge_warnings: Boolean(state.warningToken),
     warning_token: state.warningToken,
+    ...(ocrReview ? { source: "ocr", ocr_origin: true, ocr_review_token: ocrReview.review_token } : {}),
   };
   try {
     await api(`/api/people/${state.currentPersonId}/medications`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    if (ocrReview) MedicineOcr.finish();
     state.pendingProduct = null;
     state.pendingRequestId = null;
     state.warningToken = null;
@@ -530,6 +540,12 @@ async function confirmAddMedication() {
     toast("복용약에 추가했어요");
   } catch (error) {
     if (handleConfirmationRequired(error, "confirm-add-med")) return;
+    if (ocrReview && error.status === 400) {
+      MedicineOcr.clearReviewToken();
+      state.reviewedDraftKey = null;
+      toast("OCR 처방 확인이 만료됐어요. 다시 눌러 확인해주세요.");
+      return;
+    }
     toast(error.message);
   }
 }
@@ -563,10 +579,12 @@ function bindEvents() {
     state.searchTimer = setTimeout(runDrugSearch, 280);
   });
   $("#include-inactive").addEventListener("change", runDrugSearch);
+  $("#ocr-scan-button").addEventListener("click", MedicineOcr.toggle);
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
+  MedicineOcr.init({ onReviewRequired: handleOcrReviewRequired, onState: MedicineOcr.renderState });
   try {
     await loadHealth();
     await loadPeople();

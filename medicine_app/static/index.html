@@ -47,10 +47,11 @@
             <input id="include-inactive" type="checkbox">
             <span>취소·취하·만료 품목도 검색</span>
           </label>
-          <button class="camera-placeholder" type="button" disabled>
-            <span>▣</span>
-            처방전 사진으로 추가 · 다음 단계
+          <button class="camera-placeholder" id="ocr-scan-button" type="button" disabled aria-describedby="ocr-status">
+            <span aria-hidden="true">▣</span>
+            처방전 사진으로 추가
           </button>
+          <p id="ocr-status" class="muted small ocr-status">Android 스캔 기능을 확인하는 중…</p>
         </div>
         <div id="search-status" class="muted small search-status"></div>
         <div id="drug-results" class="stack"></div>
@@ -124,6 +125,7 @@
 
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/static/prescription.js" defer></script>
+  <script src="/static/ocr.js" defer></script>
   <script src="/static/app.js" defer></script>
 </body>
 </html>
