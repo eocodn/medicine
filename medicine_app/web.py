@@ -17,6 +17,14 @@ DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
 DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
 DEFAULT_CATALOG_DB = Path("data/db/catalog.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
+BROWSER_OCR_DIR = Path(os.environ.get("MEDICINE_BROWSER_OCR_ASSETS", "/opt/medicine-browser-ocr"))
+# Tesseract contains upstream CDN defaults, so the response policy is the final
+# invariant that prevents any fallback request from leaving the local app origin.
+BROWSER_CSP = (
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
+    "img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; "
+    "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+)
 
 
 class PersonCreate(BaseModel):
@@ -132,7 +140,17 @@ def create_web_app(
     service = MedicationApp(dur_db, personal_db, catalog_db)
     app = FastAPI(title="Medicine", version="0.1.0")
     app.state.service = service
+
+    @app.middleware("http")
+    async def local_browser_security(request, call_next):
+        response = await call_next(request)
+        if request.url.path == "/":
+            response.headers["Content-Security-Policy"] = BROWSER_CSP
+        return response
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    if BROWSER_OCR_DIR.is_dir():
+        app.mount("/ocr-assets", StaticFiles(directory=BROWSER_OCR_DIR), name="ocr-assets")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:

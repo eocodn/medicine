@@ -1,0 +1,15 @@
+{
+  "name": "medicine-browser-ocr-assets",
+  "private": true,
+  "version": "1.0.0",
+  "license": "UNLICENSED",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "inspect": "node cli.js"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/kor": "1.0.0",
+    "tesseract.js": "7.0.0"
+  }
+}

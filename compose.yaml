@@ -46,6 +46,20 @@ services:
       - .:/app
     entrypoint: ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]
 
+  browser-test:
+    image: node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    command: ["sh", "-lc", "node --test browser_ocr/test/*.test.js"]
+
+  browser-ocr:
+    image: node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    entrypoint: ["node", "browser_ocr/cli.js"]
+
   android:
     build:
       context: .

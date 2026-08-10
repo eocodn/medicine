@@ -87,6 +87,49 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("품목별 확인", ocr.text)
         self.assertLessEqual(len(app.text.splitlines()), 600)
 
+    def test_browser_ocr_is_self_hosted_and_keeps_images_out_of_app_requests(self) -> None:
+        page = self.client.get("/")
+        self.assertEqual(page.status_code, 200)
+        policy = page.headers.get("content-security-policy", "")
+        self.assertIn("connect-src 'self'", policy)
+        self.assertIn("worker-src 'self' blob:", policy)
+        self.assertNotIn("https:", policy)
+        self.assertNotIn("content-security-policy", self.client.get("/api/health").headers)
+        self.assertIn('id="ocr-image-input"', page.text)
+        self.assertIn('accept="image/*"', page.text)
+        self.assertIn('capture="environment"', page.text)
+        for source in (
+            "/ocr-assets/tesseract.min.js",
+            "/static/browser-ocr-parser.js",
+            "/static/browser-ocr.js",
+        ):
+            self.assertIn(f'src="{source}"', page.text)
+
+        for asset in (
+            "/ocr-assets/tesseract.min.js",
+            "/ocr-assets/worker.min.js",
+            "/ocr-assets/core/tesseract-core-lstm.wasm.js",
+            "/ocr-assets/core/tesseract-core-relaxedsimd-lstm.wasm.js",
+            "/ocr-assets/core/tesseract-core-simd-lstm.wasm.js",
+            "/ocr-assets/lang/kor.traineddata.gz",
+            "/ocr-assets/lang/eng.traineddata.gz",
+        ):
+            response = self.client.get(asset)
+            self.assertEqual(response.status_code, 200, asset)
+            self.assertTrue(response.content, asset)
+        browser = self.client.get("/static/browser-ocr.js")
+        self.assertEqual(browser.status_code, 200)
+        for contract in ("MedicineBrowserOcr", "createWorker", "kor", "eng", "90_000", "terminate"):
+            self.assertIn(contract, browser.text)
+        for forbidden in ("FormData", "XMLHttpRequest", "sendBeacon", "localStorage", "sessionStorage"):
+            self.assertNotIn(forbidden, browser.text)
+        self.assertIn('langPath: "/ocr-assets/lang"', browser.text)
+        self.assertIn('workerPath: "/ocr-assets/worker.min.js"', browser.text)
+        self.assertIn('corePath: "/ocr-assets/core"', browser.text)
+
+        bridge = self.client.get("/static/ocr.js")
+        self.assertIn("MedicineBrowserOcr", bridge.text)
+
     def test_product_search_can_include_inactive_permit_records(self) -> None:
         default = self.client.get("/api/products", params={"q": "과거취하약"})
         self.assertEqual(default.status_code, 200)

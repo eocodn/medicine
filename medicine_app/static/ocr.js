@@ -25,8 +25,9 @@
   };
 
   function bridge() {
-    return global.MedicineNative && typeof global.MedicineNative.postMessage === "function"
-      ? global.MedicineNative : null;
+    if (global.MedicineNative && typeof global.MedicineNative.postMessage === "function") return global.MedicineNative;
+    return global.MedicineBrowserOcr && typeof global.MedicineBrowserOcr.postMessage === "function"
+      ? global.MedicineBrowserOcr : null;
   }
 
   function notify(message, detail) {
@@ -39,7 +40,7 @@
     const message = { command, schema_version: SCHEMA_VERSION };
     if (operationId) message.operation_id = operationId;
     try {
-      global.MedicineNative.postMessage(JSON.stringify(message));
+      nativeBridge.postMessage(JSON.stringify(message));
       return true;
     } catch (error) {
       notify("failed", { message: "Android 브리지 요청을 보낼 수 없어요." });
@@ -163,7 +164,7 @@
 
   function start() {
     if (!bridge()) {
-      notify("unsupported", { message: "Android 앱에서만 처방전 스캔을 사용할 수 있어요." });
+      notify("unsupported", { message: "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요." });
       return false;
     }
     if (state.active) {
@@ -235,10 +236,12 @@
     if (nextState === "capabilities") {
       button.disabled = false;
       button.textContent = "처방전 사진으로 추가";
-      status.textContent = "Android 스캔 기능을 사용할 수 있어요.";
+      status.textContent = state.capabilities?.provider === "browser-wasm"
+        ? "브라우저 안에서 사진을 인식할 수 있어요. 사진은 서버로 전송되지 않아요."
+        : "Android 스캔 기능을 사용할 수 있어요.";
     } else if (nextState === "unsupported") {
       button.disabled = true;
-      status.textContent = detail?.message || "Android 앱에서만 처방전 스캔을 사용할 수 있어요.";
+      status.textContent = detail?.message || "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요.";
     } else if (["accepted", "scanner_ready", "scanning", "recognizing", "review_required"].includes(nextState)) {
       button.disabled = false;
       button.textContent = "스캔 취소";
@@ -286,7 +289,7 @@
     global.onMedicineNativeEvent = acceptEvent;
     global.__medicineOcrEvent = acceptEvent;
     if (!bridge()) {
-      notify("unsupported", { message: "Android 앱에서만 처방전 스캔을 사용할 수 있어요." });
+      notify("unsupported", { message: "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요." });
       return;
     }
     requestCapabilities();
