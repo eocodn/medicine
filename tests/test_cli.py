@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from medicine_app.cli import main
+from medicine_app.cli import build_parser, main
 from medicine_app.core import MedicationApp
 from tests.test_prescription_safety import make_catalog_db, make_dur_db
 
@@ -108,6 +108,12 @@ class PrescriptionCliTest(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(canceled["status"], "planned")
         self.assertIsNone(canceled["completed_at"])
+
+
+    def test_generic_dose_log_command_is_not_exposed(self) -> None:
+        parser = build_parser()
+        command_action = next(action for action in parser._actions if action.dest == "command")
+        self.assertNotIn("dose-log", command_action.choices)
 
 
 if __name__ == "__main__":

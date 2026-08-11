@@ -189,8 +189,10 @@ class MedicationAppTest(unittest.TestCase):
         medication = self.app.add_medication(
             person["id"], product_code="P-A", schedule_times=["08:00"], request_id="delete-person-med"
         )
-        self.app.get_daily_plan(person["id"], "2026-08-11")
-        self.app.record_dose(medication["id"], "taken", "2026-08-11T08:05:00+09:00")
+        plan = self.app.get_daily_plan(person["id"], "2026-08-11")
+        self.app.record_dose_instance(
+            plan["doses"][0]["id"], "taken", "2026-08-11T08:05:00+09:00"
+        )
 
         deleted = self.app.delete_person(person["id"])
 
@@ -231,21 +233,33 @@ class MedicationAppTest(unittest.TestCase):
 
     def test_records_dose_history(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
-        med = self.app.add_medication(person["id"], product_code="P-A", schedule_times=["08:00", "20:00"])
+        med = self.app.add_medication(
+            person["id"], product_code="P-A", start_date="2026-08-09",
+            schedule_times=["08:00", "20:00"],
+        )
 
-        log = self.app.record_dose(med["id"], "taken", "2026-08-09T08:03:00+09:00")
+        plan = self.app.get_daily_plan(person["id"], "2026-08-09")
+        completed = self.app.record_dose_instance(
+            plan["doses"][0]["id"], "taken", "2026-08-09T08:03:00+09:00"
+        )
         history = self.app.list_dose_logs(person["id"])
 
-        self.assertEqual(log["status"], "taken")
+        self.assertEqual(completed["status"], "taken")
         self.assertEqual(history[0]["medication_id"], med["id"])
+        self.assertEqual(history[0]["dose_instance_id"], plan["doses"][0]["id"])
 
     def test_default_dose_timestamp_uses_korea_timezone(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
-        med = self.app.add_medication(person["id"], product_code="P-A")
+        self.app.add_medication(person["id"], product_code="P-A", schedule_times=["08:00"])
+        plan = self.app.get_daily_plan(person["id"])
 
-        log = self.app.record_dose(med["id"], "taken")
+        self.app.record_dose_instance(plan["doses"][0]["id"], "taken")
+        log = self.app.list_dose_logs(person["id"])[0]
 
         self.assertTrue(log["occurred_at"].endswith("+09:00"))
+
+    def test_schedule_independent_dose_logging_is_not_exposed(self) -> None:
+        self.assertFalse(hasattr(self.app, "record_dose"))
 
     def test_product_search_returns_both_sides_of_combination_rows_without_duplicates(self) -> None:
         results = self.app.search_products("약", limit=10)

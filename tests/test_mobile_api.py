@@ -77,6 +77,12 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(completed["status"], "taken")
 
+        status, legacy = self.request("POST", f"/api/medications/{instance['medication_id']}/logs", {
+            "status": "taken",
+        })
+        self.assertEqual(status, 404)
+        self.assertEqual(legacy["detail"], "route not found")
+
         status, canceled = self.request("DELETE", f"/api/dose-instances/{instance['id']}/completion")
         self.assertEqual(status, 200)
         self.assertEqual(canceled["status"], "planned")

@@ -462,26 +462,6 @@ class MedicationApp:
         current = self.get_medication(medication_id)
         return self.stop_medication(medication_id, expected_revision=current["revision"])
 
-    def record_dose(self, medication_id: str, status: str, occurred_at: str | None = None, note: str | None = None) -> dict:
-        if status not in DOSE_STATUS_VALUES:
-            raise ValueError("status must be taken or skipped")
-        medication = self.get_medication(medication_id)
-        when = occurred_at or datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
-        datetime.fromisoformat(when)
-        log_id = _uuid()
-        with self._personal() as con:
-            con.execute(
-                """INSERT INTO dose_logs(
-                    id,medication_id,person_id,status,occurred_at,note,product_name_snapshot,dosage_text_snapshot
-                ) VALUES(?,?,?,?,?,?,?,?)""",
-                (
-                    log_id, medication_id, medication["person_id"], status, when, note,
-                    medication["product_name"], medication.get("dosage_text"),
-                ),
-            )
-            row = con.execute("SELECT * FROM dose_logs WHERE id=?", (log_id,)).fetchone()
-        return dict(row)
-
     def list_dose_logs(self, person_id: str, limit: int = 50) -> list[dict]:
         self.get_person(person_id)
         with self._personal() as con:

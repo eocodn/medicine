@@ -255,11 +255,21 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(acknowledged.status_code, 201)
         medication = acknowledged.json()
 
+        plan = self.client.get(f"/api/people/{person['id']}/daily-plan").json()
+        instance = next(
+            dose for dose in plan["doses"] if dose["medication_id"] == medication["id"]
+        )
         logged = self.client.post(
+            f"/api/dose-instances/{instance['id']}",
+            json={"status": "taken"},
+        )
+        self.assertEqual(logged.status_code, 200)
+
+        legacy_log = self.client.post(
             f"/api/medications/{medication['id']}/logs",
             json={"status": "taken"},
         )
-        self.assertEqual(logged.status_code, 201)
+        self.assertEqual(legacy_log.status_code, 404)
 
         dashboard = self.client.get(f"/api/people/{person['id']}/dashboard")
         self.assertEqual(dashboard.status_code, 200)

@@ -214,15 +214,6 @@ class MobileApi:
         if method == "GET" and match:
             return 200, service.list_medication_revisions(match.group(1))
 
-        match = re.fullmatch(r"/api/medications/([^/]+)/logs", path)
-        if method == "POST" and match:
-            payload = _validated_fields(_body_object(body_json), _DOSE_FIELDS)
-            if "status" not in payload:
-                raise ValueError("status is required")
-            return 201, service.record_dose(
-                match.group(1), payload["status"], payload.get("occurred_at"), payload.get("note")
-            )
-
         match = re.fullmatch(r"/api/dose-instances/([^/]+)/completion", path)
         if method == "DELETE" and match:
             return 200, service.cancel_dose_instance(match.group(1))

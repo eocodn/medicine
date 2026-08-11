@@ -98,12 +98,6 @@ class MedicationUpdate(BaseModel):
     warning_token: str | None = None
 
 
-class DoseLogCreate(BaseModel):
-    status: str
-    occurred_at: str | None = None
-    note: str | None = None
-
-
 class DoseInstanceUpdate(BaseModel):
     status: str
     occurred_at: str | None = None
@@ -278,13 +272,6 @@ def create_web_app(
             if expected_revision is None:
                 return service.deactivate_medication(medication_id)
             return service.stop_medication(medication_id, expected_revision=expected_revision)
-        except Exception as exc:
-            raise _translate_error(exc) from exc
-
-    @app.post("/api/medications/{medication_id}/logs", status_code=201)
-    def log_dose(medication_id: str, payload: DoseLogCreate) -> dict:
-        try:
-            return service.record_dose(medication_id, payload.status, payload.occurred_at, payload.note)
         except Exception as exc:
             raise _translate_error(exc) from exc
 
