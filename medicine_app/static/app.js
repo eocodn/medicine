@@ -225,7 +225,6 @@ function renderMedications() {
       </div>
       <div class="med-actions">
         <button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>
-        <button class="secondary-button" data-taken="${med.id}" type="button">복용 완료</button>
         <button class="danger-ghost" data-stop="${med.id}" type="button">복용 목록에서 종료</button>
       </div>
     </article>`).join("") : `<div class="empty-state"><strong>복용 중인 약이 없어요</strong>약 검색 탭에서 추가해보세요.</div>`;
@@ -237,18 +236,8 @@ function renderMedications() {
       <span class="history-time">${escapeHtml(formatTime(log.occurred_at))}</span>
     </div>`).join("") : `<div class="empty-state"><strong>기록이 아직 없어요</strong>약을 복용한 뒤 완료 버튼을 눌러보세요.</div>`;
 
-  $$('[data-taken]', medsRoot).forEach((button) => button.addEventListener("click", () => logDose(button.dataset.taken, "taken")));
   $$('[data-edit]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.edit)));
   $$('[data-stop]', medsRoot).forEach((button) => button.addEventListener("click", () => stopMedication(button.dataset.stop)));
-}
-
-async function logDose(medicationId, status) {
-  try {
-    await api(`/api/medications/${medicationId}/logs`, { method: "POST", body: JSON.stringify({ status }) });
-    await loadDashboard();
-    renderAll();
-    toast(status === "taken" ? "복용 완료로 기록했어요" : "건너뜀으로 기록했어요");
-  } catch (error) { toast(error.message); }
 }
 
 async function completeDoseInstance(instanceId, status) {
