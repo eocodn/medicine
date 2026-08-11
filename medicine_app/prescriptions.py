@@ -16,11 +16,12 @@ ADMINISTRATION_ROUTE_VALUES = {
 }
 
 
-def _validate_time(value: str) -> None:
+def _normalize_time(value: str) -> str:
     try:
-        datetime.strptime(value, "%H:%M")
-    except ValueError as exc:
+        parsed = datetime.strptime(value, "%H:%M")
+    except (TypeError, ValueError) as exc:
         raise ValueError("schedule time must be HH:MM") from exc
+    return parsed.strftime("%H:%M")
 
 
 def _format_decimal(value: Decimal) -> str:
@@ -31,9 +32,9 @@ def _format_decimal(value: Decimal) -> str:
 
 
 def normalize_draft(values: dict) -> dict:
-    schedule_times = list(values.get("schedule_times") or [])
-    for value in schedule_times:
-        _validate_time(value)
+    schedule_times = [
+        _normalize_time(value) for value in values.get("schedule_times") or []
+    ]
     if len(schedule_times) != len(set(schedule_times)):
         raise ValueError("schedule_times must not contain duplicates")
     frequency = values.get("frequency_per_day")

@@ -264,6 +264,21 @@ class PrescriptionSafetyTest(unittest.TestCase):
                 self.person["id"], **self._draft(prescription_days=1.5), request_id="fraction-days"
             )
 
+    def test_single_digit_schedule_hour_is_canonicalized_before_storage(self) -> None:
+        medication = self.app.add_medication(
+            self.person["id"],
+            **self._draft(schedule_times=["8:00"], frequency_per_day=1),
+            request_id="canonical-time",
+        )
+
+        self.assertEqual(medication["schedules"][0]["time_of_day"], "08:00")
+        with self.assertRaisesRegex(ValueError, "duplicates"):
+            self.app.add_medication(
+                self.person["id"],
+                **self._draft(schedule_times=["8:00", "08:00"], frequency_per_day=2),
+                request_id="canonical-time-duplicate",
+            )
+
     def test_unsupported_source_unit_is_not_evaluable(self) -> None:
         con = sqlite3.connect(self.dur_db)
         con.execute(

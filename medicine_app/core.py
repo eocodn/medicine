@@ -12,6 +12,7 @@ from typing import Iterator
 from .persistence import ensure_personal_schema
 from .planning import (
     cancel_instance_completion,
+    clock_sort_key,
     materialize_daily_plan,
     record_instance,
     sort_medications_by_time,
@@ -283,6 +284,7 @@ class MedicationApp:
             "SELECT time_of_day,dose_text FROM medication_schedules WHERE medication_id=? ORDER BY time_of_day",
             (medication_id,),
         ).fetchall()
+        schedules = sorted(schedules, key=lambda item: clock_sort_key(item["time_of_day"]))
         data = dict(row)
         data["active"] = bool(data["active"])
         data["as_needed"] = bool(data.get("as_needed") or 0)

@@ -5,6 +5,15 @@ from datetime import date
 from typing import Callable
 
 
+def clock_sort_key(value: str) -> tuple[int, int]:
+    """Parse a validated clock value numerically, including legacy H:MM rows."""
+    hour_text, minute_text = value.split(":", 1)
+    hour, minute = int(hour_text), int(minute_text)
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ValueError("schedule time must be HH:MM")
+    return hour, minute
+
+
 def medication_course_progress(medication: dict, target: date) -> dict | None:
     """Return inclusive calendar progress for a finite prescription course."""
     if not medication.get("start_date") or not medication.get("end_date"):
@@ -42,7 +51,10 @@ def sort_medications_by_time(medications: list[dict], target: date) -> list[dict
 
     def key(item: dict) -> tuple[int, str]:
         times = [schedule["time_of_day"] for schedule in item.get("schedules") or []]
-        return (0, min(times)) if times else (1, "")
+        if not times:
+            return 1, ""
+        hour, minute = min(clock_sort_key(value) for value in times)
+        return 0, f"{hour:02d}:{minute:02d}"
 
     # Python's stable sort preserves the database list order for equal times.
     return sorted(annotated, key=key)
@@ -146,7 +158,7 @@ def materialize_daily_plan(
             ),
         )
 
-    rows = con.execute(
+    rows = list(con.execute(
         """
         SELECT i.*,
                COALESCE(i.product_name_snapshot,m.product_name) AS product_name,
@@ -158,7 +170,12 @@ def materialize_daily_plan(
                  i.scheduled_time, i.schedule_key, i.rowid
         """,
         (person_id, target.isoformat()),
-    ).fetchall()
+    ).fetchall())
+    rows.sort(key=lambda row: (
+        (0, *clock_sort_key(row["scheduled_time"]))
+        if row["scheduled_time"] is not None
+        else (1, int(row["schedule_key"].split(":", 1)[1]), 0)
+    ))
     return {
         "date": target.isoformat(),
         "doses": [dict(row) for row in rows],

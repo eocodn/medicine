@@ -406,6 +406,13 @@ class MedicationAppTest(unittest.TestCase):
             person["id"], product_code="P-D", start_date="2026-08-10",
             frequency_per_day=1,
         )
+        con = sqlite3.connect(self.personal_db)
+        con.execute(
+            "UPDATE medication_schedules SET time_of_day='8:00' WHERE medication_id=?",
+            (early["id"],),
+        )
+        con.commit()
+        con.close()
 
         medications = self.app.list_medications(person["id"], as_of=date(2026, 8, 11))
         plan = self.app.get_daily_plan(person["id"], "2026-08-11")
@@ -419,7 +426,7 @@ class MedicationAppTest(unittest.TestCase):
             },
         )
         self.assertIsNone(medications[2]["course_progress"])
-        self.assertEqual([dose["scheduled_time"] for dose in plan["doses"]], ["08:00", "20:00", None])
+        self.assertEqual([dose["scheduled_time"] for dose in plan["doses"]], ["8:00", "20:00", None])
 
         upcoming = self.app.list_medications(person["id"], as_of=date(2026, 8, 9))[0]["course_progress"]
         completed = self.app.list_medications(person["id"], as_of=date(2026, 8, 15))[0]["course_progress"]
