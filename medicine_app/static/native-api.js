@@ -10,7 +10,8 @@
     }
     if (!(envelope.status >= 200 && envelope.status < 300)) {
       const body = envelope.body || null;
-      const message = body?.detail || `요청 실패 (${envelope.status})`;
+      const message = body?.detail || "요청을 처리하지 못했어요";
+      console.error("native request failed", { path, status: envelope.status });
       const displayMessage = typeof window.friendlyErrorMessage === "function"
         ? window.friendlyErrorMessage(message)
         : message;

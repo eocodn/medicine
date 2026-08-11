@@ -40,12 +40,13 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
   if (!response.ok) {
-    let message = `요청 실패 (${response.status})`;
+    let message = "요청을 처리하지 못했어요";
     let body = null;
     try {
       body = await response.json();
       message = body.detail || message;
     } catch (_) {}
+    console.error("api request failed", { path, status: response.status });
     const error = new Error(typeof message === "string" ? friendlyErrorMessage(message) : "요청을 처리하지 못했어요");
     error.status = response.status;
     error.body = body;
@@ -248,7 +249,6 @@ async function completeDoseInstance(instanceId, status) {
     });
     await loadDashboard();
     renderAll();
-    toast(status === "taken" ? "오늘 복용 완료로 기록했어요" : "건너뜀으로 기록했어요");
   } catch (error) { toast(error.message); }
 }
 
@@ -257,7 +257,6 @@ async function cancelDoseInstance(instanceId) {
     await api(`/api/dose-instances/${instanceId}/completion`, { method: "DELETE" });
     await loadDashboard();
     renderAll();
-    toast("복용 완료를 취소했어요");
   } catch (error) { toast(error.message); }
 }
 
@@ -269,7 +268,6 @@ async function stopMedication(medicationId) {
     await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
     await loadDashboard();
     renderAll();
-    toast("복용약 목록에서 삭제했어요");
   } catch (error) { toast(error.message); }
 }
 
@@ -284,23 +282,23 @@ async function runDrugSearch() {
   const status = $("#search-status");
   const root = $("#drug-results");
   if (!term) { status.textContent = ""; root.innerHTML = ""; return; }
-  status.textContent = state.fullCatalog ? "전체 허가 의약품에서 찾는 중…" : "전체 허가 의약품 카탈로그를 확인하는 중…";
+  status.textContent = "";
   try {
     const includeInactive = $("#include-inactive").checked;
     const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30&include_inactive=${includeInactive}`);
     state.fullCatalog = true;
-    status.textContent = `${results.length}개 결과 · 식약처 허가상태 + DUR 연결`;
+    status.textContent = "";
     root.innerHTML = results.length ? results.map((item) => `
       <article class="card result-card" data-product-select="${escapeHtml(item.product_ref)}" role="button" tabindex="0">
         <div class="result-row">
           <div class="result-copy">
             <div class="result-title-line"><strong>${escapeHtml(item.product_name)}</strong><span class="permit-badge ${escapeHtml(item.permit_status)}">${escapeHtml(permitStatusLabel(item.permit_status, item.permit_status_name))}</span></div>
             <span>${escapeHtml(item.ingredient_name || "성분 정보 없음")}${item.manufacturer ? ` · ${escapeHtml(item.manufacturer)}` : ""}</span>
-            <span>${item.dur_match ? "DUR 자동 확인 가능" : "DUR 자동 확인 일부 제한"}${item.cancel_date ? ` · 상태일 ${escapeHtml(item.cancel_date)}` : ""}</span>
+            <span>${item.dur_match ? "DUR 자동 확인 가능" : "DUR 자동 확인 일부 제한"}${item.cancel_date ? ` · 허가 상태 변경일 ${escapeHtml(item.cancel_date)}` : ""}</span>
           </div>
           <span class="add-button" aria-hidden="true">추가</span>
         </div>
-      </article>`).join("") : `<div class="empty-state"><strong>검색 결과가 없어요</strong>${state.fullCatalog ? "다른 제품명이나 성분명으로 검색해보세요." : "전체 카탈로그를 동기화하면 검색 범위를 넓힐 수 있어요."}</div>`;
+      </article>`).join("") : `<div class="empty-state"><strong>검색 결과가 없어요</strong>다른 제품명이나 성분명으로 검색해보세요.</div>`;
     $$('[data-product-select]', root).forEach((card) => {
       card.addEventListener("click", () => selectProductResult(card));
       card.addEventListener("keydown", (event) => {
@@ -310,7 +308,7 @@ async function runDrugSearch() {
       });
     });
   } catch (error) {
-    status.textContent = error.message;
+    status.textContent = friendlyErrorMessage(error.message);
     root.innerHTML = "";
   }
 }
@@ -395,7 +393,6 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
     </div>
     <div id="ocr-issue-warning"></div>
     <div id="quantitative-warning"></div>
-    <div id="revision-history"></div>
     <div class="risk-actions">
       <button class="secondary-button" data-close-sheet type="button">취소</button>
       <button class="primary-button" id="${medication ? "confirm-edit-med" : "confirm-add-med"}" type="button">${medication ? "수정 내용 저장" : "복용약에 추가"}</button>
@@ -420,7 +417,7 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
   }
 }
 
-async function openMedicationEdit(medicationId) {
+function openMedicationEdit(medicationId) {
   const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
   if (!medication) return;
   state.editingMedicationId = medicationId;
@@ -436,10 +433,6 @@ async function openMedicationEdit(medicationId) {
     risks: [], coverage: null,
   }, medication);
   openSheet("#risk-sheet");
-  try {
-    const history = await api(`/api/medications/${medicationId}/history`);
-    $("#revision-history").innerHTML = history.length ? `<div class="coverage-note matched"><strong>변경 이력 ${history.length}건</strong><br>${history.map((item) => `${item.revision}판 · ${item.action}`).join(" · ")}</div>` : "";
-  } catch (error) { toast(error.message); }
 }
 
 async function confirmEditMedication() {
@@ -468,7 +461,6 @@ async function confirmEditMedication() {
     closeSheets();
     await loadDashboard();
     renderAll();
-    toast("처방 정보를 수정했어요");
   } catch (error) {
     if (handleConfirmationRequired(error, "confirm-edit-med")) return;
     toast(error.message);
@@ -514,13 +506,12 @@ async function confirmAddMedication() {
     await loadDashboard();
     renderAll();
     showScreen("meds");
-    toast("복용약에 추가했어요");
   } catch (error) {
     if (handleConfirmationRequired(error, "confirm-add-med")) return;
     if (ocrReview && error.status === 400) {
       MedicineOcr.clearReviewToken();
       state.reviewedDraftKey = null;
-      toast("OCR 처방 확인이 만료됐어요. 다시 눌러 확인해주세요.");
+      toast("사진에서 불러온 처방 확인 시간이 지났어요. 내용을 다시 확인해주세요.");
       return;
     }
     toast(error.message);
@@ -548,5 +539,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     await loadHealth();
     await loadPeople();
   }
-  catch (error) { toast(`초기화 실패: ${error.message}`); }
+  catch (error) {
+    console.error("app initialization failed", error);
+    toast("앱을 불러오지 못했어요. 다시 열어주세요.");
+  }
 });

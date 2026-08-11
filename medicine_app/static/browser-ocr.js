@@ -113,14 +113,14 @@
       } else if (message.type === "error") {
         finishTerminal(target, "failed", {
           error_code: "DIRECT_ONNX_OCR_FAILED",
-          message: "브라우저 CPU 모델에서 처방전을 인식하지 못했어요.",
+          message: "사진에서 처방 정보를 인식하지 못했어요. 다른 사진으로 다시 시도해주세요.",
         });
       }
     };
     worker.onerror = () => {
       finishTerminal(target, "failed", {
         error_code: "DIRECT_ONNX_OCR_FAILED",
-        message: "브라우저 CPU 모델에서 처방전을 인식하지 못했어요.",
+        message: "사진에서 처방 정보를 인식하지 못했어요. 다른 사진으로 다시 시도해주세요.",
       });
     };
     worker.postMessage({ type: "recognize", image: file });
@@ -138,7 +138,7 @@
         sequence: 0,
         state: "failed",
         error_code: "OCR_BUSY",
-        message: "진행 중인 브라우저 OCR이 있어요.",
+        message: "사진 인식이 이미 진행 중이에요.",
       });
       return;
     }
@@ -154,7 +154,7 @@
     active = target;
     target.timeoutId = global.setTimeout(() => {
       if (active === target && generation === epoch) {
-        finishTerminal(target, "expired", { message: "브라우저 CPU OCR 시간이 만료됐어요." });
+        finishTerminal(target, "expired", { message: "사진 인식 시간이 오래 걸렸어요. 다시 시도해주세요." });
       }
     }, TIMEOUT_MS);
     emit(target, "accepted");

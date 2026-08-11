@@ -68,7 +68,6 @@ async function selectPerson(personId) {
   await loadDashboard();
   renderAll();
   showScreen("home");
-  toast(`${currentPerson().name}님으로 전환했어요`);
 }
 
 function syncReproductiveFields() {
@@ -129,14 +128,13 @@ async function submitPerson(event) {
     closeSheets();
     await loadPeople();
     showScreen(editingId ? "people" : "home");
-    toast(editingId ? `${person.name}님 정보를 수정했어요` : `${person.name}님 프로필을 만들었어요`);
   } catch (error) { toast(error.message); }
 }
 
 async function deletePerson(personId) {
   const person = state.people.find((item) => item.id === personId);
   if (!person) return;
-  if (!confirm(`${person.name}님의 복용약, 복용 기록, 일정과 변경 이력을 모두 삭제할까요? 이 작업은 되돌릴 수 없어요.`)) return;
+  if (!confirm(`${person.name}님의 복용약, 복용 기록과 일정을 모두 삭제할까요? 이 작업은 되돌릴 수 없어요.`)) return;
   try {
     await api(`/api/people/${personId}`, { method: "DELETE" });
     if (state.currentPersonId === personId) {
@@ -145,7 +143,6 @@ async function deletePerson(personId) {
     }
     await loadPeople();
     showScreen(state.people.length ? "people" : "home");
-    toast(`${person.name}님의 관리 데이터를 삭제했어요`);
   } catch (error) { toast(error.message); }
 }
 

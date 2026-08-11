@@ -32,10 +32,10 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("복용", response.text)
         self.assertIn("약 검색", response.text)
         self.assertIn('id="include-inactive"', response.text)
-        self.assertIn('src="/static/native-api.js"', response.text)
-        self.assertIn('src="/static/people.js?v=20260811c"', response.text)
+        self.assertIn('src="/static/native-api.js?v=20260811k"', response.text)
+        self.assertIn('src="/static/people.js?v=20260811k"', response.text)
         self.assertIn('href="/static/styles.css?v=20260811f"', response.text)
-        self.assertIn('src="/static/app.js?v=20260811j"', response.text)
+        self.assertIn('src="/static/app.js?v=20260811k"', response.text)
         self.assertNotIn("로컬 우선", response.text)
         self.assertNotIn("personal.sqlite", response.text)
         self.assertIn("Content-Security-Policy", response.text)
@@ -47,7 +47,7 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("MedicineLocalApi", script.text)
         self.assertIn("warning_token", script.text)
         self.assertIn("openMedicationEdit", script.text)
-        self.assertIn("변경 이력", script.text)
+        self.assertNotIn("변경 이력", script.text)
         self.assertIn("data-instance-cancel", script.text)
         self.assertIn("cancelDoseInstance", script.text)
         self.assertNotIn("data-taken=", script.text)
@@ -61,6 +61,7 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('name="birth_date" type="date" min="1000-01-01"', response.text)
         people_script = self.client.get("/static/people.js")
         self.assertEqual(people_script.status_code, 200)
+        self.assertNotIn("변경 이력", people_script.text)
         self.assertIn("const formElement = event.currentTarget", people_script.text)
         self.assertIn("formElement.reset()", people_script.text)
         self.assertNotIn("event.currentTarget.reset()", people_script.text)
@@ -94,13 +95,17 @@ class WebApiTest(unittest.TestCase):
         native_api = self.client.get("/static/native-api.js")
         self.assertEqual(native_api.status_code, 200)
         self.assertIn("MedicineNative.request", native_api.text)
+        self.assertNotIn("요청 실패 (", native_api.text)
+        self.assertNotIn("요청 실패 (", script.text)
 
     def test_ocr_review_contract_is_exposed_without_raw_artifacts(self) -> None:
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
         self.assertIn('id="ocr-scan-button"', page.text)
         self.assertIn('id="ocr-status"', page.text)
-        self.assertIn('src="/static/ocr.js"', page.text)
+        self.assertIn("브라우저 안에서 사진을 인식할 수 있어요. 사진은 서버로 전송되지 않아요.", page.text)
+        self.assertNotIn("기기 내 OCR 기능을 확인하는 중", page.text)
+        self.assertIn('src="/static/ocr.js?v=20260811k"', page.text)
 
         ocr = self.client.get("/static/ocr.js")
         self.assertEqual(ocr.status_code, 200)
@@ -124,13 +129,22 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("UNSUPPORTED_PRN", ocr.text)
         self.assertIn("onClear", ocr.text)
         self.assertIn("state.active.issues = null", ocr.text)
+        for transient_copy in (
+            "처방전 스캔을 시작했어요",
+            "카메라를 준비했어요",
+            "처방전을 촬영하는 중",
+            "처방전 내용을 기기에서 인식하는 중",
+            "스캔을 취소하는 중",
+            "스캔을 취소했어요",
+        ):
+            self.assertNotIn(transient_copy, ocr.text)
 
         app = self.client.get("/static/app.js")
         self.assertEqual(app.status_code, 200)
         self.assertIn("MedicineOcr", app.text)
         self.assertIn("MedicineOcr.getReview", app.text)
         self.assertIn("MedicineOcr.clearReviewToken", app.text)
-        self.assertIn("OCR 처방 확인이 만료", app.text)
+        self.assertIn("사진에서 불러온 처방 확인 시간이 지났어요", app.text)
         self.assertIn("ocr-preview", app.text)
         self.assertIn("ocr_review_token", app.text)
         self.assertIn("reviewPrescriptionDraft", app.text)
@@ -138,6 +152,26 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("reviewToken = null", ocr.text)
         self.assertIn("여러 약명 인식", ocr.text)
         self.assertIn("품목별 확인", ocr.text)
+        for transient_copy in (
+            "오늘 복용 완료로 기록했어요",
+            "복용 완료를 취소했어요",
+            "복용약 목록에서 삭제했어요",
+            "처방 정보를 수정했어요",
+            "복용약에 추가했어요",
+            "전체 허가 의약품에서 찾는 중",
+            "전체 허가 의약품 카탈로그를 확인하는 중",
+            "식약처 허가상태 + DUR 연결",
+            "초기화 실패:",
+        ):
+            self.assertNotIn(transient_copy, app.text)
+        people = self.client.get("/static/people.js")
+        for transient_copy in (
+            "님으로 전환했어요",
+            "님 정보를 수정했어요",
+            "님 프로필을 만들었어요",
+            "님의 관리 데이터를 삭제했어요",
+        ):
+            self.assertNotIn(transient_copy, people.text)
         self.assertLessEqual(len(app.text.splitlines()), 600)
 
     def test_browser_ocr_is_self_hosted_and_keeps_images_out_of_app_requests(self) -> None:
@@ -155,9 +189,9 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('capture="environment"', page.text)
         for source in (
             "/static/browser-ocr-parser.js",
-            "/static/browser-ocr.js",
         ):
             self.assertIn(f'src="{source}"', page.text)
+        self.assertIn('src="/static/browser-ocr.js?v=20260811k"', page.text)
         self.assertNotIn("tesseract.min.js", page.text)
 
         for asset in (

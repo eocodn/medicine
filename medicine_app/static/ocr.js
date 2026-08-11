@@ -2,6 +2,8 @@
   "use strict";
 
   const SCHEMA_VERSION = 1;
+  const PRIVACY_COPY = "브라우저 안에서 사진을 인식할 수 있어요. 사진은 서버로 전송되지 않아요.";
+  const UNSUPPORTED_COPY = "이 기기에서는 사진 인식을 사용할 수 없어요.";
   const STATES = new Set([
     "accepted", "scanner_ready", "scanning", "recognizing",
     "review_required", "cancelled", "failed", "expired",
@@ -42,7 +44,7 @@
       nativeBridge.postMessage(JSON.stringify(message));
       return true;
     } catch (error) {
-      notify("failed", { message: "브라우저 OCR 요청을 보낼 수 없어요." });
+      notify("failed", { message: "사진 인식 기능을 시작하지 못했어요. 다시 시도해주세요." });
       return false;
     }
   }
@@ -163,11 +165,11 @@
 
   function start() {
     if (!bridge()) {
-      notify("unsupported", { message: "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요." });
+      notify("unsupported", { message: UNSUPPORTED_COPY });
       return false;
     }
     if (state.active) {
-      notify("failed", { message: "진행 중인 스캔을 먼저 취소해주세요." });
+      notify("failed", { message: "사진 인식이 진행 중이에요. 먼저 취소해주세요." });
       return false;
     }
     const operationId = (global.crypto && typeof global.crypto.randomUUID === "function")
@@ -194,7 +196,7 @@
     const operationId = state.active.operationId;
     clearReviewMemory();
     if (!post("cancel_scan", operationId)) return false;
-    notify("scanning", { message: "스캔을 취소하는 중…" });
+    notify("scanning");
     return true;
   }
 
@@ -225,28 +227,27 @@
     const button = global.document.querySelector("#ocr-scan-button");
     const status = global.document.querySelector("#ocr-status");
     if (!button || !status) return;
-    const messages = {
-      accepted: "처방전 스캔을 시작했어요.", scanner_ready: "카메라를 준비했어요.", scanning: "처방전을 촬영하는 중…",
-      recognizing: "처방전 내용을 기기에서 인식하는 중…", review_required: "제품을 선택하고 처방 정보를 확인해주세요.",
-      cancelled: "스캔을 취소했어요.", failed: detail?.message || "스캔에 실패했어요. 다시 시도해주세요.", expired: "스캔 시간이 만료됐어요. 다시 시도해주세요.",
-    };
-    const progress = Number.isFinite(detail?.progress) ? ` (${Math.round(detail.progress)}%)` : "";
-    status.textContent = `${messages[nextState] || detail?.message || status.textContent}${progress}`;
     if (nextState === "capabilities") {
       button.disabled = false;
       button.textContent = "처방전 사진으로 추가";
-      status.textContent = state.capabilities?.provider === "direct-onnx-wasm-cpu"
-        ? "브라우저 안에서 사진을 인식할 수 있어요. 사진은 서버로 전송되지 않아요."
-        : "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요.";
+      status.textContent = PRIVACY_COPY;
     } else if (nextState === "unsupported") {
       button.disabled = true;
-      status.textContent = detail?.message || "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요.";
+      button.textContent = "처방전 사진으로 추가";
+      status.textContent = detail?.message || UNSUPPORTED_COPY;
     } else if (["accepted", "scanner_ready", "scanning", "recognizing", "review_required"].includes(nextState)) {
       button.disabled = false;
       button.textContent = "스캔 취소";
+      status.textContent = PRIVACY_COPY;
     } else if (["cancelled", "failed", "expired", "finished"].includes(nextState)) {
       button.disabled = false;
       button.textContent = "처방전 사진으로 추가";
+      status.textContent = PRIVACY_COPY;
+      if (["failed", "expired"].includes(nextState) && typeof global.toast === "function") {
+        global.toast(detail?.message || (nextState === "expired"
+          ? "사진 인식 시간이 오래 걸렸어요. 다시 시도해주세요."
+          : "사진을 인식하지 못했어요. 다른 사진으로 다시 시도해주세요."));
+      }
     }
   }
 
@@ -287,7 +288,7 @@
     global.addEventListener("message", (event) => acceptEvent(event.data));
     global.onMedicineOcrEvent = acceptEvent;
     if (!bridge()) {
-      notify("unsupported", { message: "이 브라우저에서는 기기 내 OCR을 사용할 수 없어요." });
+      notify("unsupported", { message: UNSUPPORTED_COPY });
       return;
     }
     requestCapabilities();
