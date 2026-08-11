@@ -105,6 +105,9 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('check.result === "not_applicable"', prescription_script.text)
         self.assertIn("check.coverage_only", prescription_script.text)
         self.assertIn("DUR 기준 미초과", prescription_script.text)
+        self.assertIn("확인된 DUR 경고가 없어 바로 저장합니다", prescription_script.text)
+        app_script = self.client.get("/static/app.js")
+        self.assertIn("if (reviewRequired) return", app_script.text)
         self.assertIn("하루 복용 횟수와 입력한 복용 시간 개수가 같아야 해요", prescription_script.text)
         self.assertIn("<details", prescription_script.text)
         native_api = self.client.get("/static/native-api.js")
@@ -280,10 +283,20 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(search.status_code, 200)
         self.assertEqual(search.json()[0]["product_code"], "P-B")
 
-        self.client.post(
+        current_warning = self.client.post(
             f"/api/people/{person['id']}/medications",
             json={"product_code": "P-A", "schedule_times": ["08:00"]},
         )
+        self.assertEqual(current_warning.status_code, 409)
+        current_added = self.client.post(
+            f"/api/people/{person['id']}/medications",
+            json={
+                "product_code": "P-A", "schedule_times": ["08:00"],
+                "acknowledge_warnings": True,
+                "warning_token": current_warning.json()["warning_token"],
+            },
+        )
+        self.assertEqual(current_added.status_code, 201)
         preview = self.client.post(
             f"/api/people/{person['id']}/medications/preview",
             json={"product_code": "P-B"},

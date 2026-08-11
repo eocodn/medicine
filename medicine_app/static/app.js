@@ -453,9 +453,10 @@ async function confirmEditMedication() {
   const draft = prescriptionPayloadFromForm();
   const draftKey = JSON.stringify(draft);
   if (state.reviewedDraftKey !== draftKey) {
-    try { await reviewPrescriptionDraft(state.pendingProduct.product_ref, draft, "confirm-edit-med"); }
-    catch (error) { toast(error.message); }
-    return;
+    let reviewRequired;
+    try { reviewRequired = await reviewPrescriptionDraft(state.pendingProduct.product_ref, draft, "confirm-edit-med"); }
+    catch (error) { toast(error.message); return; }
+    if (reviewRequired) return;
   }
   try {
     await api(`/api/medications/${medication.id}`, {
@@ -492,9 +493,10 @@ async function confirmAddMedication() {
         MedicineOcr.setReviewToken(reviewed.ocr_review_token);
       } catch (error) { toast(error.message); return; }
     }
-    try { await reviewPrescriptionDraft(state.pendingProduct.product_ref, draft, "confirm-add-med"); }
-    catch (error) { toast(error.message); }
-    return;
+    let reviewRequired;
+    try { reviewRequired = await reviewPrescriptionDraft(state.pendingProduct.product_ref, draft, "confirm-add-med"); }
+    catch (error) { toast(error.message); return; }
+    if (reviewRequired) return;
   }
   const payload = {
     product_ref: state.pendingProduct.product_ref,

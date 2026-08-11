@@ -16,7 +16,7 @@ from .ingredient_safety import (
 from .safety import age_years, collect_qualitative_risks, evaluate_quantitative
 
 
-EVALUATOR_VERSION = "3"
+EVALUATOR_VERSION = "4"
 
 
 def _coverage_only(reason: str, *, scope: str = "coverage") -> dict[str, Any]:
@@ -178,12 +178,16 @@ def assess_medication(
                     "authoritative ingredient mapping is unavailable", scope="ingredient"
                 )
 
-        if age_years(person["birth_date"], as_of) < 19 and quantitative["dose"].get("result") == "within":
+        pediatric = age_years(person["birth_date"], as_of) < 19
+        if pediatric and quantitative["dose"].get("result") in {"within", "not_applicable"}:
             quantitative["dose"] = {
                 "result": "not_evaluable",
                 "reason": "adult dose-caution threshold is not a pediatric dose criterion",
-                "source_scope": "product",
+                "source_scope": "profile",
+                "pediatric_review": True,
             }
+        elif pediatric:
+            quantitative["dose"]["pediatric_review"] = True
         relevant_profile_categories = _profile_rule_categories(dur_con, product, person)
 
         if dataset.get("status") != "verified":
@@ -211,6 +215,8 @@ def assess_medication(
     requires_review = (
         any(risk.get("severity") in {"danger", "warning"} for risk in risks)
         or any(quantitative[name].get("result") == "exceeded" for name in ("duration", "dose"))
+        or bool(relevant_profile_categories)
+        or pediatric
         or critical_coverage_gap
     )
     return {

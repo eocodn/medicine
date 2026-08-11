@@ -74,11 +74,12 @@ async function reviewPrescriptionDraft(productRef, draft, buttonId) {
   state.reviewedDraftKey = JSON.stringify(draft);
   state.warningToken = preview.warning_token || null;
   $("#quantitative-warning").innerHTML = `
-    <div class="coverage-note ${reviewRequired ? "limited" : "matched"}"><strong>입력한 복용 정보를 확인해주세요</strong><br>${reviewRequired ? "확인된 주의사항이나 자동 확인이 제한된 항목이 있어요. 내용을 확인한 뒤에도 저장할 수 있습니다." : "아래 확인 결과를 본 뒤 같은 내용으로 한 번 더 저장해주세요."}</div>
+    <div class="coverage-note ${reviewRequired ? "limited" : "matched"}"><strong>입력한 복용 정보를 확인해주세요</strong><br>${reviewRequired ? "확인된 주의사항이나 자동 확인이 제한된 항목이 있어요. 내용을 확인한 뒤에도 저장할 수 있습니다." : "확인된 DUR 경고가 없어 바로 저장합니다."}</div>
     ${quantitativeCheckHtml("투여기간", checks.duration)}
     ${quantitativeCheckHtml("1일 용량", checks.dose)}`;
   const button = $(`#${buttonId}`);
-  if (button) button.textContent = reviewRequired ? "경고를 확인했고 계속 저장" : "판정 결과를 확인했고 저장";
+  if (button) button.textContent = reviewRequired ? "경고를 확인했고 계속 저장" : "저장 중...";
+  return reviewRequired;
 }
 
 function handleConfirmationRequired(error, buttonId) {

@@ -217,6 +217,29 @@ class SafetyCoverageV2Test(unittest.TestCase):
 
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "not_applicable")
         self.assertEqual(preview["quantitative_checks"]["dose"]["result"], "not_applicable")
+        self.assertIsNone(preview["warning_token"])
+
+    def test_child_requires_review_even_without_a_quantitative_dur_rule(self) -> None:
+        child = self.app.create_person("소아", "2015-01-01", "female", "not_pregnant")
+        draft = {
+            "product_ref": "MFDS-I", "prescription_days": 7,
+            "dose_amount": 1, "dose_unit": "캡슐", "frequency_per_day": 1,
+        }
+
+        preview = self.app.preview_medication(child["id"], draft)
+
+        self.assertTrue(preview["warning_token"])
+        self.assertEqual(preview["quantitative_checks"]["dose"]["result"], "not_evaluable")
+        self.assertIn("pediatric", preview["quantitative_checks"]["dose"]["reason"])
+        with self.assertRaises(ConfirmationRequired) as blocked:
+            self.app.add_medication(child["id"], **draft, request_id="child-review-required")
+        self.assertEqual(self.app.list_medications(child["id"]), [])
+        medication = self.app.add_medication(
+            child["id"], **draft, request_id="child-review-required",
+            acknowledge_warnings=True,
+            warning_token=blocked.exception.assessment["warning_token"],
+        )
+        self.assertTrue(medication["assessment"]["acknowledged"])
 
     def test_unmapped_ingredient_keeps_quantitative_coverage_explicit(self) -> None:
         preview = self.app.preview_medication(
@@ -253,8 +276,10 @@ class SafetyCoverageV2Test(unittest.TestCase):
 
         self.assertNotIn("pregnancy_contraindication", unrelated_categories)
         self.assertNotIn("lactation_caution", unrelated_categories)
+        self.assertIsNone(unrelated["warning_token"])
         self.assertNotIn("pregnancy_contraindication", related_categories)
         self.assertIn("lactation_caution", related_categories)
+        self.assertTrue(related["warning_token"])
 
     def test_conditional_ingredient_duration_is_not_automatically_compared(self) -> None:
         con = sqlite3.connect(self.dur_db)

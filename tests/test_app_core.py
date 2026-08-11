@@ -211,7 +211,11 @@ class MedicationAppTest(unittest.TestCase):
 
     def test_preview_combines_current_medications_age_and_pregnancy(self) -> None:
         person = self.app.create_person("Teen", "2010-01-10", "female", "pregnant")
-        self.app.add_medication(person["id"], product_code="P-A")
+        current_preview = self.app.preview_medication(person["id"], "P-A")
+        self.app.add_medication(
+            person["id"], product_code="P-A", acknowledge_warnings=True,
+            warning_token=current_preview["warning_token"],
+        )
 
         preview = self.app.preview_medication(person["id"], "P-B", as_of=date(2026, 8, 9))
         risk_types = {risk["type"] for risk in preview["risks"]}

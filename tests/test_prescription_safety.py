@@ -216,6 +216,17 @@ class PrescriptionSafetyTest(unittest.TestCase):
         self.assertEqual(self._dimension(preview, "duration")["result"], "within")
         self.assertEqual(self._dimension(preview, "dose")["result"], "exceeded")
 
+    def test_rules_within_threshold_do_not_require_a_second_registration_click(self) -> None:
+        draft = self._draft(prescription_days=7, dose_amount=5)
+
+        preview = self.app.preview_medication(self.person["id"], draft)
+        medication = self.app.add_medication(
+            self.person["id"], **draft, request_id="within-threshold-one-click"
+        )
+
+        self.assertIsNone(preview["warning_token"])
+        self.assertFalse(medication["assessment"]["acknowledged"])
+
     def test_countable_dose_uses_product_ingredient_content(self) -> None:
         preview = self.app.preview_medication(
             self.person["id"],
