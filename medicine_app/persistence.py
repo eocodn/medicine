@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS people (
     birth_date TEXT NOT NULL,
     sex TEXT NOT NULL,
     pregnancy_status TEXT NOT NULL,
+    lactation_status TEXT NOT NULL DEFAULT 'unknown',
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -72,6 +73,10 @@ MEDICATION_COLUMNS = {
     # TABLE. Existing rows are backfilled below and an insert trigger supplies
     # the timestamp for legacy databases.
     "updated_at": "TEXT",
+}
+
+PERSON_COLUMNS = {
+    "lactation_status": "TEXT NOT NULL DEFAULT 'unknown'",
 }
 
 DOSE_LOG_COLUMNS = {
@@ -162,6 +167,7 @@ def ensure_personal_schema(con: sqlite3.Connection) -> None:
         );
         """
     )
+    _add_missing_columns(con, "people", PERSON_COLUMNS)
     _add_missing_columns(con, "medications", MEDICATION_COLUMNS)
     _add_missing_columns(con, "dose_logs", DOSE_LOG_COLUMNS)
     _add_missing_columns(con, "dose_instances", DOSE_INSTANCE_COLUMNS)
@@ -176,6 +182,13 @@ def ensure_personal_schema(con: sqlite3.Connection) -> None:
         SET updated_at=COALESCE(updated_at, created_at, CURRENT_TIMESTAMP),
             revision=COALESCE(revision, 1)
         WHERE updated_at IS NULL OR revision IS NULL
+        """
+    )
+    con.execute(
+        """
+        UPDATE people
+        SET pregnancy_status='not_applicable', lactation_status='not_applicable'
+        WHERE sex='male'
         """
     )
     con.execute(
@@ -242,16 +255,10 @@ def ensure_personal_schema(con: sqlite3.Connection) -> None:
             UPDATE medications SET updated_at=CURRENT_TIMESTAMP WHERE id=NEW.id;
         END;
 
-        -- Revision rows are the audit trail and must never be rewritten or
-        -- removed. Medication deletion is consequently restricted by the FK.
+        -- Revision rows are immutable during normal medication operations.
+        -- Whole-profile privacy erasure is the sole explicit deletion path.
         CREATE TRIGGER IF NOT EXISTS trg_medication_revisions_append_only_update
         BEFORE UPDATE ON medication_revisions
-        BEGIN
-            SELECT RAISE(ABORT, 'medication_revisions is append-only');
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS trg_medication_revisions_append_only_delete
-        BEFORE DELETE ON medication_revisions
         BEGIN
             SELECT RAISE(ABORT, 'medication_revisions is append-only');
         END;
@@ -273,3 +280,4 @@ def ensure_personal_schema(con: sqlite3.Connection) -> None:
         END;
         """
     )
+    con.execute("DROP TRIGGER IF EXISTS trg_medication_revisions_append_only_delete")

@@ -11,7 +11,10 @@
     if (!(envelope.status >= 200 && envelope.status < 300)) {
       const body = envelope.body || null;
       const message = body?.detail || `요청 실패 (${envelope.status})`;
-      const error = new Error(typeof message === "string" ? message : "요청을 처리하지 못했어요");
+      const displayMessage = typeof window.friendlyErrorMessage === "function"
+        ? window.friendlyErrorMessage(message)
+        : message;
+      const error = new Error(typeof displayMessage === "string" ? displayMessage : "요청을 처리하지 못했어요");
       error.status = envelope.status;
       error.body = body;
       throw error;

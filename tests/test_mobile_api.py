@@ -98,6 +98,33 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(history[-1]["action"], "create")
 
+    def test_person_profile_update_and_delete_routes(self) -> None:
+        status, person = self.request("POST", "/api/people", {
+            "name": "프로필",
+            "birth_date": "1990-01-01",
+            "sex": "female",
+            "pregnancy_status": "not_pregnant",
+            "lactation_status": "unknown",
+        })
+        self.assertEqual(status, 201)
+
+        status, updated = self.request("PATCH", f"/api/people/{person['id']}", {
+            "name": "프로필",
+            "birth_date": "1990-01-01",
+            "sex": "female",
+            "pregnancy_status": "not_pregnant",
+            "lactation_status": "breastfeeding",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["lactation_status"], "breastfeeding")
+
+        status, deleted = self.request("DELETE", f"/api/people/{person['id']}")
+        self.assertEqual(status, 200)
+        self.assertEqual(deleted, {"id": person["id"], "deleted": True})
+        status, people = self.request("GET", "/api/people")
+        self.assertEqual(status, 200)
+        self.assertEqual(people, [])
+
 
 if __name__ == "__main__":
     unittest.main()

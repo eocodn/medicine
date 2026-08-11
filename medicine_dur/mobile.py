@@ -88,9 +88,11 @@ def build_mobile_database(
                 ON product_dur(product_code,category,paired_product_code);
 
             CREATE TABLE product_catalog AS
-            SELECT product_code,ingredient_code,ingredient_name
+            SELECT product_code,product_name,ingredient_code,ingredient_name
             FROM dur.product_catalog;
             CREATE UNIQUE INDEX idx_product_catalog_code ON product_catalog(product_code);
+            CREATE INDEX idx_product_catalog_ingredient
+                ON product_catalog(ingredient_name COLLATE NOCASE);
 
             CREATE TABLE ingredient_dur AS
             SELECT dataset_key,source_row,category,ingredient_name,ingredient_name_ko,

@@ -156,6 +156,23 @@ def collect_ingredient_risks(
                     title=f"성분 임부금기 · {row.get('rule_value') or '등급 미표기'}",
                 ))
 
+    if person.get("lactation_status") == "breastfeeding":
+        for row in _rows(con, "lactation_caution"):
+            if normalize_ingredient_name(row.get("ingredient_name")) not in new_ingredients:
+                continue
+            applicability = _form_applicable(row.get("dosage_form"), product.get("dosage_form"))
+            if applicability is None:
+                not_evaluable.append(_not_evaluable(
+                    row,
+                    "lactation_caution",
+                    "제품 제형 정보가 없어 성분 수유부주의의 제형 적용 여부를 판정할 수 없습니다.",
+                ))
+                continue
+            if applicability is True:
+                risks.append(_risk(
+                    row, type_="lactation_caution", severity="warning", title="성분 수유부주의 대상",
+                ))
+
     if current_age >= 65:
         for row in _rows(con, "elderly_caution"):
             if normalize_ingredient_name(row.get("ingredient_name")) not in new_ingredients:

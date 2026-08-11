@@ -229,12 +229,14 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .add-button { flex: 0 0 auto; min-width: 58px; min-height: 40px; border: 0; border-radius: 13px; background: var(--brand); color: white; font-weight: 800; }
 
 .person-card { padding: 17px; }
+.person-select { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
 .person-row { align-items: start; }
 .person-avatar { width: 44px; height: 44px; border-radius: 15px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); font-weight: 900; font-size: 17px; }
 .person-copy { flex: 1; }
 .person-copy h3 { margin: 2px 0 5px; }
 .person-copy p { margin: 0; color: var(--muted); font-size: 13px; }
 .selected-badge { color: var(--brand); background: var(--brand-soft); padding: 5px 8px; border-radius: 99px; font-size: 11px; font-weight: 800; }
+.person-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 12px; }
 
 .settings-card { padding: 20px; margin-bottom: 12px; }
 .settings-card h2 { margin-bottom: 8px; font-size: 19px; }
@@ -365,6 +367,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .coverage-note { margin-bottom: 10px; padding: 11px 13px; border-radius: 14px; font-size: 12px; line-height: 1.5; }
 .coverage-note.matched { background: var(--brand-soft); color: var(--brand); }
 .coverage-note.limited { background: var(--warning-soft); color: #69440e; }
+.coverage-details { margin: 10px 0 14px; padding: 11px 13px; border-radius: 14px; background: var(--surface-soft); color: var(--muted); font-size: 12px; }
+.coverage-details summary { cursor: pointer; color: var(--text); font-weight: 800; }
+.coverage-details p { margin: 8px 0 0; line-height: 1.5; }
 .prescription-form { display: grid; gap: 13px; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--line); }
 .form-grid.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .prescription-form label { display: grid; gap: 7px; font-size: 13px; font-weight: 800; color: #536059; }

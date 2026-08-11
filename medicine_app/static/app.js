@@ -8,6 +8,7 @@ const state = {
   warningToken: null,
   reviewedDraftKey: null,
   editingMedicationId: null,
+  editingPersonId: null,
   searchTimer: null,
 };
 const titles = {
@@ -45,7 +46,7 @@ async function api(path, options = {}) {
       body = await response.json();
       message = body.detail || message;
     } catch (_) {}
-    const error = new Error(typeof message === "string" ? message : "요청을 처리하지 못했어요");
+    const error = new Error(typeof message === "string" ? friendlyErrorMessage(message) : "요청을 처리하지 못했어요");
     error.status = response.status;
     error.body = body;
     throw error;
@@ -55,7 +56,7 @@ async function api(path, options = {}) {
 
 function toast(message) {
   const node = $("#toast");
-  node.textContent = message;
+  node.textContent = friendlyErrorMessage(message);
   node.classList.remove("hidden");
   clearTimeout(node._timer);
   node._timer = setTimeout(() => node.classList.add("hidden"), 2200);
@@ -82,14 +83,6 @@ function handleOcrReviewRequired(hints, productQueries, operationId, issues) {
   showScreen("search");
   const query = MedicineOcr.renderReview(productQueries, hints?.product_name, issues);
   if (query) runDrugSearch();
-}
-function pregnancyLabel(value) {
-  return {
-    pregnant: "임신 중",
-    not_pregnant: "임신 중 아님",
-    not_applicable: "해당 없음",
-    unknown: "임신 여부 미입력",
-  }[value] || value;
 }
 function permitStatusLabel(value, raw) {
   return {
@@ -158,11 +151,6 @@ function renderAll() {
   renderPeople();
 }
 
-function renderProfileShortcut() {
-  const person = currentPerson();
-  $("#profile-shortcut").textContent = person ? person.name.slice(0, 1) : "+";
-}
-
 function renderHome() {
   const root = $("#home-content");
   const person = currentPerson();
@@ -171,7 +159,7 @@ function renderHome() {
       <div class="hero-card">
         <p class="eyebrow">START HERE</p>
         <h2>누구의 약을<br>관리할까요?</h2>
-        <p class="muted">프로필을 먼저 만들면 나이·임신 여부와 현재 복용약을 함께 확인할 수 있어요.</p>
+        <p class="muted">프로필을 먼저 만들면 나이와 건강 관련 정보, 현재 복용약을 함께 확인할 수 있어요.</p>
         <button class="primary-button wide" id="home-add-person" type="button">관리 대상 추가</button>
       </div>`;
     $("#home-add-person").addEventListener("click", () => openSheet("#person-sheet"));
@@ -186,7 +174,7 @@ function renderHome() {
     <div class="hero-card">
       <p class="eyebrow">${escapeHtml(new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" }))}</p>
       <h2>${escapeHtml(person.name)}님의<br>복약을 챙겨볼게요.</h2>
-      <p class="muted">현재 복용약 ${meds.length}개 · 만 ${person.age}세 · ${escapeHtml(pregnancyLabel(person.pregnancy_status))}</p>
+      <p class="muted">현재 복용약 ${meds.length}개 · ${escapeHtml(profileMeta(person))}</p>
       <div class="profile-line"><span class="profile-dot"></span><span class="small">개인 기록은 로컬 DB에 저장 중</span></div>
     </div>
     <div class="card today-card">
@@ -231,7 +219,6 @@ function renderMedications() {
         ${med.administration_route ? `<span class="chip">${escapeHtml(routeLabel(med.administration_route))}</span>` : ""}
         ${med.prescription_days ? `<span class="chip">${escapeHtml(med.prescription_days)}일분</span>` : ""}
         ${(med.schedules || []).map((s) => `<span class="chip">${escapeHtml(s.time_of_day)}</span>`).join("")}
-        ${med.catalog_item_seq && !med.product_code ? `<span class="chip caution-chip">전체 카탈로그 · DUR 매칭 없음</span>` : ""}
         ${med.source === "manual" ? `<span class="chip caution-chip">직접 입력 · DUR 제한</span>` : ""}
       </div>
       <div class="med-actions">
@@ -251,28 +238,6 @@ function renderMedications() {
   $$('[data-taken]', medsRoot).forEach((button) => button.addEventListener("click", () => logDose(button.dataset.taken, "taken")));
   $$('[data-edit]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.edit)));
   $$('[data-stop]', medsRoot).forEach((button) => button.addEventListener("click", () => stopMedication(button.dataset.stop)));
-}
-
-function renderPeople() {
-  const root = $("#people-list");
-  root.innerHTML = state.people.length ? state.people.map((person) => `
-    <button class="card person-card" data-person="${person.id}" type="button">
-      <div class="person-row">
-        <span class="person-avatar">${escapeHtml(person.name.slice(0, 1))}</span>
-        <div class="person-copy"><h3>${escapeHtml(person.name)}</h3><p>만 ${person.age}세 · ${escapeHtml(pregnancyLabel(person.pregnancy_status))}</p></div>
-        ${person.id === state.currentPersonId ? `<span class="selected-badge">관리 중</span>` : ""}
-      </div>
-    </button>`).join("") : `<div class="empty-state"><strong>프로필이 없어요</strong>여러 사람의 복약을 한 기기에서 따로 관리할 수 있어요.</div>`;
-  $$('[data-person]', root).forEach((button) => button.addEventListener("click", () => selectPerson(button.dataset.person)));
-}
-
-async function selectPerson(personId) {
-  state.currentPersonId = personId;
-  localStorage.setItem("medicine.currentPersonId", personId);
-  await loadDashboard();
-  renderAll();
-  showScreen("home");
-  toast(`${currentPerson().name}님으로 전환했어요`);
 }
 
 async function logDose(medicationId, status) {
@@ -331,7 +296,7 @@ async function runDrugSearch() {
           <div class="result-copy">
             <div class="result-title-line"><strong>${escapeHtml(item.product_name)}</strong><span class="permit-badge ${escapeHtml(item.permit_status)}">${escapeHtml(permitStatusLabel(item.permit_status, item.permit_status_name))}</span></div>
             <span>${escapeHtml(item.ingredient_name || "성분 정보 없음")}${item.manufacturer ? ` · ${escapeHtml(item.manufacturer)}` : ""}</span>
-            <span>${item.dur_match ? "DUR 연결됨" : "DUR 제품코드 매칭 없음"}${item.cancel_date ? ` · 상태일 ${escapeHtml(item.cancel_date)}` : ""}</span>
+            <span>${item.dur_match ? "DUR 자동 확인 가능" : "DUR 자동 확인 일부 제한"}${item.cancel_date ? ` · 상태일 ${escapeHtml(item.cancel_date)}` : ""}</span>
           </div>
           <button class="add-button" data-add-ref="${escapeHtml(item.product_ref)}" type="button">추가</button>
         </div>
@@ -373,14 +338,13 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
       <button class="icon-button" data-close-sheet type="button">×</button>
     </div>
     <div class="risk-summary">
-      <h2>${medication ? "처방 정보를 수정합니다" : dangerous ? "확인이 필요한 위험이 있어요" : risks.length ? "주의 정보를 확인하세요" : preview.coverage?.status === "complete" ? "현재 확인된 DUR 위험 정보가 없어요" : "DUR 자동 확인 범위가 제한돼요"}</h2>
+      <h2>${medication ? "처방 정보를 수정합니다" : dangerous ? "확인이 필요한 위험이 있어요" : risks.length ? "주의 정보를 확인하세요" : preview.coverage?.status === "complete" ? "현재 확인된 DUR 위험이 없어요" : "현재 확인된 위험은 없지만 일부 항목은 확인이 필요해요"}</h2>
       <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필과 현재 복용약 ${preview.current_medication_count}개를 기준으로 확인했습니다.</p>
     </div>
     ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 허가 상태와 실제 보유·유통 여부는 별개일 수 있어요.</div>` : ""}
-    ${preview.coverage ? `<div class="coverage-note ${preview.coverage.status === "complete" ? "matched" : "limited"}">${escapeHtml(preview.coverage.message)}</div>` : ""}
-    ${coverageLimitHtml(preview.coverage)}
     <div>${risks.length ? risks.map((risk) => `
-      <div class="risk-card ${escapeHtml(risk.severity)}"><strong>${escapeHtml(risk.title)}</strong><p>${escapeHtml(risk.details || "상세 설명 없음")}</p></div>`).join("") : `<div class="risk-card info"><strong>DUR 결과 없음</strong><p>현재 로컬 DUR 데이터에서 일치하는 금기·주의 신호가 발견되지 않았습니다. 이것이 모든 상호작용의 부재를 뜻하지는 않습니다.</p></div>`}</div>
+      <div class="risk-card ${escapeHtml(risk.severity)}"><strong>${escapeHtml(risk.title)}</strong><p>${escapeHtml(risk.details || "상세 설명 없음")}</p></div>`).join("") : `<div class="risk-card info"><strong>현재 확인된 DUR 위험 없음</strong><p>확인 가능한 DUR 범위에서 일치하는 금기·주의 신호가 발견되지 않았어요.</p></div>`}</div>
+    ${coverageLimitHtml(preview.coverage)}
     <div class="prescription-form">
       <div class="form-grid two">
         <label>1회 복용량<input id="pending-dose-amount" type="number" min="0" step="0.1" placeholder="1"></label>
@@ -552,31 +516,10 @@ async function confirmAddMedication() {
   }
 }
 
-async function submitPerson(event) {
-  event.preventDefault();
-  const formElement = event.currentTarget;
-  const form = new FormData(formElement);
-  const payload = Object.fromEntries(form.entries());
-  try {
-    const person = await api("/api/people", { method: "POST", body: JSON.stringify(payload) });
-    state.currentPersonId = person.id;
-    localStorage.setItem("medicine.currentPersonId", person.id);
-    formElement.reset();
-    closeSheets();
-    await loadPeople();
-    showScreen("home");
-    toast(`${person.name}님 프로필을 만들었어요`);
-  } catch (error) { toast(error.message); }
-}
-
 function bindEvents() {
-  const birthInput = $('#person-form input[name="birth_date"]');
-  birthInput.max = todayInKorea();
   $$("[data-nav]").forEach((button) => button.addEventListener("click", () => showScreen(button.dataset.nav)));
   $$("[data-go]").forEach((button) => button.addEventListener("click", () => showScreen(button.dataset.go)));
-  $("#profile-shortcut").addEventListener("click", () => state.people.length ? showScreen("people") : openSheet("#person-sheet"));
-  $("#open-person-form").addEventListener("click", () => openSheet("#person-sheet"));
-  $("#person-form").addEventListener("submit", submitPerson);
+  bindPeopleEvents();
   $("#sheet-backdrop").addEventListener("click", closeSheets);
   $$('[data-close-sheet]').forEach((button) => button.addEventListener("click", closeSheets));
   $("#drug-query").addEventListener("input", () => {

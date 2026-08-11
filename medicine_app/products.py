@@ -55,6 +55,7 @@ class ProductRepository:
         mapping = resolve_safety_mapping(
             dur_con,
             edi_value=row["edi_code"],
+            catalog_product_name=row["product_name"],
             catalog_ingredient=row["ingredient_name"],
             known_ingredients=known_ingredients,
         )
@@ -65,6 +66,7 @@ class ProductRepository:
             "edi_codes": mapping["edi_codes"],
             "matched_product_codes": mapping["matched_product_codes"],
             "product_mapping_status": mapping["product_status"],
+            "product_mapping_method": mapping["product_mapping_method"],
             "product_name": row["product_name"],
             "ingredient_code": mapping["ingredient_code"],
             "ingredient_name": row["ingredient_name"],

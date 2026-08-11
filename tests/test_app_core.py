@@ -169,6 +169,44 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(len(self.app.list_medications(alice["id"])), 1)
         self.assertEqual(self.app.list_medications(bob["id"]), [])
 
+    def test_profile_reproductive_status_is_normalized_and_editable(self) -> None:
+        male = self.app.create_person(
+            "Male", "1990-01-01", "male", "pregnant", lactation_status="breastfeeding"
+        )
+        self.assertEqual(male["pregnancy_status"], "not_applicable")
+        self.assertEqual(male["lactation_status"], "not_applicable")
+
+        female = self.app.create_person(
+            "Female", "1990-01-01", "female", "not_pregnant", lactation_status="unknown"
+        )
+        updated = self.app.update_person(
+            female["id"], "Female", "1990-01-01", "female", "not_pregnant", "breastfeeding"
+        )
+        self.assertEqual(updated["lactation_status"], "breastfeeding")
+
+    def test_delete_person_erases_all_dependent_personal_records(self) -> None:
+        person = self.app.create_person("Delete", "1990-01-01", "male")
+        medication = self.app.add_medication(
+            person["id"], product_code="P-A", schedule_times=["08:00"], request_id="delete-person-med"
+        )
+        self.app.get_daily_plan(person["id"], "2026-08-11")
+        self.app.record_dose(medication["id"], "taken", "2026-08-11T08:05:00+09:00")
+
+        deleted = self.app.delete_person(person["id"])
+
+        self.assertEqual(deleted, {"id": person["id"], "deleted": True})
+        with self.assertRaises(KeyError):
+            self.app.get_person(person["id"])
+        con = sqlite3.connect(self.personal_db)
+        try:
+            for table in (
+                "people", "medications", "medication_schedules", "dose_instances",
+                "dose_logs", "medication_revisions", "medication_requests",
+            ):
+                self.assertEqual(con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0, table)
+        finally:
+            con.close()
+
     def test_preview_combines_current_medications_age_and_pregnancy(self) -> None:
         person = self.app.create_person("Teen", "2010-01-10", "female", "pregnant")
         self.app.add_medication(person["id"], product_code="P-A")

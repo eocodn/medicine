@@ -28,6 +28,24 @@ class MobileDatabaseTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_compact_snapshot_preserves_dataset_identity_and_runtime_behavior(self) -> None:
+        dur = sqlite3.connect(self.dur_db)
+        dur.execute(
+            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
+            ("P-NAME", "이름연결약_(1정/1정)", "ING-NAME", "Zolpidem"),
+        )
+        dur.commit()
+        dur.close()
+        catalog = sqlite3.connect(self.catalog_db)
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ("MFDS-NAME", "이름연결약", "제약", "Zolpidem", "정제", None, "2026-01-01", None, "정상", "active", "fixture", "{}"),
+        )
+        catalog.commit()
+        catalog.close()
+
         result = build_mobile_database(
             self.dur_db,
             self.catalog_db,
@@ -41,9 +59,11 @@ class MobileDatabaseTest(unittest.TestCase):
         try:
             self.assertEqual(dataset_manifest(source)["dataset_id"], dataset_manifest(mobile)["dataset_id"])
             product_columns = {row[1] for row in mobile.execute("PRAGMA table_info(product_dur)")}
+            product_catalog_columns = {row[1] for row in mobile.execute("PRAGMA table_info(product_catalog)")}
             catalog_columns = {row[1] for row in mobile.execute("PRAGMA table_info(products)")}
             self.assertNotIn("ingredient_code", product_columns)
             self.assertNotIn("paired_ingredient_name", product_columns)
+            self.assertIn("product_name", product_catalog_columns)
             self.assertNotIn("raw_json", catalog_columns)
             self.assertEqual(mobile.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         finally:
@@ -63,6 +83,9 @@ class MobileDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(preview["product"]["product_name"], "졸피뎀제품")
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "exceeded")
+        linked = app.get_product("MFDS-NAME")
+        self.assertEqual(linked["product_code"], "P-NAME")
+        self.assertEqual(linked["product_mapping_method"], "normalized_name_ingredient_unique")
 
 
 if __name__ == "__main__":

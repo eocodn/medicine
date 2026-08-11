@@ -103,6 +103,7 @@
       <button class="icon-button" data-close-sheet type="button">×</button>
     </div>
     <form id="person-form" class="form-stack">
+      <input name="notes" type="hidden">
       <label>이름<input name="name" required placeholder="예: 나, 엄마"></label>
       <label>생년월일<input name="birth_date" type="date" min="1000-01-01" required></label>
       <label>성별
@@ -113,7 +114,7 @@
           <option value="other">기타</option>
         </select>
       </label>
-      <label>임신 여부
+      <label data-reproductive-field>임신 여부
         <select name="pregnancy_status">
           <option value="unknown">알 수 없음 / 선택 안 함</option>
           <option value="pregnant">임신 중</option>
@@ -121,7 +122,15 @@
           <option value="not_applicable">해당 없음</option>
         </select>
       </label>
-      <button class="primary-button wide" type="submit">프로필 저장</button>
+      <label data-reproductive-field>수유 여부
+        <select name="lactation_status">
+          <option value="unknown">알 수 없음 / 선택 안 함</option>
+          <option value="breastfeeding">수유 중</option>
+          <option value="not_breastfeeding">수유 중 아님</option>
+          <option value="not_applicable">해당 없음</option>
+        </select>
+      </label>
+      <button id="person-submit" class="primary-button wide" type="submit">프로필 저장</button>
     </form>
   </section>
 
@@ -131,6 +140,7 @@
   <script src="/static/browser-ocr-parser.js" defer></script>
   <script src="/static/browser-ocr.js" defer></script>
   <script src="/static/ocr.js" defer></script>
+  <script src="/static/people.js" defer></script>
   <script src="/static/app.js" defer></script>
 </body>
 </html>

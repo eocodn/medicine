@@ -1,3 +1,25 @@
+function friendlyErrorMessage(message) {
+  const text = String(message || "");
+  const exact = {
+    "frequency_per_day must match the number of schedule_times": "하루 복용 횟수와 입력한 복용 시간 개수가 같아야 해요.",
+    "schedule_times must not contain duplicates": "같은 복용 시간이 두 번 입력되어 있어요.",
+    "schedule time must be HH:MM": "복용 시간은 08:00처럼 시:분 형식으로 입력해주세요.",
+    "dose_amount must be > 0": "1회 복용량은 0보다 큰 값으로 입력해주세요.",
+    "dose_amount must be a finite number": "1회 복용량을 숫자로 입력해주세요.",
+    "frequency_per_day must be a positive integer": "하루 복용 횟수를 숫자로 입력해주세요.",
+    "frequency_per_day must be between 1 and 24": "하루 복용 횟수는 1회에서 24회 사이로 입력해주세요.",
+    "prescription_days must be a positive integer": "처방 일수를 숫자로 입력해주세요.",
+    "prescription_days must be between 1 and 3650": "처방 일수는 1일 이상으로 입력해주세요.",
+    "end_date conflicts with start_date and prescription_days": "복용 종료일이 시작일과 처방 일수에 맞지 않아요.",
+    "end_date must be on or after start_date": "복용 종료일은 시작일보다 빠를 수 없어요.",
+    "DUR product code is not linked": "제품 단위 DUR 기준을 연결하지 못했어요.",
+    "ingredient duration rule is missing": "이 성분에 자동 비교 가능한 투여기간 기준이 없어요.",
+    "ingredient duration rule dosage form cannot be resolved": "제품 제형을 확인하지 못해 투여기간 기준을 비교할 수 없어요.",
+    "prescription duration is missing or invalid": "처방 일수를 입력하면 투여기간 기준을 비교할 수 있어요.",
+  };
+  return exact[text] || text;
+}
+
 function prescriptionPayloadFromForm() {
   const times = $("#pending-times").value.split(",").map((value) => value.trim()).filter(Boolean);
   return {
@@ -21,7 +43,7 @@ function quantitativeCheckHtml(label, check) {
     return `<div class="risk-card warning"><strong>${label} 기준 초과</strong><p>입력값 ${escapeHtml(requested)} · 기준 ${escapeHtml(maximum)}${check.unit ? ` ${escapeHtml(check.unit)}` : ""}</p></div>`;
   }
   if (check.result === "not_evaluable") {
-    return `<div class="risk-card info"><strong>${label} 자동 판정 불가</strong><p>${escapeHtml(check.reason || "기준을 정확히 비교할 수 없습니다.")}</p></div>`;
+    return `<div class="risk-card info"><strong>${label} 자동 판정 불가</strong><p>${escapeHtml(friendlyErrorMessage(check.reason || "기준을 정확히 비교할 수 없습니다."))}</p></div>`;
   }
   return `<div class="risk-card info"><strong>${label} 입력 기준 이내</strong></div>`;
 }
@@ -29,7 +51,13 @@ function quantitativeCheckHtml(label, check) {
 function coverageLimitHtml(coverage) {
   const items = [...new Map((coverage?.not_evaluable_checks || []).map((item) => [`${item.category}:${item.reason}`, item])).values()];
   if (!items.length) return "";
-  return `<div class="coverage-note limited"><strong>자동 판정 불가 / 확인 범위 제한</strong><br>${items.map((item) => escapeHtml(item.reason || item.category || "판정 불가")).join("<br>")}</div>`;
+  const labels = {
+    product_mapping: "제품 단위 DUR 규칙을 연결하지 못했어요.",
+    ingredient_mapping: "성분 단위 DUR 규칙을 정확히 연결하지 못했어요.",
+    pregnancy_contraindication: "임신 여부가 입력되지 않아 임부금기는 확인하지 못했어요.",
+    lactation_caution: "수유 여부가 입력되지 않아 수유부주의는 확인하지 못했어요.",
+  };
+  return `<details class="coverage-details"><summary>자동 확인이 제한된 항목 ${items.length}개</summary><div>${items.map((item) => `<p>${escapeHtml(labels[item.category] || friendlyErrorMessage(item.reason || item.category || "판정 불가"))}</p>`).join("")}</div></details>`;
 }
 
 async function reviewPrescriptionDraft(productRef, draft, buttonId) {
@@ -41,7 +69,7 @@ async function reviewPrescriptionDraft(productRef, draft, buttonId) {
   state.reviewedDraftKey = JSON.stringify(draft);
   state.warningToken = preview.warning_token || null;
   $("#quantitative-warning").innerHTML = `
-    <div class="coverage-note ${reviewRequired ? "limited" : "matched"}"><strong>입력 처방 안전성 검토</strong><br>${reviewRequired ? "DUR 위험·판정 불가·커버리지 제한을 확인한 뒤에도 등록할 수 있습니다." : "아래 판정 결과를 확인한 뒤 같은 내용으로 저장해주세요."}</div>
+    <div class="coverage-note ${reviewRequired ? "limited" : "matched"}"><strong>입력한 복용 정보를 확인해주세요</strong><br>${reviewRequired ? "확인된 주의사항이나 자동 확인이 제한된 항목이 있어요. 내용을 확인한 뒤에도 저장할 수 있습니다." : "아래 확인 결과를 본 뒤 같은 내용으로 한 번 더 저장해주세요."}</div>
     ${quantitativeCheckHtml("투여기간", checks.duration)}
     ${quantitativeCheckHtml("1일 용량", checks.dose)}`;
   const button = $(`#${buttonId}`);
@@ -53,7 +81,7 @@ function handleConfirmationRequired(error, buttonId) {
   state.warningToken = error.body.warning_token;
   const assessment = error.body.assessment || {};
   $("#quantitative-warning").innerHTML = `
-    <div class="coverage-note limited"><strong>DUR 안전성 확인이 필요합니다.</strong><br>금기·주의, 정량 기준 초과 또는 자동 판정 범위 제한을 확인해주세요. 아래 버튼을 다시 누르면 확인 이력과 함께 등록합니다.</div>
+    <div class="coverage-note limited"><strong>저장하기 전에 확인해주세요</strong><br>금기·주의 정보나 입력 기준 초과, 자동 확인이 제한된 항목이 있어요. 내용을 확인한 뒤 아래 버튼을 다시 누르면 저장됩니다.</div>
     ${quantitativeCheckHtml("투여기간", assessment.duration)}
     ${quantitativeCheckHtml("1일 용량", assessment.dose)}`;
   const button = $(`#${buttonId}`);

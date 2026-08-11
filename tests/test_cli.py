@@ -69,6 +69,26 @@ class PrescriptionCliTest(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual([entry["revision"] for entry in history], [1, 2])
 
+    def test_profile_update_lactation_and_delete_flow(self) -> None:
+        status, created = self.run_cli(
+            "person-add", "--name", "관리", "--birth-date", "1990-01-01",
+            "--sex", "female", "--pregnancy-status", "not_pregnant",
+            "--lactation-status", "unknown",
+        )
+        self.assertEqual(status, 0)
+
+        status, updated = self.run_cli(
+            "person-update", "--person", created["id"], "--name", "관리",
+            "--birth-date", "1990-01-01", "--sex", "female",
+            "--pregnancy-status", "not_pregnant", "--lactation-status", "breastfeeding",
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(updated["lactation_status"], "breastfeeding")
+
+        status, deleted = self.run_cli("person-delete", "--person", created["id"])
+        self.assertEqual(status, 0)
+        self.assertTrue(deleted["deleted"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,7 @@ class PersonCreate(BaseModel):
     birth_date: str
     sex: str = "unknown"
     pregnancy_status: str = "unknown"
+    lactation_status: str = "unknown"
     notes: str | None = None
 
 
@@ -169,6 +170,20 @@ def create_web_app(
     def create_person(payload: PersonCreate) -> dict:
         try:
             return service.create_person(**payload.model_dump())
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @app.patch("/api/people/{person_id}")
+    def update_person(person_id: str, payload: PersonCreate) -> dict:
+        try:
+            return service.update_person(person_id, **payload.model_dump())
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @app.delete("/api/people/{person_id}")
+    def delete_person(person_id: str) -> dict:
+        try:
+            return service.delete_person(person_id)
         except Exception as exc:
             raise _translate_error(exc) from exc
 

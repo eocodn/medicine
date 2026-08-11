@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 
 _ANNOTATION_RE = re.compile(r"\(\s*분류번호\s*:[^)]+\)\s*$", re.IGNORECASE)
+_DUR_DOSE_SUFFIX_RE = re.compile(r"_\((?=[^)]*\d)(?=[^)]*/)[^)]*\)\s*$")
 
 
 def normalize_ingredient_name(value: Any) -> str:
@@ -15,6 +16,12 @@ def normalize_ingredient_name(value: Any) -> str:
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"\s*([+/])\s*", r"\1", text)
     return text.strip()
+
+
+def normalize_product_name(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+    text = _DUR_DOSE_SUFFIX_RE.sub("", text)
+    return re.sub(r"[\s_]+", "", text)
 
 
 def split_edi_codes(value: Any) -> list[str]:
@@ -65,6 +72,7 @@ def resolve_safety_mapping(
     con: sqlite3.Connection,
     *,
     edi_value: Any,
+    catalog_product_name: Any,
     catalog_ingredient: Any,
     known_ingredients: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -74,13 +82,33 @@ def resolve_safety_mapping(
         placeholders = ",".join("?" for _ in edi_codes)
         con.row_factory = sqlite3.Row
         product_rows = list(con.execute(
-            f"""SELECT product_code,ingredient_code,ingredient_name
+            f"""SELECT product_code,product_name,ingredient_code,ingredient_name
                 FROM product_catalog WHERE product_code IN ({placeholders})
                 ORDER BY product_code""",
             edi_codes,
         ).fetchall())
+    product_mapping_method = "edi_exact" if product_rows else "none"
+    if not product_rows and not edi_codes and catalog_product_name and catalog_ingredient:
+        normalized_ingredient = normalize_ingredient_name(catalog_ingredient)
+        normalized_name = normalize_product_name(catalog_product_name)
+        candidate_rows = con.execute(
+            """SELECT product_code,product_name,ingredient_code,ingredient_name
+            FROM product_catalog
+            WHERE ingredient_name=? COLLATE NOCASE
+            ORDER BY product_code""",
+            (str(catalog_ingredient).strip(),),
+        ).fetchall()
+        product_rows = [
+            row for row in candidate_rows
+            if normalize_ingredient_name(row["ingredient_name"]) == normalized_ingredient
+            and normalize_product_name(row["product_name"]) == normalized_name
+        ]
+        if product_rows:
+            product_mapping_method = "normalized_name_ingredient_unique"
     matched_product_codes = sorted({str(row["product_code"]) for row in product_rows})
     selected_product_code = matched_product_codes[0] if len(matched_product_codes) == 1 else None
+    if len(matched_product_codes) > 1 and product_mapping_method == "normalized_name_ingredient_unique":
+        product_mapping_method = "normalized_name_ingredient_ambiguous"
 
     canonical_names = [row["ingredient_name"] for row in product_rows if row["ingredient_name"]]
     known_ingredients = known_ingredients if known_ingredients is not None else ingredient_index(con)
@@ -133,6 +161,7 @@ def resolve_safety_mapping(
         "edi_codes": edi_codes,
         "matched_product_codes": matched_product_codes,
         "product_code": selected_product_code,
+        "product_mapping_method": product_mapping_method,
         "product_status": (
             "matched" if selected_product_code else "ambiguous" if len(matched_product_codes) > 1 else "not_matched"
         ),
@@ -149,9 +178,10 @@ def coverage_summary(product: Mapping[str, Any], dataset: Mapping[str, Any], per
     ingredient_status = product.get("ingredient_mapping_status") or "not_evaluable"
     product_status = product.get("product_mapping_status") or "not_matched"
     profile_gaps: list[str] = []
-    if person.get("pregnancy_status") == "unknown":
+    reproductive_applicable = person.get("sex") != "male"
+    if reproductive_applicable and person.get("pregnancy_status") == "unknown":
         profile_gaps.append("pregnancy_contraindication")
-    if person.get("sex") in {"female", "unknown", None}:
+    if reproductive_applicable and person.get("lactation_status", "unknown") == "unknown":
         profile_gaps.append("lactation_caution")
 
     not_evaluable_checks: list[dict[str, Any]] = []
@@ -183,7 +213,7 @@ def coverage_summary(product: Mapping[str, Any], dataset: Mapping[str, Any], per
         reason = (
             "임신 여부가 미확정이라 임부금기 적용 여부를 판정할 수 없습니다."
             if category == "pregnancy_contraindication"
-            else "수유 여부를 프로필에서 관리하지 않아 수유부주의 적용 여부를 판정할 수 없습니다."
+            else "수유 여부가 미입력이라 수유부주의 적용 여부를 판정할 수 없습니다."
         )
         not_evaluable_checks.append({"category": category, "result": "not_evaluable", "reason": reason})
 
@@ -194,9 +224,9 @@ def coverage_summary(product: Mapping[str, Any], dataset: Mapping[str, Any], per
         or bool(profile_gaps)
     )
     if limited:
-        message = "DUR 자동 확인 범위에 제한이 있습니다. 아래 커버리지와 판정 불가 항목을 확인해주세요."
+        message = "일부 항목은 자동으로 확인하지 못했어요."
     else:
-        message = "제품·성분 DUR 데이터와 현재 프로필 범위에서 자동 확인했습니다."
+        message = "현재 프로필과 DUR 데이터 범위에서 확인했어요."
     return {
         "status": "limited" if limited else "complete",
         "message": message,

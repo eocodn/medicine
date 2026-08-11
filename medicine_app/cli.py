@@ -127,7 +127,21 @@ def build_parser() -> argparse.ArgumentParser:
     person_add.add_argument("--birth-date", required=True)
     person_add.add_argument("--sex", default="unknown")
     person_add.add_argument("--pregnancy-status", default="unknown")
+    person_add.add_argument("--lactation-status", default="unknown")
     person_add.add_argument("--json", action="store_true")
+
+    person_update = sub.add_parser("person-update")
+    person_update.add_argument("--person", required=True)
+    person_update.add_argument("--name", required=True)
+    person_update.add_argument("--birth-date", required=True)
+    person_update.add_argument("--sex", required=True)
+    person_update.add_argument("--pregnancy-status", required=True)
+    person_update.add_argument("--lactation-status", required=True)
+    person_update.add_argument("--json", action="store_true")
+
+    person_delete = sub.add_parser("person-delete")
+    person_delete.add_argument("--person", required=True)
+    person_delete.add_argument("--json", action="store_true")
 
     search = sub.add_parser("drug-search")
     search.add_argument("term")
@@ -237,7 +251,16 @@ def _dispatch(args, app: MedicationApp):
     if args.command == "people":
         payload = app.list_people()
     elif args.command == "person-add":
-        payload = app.create_person(args.name, args.birth_date, args.sex, args.pregnancy_status)
+        payload = app.create_person(
+            args.name, args.birth_date, args.sex, args.pregnancy_status, args.lactation_status
+        )
+    elif args.command == "person-update":
+        payload = app.update_person(
+            args.person, args.name, args.birth_date, args.sex,
+            args.pregnancy_status, args.lactation_status,
+        )
+    elif args.command == "person-delete":
+        payload = app.delete_person(args.person)
     elif args.command == "drug-search":
         payload = app.search_products(args.term, args.limit, include_inactive=args.include_inactive)
     elif args.command == "meds":

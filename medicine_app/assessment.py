@@ -46,12 +46,16 @@ def _current_products(app: Any, medications: list[dict]) -> list[dict]:
 def _dedupe_risks(product_risks: list[dict], ingredient_risks: list[dict]) -> list[dict]:
     risks: list[dict] = []
     seen: set[tuple[Any, ...]] = set()
+    product_scopes: set[tuple[Any, ...]] = set()
     for item in product_risks:
         enriched = {**item, "source_scope": item.get("source_scope") or "product"}
         key = (enriched.get("type"), enriched.get("related_medication_id"), enriched.get("title"))
         seen.add(key)
+        product_scopes.add((enriched.get("type"), enriched.get("related_medication_id")))
         risks.append(enriched)
     for item in ingredient_risks:
+        if (item.get("type"), item.get("related_medication_id")) in product_scopes:
+            continue
         key = (item.get("type"), item.get("related_medication_id"), item.get("title"))
         if key not in seen:
             seen.add(key)

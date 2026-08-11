@@ -12,7 +12,7 @@ from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, Revi
 from .ocr import OCRValidationError, split_ocr_request
 
 
-_PERSON_FIELDS = {"name", "birth_date", "sex", "pregnancy_status", "notes"}
+_PERSON_FIELDS = {"name", "birth_date", "sex", "pregnancy_status", "lactation_status", "notes"}
 _PREVIEW_FIELDS = {
     "product_ref", "product_code", "dosage_text", "dose_amount", "dose_unit",
     "frequency_per_day", "meal_relation", "administration_route", "as_needed",
@@ -128,6 +128,12 @@ class MobileApi:
         if method == "POST" and path == "/api/people":
             payload = _validated_fields(_body_object(body_json), _PERSON_FIELDS)
             return 201, service.create_person(**payload)
+        match = re.fullmatch(r"/api/people/([^/]+)", path)
+        if method == "PATCH" and match:
+            payload = _validated_fields(_body_object(body_json), _PERSON_FIELDS)
+            return 200, service.update_person(match.group(1), **payload)
+        if method == "DELETE" and match:
+            return 200, service.delete_person(match.group(1))
         if method == "GET" and path == "/api/products":
             term = (query.get("q") or [""])[-1].strip()
             if not term:

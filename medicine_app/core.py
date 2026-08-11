@@ -15,10 +15,9 @@ from .prescriptions import draft_hash, normalize_draft
 from .products import ProductRepository
 from .ocr import OCRReviewStore, preview_ocr, validate_ocr_create
 from .assessment import assess_medication, bind_warning_token, requires_acknowledgement
+from .profiles import create_person_record, delete_person_record, person_dict, update_person_record
 from .safety import APP_TIMEZONE, age_years
 
-SEX_VALUES = {"female", "male", "other", "unknown"}
-PREGNANCY_VALUES = {"pregnant", "not_pregnant", "unknown", "not_applicable"}
 DOSE_STATUS_VALUES = {"taken", "skipped"}
 
 
@@ -28,13 +27,6 @@ def _uuid() -> str:
 
 def _row(row: sqlite3.Row | None) -> dict | None:
     return dict(row) if row is not None else None
-
-
-def _parse_birth_date(value: str) -> date:
-    try:
-        return date.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError("birth_date must be YYYY-MM-DD") from exc
 
 
 class ConfirmationRequired(ValueError):
@@ -119,41 +111,44 @@ class MedicationApp:
         birth_date: str,
         sex: str = "unknown",
         pregnancy_status: str = "unknown",
+        lactation_status: str = "unknown",
         notes: str | None = None,
     ) -> dict:
-        name = name.strip()
-        if not name:
-            raise ValueError("name is required")
-        _parse_birth_date(birth_date)
-        if sex not in SEX_VALUES:
-            raise ValueError(f"invalid sex: {sex}")
-        if pregnancy_status not in PREGNANCY_VALUES:
-            raise ValueError(f"invalid pregnancy_status: {pregnancy_status}")
-        person_id = _uuid()
-        with self._personal() as con:
-            con.execute(
-                "INSERT INTO people(id,name,birth_date,sex,pregnancy_status,notes) VALUES(?,?,?,?,?,?)",
-                (person_id, name, birth_date, sex, pregnancy_status, notes),
+        with self._personal(write_lock=True) as con:
+            return create_person_record(
+                con, _uuid(), name, birth_date, sex, pregnancy_status, lactation_status, notes
             )
-            row = con.execute("SELECT * FROM people WHERE id=?", (person_id,)).fetchone()
-        return self._person_dict(row)
+
+    def update_person(
+        self,
+        person_id: str,
+        name: str,
+        birth_date: str,
+        sex: str,
+        pregnancy_status: str,
+        lactation_status: str,
+        notes: str | None = None,
+    ) -> dict:
+        with self._personal(write_lock=True) as con:
+            return update_person_record(
+                con, person_id, name, birth_date, sex, pregnancy_status, lactation_status, notes
+            )
+
+    def delete_person(self, person_id: str) -> dict:
+        with self._personal(write_lock=True) as con:
+            return delete_person_record(con, person_id)
 
     def list_people(self) -> list[dict]:
         with self._personal() as con:
             rows = con.execute("SELECT * FROM people ORDER BY rowid").fetchall()
-        return [self._person_dict(row) for row in rows]
+        return [person_dict(row) for row in rows]
 
     def get_person(self, person_id: str) -> dict:
         with self._personal() as con:
             row = con.execute("SELECT * FROM people WHERE id=?", (person_id,)).fetchone()
         if row is None:
             raise KeyError("person not found")
-        return self._person_dict(row)
-
-    def _person_dict(self, row: sqlite3.Row) -> dict:
-        data = dict(row)
-        data["age"] = age_years(data["birth_date"])
-        return data
+        return person_dict(row)
 
     def search_products(self, term: str, limit: int = 30, include_inactive: bool = False) -> list[dict]:
         return self.products.search(term, limit, include_inactive=include_inactive)

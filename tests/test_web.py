@@ -33,22 +33,32 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("약 검색", response.text)
         self.assertIn('id="include-inactive"', response.text)
         self.assertIn('src="/static/native-api.js"', response.text)
+        self.assertIn('src="/static/people.js"', response.text)
         self.assertIn("Content-Security-Policy", response.text)
+        self.assertIn('name="lactation_status"', response.text)
+        self.assertIn('name="notes" type="hidden"', response.text)
         script = self.client.get("/static/app.js")
         self.assertEqual(script.status_code, 200)
         self.assertIn("MedicineLocalApi", script.text)
         self.assertIn("warning_token", script.text)
         self.assertIn("openMedicationEdit", script.text)
         self.assertIn("변경 이력", script.text)
-        self.assertIn("const formElement = event.currentTarget", script.text)
-        self.assertIn("formElement.reset()", script.text)
-        self.assertNotIn("event.currentTarget.reset()", script.text)
-        self.assertIn("birthInput.max = todayInKorea()", script.text)
         self.assertIn('name="birth_date" type="date" min="1000-01-01"', response.text)
+        people_script = self.client.get("/static/people.js")
+        self.assertEqual(people_script.status_code, 200)
+        self.assertIn("const formElement = event.currentTarget", people_script.text)
+        self.assertIn("formElement.reset()", people_script.text)
+        self.assertNotIn("event.currentTarget.reset()", people_script.text)
+        self.assertIn("birthInput.max = todayInKorea()", people_script.text)
+        self.assertIn("deletePerson", people_script.text)
+        self.assertIn("not_applicable", people_script.text)
+        self.assertIn('form.elements.notes.value = person.notes || ""', people_script.text)
         prescription_script = self.client.get("/static/prescription.js")
         self.assertEqual(prescription_script.status_code, 200)
         self.assertIn("reviewPrescriptionDraft", prescription_script.text)
         self.assertIn("자동 판정 불가", prescription_script.text)
+        self.assertIn("하루 복용 횟수와 입력한 복용 시간 개수가 같아야 해요", prescription_script.text)
+        self.assertIn("<details", prescription_script.text)
         native_api = self.client.get("/static/native-api.js")
         self.assertEqual(native_api.status_code, 200)
         self.assertIn("MedicineNative.request", native_api.text)
@@ -227,6 +237,38 @@ class WebApiTest(unittest.TestCase):
         body = dashboard.json()
         self.assertEqual(len(body["medications"]), 2)
         self.assertEqual(len(body["recent_logs"]), 1)
+
+    def test_person_profile_can_update_lactation_and_be_deleted(self) -> None:
+        created = self.client.post(
+            "/api/people",
+            json={
+                "name": "프로필",
+                "birth_date": "1990-01-01",
+                "sex": "female",
+                "pregnancy_status": "not_pregnant",
+                "lactation_status": "unknown",
+            },
+        )
+        self.assertEqual(created.status_code, 201)
+        person = created.json()
+
+        updated = self.client.patch(
+            f"/api/people/{person['id']}",
+            json={
+                "name": "프로필",
+                "birth_date": "1990-01-01",
+                "sex": "female",
+                "pregnancy_status": "not_pregnant",
+                "lactation_status": "breastfeeding",
+            },
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["lactation_status"], "breastfeeding")
+
+        deleted = self.client.delete(f"/api/people/{person['id']}")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json(), {"id": person["id"], "deleted": True})
+        self.assertEqual(self.client.get("/api/people").json(), [])
 
     def test_structured_prescription_and_daily_plan_api(self) -> None:
         person = self.client.post(
