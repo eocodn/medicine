@@ -94,25 +94,55 @@ def _mapping_reason(category: str, coverage: Mapping[str, Any]) -> str:
     return "성분 단위 DUR 규칙 연결을 확인하지 못했습니다."
 
 
-def _current_mapping_gap(
+def _current_mapping_issues(
     current: list[Mapping[str, Any]],
     candidate_course: Mapping[str, Any],
-) -> bool:
+) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
     for medication in current:
-        if (
-            medication.get("product_mapping_status") == "matched"
-            and medication.get("ingredient_mapping_status") == "matched"
-        ):
+        product_matched = medication.get("product_mapping_status") == "matched"
+        ingredient_matched = medication.get("ingredient_mapping_status") == "matched"
+        if product_matched and ingredient_matched:
             continue
         # Inactive history matters only when its recorded course can overlap the
         # candidate (or overlap itself cannot be resolved). This avoids turning
         # an old, clearly non-overlapping unmapped medicine into a permanent
         # interaction-coverage warning.
-        if medication.get("active"):
-            return True
-        if courses_overlap(medication, candidate_course) is not False:
-            return True
-    return False
+        if not medication.get("active") and courses_overlap(medication, candidate_course) is False:
+            continue
+        if not product_matched and not ingredient_matched:
+            scope = "제품·성분"
+        elif not product_matched:
+            scope = "제품"
+        else:
+            scope = "성분"
+        issues.append({
+            "name": str(medication.get("product_name") or "이름을 확인할 수 없는 복용약"),
+            "scope": scope,
+        })
+    return issues
+
+
+def _current_mapping_issue_text(
+    issues: list[dict[str, str]],
+    category_label: str,
+) -> tuple[str, str]:
+    if len(issues) == 1:
+        issue = issues[0]
+        name = issue["name"]
+        scope = issue["scope"]
+        return (
+            f"{name} 확인 필요",
+            f"{name}의 {scope} DUR 연결을 확인하지 못해 {category_label}를 완전히 비교하지 못했습니다.",
+        )
+    named_issues = ", ".join(
+        f"{issue['name']} ({issue['scope']})"
+        for issue in issues
+    )
+    return (
+        f"현재 복용약 {len(issues)}개 확인 필요",
+        f"DUR 연결을 확인하지 못한 현재 복용약: {named_issues}. {category_label}를 완전히 비교하지 못했습니다.",
+    )
 
 
 def _category_issue(category: str, coverage: Mapping[str, Any]) -> str | None:
@@ -205,7 +235,7 @@ def build_dur_checks(
 
     current_age = age_years(str(person["birth_date"]), as_of)
     dataset_verified = dataset.get("status") == "verified"
-    current_mapping_gap = _current_mapping_gap(current, candidate_course)
+    current_mapping_issues = _current_mapping_issues(current, candidate_course)
     result: list[dict[str, Any]] = []
 
     for category, label in DUR_CATEGORIES:
@@ -282,13 +312,14 @@ def build_dur_checks(
                 details=_mapping_reason(category, coverage),
             ))
             continue
-        if category in _INTERACTION_CATEGORIES and current_mapping_gap:
+        if category in _INTERACTION_CATEGORIES and current_mapping_issues:
+            summary, details = _current_mapping_issue_text(current_mapping_issues, label)
             result.append(_item(
                 category,
                 label,
                 "unknown",
-                "현재 복용약 확인 필요",
-                details="현재 복용약 중 DUR 연결이 불완전한 약이 있어 완전히 비교하지 못했습니다.",
+                summary,
+                details=details,
             ))
             continue
 

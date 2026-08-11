@@ -143,6 +143,7 @@ def make_catalog_db(path: Path) -> None:
             ("MFDS-C", "약C", "제약C", "drug-c", "정제", "P-C", "2020-01-01", None, "정상", "active", "mfds", "{}"),
             ("MFDS-D", "약D", "제약D", "drug-d", "정제", "P-D", "2020-01-01", None, "정상", "active", "mfds", "{}"),
             ("MFDS-X", "비급여전체약X", "제약X", "drug-x", "캡슐", None, "2021-01-01", None, "정상", "active", "mfds", "{}"),
+            ("MFDS-Y", "비급여전체약Y", "제약Y", "drug-y", "정제", None, "2021-01-01", None, "정상", "active", "mfds", "{}"),
             ("MFDS-W", "과거취하약", "제약W", "drug-w", "정제", "P-W", "2019-01-01", "2025-07-01", "취하", "withdrawn", "mfds", "{}"),
         ],
     )
@@ -341,10 +342,40 @@ class MedicationAppTest(unittest.TestCase):
             person["id"],
             {"product_ref": "MFDS-A", "start_date": "2026-08-05", "prescription_days": 2},
         )
-        statuses = {item["category"]: item["status"] for item in candidate["dur_checks"]}
+        checks = {item["category"]: item for item in candidate["dur_checks"]}
 
-        self.assertEqual(statuses["combination_contraindication"], "unknown")
-        self.assertEqual(statuses["therapeutic_duplication_caution"], "unknown")
+        for category in ("combination_contraindication", "therapeutic_duplication_caution"):
+            self.assertEqual(checks[category]["status"], "unknown")
+            self.assertEqual(checks[category]["summary"], "비급여전체약X 확인 필요")
+            self.assertIn("비급여전체약X의 제품·성분 DUR 연결", checks[category]["details"])
+
+    def test_multiple_unmapped_current_medications_are_named_in_interaction_unknown_details(self) -> None:
+        person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
+        for product_ref in ("MFDS-X", "MFDS-Y"):
+            preview = self.app.preview_medication(
+                person["id"],
+                {"product_ref": product_ref, "start_date": "2026-08-01", "prescription_days": 10},
+            )
+            self.app.add_medication(
+                person["id"],
+                product_ref=product_ref,
+                start_date="2026-08-01",
+                prescription_days=10,
+                acknowledge_warnings=True,
+                warning_token=preview["warning_token"],
+            )
+
+        candidate = self.app.preview_medication(
+            person["id"],
+            {"product_ref": "MFDS-A", "start_date": "2026-08-05", "prescription_days": 2},
+        )
+        checks = {item["category"]: item for item in candidate["dur_checks"]}
+
+        for category in ("combination_contraindication", "therapeutic_duplication_caution"):
+            self.assertEqual(checks[category]["status"], "unknown")
+            self.assertEqual(checks[category]["summary"], "현재 복용약 2개 확인 필요")
+            self.assertIn("비급여전체약X (제품·성분)", checks[category]["details"])
+            self.assertIn("비급여전체약Y (제품·성분)", checks[category]["details"])
 
     def test_therapeutic_duplication_also_requires_course_overlap(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
