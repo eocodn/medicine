@@ -309,8 +309,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 #people-list {
   flex: 1 1 auto;
   min-height: 0;
+  align-content: start;
+  grid-auto-rows: max-content;
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: pan-y;
   scrollbar-width: none;
   -ms-overflow-style: none;
   padding: 2px 2px 14px;
