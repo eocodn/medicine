@@ -229,7 +229,17 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .add-button { flex: 0 0 auto; min-width: 58px; min-height: 40px; border: 0; border-radius: 13px; background: var(--brand); color: white; font-weight: 800; }
 
 .person-card { padding: 17px; }
-.person-select { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.person-select {
+  width: 100%;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+}
 .person-row { align-items: start; }
 .person-avatar { width: 44px; height: 44px; border-radius: 15px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); font-weight: 900; font-size: 17px; }
 .person-copy { flex: 1; }
