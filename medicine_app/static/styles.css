@@ -90,8 +90,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   animation: enter .18s ease-out;
 }
+.screen.active::-webkit-scrollbar { display: none; }
 @keyframes enter { from { opacity: .35; transform: translateY(4px); } }
 
 .hero-card, .settings-card, .card {
@@ -273,8 +276,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   padding: 2px 2px 14px;
 }
+#people-list::-webkit-scrollbar { display: none; }
 #open-person-form { flex: 0 0 auto; margin-top: 16px; }
 
 .settings-card { padding: 20px; margin-bottom: 12px; }
@@ -335,11 +341,14 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   width: min(100%, 540px);
   max-height: 86vh;
   overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   padding: 9px 18px calc(22px + env(safe-area-inset-bottom));
   border-radius: 28px 28px 0 0;
   background: var(--surface);
   box-shadow: 0 -22px 60px rgba(20, 31, 23, .18);
 }
+.bottom-sheet::-webkit-scrollbar { display: none; }
 .sheet-handle { width: 45px; height: 5px; margin: 2px auto 17px; border-radius: 99px; background: #d3d9d4; }
 .sheet-header { margin-bottom: 16px; }
 .sheet-header h2 { margin: 0; }

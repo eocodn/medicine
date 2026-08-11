@@ -106,25 +106,25 @@ function permitStatusLabel(value, raw) {
 }
 function mealRelationLabel(value) {
   return {
-    before_meal: "식전",
-    after_meal: "식후",
+    before_meal: "식사 전",
+    after_meal: "식사 후",
     with_meal: "식사와 함께",
-    empty_stomach: "공복",
-    regardless: "식사 무관",
+    empty_stomach: "빈속에",
+    regardless: "식사와 관계없이",
     unspecified: "복용 시점 미지정",
   }[value] || value;
 }
 function routeLabel(value) {
   return {
-    oral: "경구",
-    topical: "외용",
+    oral: "먹는 약",
+    topical: "바르는 약",
     inhaled: "흡입",
-    ophthalmic: "점안",
-    otic: "점이",
-    nasal: "비강",
+    ophthalmic: "안약",
+    otic: "귀에 넣는 약",
+    nasal: "코에 쓰는 약",
     injection: "주사",
     other: "기타",
-    unknown: "경로 미지정",
+    unknown: "사용 방법 미지정",
   }[value] || value;
 }
 function currentPerson() {
@@ -227,13 +227,13 @@ function renderMedications() {
         <div><p class="eyebrow">${escapeHtml(med.ingredient_name || "MEDICINE")}</p><h3>${escapeHtml(med.product_name)}</h3></div>
       </div>
       <div class="med-meta">
-        ${med.dosage_text ? `<span class="chip">${escapeHtml(formatDoseText(med.dosage_text))}</span>` : ""}
-        ${med.frequency_per_day ? `<span class="chip">1일 ${escapeHtml(med.frequency_per_day)}회</span>` : ""}
-        ${med.as_needed ? `<span class="chip prn-chip">필요시 복용</span>` : ""}
+        ${med.dosage_text ? `<span class="chip">한 번에 ${escapeHtml(formatDoseText(med.dosage_text))}</span>` : ""}
+        ${med.frequency_per_day ? `<span class="chip">하루 ${escapeHtml(med.frequency_per_day)}회</span>` : ""}
+        ${med.as_needed ? `<span class="chip prn-chip">필요할 때 복용</span>` : ""}
         ${med.meal_relation && med.meal_relation !== "unspecified" ? `<span class="chip">${escapeHtml(mealRelationLabel(med.meal_relation))}</span>` : ""}
         ${med.administration_route ? `<span class="chip">${escapeHtml(routeLabel(med.administration_route))}</span>` : ""}
-        ${med.prescription_days ? `<span class="chip">${escapeHtml(med.prescription_days)}일분</span>` : ""}
-        ${(med.schedules || []).map((s) => `<span class="chip">${escapeHtml(s.time_of_day)}</span>`).join("")}
+        ${med.prescription_days ? `<span class="chip">${escapeHtml(med.prescription_days)}일 복용</span>` : ""}
+        ${(med.schedules || []).map((s) => `<span class="chip">매일 ${escapeHtml(s.time_of_day)}</span>`).join("")}
         ${med.source === "manual" ? `<span class="chip caution-chip">직접 입력 · DUR 제한</span>` : ""}
       </div>
       <div class="med-actions">
