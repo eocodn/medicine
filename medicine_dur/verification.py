@@ -4,10 +4,9 @@ import hashlib
 import json
 import re
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 
 REQUIRED_SOURCE_KEYS = (
@@ -51,7 +50,7 @@ REQUIRED_HEADERS: dict[str, set[str]] = {
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _DATE_RE = re.compile(r"(?P<year>20\d{2})[.\-/년 ]+(?P<month>\d{1,2})[.\-/월 ]+(?P<day>\d{1,2})")
-APP_TIMEZONE = ZoneInfo("Asia/Seoul")
+APP_TIMEZONE = timezone(timedelta(hours=9), "Asia/Seoul")
 
 
 def _table_exists(con: sqlite3.Connection, table: str) -> bool:

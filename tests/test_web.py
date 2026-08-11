@@ -32,8 +32,11 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("복용", response.text)
         self.assertIn("약 검색", response.text)
         self.assertIn('id="include-inactive"', response.text)
+        self.assertIn('src="/static/native-api.js"', response.text)
+        self.assertIn("Content-Security-Policy", response.text)
         script = self.client.get("/static/app.js")
         self.assertEqual(script.status_code, 200)
+        self.assertIn("MedicineLocalApi", script.text)
         self.assertIn("warning_token", script.text)
         self.assertIn("openMedicationEdit", script.text)
         self.assertIn("변경 이력", script.text)
@@ -41,6 +44,9 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(prescription_script.status_code, 200)
         self.assertIn("reviewPrescriptionDraft", prescription_script.text)
         self.assertIn("자동 판정 불가", prescription_script.text)
+        native_api = self.client.get("/static/native-api.js")
+        self.assertEqual(native_api.status_code, 200)
+        self.assertIn("MedicineNative.request", native_api.text)
 
     def test_ocr_review_contract_is_exposed_without_raw_artifacts(self) -> None:
         page = self.client.get("/")

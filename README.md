@@ -73,6 +73,10 @@ docker compose down
   - PRN 약은 고정 일정과 분리
 - 복용 종료 처리 / 최근 복용 기록 조회
 - JSON API와 동일 코어를 사용하는 headless CLI
+- 서버 없는 Android 패키징
+  - WebView UI, Python 앱 코어, 검증된 DUR/허가 카탈로그 snapshot, OCR ONNX/WASM 자산을 APK에 함께 포함
+  - Android 앱은 `INTERNET` 권한 없이 앱 내부 HTTPS asset origin과 네이티브 Python 브리지만 사용
+  - 개인 복약 DB는 앱 전용 저장소에 쓰고, 배포 reference DB는 읽기 전용으로 분리
 
 DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제품·성분 매핑, 데이터셋 검증 상태,
 지원하는 프로필 범위를 함께 기록하고 `DUR 위험 정보가 발견되지 않음`과 `DUR 자동 확인 범위 제한`을
@@ -182,6 +186,7 @@ API입니다. 각 API는 공공데이터포털에서 별도 활용신청이 필�
 docker compose run --rm dur build --json
 docker compose run --rm dur stats --json
 docker compose run --rm dur verify --json
+docker compose run --rm dur mobile-build --json
 ```
 
 원본 파일은 `data/raw/`, `data/kids/`에 보존하고 Git에는 넣지 않습니다. DUR 빌드도 임시 DB에서
@@ -189,6 +194,11 @@ docker compose run --rm dur verify --json
 15개 필수 원본의 존재·헤더·실제 파일 SHA-256 일치, 실제 import 행 수, SQLite 무결성, 성분 고시 기준일과
 제품 스냅샷 생성 시점을 확인하고 결정적인 `dataset_id`를 출력합니다. 이 식별자는 처방 안전성
 평가와 변경 이력에 저장됩니다.
+
+`dur mobile-build`는 검증된 `dur.sqlite`와 `catalog.sqlite`에서 Android 런타임에 필요한 컬럼과
+인덱스만 보존한 `data/db/mobile.sqlite`와 SHA-256 manifest를 만듭니다. DUR 규칙 행과 원본
+provenance는 유지하며 `dataset_id`도 원본 DUR DB와 같아야 빌드가 성공합니다. Android 빌드도
+이 과정을 다시 실행하므로 검증에 실패한 데이터는 APK에 패키징되지 않습니다.
 
 ## 앱 제어 CLI
 
@@ -289,16 +299,15 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 - 로그인/클라우드 동기화/다기기 공유
 - 개인 DB 암호화
 - 네이티브 Android UI
-- 서버 없이 APK 내부에서 앱 코어와 DUR/카탈로그를 직접 실행하는 배포 패키징
 
 ## Android / OCR 빌드·실행
 
-PC·모바일 브라우저와 Android WebView 모두 자체 호스팅한 단일 OCR 경로를 사용합니다.
+PC·모바일 브라우저와 Android WebView 모두 같은 브라우저 OCR 구현을 사용합니다.
 전용 Worker가 PP-OCRv5 모바일 탐지·한국어 인식 ONNX 모델을 ONNX Runtime WebAssembly CPU
 backend로 직접 실행하며 PaddleOCR.js, OpenCV, ML Kit은 사용하지 않습니다. 사진과 인식 원문은
 Worker 메모리 안에서만 처리하고 서버·DB·웹 저장소로 보내지 않으며, 구조화된 복용 힌트만 기존
-사용자 확인 흐름으로 넘깁니다. 모델 자산은 첫 실행 때 같은 로컬 웹 origin에서 받고 브라우저
-캐시에 저장될 수 있습니다. 브라우저 파서 테스트와 헤드리스 확인 CLI는 다음과 같이 실행합니다.
+사용자 확인 흐름으로 넘깁니다. Android에서는 Worker와 ONNX/WASM 모델도 APK asset에 포함되어
+외부 다운로드가 필요하지 않습니다. 브라우저 파서 테스트와 헤드리스 확인 CLI는 다음과 같이 실행합니다.
 
 ```bash
 docker compose run --rm browser-test
@@ -306,40 +315,31 @@ printf '약명: 타이레놀정\n1정 1일 2회 7일\n오전 8시 오후 8시\n'
   | docker compose run -T --rm browser-ocr --input - --json
 ```
 
-Android 셸은 최소 WebView와 시스템 사진 선택기만 제공합니다. OCR은 WebView 안의 동일한
-브라우저 Worker가 담당하므로 별도 네이티브 모델이나 메시지 브리지가 없습니다. WebView 탐색은
-설정된 동일 origin으로 제한되며 HTTP cleartext는 debug manifest에서만 허용되고 release
-manifest에서는 꺼집니다.
+Android 앱은 WebView와 시스템 사진 선택기를 UI 셸로 사용하지만 외부 웹 서버에는 연결하지 않습니다.
+정적 UI와 OCR 자산은 AndroidX WebKit의 `https://appassets.androidplatform.net` 로컬 asset origin에서
+제공하고, 앱의 `/api/...` 호출은 `MedicineNative` 브리지를 통해 APK에 포함된 Python `MedicationApp`
+코어를 직접 호출합니다. WebView의 다른 HTTP/HTTPS 요청은 차단하며 Android manifest에는
+`INTERNET` 권한이 없습니다.
 
-Docker에서 단위 테스트와 debug APK를 함께 빌드합니다.
+배포용 reference DB는 원본 `dur.sqlite` + `catalog.sqlite`를 compact한 `mobile.sqlite`입니다.
+APK에는 압축된 asset으로 들어가며 첫 실행 때 manifest의 크기와 SHA-256을 확인하면서 앱 전용
+저장소에 원자적으로 설치합니다. reference DB는 이후 읽기 전용으로 사용하고 개인 기록은 별도의
+`personal.sqlite`에 저장합니다. 데이터 snapshot이 바뀌면 새 해시 이름으로 설치한 뒤 이전 reference
+파일을 정리합니다.
+
+Docker에서 데이터 release gate, compact DB 생성, Android 단위 테스트와 debug APK 빌드를 한 번에 실행합니다.
 
 ```bash
 docker compose run --rm android
 ```
 
-APK는 `android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. 기본 WebView URL은
-Android 에뮬레이터에서 호스트 loopback으로 연결하는 `http://10.0.2.2:18787/`이며, 기존
-웹 서비스는 계속 `127.0.0.1`에 바인딩됩니다. URL은 debug 빌드 시 바꿀 수 있습니다.
+APK는 `android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. 설치 후에는 PC, LAN,
+loopback 서버나 인터넷 연결 없이 약 검색·DUR 판정·복약 기록·OCR을 실행할 수 있습니다.
+현재 Gradle 설정은 개인 기기 우선으로 `arm64-v8a`만 패키징합니다.
 
-```bash
-MEDICINE_WEB_URL=http://10.0.2.2:19000/ docker compose run --rm android
-```
-
-실기기 debug 빌드는 PC와 휴대폰을 같은 신뢰 가능한 LAN에 연결하고, 웹 서비스를 명시적으로
-LAN에 공개한 뒤 해당 PC 주소로 APK를 빌드합니다. 방화벽에서도 선택한 포트만 허용합니다.
-
-```bash
-MEDICINE_BIND_IP=0.0.0.0 docker compose up -d web
-MEDICINE_WEB_URL=http://192.168.0.10:18787/ docker compose run --rm android
-```
-
-`192.168.0.10`은 PC의 실제 LAN 주소로 바꿉니다. 사용 후 `docker compose down`으로 LAN 공개를
-종료합니다. release 빌드는 cleartext가 차단되므로, 배포 시에는 접근 가능한 HTTPS URL과 서명
-구성이 필요합니다.
-
-현재 Android 프로젝트는 개발·검증용 WebView 셸이므로 실행 중인 로컬 웹 서비스가 필요합니다.
-최종 배포 목표는 별도 서버 없이 개인 모바일 기기 안에 앱 코어, 검증된 DUR/카탈로그 스냅샷,
-OCR 자산을 함께 두는 형태이며, 그 패키징 전에는 `dur verify`를 필수 release gate로 사용합니다.
+release 변형도 동일한 온디바이스 구조로 빌드할 수 있지만 실제 배포 전에 Android 서명키와
+release signing configuration을 별도로 설정해야 합니다. 데이터 이용조건 검토 역시 제품 배포 전
+별도 release 절차로 남아 있습니다.
 
 ## 의료 정보 주의
 

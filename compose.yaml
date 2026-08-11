@@ -69,8 +69,16 @@ services:
       - .:/workspace
       - android-gradle-cache:/opt/gradle-cache
     environment:
-      MEDICINE_WEB_URL: ${MEDICINE_WEB_URL:-http://10.0.2.2:18787/}
-    command: ["gradle", "--no-daemon", "testDebugUnitTest", "assembleDebug", "-PmedicineWebUrl=${MEDICINE_WEB_URL:-http://10.0.2.2:18787/}"]
+      MEDICINE_BROWSER_OCR_ASSETS: /opt/medicine-browser-ocr
+    command:
+      - sh
+      - -lc
+      - >-
+        cd /workspace &&
+        PYTHONPATH=/workspace python3.12 -c
+        'import json; from medicine_dur.mobile import build_mobile_database; print(json.dumps(build_mobile_database("data/db/dur.sqlite", "data/db/catalog.sqlite", "data/db/mobile.sqlite"), ensure_ascii=False))'
+        && cd /workspace/android
+        && gradle --no-daemon testDebugUnitTest assembleDebug
 
 volumes:
   android-gradle-cache:

@@ -3,19 +3,32 @@ package com.medicine.android
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.Gravity
+import android.view.ViewGroup
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.webkit.WebViewAssetLoader
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
-    private lateinit var webView: WebView
+    private var webView: WebView? = null
     private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,63 +43,137 @@ class MainActivity : ComponentActivity() {
             fileChooserCallback = null
         }
 
-        webView = WebView(this).apply {
+        showStartupView("안전 데이터 준비 중…")
+        startupExecutor.execute {
+            runCatching {
+                val reference = ReferenceAssetInstaller(this).install()
+                val personalDatabase = File(filesDir, "personal.sqlite")
+                MedicineBridge(reference.database, personalDatabase)
+            }.onSuccess { bridge ->
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) setupWebView(bridge)
+                }
+            }.onFailure { error ->
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        showStartupView("앱 데이터를 준비하지 못했습니다.\n${error.message ?: "알 수 없는 오류"}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun setupWebView(bridge: MedicineBridge) {
+        val assetLoader = WebViewAssetLoader.Builder()
+            .setDomain(APP_ASSET_DOMAIN)
+            .addPathHandler("/static/", WebViewAssetLoader.AssetsPathHandler(this))
+            .addPathHandler("/ocr-assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
+        val view = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.javaScriptCanOpenWindowsAutomatically = false
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+
+            addJavascriptInterface(bridge, "MedicineNative")
             webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest,
+                ): WebResourceResponse? {
+                    val url = request.url
+                    if (url.scheme == "https" && url.host == APP_ASSET_DOMAIN) {
+                        return assetLoader.shouldInterceptRequest(url)
+                    }
+                    if (url.scheme == "http" || url.scheme == "https") {
+                        return WebResourceResponse(
+                            "text/plain",
+                            "utf-8",
+                            403,
+                            "Blocked",
+                            emptyMap(),
+                            ByteArrayInputStream("blocked external request".toByteArray()),
+                        )
+                    }
+                    return super.shouldInterceptRequest(view, request)
+                }
+
                 override fun shouldOverrideUrlLoading(
                     view: WebView,
-                    request: WebResourceRequest
-                ): Boolean = !isAllowedOrigin(request.url.toString())
+                    request: WebResourceRequest,
+                ): Boolean = !isAllowedOrigin(request.url)
 
                 @Suppress("DEPRECATION")
                 override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-                    !isAllowedOrigin(url)
+                    !isAllowedOrigin(Uri.parse(url))
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(
                     webView: WebView,
                     filePathCallback: ValueCallback<Array<Uri>>,
-                    fileChooserParams: FileChooserParams
+                    fileChooserParams: FileChooserParams,
                 ): Boolean {
-                    this@MainActivity.fileChooserCallback?.onReceiveValue(null)
-                    this@MainActivity.fileChooserCallback = filePathCallback
+                    fileChooserCallback?.onReceiveValue(null)
+                    fileChooserCallback = filePathCallback
                     return runCatching {
                         fileChooserLauncher.launch(fileChooserParams.createIntent())
                         true
                     }.getOrElse {
-                        this@MainActivity.fileChooserCallback = null
+                        fileChooserCallback = null
                         filePathCallback.onReceiveValue(null)
                         false
                     }
                 }
             }
-            loadUrl(BuildConfig.MEDICINE_WEB_URL)
+            loadUrl(APP_URL)
         }
-        setContentView(webView)
+        webView = view
+        setContentView(view)
     }
 
-    private fun isAllowedOrigin(url: String): Boolean =
-        origin(url) != null && origin(url) == origin(BuildConfig.MEDICINE_WEB_URL)
+    private fun isAllowedOrigin(uri: Uri): Boolean =
+        uri.scheme == "https" && uri.host == APP_ASSET_DOMAIN
 
-    private fun origin(value: String): String? {
-        val parsed = runCatching { Uri.parse(value) }.getOrNull() ?: return null
-        val scheme = parsed.scheme?.lowercase()?.takeIf { it == "http" || it == "https" } ?: return null
-        val host = parsed.host?.lowercase() ?: return null
-        val defaultPort = if (scheme == "https") 443 else 80
-        val port = parsed.port.takeIf { it >= 0 } ?: defaultPort
-        return "$scheme://$host:$port"
+    private fun showStartupView(message: String) {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(48, 48, 48, 48)
+            addView(ProgressBar(this@MainActivity))
+            addView(TextView(this@MainActivity).apply {
+                text = message
+                gravity = Gravity.CENTER
+                textSize = 16f
+                setPadding(0, 24, 0, 0)
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            })
+        }
+        setContentView(root)
     }
 
     override fun onDestroy() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
-        if (::webView.isInitialized) {
-            webView.stopLoading()
-            webView.clearHistory()
-            webView.removeAllViews()
-            webView.destroy()
+        startupExecutor.shutdownNow()
+        webView?.let { view ->
+            view.stopLoading()
+            view.removeJavascriptInterface("MedicineNative")
+            view.clearHistory()
+            view.removeAllViews()
+            view.destroy()
         }
+        webView = null
         super.onDestroy()
+    }
+
+    companion object {
+        private const val APP_ASSET_DOMAIN = "appassets.androidplatform.net"
+        private const val APP_URL = "https://$APP_ASSET_DOMAIN/static/index.html"
     }
 }

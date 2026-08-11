@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f6f7f4">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
   <title>약봄</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
@@ -125,6 +126,7 @@
   </section>
 
   <div id="toast" class="toast hidden" role="status"></div>
+  <script src="/static/native-api.js" defer></script>
   <script src="/static/prescription.js" defer></script>
   <script src="/static/browser-ocr-parser.js" defer></script>
   <script src="/static/browser-ocr.js" defer></script>

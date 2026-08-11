@@ -11,13 +11,10 @@ import calendar
 import json
 import re
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
-from zoneinfo import ZoneInfo
-
-
-APP_TIMEZONE = ZoneInfo("Asia/Seoul")
+APP_TIMEZONE = timezone(timedelta(hours=9), "Asia/Seoul")
 AGE_RULE_RE = re.compile(r"(?P<n>\d+)\s*(?P<unit>세|개월|주)\s*(?P<op>미만|이하|이상|초과)")
 
 
@@ -125,7 +122,7 @@ def _combination_risks(con: sqlite3.Connection, product: Mapping[str, Any], curr
             continue
         rows = con.execute(
             """
-            SELECT details, notice_no, notice_date, product_name, paired_product_name
+            SELECT details, notice_no, notice_date
             FROM product_dur
             WHERE category='combination_contraindication'
               AND ((product_code=? AND paired_product_code=?)

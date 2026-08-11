@@ -31,6 +31,8 @@ function escapeHtml(value) {
 }
 
 async function api(path, options = {}) {
+  const local = window.MedicineLocalApi?.request(path, options);
+  if (local !== undefined) return local;
   const response = await fetch(path, {
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
