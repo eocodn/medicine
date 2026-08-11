@@ -14,7 +14,6 @@
   --info: #315a77;
   --info-soft: #e3edf4;
   --shadow: 0 14px 38px rgba(34, 52, 40, .08);
-  --bottom-nav-clearance: calc(96px + env(safe-area-inset-bottom));
   font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -38,9 +37,13 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .app-shell {
   width: min(100%, 540px);
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   margin: 0 auto;
   position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
   background: rgba(243, 245, 241, .92);
 }
 
@@ -49,8 +52,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   align-items: center;
   justify-content: space-between;
   padding: calc(18px + env(safe-area-inset-top)) 20px 13px;
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 10;
   backdrop-filter: blur(16px);
   background: rgba(243, 245, 241, .82);
@@ -77,9 +79,19 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-size: 18px;
 }
 
-.main-content { padding: 12px 16px var(--bottom-nav-clearance); }
+.main-content {
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 16px;
+}
 .screen { display: none; }
-.screen.active { display: block; animation: enter .18s ease-out; }
+.screen.active {
+  display: block;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  animation: enter .18s ease-out;
+}
 @keyframes enter { from { opacity: .35; transform: translateY(4px); } }
 
 .hero-card, .settings-card, .card {
@@ -215,7 +227,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .camera-placeholder span { margin-right: 6px; }
 .ocr-status { margin: 8px 2px 0; }
 .search-status { padding: 14px 4px 8px; min-height: 40px; }
-#drug-results { padding-bottom: var(--bottom-nav-clearance); }
 .result-card { padding: 15px 16px; }
 .result-card[data-product-select] { cursor: pointer; overflow: hidden; }
 .result-card[data-product-select]:focus-visible { outline: 3px solid rgba(33, 76, 53, .24); outline-offset: 2px; }
@@ -253,7 +264,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .people-screen.active {
   display: flex;
   flex-direction: column;
-  height: calc(100dvh - 180px - env(safe-area-inset-top) - var(--bottom-nav-clearance));
+  height: 100%;
+  overflow: hidden;
 }
 .people-screen .section-heading { flex: 0 0 auto; }
 #people-list {
@@ -280,12 +292,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .empty-state strong { display: block; color: var(--text); margin-bottom: 6px; }
 
 .bottom-nav {
-  position: fixed;
+  position: static;
   z-index: 20;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
-  width: min(100%, 540px);
+  width: 100%;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
@@ -377,8 +386,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 @media (min-width: 700px) {
   body { padding: 22px 0; }
-  .app-shell { min-height: calc(100vh - 44px); border-radius: 32px; overflow: hidden; box-shadow: 0 24px 80px rgba(39, 58, 45, .14); }
-  .bottom-nav { bottom: 22px; border-radius: 0 0 32px 32px; }
+  .app-shell { height: calc(100vh - 44px); height: calc(100dvh - 44px); border-radius: 32px; overflow: hidden; box-shadow: 0 24px 80px rgba(39, 58, 45, .14); }
+  .bottom-nav { border-radius: 0 0 32px 32px; }
   .bottom-sheet { bottom: 22px; border-radius: 28px; }
 }
 
