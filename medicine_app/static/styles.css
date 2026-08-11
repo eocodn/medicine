@@ -167,6 +167,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .dur-alert-badge {
   width: 30px;
   height: 30px;
+  padding: 0;
   flex: 0 0 30px;
   display: grid;
   place-items: center;
@@ -177,6 +178,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-size: 18px;
   font-weight: 900;
   line-height: 1;
+  cursor: pointer;
+  appearance: none;
 }
 .course-progress { margin-top: 13px; }
 .course-progress > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }

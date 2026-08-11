@@ -225,7 +225,7 @@ function renderMedications() {
     <article class="card med-card">
       <div class="med-row">
         <div><p class="eyebrow">${escapeHtml(med.ingredient_name || "MEDICINE")}</p><h3>${escapeHtml(med.product_name)}</h3></div>
-        ${med.dur_alert ? `<span class="dur-alert-badge" aria-label="현재 DUR 주의 항목 있음" title="현재 DUR 주의 항목 있음">!</span>` : ""}
+        ${med.dur_alert ? `<button class="dur-alert-badge" data-dur-alert="${med.id}" type="button" aria-label="현재 DUR 주의 항목 보기" title="현재 DUR 주의 항목 보기">!</button>` : ""}
       </div>
       ${medicationCourseHtml(med.course_progress)}
       <div class="med-meta">
@@ -251,6 +251,7 @@ function renderMedications() {
       <span class="history-time">${escapeHtml(formatTime(log.occurred_at))}</span>
     </div>`).join("") : `<div class="empty-state"><strong>기록이 아직 없어요</strong>약을 복용한 뒤 완료 버튼을 눌러보세요.</div>`;
 
+  $$('[data-dur-alert]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.durAlert)));
   $$('[data-edit]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.edit)));
   $$('[data-stop]', medsRoot).forEach((button) => button.addEventListener("click", () => stopMedication(button.dataset.stop)));
 }
@@ -354,19 +355,23 @@ async function previewProduct(productRef) {
 function renderRiskSheet(preview, medication = null, ocrHints = null) {
   const root = $("#risk-sheet-content");
   const risks = preview.risks || [];
+  const checks = preview.quantitative_checks || {};
   const dangerous = risks.some((risk) => risk.severity === "danger");
+  const quantitativeAlert = [checks.duration, checks.dose].some((check) => check?.result === "exceeded");
+  const hasDurFinding = risks.length > 0 || quantitativeAlert;
   root.innerHTML = `
     <div class="sheet-header">
       <div><p class="eyebrow">DUR CHECK</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>
       <button class="icon-button" data-close-sheet type="button">×</button>
     </div>
     <div class="risk-summary">
-      <h2>${medication ? "처방 정보를 수정합니다" : dangerous ? "확인이 필요한 위험이 있어요" : risks.length ? "주의 정보를 확인하세요" : preview.coverage?.status === "complete" ? "현재 확인된 DUR 위험이 없어요" : "현재 확인된 위험은 없지만 일부 항목은 확인이 필요해요"}</h2>
+      <h2>${medication ? "처방 정보를 수정합니다" : dangerous ? "확인이 필요한 위험이 있어요" : hasDurFinding ? "주의 정보를 확인하세요" : preview.coverage?.status === "complete" ? "현재 확인된 DUR 위험이 없어요" : "현재 확인된 위험은 없지만 일부 항목은 확인이 필요해요"}</h2>
       <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필과 현재 복용약 ${preview.current_medication_count}개를 기준으로 확인했습니다.</p>
     </div>
     ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 허가 상태와 실제 보유·유통 여부는 별개일 수 있어요.</div>` : ""}
-    <div>${risks.length ? risks.map((risk) => `
-      <div class="risk-card ${escapeHtml(risk.severity)}"><strong>${escapeHtml(risk.title)}</strong><p>${escapeHtml(risk.details || "상세 설명 없음")}</p></div>`).join("") : `<div class="risk-card info"><strong>현재 확인된 DUR 위험 없음</strong><p>확인 가능한 DUR 범위에서 일치하는 금기·주의 신호가 발견되지 않았어요.</p></div>`}</div>
+    <div>${risks.length ? qualitativeRiskHtml(risks) : quantitativeAlert ? "" : `<div class="risk-card info"><strong>현재 확인된 DUR 위험 없음</strong><p>확인 가능한 DUR 범위에서 일치하는 금기·주의 신호가 발견되지 않았어요.</p></div>`}</div>
+    ${quantitativeAlertHtml("투여기간", checks.duration)}
+    ${quantitativeAlertHtml("1일 용량", checks.dose)}
     ${coverageLimitHtml(preview.coverage)}
     <div class="prescription-form">
       <div class="form-grid two">
@@ -441,10 +446,16 @@ function openMedicationEdit(medicationId) {
     product_ref: medication.catalog_item_seq || medication.product_code,
     product_name: medication.product_name,
   };
+  const currentAssessment = medication.current_assessment || {};
   renderRiskSheet({
     product: { product_name: medication.product_name }, person: currentPerson(),
     current_medication_count: Math.max((state.dashboard?.medications || []).length - 1, 0),
-    risks: [], coverage: null,
+    risks: currentAssessment.risks || [],
+    coverage: currentAssessment.coverage || null,
+    quantitative_checks: {
+      duration: currentAssessment.duration,
+      dose: currentAssessment.dose,
+    },
   }, medication);
   openSheet("#risk-sheet");
 }
@@ -453,13 +464,6 @@ async function confirmEditMedication() {
   const medication = (state.dashboard?.medications || []).find((item) => item.id === state.editingMedicationId);
   if (!medication) return;
   const draft = prescriptionPayloadFromForm();
-  const draftKey = JSON.stringify(draft);
-  if (state.reviewedDraftKey !== draftKey) {
-    let reviewRequired;
-    try { reviewRequired = await reviewPrescriptionDraft(state.pendingProduct.product_ref, draft, "confirm-edit-med"); }
-    catch (error) { toast(error.message); return; }
-    if (reviewRequired) return;
-  }
   try {
     await api(`/api/medications/${medication.id}`, {
       method: "PATCH",

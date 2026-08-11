@@ -53,6 +53,27 @@ function quantitativeCheckHtml(label, check) {
   return `<div class="risk-card info"><strong>${label} DUR 기준 미초과</strong></div>`;
 }
 
+function quantitativeAlertHtml(label, check) {
+  return check?.result === "exceeded" ? quantitativeCheckHtml(label, check) : "";
+}
+
+function qualitativeRiskHtml(risks) {
+  return (risks || []).map((risk) => `
+    <div class="risk-card ${escapeHtml(risk.severity || "info")}">
+      <strong>${escapeHtml(risk.title || "DUR 주의")}</strong>
+      <p>${escapeHtml(risk.details || "상세 설명 없음")}</p>
+    </div>`).join("");
+}
+
+function assessmentDetailsHtml(assessment) {
+  const checks = assessment?.quantitative_checks || assessment || {};
+  return `
+    ${qualitativeRiskHtml(assessment?.risks)}
+    ${quantitativeCheckHtml("투여기간", checks.duration)}
+    ${quantitativeCheckHtml("1일 용량", checks.dose)}
+    ${coverageLimitHtml(assessment?.coverage)}`;
+}
+
 function coverageLimitHtml(coverage) {
   const items = [...new Map((coverage?.not_evaluable_checks || []).map((item) => [`${item.category}:${item.reason}`, item])).values()];
   if (!items.length) return "";
@@ -69,14 +90,12 @@ async function reviewPrescriptionDraft(productRef, draft, buttonId) {
   const preview = await api(`/api/people/${state.currentPersonId}/medications/preview`, {
     method: "POST", body: JSON.stringify({ product_ref: productRef, ...draft }),
   });
-  const checks = preview.quantitative_checks || {};
   const reviewRequired = Boolean(preview.warning_token);
   state.reviewedDraftKey = JSON.stringify(draft);
   state.warningToken = preview.warning_token || null;
   $("#quantitative-warning").innerHTML = `
     <div class="coverage-note ${reviewRequired ? "limited" : "matched"}"><strong>입력한 복용 정보를 확인해주세요</strong><br>${reviewRequired ? "확인된 주의사항이나 자동 확인이 제한된 항목이 있어요. 내용을 확인한 뒤에도 저장할 수 있습니다." : "확인된 DUR 경고가 없어 바로 저장합니다."}</div>
-    ${quantitativeCheckHtml("투여기간", checks.duration)}
-    ${quantitativeCheckHtml("1일 용량", checks.dose)}`;
+    ${assessmentDetailsHtml(preview)}`;
   const button = $(`#${buttonId}`);
   if (button) button.textContent = reviewRequired ? "경고를 확인했고 계속 저장" : "저장 중...";
   return reviewRequired;
@@ -88,8 +107,7 @@ function handleConfirmationRequired(error, buttonId) {
   const assessment = error.body.assessment || {};
   $("#quantitative-warning").innerHTML = `
     <div class="coverage-note limited"><strong>저장하기 전에 확인해주세요</strong><br>금기·주의 정보나 입력 기준 초과, 자동 확인이 제한된 항목이 있어요. 내용을 확인한 뒤 아래 버튼을 다시 누르면 저장됩니다.</div>
-    ${quantitativeCheckHtml("투여기간", assessment.duration)}
-    ${quantitativeCheckHtml("1일 용량", assessment.dose)}`;
+    ${assessmentDetailsHtml(assessment)}`;
   const button = $(`#${buttonId}`);
   if (button) button.textContent = "경고를 확인했고 계속 저장";
   toast("DUR 안전성 경고를 확인해주세요");

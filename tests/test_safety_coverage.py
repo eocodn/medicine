@@ -430,6 +430,32 @@ class SafetyCoverageV2Test(unittest.TestCase):
         history = self.app.list_medication_revisions(medication["id"])
         self.assertEqual(history[-1]["assessment"]["dataset"]["dataset_id"], assessment["dataset"]["dataset_id"])
 
+    def test_warning_acknowledgement_is_invalidated_when_reviewed_safety_findings_change(self) -> None:
+        draft = {
+            "product_ref": "MFDS-Z",
+            "prescription_days": 35,
+            "start_date": "2026-08-11",
+            "request_id": "profile-change-token",
+        }
+        preview = self.app.preview_medication(self.person["id"], draft)
+        old_token = preview["warning_token"]
+        self.assertTrue(old_token)
+        self.assertNotIn("lactation_caution", {risk["type"] for risk in preview["risks"]})
+
+        self.app.update_person(
+            self.person["id"], self.person["name"], self.person["birth_date"], self.person["sex"],
+            self.person["pregnancy_status"], "breastfeeding", self.person.get("notes"),
+        )
+
+        with self.assertRaises(ConfirmationRequired) as changed:
+            self.app.add_medication(
+                self.person["id"], **draft,
+                acknowledge_warnings=True, warning_token=old_token,
+            )
+        assessment = changed.exception.assessment
+        self.assertNotEqual(assessment["warning_token"], old_token)
+        self.assertIn("lactation_caution", {risk["type"] for risk in assessment["risks"]})
+
     def test_ingredient_level_combination_contraindication_requires_review_but_can_be_registered(self) -> None:
         current = self.app.add_medication(self.person["id"], product_ref="MFDS-I", request_id="itraconazole")
         preview = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-A"})

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from datetime import date
 from typing import Any, Mapping
@@ -237,8 +238,23 @@ def bind_warning_token(assessment: dict[str, Any], payload_hash: str) -> str | N
         assessment["warning_token"] = None
         return None
     dataset_id = assessment.get("dataset", {}).get("dataset_id") or "dataset:unverified"
+    reviewed_safety_context = {
+        "coverage": assessment.get("coverage"),
+        "risks": assessment.get("risks"),
+        "duration": assessment.get("duration"),
+        "dose": assessment.get("dose"),
+        "requires_review": bool(assessment.get("requires_review")),
+    }
+    context_hash = hashlib.sha256(
+        json.dumps(
+            reviewed_safety_context,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     token = hashlib.sha256(
-        f"{EVALUATOR_VERSION}\0{dataset_id}\0{payload_hash}".encode("utf-8")
+        f"{EVALUATOR_VERSION}\0{dataset_id}\0{payload_hash}\0{context_hash}".encode("utf-8")
     ).hexdigest()
     assessment["warning_token"] = token
     return token
