@@ -207,6 +207,8 @@ def collect_ingredient_risks(
                 )
                 item["related_medication_id"] = medication["id"]
                 item["timing"] = timing
+                if conditional_note or timing.get("status") == "not_evaluable":
+                    item["evaluation_status"] = "unknown"
                 risks.append(item)
 
     current_age = age_years(person["birth_date"], as_of)
@@ -313,24 +315,18 @@ def collect_ingredient_risks(
             item["related_medication_id"] = medication["id"]
             risks.append(item)
 
-    labels = {"dose_caution": "성분 기준 용량주의 대상", "duration_caution": "성분 기준 투여기간주의 대상"}
+    labels = {"dose_caution": "용량주의", "duration_caution": "투여기간주의"}
     for category, label in labels.items():
         for row in _rows(con, category):
             if normalize_ingredient_name(row.get("ingredient_name")) not in new_ingredients:
                 continue
             applicability = _form_applicable(row.get("dosage_form"), product.get("dosage_form"))
-            if applicability is False:
-                continue
-            details = f"기준: {row.get('rule_value') or '원문 확인 필요'}"
             if applicability is None:
-                details += ". 제형을 확정할 수 없어 자동 적용 여부는 판정하지 않았습니다."
                 not_evaluable.append(_not_evaluable(
                     row,
                     category,
-                    f"제품 제형 정보가 없어 {label} 규칙의 적용 여부를 판정할 수 없습니다.",
+                    f"제품 제형 정보가 없어 성분 {label} 규칙의 적용 여부를 판정할 수 없습니다.",
                 ))
-                continue
-            risks.append(_risk(row, type_=category, severity="info", title=label, details=details))
 
     seen: set[tuple[Any, ...]] = set()
     unique: list[dict[str, Any]] = []

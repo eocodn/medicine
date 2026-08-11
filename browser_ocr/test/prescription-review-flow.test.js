@@ -184,3 +184,27 @@ test("mapping failures render as visible warning cards instead of collapsed deta
   assert.doesNotMatch(html.slice(detailsIndex), /제품 단위 DUR 매핑 실패|성분 단위 DUR 매핑 실패/);
   assert.match(html.slice(detailsIndex), /데이터셋 확인 실패/);
 });
+
+test("DUR status UI renders all eight categories with compact non-hit states", () => {
+  const context = prescriptionContext({});
+  const html = context.durStatusHtml([
+    { category: "combination_contraindication", label: "병용금기", status: "hit", summary: "현재 복용약과 병용금기", findings: [{ severity: "danger", title: "약A와 병용금기", details: "함께 사용하지 않아야 합니다." }] },
+    { category: "age_contraindication", label: "연령금기", status: "clear", summary: "해당 금기 없음", findings: [] },
+    { category: "pregnancy_contraindication", label: "임부금기", status: "not_applicable", summary: "해당사항 없음", findings: [] },
+    { category: "lactation_caution", label: "수유부주의", status: "not_applicable", summary: "해당사항 없음", findings: [] },
+    { category: "elderly_caution", label: "노인주의", status: "not_applicable", summary: "해당사항 없음", findings: [] },
+    { category: "dose_caution", label: "용량주의", status: "unknown", summary: "복용정보를 확인해주세요", findings: [] },
+    { category: "duration_caution", label: "투여기간주의", status: "clear", summary: "기준 이내", findings: [] },
+    { category: "therapeutic_duplication_caution", label: "효능군 중복주의", status: "clear", summary: "중복 없음", findings: [] },
+  ]);
+
+  for (const label of ["병용금기", "연령금기", "임부금기", "수유부주의", "노인주의", "용량주의", "투여기간주의", "효능군 중복주의"]) {
+    assert.match(html, new RegExp(label));
+  }
+  assert.match(html, /dur-check hit/);
+  assert.match(html, /dur-check unknown/);
+  assert.match(html, /dur-check compact clear/);
+  assert.match(html, /dur-check compact not_applicable/);
+  assert.match(html, /함께 사용하지 않아야 합니다/);
+  assert.match(html, /복용정보를 확인해주세요/);
+});

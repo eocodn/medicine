@@ -11,6 +11,7 @@ from threading import Barrier
 from zoneinfo import ZoneInfo
 
 from medicine_app.core import ConfirmationRequired, MedicationApp
+from tests.dur_fixture_support import install_verified_dur_fixture_metadata
 
 
 APP_TZ = ZoneInfo("Asia/Seoul")
@@ -112,6 +113,7 @@ def make_dur_db(path: Path) -> None:
         "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
         [("P-SAFE", "정량비교약", "ING-SAFE", "example"), ("P-UNKNOWN", "비교불가약", "ING-UNKNOWN", "unknown")],
     )
+    install_verified_dur_fixture_metadata(con, ingredients=["example", "unknown"])
     con.commit()
     con.close()
 
@@ -202,11 +204,10 @@ class PrescriptionSafetyTest(unittest.TestCase):
             risk for risk in preview["risks"]
             if risk["type"] in {"duration_caution", "dose_caution"}
         ]
-        self.assertTrue(quantitative_risks)
-        self.assertTrue(all(
-            "자동 비교는 아직 지원하지 않습니다" not in risk["details"]
-            for risk in quantitative_risks
-        ))
+        self.assertEqual(quantitative_risks, [])
+        statuses = {item["category"]: item for item in preview["dur_checks"]}
+        self.assertEqual(statuses["duration_caution"]["status"], "hit")
+        self.assertEqual(statuses["dose_caution"]["status"], "clear")
 
     def test_full_preview_reports_duration_within_and_dose_exceeded(self) -> None:
         preview = self.app.preview_medication(

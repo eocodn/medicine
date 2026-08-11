@@ -7,6 +7,8 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from medicine_app.core import MedicationApp
+from medicine_app.safety import age_rule_matches
+from tests.dur_fixture_support import install_verified_dur_fixture_metadata
 
 
 def make_dur_db(path: Path) -> None:
@@ -100,6 +102,9 @@ def make_dur_db(path: Path) -> None:
         FROM product_dur WHERE paired_product_code IS NOT NULL
         """
     )
+    install_verified_dur_fixture_metadata(
+        con, ingredients=["drug-a", "drug-b", "drug-c", "drug-d"]
+    )
     con.commit()
     con.close()
 
@@ -143,6 +148,12 @@ def make_catalog_db(path: Path) -> None:
     )
     con.commit()
     con.close()
+
+
+class AgeRuleTest(unittest.TestCase):
+    def test_day_based_age_rule_uses_exact_calendar_days(self) -> None:
+        self.assertTrue(age_rule_matches("2026-08-01", "28일 미만", date(2026, 8, 28)))
+        self.assertFalse(age_rule_matches("2026-08-01", "28일 미만", date(2026, 8, 29)))
 
 
 class MedicationAppTest(unittest.TestCase):
@@ -223,7 +234,11 @@ class MedicationAppTest(unittest.TestCase):
         self.assertIn("combination_contraindication", risk_types)
         self.assertIn("age_contraindication", risk_types)
         self.assertIn("pregnancy_contraindication", risk_types)
-        self.assertIn("duration_caution", risk_types)
+        self.assertNotIn("duration_caution", risk_types)
+        duration = next(
+            item for item in preview["dur_checks"] if item["category"] == "duration_caution"
+        )
+        self.assertEqual(duration["status"], "unknown")
 
     def test_interactions_follow_prescription_course_overlap_not_active_flag(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
@@ -306,6 +321,31 @@ class MedicationAppTest(unittest.TestCase):
         self.assertIn("combination_contraindication", {r["type"] for r in within["risks"]})
         self.assertNotIn("combination_contraindication", {r["type"] for r in outside["risks"]})
 
+    def test_stopped_unmapped_medication_overlapping_candidate_keeps_interaction_checks_unknown(self) -> None:
+        person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
+        draft = {
+            "product_ref": "MFDS-X",
+            "start_date": "2026-08-01",
+            "prescription_days": 10,
+        }
+        preview = self.app.preview_medication(person["id"], draft)
+        medication = self.app.add_medication(
+            person["id"],
+            **draft,
+            acknowledge_warnings=True,
+            warning_token=preview["warning_token"],
+        )
+        self.app.stop_medication(medication["id"], expected_revision=medication["revision"])
+
+        candidate = self.app.preview_medication(
+            person["id"],
+            {"product_ref": "MFDS-A", "start_date": "2026-08-05", "prescription_days": 2},
+        )
+        statuses = {item["category"]: item["status"] for item in candidate["dur_checks"]}
+
+        self.assertEqual(statuses["combination_contraindication"], "unknown")
+        self.assertEqual(statuses["therapeutic_duplication_caution"], "unknown")
+
     def test_therapeutic_duplication_also_requires_course_overlap(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
         self.app.add_medication(
@@ -321,7 +361,7 @@ class MedicationAppTest(unittest.TestCase):
 
     def test_active_medication_is_reassessed_after_profile_change_without_rewriting_history(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant")
-        medication = self.app.add_medication(person["id"], product_code="P-B")
+        medication = self.app.add_medication(person["id"], product_code="P-B", prescription_days=7)
         historical = self.app.get_medication(medication["id"])["assessment"]
         self.assertNotIn(
             "pregnancy_contraindication",

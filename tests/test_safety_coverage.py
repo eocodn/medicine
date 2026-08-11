@@ -204,6 +204,10 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(preview["coverage"]["ingredient"]["ingredients"], ["zolpidem"])
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "exceeded")
         self.assertEqual(preview["quantitative_checks"]["duration"]["source_scope"], "ingredient")
+        duration = next(
+            item for item in preview["dur_checks"] if item["category"] == "duration_caution"
+        )
+        self.assertEqual(duration["status"], "hit")
         self.assertTrue(preview["warning_token"])
 
     def test_exact_ingredient_without_quantitative_rules_is_not_applicable(self) -> None:
@@ -217,7 +221,53 @@ class SafetyCoverageV2Test(unittest.TestCase):
 
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "not_applicable")
         self.assertEqual(preview["quantitative_checks"]["dose"]["result"], "not_applicable")
+        checks = {item["category"]: item for item in preview["dur_checks"]}
+        self.assertEqual(len(preview["dur_checks"]), 8)
+        self.assertEqual(checks["duration_caution"]["status"], "unknown")
+        self.assertTrue(preview["warning_token"])
+
+    def test_complete_dur_preview_reports_all_eight_categories_in_fixed_order(self) -> None:
+        preview = self.app.preview_medication(
+            self.person["id"],
+            {
+                "product_ref": "MFDS-M", "prescription_days": 7,
+                "dose_amount": 1, "dose_unit": "정", "frequency_per_day": 1,
+            },
+        )
+
+        self.assertEqual(
+            [item["category"] for item in preview["dur_checks"]],
+            [
+                "combination_contraindication",
+                "age_contraindication",
+                "pregnancy_contraindication",
+                "lactation_caution",
+                "elderly_caution",
+                "dose_caution",
+                "duration_caution",
+                "therapeutic_duplication_caution",
+            ],
+        )
+        checks = {item["category"]: item for item in preview["dur_checks"]}
+        self.assertEqual(checks["pregnancy_contraindication"]["status"], "not_applicable")
+        self.assertEqual(checks["lactation_caution"]["status"], "not_applicable")
+        self.assertEqual(checks["elderly_caution"]["status"], "not_applicable")
+        self.assertEqual(checks["duration_caution"]["status"], "clear")
+        self.assertEqual(checks["dose_caution"]["status"], "not_applicable")
+        self.assertFalse(any(item["status"] in {"hit", "unknown"} for item in preview["dur_checks"]))
         self.assertIsNone(preview["warning_token"])
+
+    def test_quantitative_rule_presence_is_not_a_qualitative_finding(self) -> None:
+        preview = self.app.preview_medication(
+            self.person["id"],
+            {"product_ref": "MFDS-M", "prescription_days": 7},
+        )
+
+        self.assertNotIn("duration_caution", {risk["type"] for risk in preview["risks"]})
+        duration = next(
+            item for item in preview["dur_checks"] if item["category"] == "duration_caution"
+        )
+        self.assertEqual(duration["status"], "clear")
 
     def test_child_requires_review_even_without_a_quantitative_dur_rule(self) -> None:
         child = self.app.create_person("소아", "2015-01-01", "female", "not_pregnant")
@@ -276,7 +326,10 @@ class SafetyCoverageV2Test(unittest.TestCase):
 
         self.assertNotIn("pregnancy_contraindication", unrelated_categories)
         self.assertNotIn("lactation_caution", unrelated_categories)
-        self.assertIsNone(unrelated["warning_token"])
+        # The unrelated product still has an independent product-mapping gap,
+        # so the new all-unknowns-review policy may issue a token; the profile
+        # categories themselves must remain absent.
+        self.assertTrue(unrelated["warning_token"])
         self.assertNotIn("pregnancy_contraindication", related_categories)
         self.assertIn("lactation_caution", related_categories)
         self.assertTrue(related["warning_token"])
@@ -348,7 +401,9 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(product["product_mapping_method"], "normalized_name_ingredient_unique")
         self.assertEqual(product["ingredient_mapping_status"], "matched")
         preview = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-IBU"})
-        self.assertEqual([risk["type"] for risk in preview["risks"]].count("dose_caution"), 1)
+        self.assertEqual([risk["type"] for risk in preview["risks"]].count("dose_caution"), 0)
+        dose = next(item for item in preview["dur_checks"] if item["category"] == "dose_caution")
+        self.assertEqual(dose["status"], "unknown")
 
     def test_name_fallback_refuses_ambiguous_dur_product_candidates(self) -> None:
         dur = sqlite3.connect(self.dur_db)
@@ -457,7 +512,11 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertIn("lactation_caution", {risk["type"] for risk in assessment["risks"]})
 
     def test_ingredient_level_combination_contraindication_requires_review_but_can_be_registered(self) -> None:
-        current = self.app.add_medication(self.person["id"], product_ref="MFDS-I", request_id="itraconazole")
+        current_preview = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-I"})
+        current = self.app.add_medication(
+            self.person["id"], product_ref="MFDS-I", request_id="itraconazole",
+            acknowledge_warnings=True, warning_token=current_preview["warning_token"],
+        )
         preview = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-A"})
 
         combination = [risk for risk in preview["risks"] if risk["type"] == "combination_contraindication"]
@@ -467,6 +526,11 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertNotIn("조건", combination[0]["title"])
         self.assertEqual(combination[0]["timing"]["kind"], "minimum_separation")
         self.assertEqual(combination[0]["timing"]["hours"], 24)
+        combination_status = next(
+            item for item in preview["dur_checks"]
+            if item["category"] == "combination_contraindication"
+        )
+        self.assertEqual(combination_status["status"], "hit")
         conditional_checks = [
             check for check in preview["coverage"]["not_evaluable_checks"]
             if check["category"] == "combination_contraindication"
@@ -492,8 +556,13 @@ class SafetyCoverageV2Test(unittest.TestCase):
         )
         con.commit()
         con.close()
+        current_draft = {
+            "product_ref": "MFDS-I", "start_date": "2026-08-01", "prescription_days": 1,
+        }
+        current_preview = self.app.preview_medication(self.person["id"], current_draft)
         self.app.add_medication(
-            self.person["id"], product_ref="MFDS-I", start_date="2026-08-01", prescription_days=1,
+            self.person["id"], **current_draft, acknowledge_warnings=True,
+            warning_token=current_preview["warning_token"],
         )
 
         preview = self.app.preview_medication(
@@ -506,6 +575,12 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertIn("조건", combination[0]["title"])
         self.assertIn("75세 이상 남성", combination[0]["details"])
         self.assertEqual(combination[0]["timing"]["kind"], "washout_after")
+        self.assertEqual(combination[0]["evaluation_status"], "unknown")
+        combination_status = next(
+            item for item in preview["dur_checks"]
+            if item["category"] == "combination_contraindication"
+        )
+        self.assertEqual(combination_status["status"], "unknown")
 
     def test_unmapped_catalog_ingredient_is_explicitly_not_evaluable(self) -> None:
         preview = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-X"})
@@ -528,7 +603,10 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(preview["coverage"]["product"]["status"], "matched")
         self.assertEqual(preview["coverage"]["ingredient"]["status"], "not_evaluable")
         self.assertEqual(preview["coverage"]["ingredient"]["ingredients"], [])
-        self.assertIsNone(preview["warning_token"])
+        self.assertTrue(preview["warning_token"])
+        checks = {item["category"]: item for item in preview["dur_checks"]}
+        self.assertEqual(checks["age_contraindication"]["status"], "unknown")
+        self.assertEqual(checks["pregnancy_contraindication"]["status"], "not_applicable")
 
     def test_unknown_dosage_form_keeps_ingredient_duration_explicitly_not_evaluable(self) -> None:
         preview = self.app.preview_medication(
@@ -545,7 +623,11 @@ class SafetyCoverageV2Test(unittest.TestCase):
         ]
         self.assertEqual(len(duration_checks), 1)
         self.assertIn("제형", duration_checks[0]["reason"])
-        self.assertIsNone(preview["warning_token"])
+        status = next(
+            item for item in preview["dur_checks"] if item["category"] == "duration_caution"
+        )
+        self.assertEqual(status["status"], "unknown")
+        self.assertTrue(preview["warning_token"])
 
 
 if __name__ == "__main__":

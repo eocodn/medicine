@@ -543,6 +543,7 @@ class MedicationApp:
             "person": person, "product": product, "draft": draft,
             "current_medication_count": current_count,
             "risks": assessment["risks"],
+            "dur_checks": assessment["dur_checks"],
             "quantitative_checks": {
                 "duration": assessment["duration"], "dose": assessment["dose"]
             },

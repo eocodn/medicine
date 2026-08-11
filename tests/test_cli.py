@@ -92,8 +92,9 @@ class PrescriptionCliTest(unittest.TestCase):
     def test_dose_instance_completion_can_be_canceled(self) -> None:
         app = MedicationApp(self.dur_db, self.personal_db, self.catalog_db)
         app.add_medication(
-            self.person["id"], product_ref="MFDS-SAFE", frequency_per_day=1,
-            start_date="2026-08-10", schedule_times=["08:00"],
+            self.person["id"], product_ref="MFDS-SAFE", dose_amount=5, dose_unit="mg",
+            frequency_per_day=1, prescription_days=5, start_date="2026-08-10",
+            schedule_times=["08:00"],
         )
         instance = app.get_daily_plan(self.person["id"], "2026-08-10")["doses"][0]
 
@@ -112,8 +113,9 @@ class PrescriptionCliTest(unittest.TestCase):
     def test_meds_exposes_date_relative_course_progress(self) -> None:
         app = MedicationApp(self.dur_db, self.personal_db, self.catalog_db)
         app.add_medication(
-            self.person["id"], product_ref="MFDS-SAFE", start_date="2026-08-10",
-            prescription_days=5, schedule_times=["08:00"],
+            self.person["id"], product_ref="MFDS-SAFE", dose_amount=5, dose_unit="mg",
+            frequency_per_day=1, start_date="2026-08-10", prescription_days=5,
+            schedule_times=["08:00"],
         )
 
         status, medications = self.run_cli(

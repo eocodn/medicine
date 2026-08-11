@@ -185,7 +185,7 @@ class MobileApiTest(unittest.TestCase):
             "pregnancy_status": "not_pregnant",
             "lactation_status": "unknown",
         })
-        self.api.service.add_medication(person["id"], product_ref="MFDS-B")
+        self.api.service.add_medication(person["id"], product_ref="MFDS-B", prescription_days=7)
 
         _, before = self.request("GET", f"/api/people/{person['id']}/dashboard?date=2026-08-11")
         self.assertFalse(before["medications"][0]["dur_alert"])

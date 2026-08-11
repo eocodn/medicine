@@ -80,7 +80,36 @@ function interactionTimingHtml(timing) {
   return "";
 }
 
+
+function durStatusHtml(items) {
+  return (items || []).map((item) => {
+    const status = item.status || "unknown";
+    const label = escapeHtml(item.label || item.category || "DUR 항목");
+    const summary = escapeHtml(item.summary || "확인 필요");
+    const findings = item.findings || [];
+    if (status === "hit") {
+      const detailHtml = findings.length
+        ? findings.map((finding) => `
+          <div class="dur-finding">
+            <strong>${escapeHtml(finding.title || item.summary || "DUR 주의사항")}</strong>
+            <p>${escapeHtml(finding.details || item.details || "상세 설명 없음")}</p>
+            ${interactionTimingHtml(finding.timing)}
+          </div>`).join("")
+        : (item.details ? `<p>${escapeHtml(item.details)}</p>` : "");
+      return `<section class="dur-check hit"><div class="dur-check-heading"><strong>${label}</strong><span>${summary}</span></div>${detailHtml}</section>`;
+    }
+    if (status === "unknown") {
+      return `<section class="dur-check unknown"><div class="dur-check-heading"><strong>${label}</strong><span>${summary}</span></div>${item.details ? `<p>${escapeHtml(item.details)}</p>` : ""}</section>`;
+    }
+    return `<div class="dur-check compact ${escapeHtml(status)}"><strong>${label}</strong><span>${summary}</span></div>`;
+  }).join("");
+}
+
 function assessmentDetailsHtml(assessment) {
+  const durChecks = assessment?.dur_checks || [];
+  if (durChecks.length) {
+    return `${durStatusHtml(durChecks)}${coverageLimitHtml(assessment?.coverage)}`;
+  }
   const checks = assessment?.quantitative_checks || assessment || {};
   return `
     ${qualitativeRiskHtml(assessment?.risks)}
@@ -90,6 +119,11 @@ function assessmentDetailsHtml(assessment) {
 }
 
 function hasClearDurCoverage(assessment) {
+  const durChecks = assessment?.dur_checks || [];
+  if (durChecks.length) {
+    return durChecks.length === 8
+      && durChecks.every((item) => item.status === "clear" || item.status === "not_applicable");
+  }
   const coverage = assessment?.coverage;
   const checks = assessment?.quantitative_checks || assessment || {};
   const hasFinding = (assessment?.risks || []).length > 0;

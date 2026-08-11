@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from medicine_dur.verification import dataset_manifest
 
 from .coverage import coverage_summary
+from .dur_status import build_dur_checks
 from .ingredient_safety import (
     collect_ingredient_risks,
     evaluate_ingredient_duration,
@@ -17,7 +18,7 @@ from .ingredient_safety import (
 from .safety import age_years, collect_qualitative_risks, evaluate_quantitative
 
 
-EVALUATOR_VERSION = "4"
+EVALUATOR_VERSION = "5"
 
 
 def _coverage_only(reason: str, *, scope: str = "coverage") -> dict[str, Any]:
@@ -208,25 +209,30 @@ def assess_medication(
     )
     coverage["not_evaluable_checks"].extend(ingredient_not_evaluable)
     risks = _dedupe_risks(product_risks, ingredient_risks)
-    product_status = coverage["product"]["status"]
-    ingredient_status = coverage["ingredient"]["status"]
-    critical_coverage_gap = (
-        (dataset.get("source_count", 0) > 0 and dataset.get("status") != "verified")
-        or product_status == "ambiguous"
-        or (product_status != "matched" and ingredient_status != "matched")
+    dur_checks = build_dur_checks(
+        person=person,
+        current=current,
+        risks=risks,
+        duration=quantitative["duration"],
+        dose=quantitative["dose"],
+        coverage=coverage,
+        dataset=dataset,
+        candidate_course=draft,
+        as_of=as_of,
     )
-    requires_review = (
-        any(risk.get("severity") in {"danger", "warning"} for risk in risks)
-        or any(quantitative[name].get("result") == "exceeded" for name in ("duration", "dose"))
-        or bool(relevant_profile_categories)
-        or pediatric
-        or critical_coverage_gap
+    # The eight-category status model is authoritative for acknowledgement.
+    # A definite hit and an unresolved check both require one explicit review;
+    # clear and not_applicable are the only non-blocking states.
+    requires_review = any(
+        item.get("status") in {"hit", "unknown"}
+        for item in dur_checks
     )
     return {
         "evaluator_version": EVALUATOR_VERSION,
         "dataset": dataset,
         "coverage": coverage,
         "risks": risks,
+        "dur_checks": dur_checks,
         "duration": quantitative["duration"],
         "dose": quantitative["dose"],
         "requires_review": requires_review,
@@ -245,6 +251,7 @@ def bind_warning_token(assessment: dict[str, Any], payload_hash: str) -> str | N
         "risks": assessment.get("risks"),
         "duration": assessment.get("duration"),
         "dose": assessment.get("dose"),
+        "dur_checks": assessment.get("dur_checks"),
         "requires_review": bool(assessment.get("requires_review")),
     }
     context_hash = hashlib.sha256(
@@ -274,9 +281,13 @@ def has_dur_alert(assessment: Mapping[str, Any]) -> bool:
     means that a DUR danger/warning matched or a quantitative DUR limit was
     exceeded, not merely that the evaluator could not conclude something.
     """
+    dur_checks = assessment.get("dur_checks") or []
+    if dur_checks:
+        return any(item.get("status") == "hit" for item in dur_checks)
     return (
         any(
             risk.get("severity") in {"danger", "warning"}
+            and risk.get("evaluation_status") != "unknown"
             for risk in assessment.get("risks") or []
         )
         or any(

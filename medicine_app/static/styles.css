@@ -398,6 +398,18 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .risk-card.danger { background: var(--danger-soft); border-color: #ecc7c2; color: #712a26; }
 .risk-card.warning { background: var(--warning-soft); border-color: #ead8b4; color: #69440e; }
 .risk-card.info { background: var(--info-soft); border-color: #cbdde8; color: #284b62; }
+.dur-check { margin-bottom: 8px; border-radius: 17px; border: 1px solid var(--line); }
+.dur-check-heading { display: grid; gap: 4px; }
+.dur-check-heading strong { font-size: 14px; }
+.dur-check-heading span { font-size: 13px; font-weight: 800; }
+.dur-check p { margin: 7px 0 0; font-size: 13px; line-height: 1.55; }
+.dur-check.hit { padding: 15px; background: var(--danger-soft); border-color: #ecc7c2; color: #712a26; }
+.dur-check.unknown { padding: 12px 14px; background: var(--warning-soft); border-color: #ead8b4; color: #69440e; }
+.dur-check.compact { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 11px; margin-bottom: 5px; border-radius: 12px; color: var(--muted); background: var(--surface-soft); font-size: 12px; }
+.dur-check.compact strong { color: #536059; }
+.dur-check.compact span { text-align: right; }
+.dur-finding { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(113, 42, 38, .16); }
+.dur-finding strong { display: block; margin-bottom: 4px; }
 .risk-actions { display: grid; grid-template-columns: 1fr 1.25fr; gap: 9px; margin-top: 14px; }
 .risk-disclaimer { margin: 12px 2px 0; font-size: 11px; line-height: 1.5; color: var(--muted); }
 

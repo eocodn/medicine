@@ -17,7 +17,7 @@ from typing import Any, Iterable, Mapping
 
 from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 APP_TIMEZONE = timezone(timedelta(hours=9), "Asia/Seoul")
-AGE_RULE_RE = re.compile(r"(?P<n>\d+)\s*(?P<unit>세|개월|주)\s*(?P<op>미만|이하|이상|초과)")
+AGE_RULE_RE = re.compile(r"(?P<n>\d+)\s*(?P<unit>세|개월|주|일)\s*(?P<op>미만|이하|이상|초과)")
 
 
 def _parse_birth_date(value: str) -> date:
@@ -69,9 +69,12 @@ def age_rule_matches(birth_date: str, rule: str | None, as_of: date | None = Non
     elif unit == "개월":
         threshold = _add_months(birth, amount)
         next_threshold = _add_months(birth, amount + 1)
-    else:
+    elif unit == "주":
         threshold = birth + timedelta(weeks=amount)
         next_threshold = birth + timedelta(weeks=amount + 1)
+    else:
+        threshold = birth + timedelta(days=amount)
+        next_threshold = birth + timedelta(days=amount + 1)
     if operator == "미만":
         return today < threshold
     if operator == "이하":
@@ -151,7 +154,7 @@ def _combination_risks(
             details = row["details"] or "DUR 병용금기 조합에 해당합니다."
             if timing.get("status") == "not_evaluable":
                 details = f"{details} 복용 간격 조건은 자동 판정하지 못해 경고를 유지합니다."
-            risks.append({
+            item = {
                 "type": "combination_contraindication",
                 "severity": "danger",
                 "title": f"{medication['product_name']}와 병용금기",
@@ -160,7 +163,10 @@ def _combination_risks(
                 "notice_no": row["notice_no"],
                 "notice_date": row["notice_date"],
                 "timing": timing,
-            })
+            }
+            if timing.get("status") == "not_evaluable":
+                item["evaluation_status"] = "unknown"
+            risks.append(item)
     return risks
 
 
@@ -248,40 +254,6 @@ def _duplication_risks(
     return risks
 
 
-def _rule_presence_risks(con: sqlite3.Connection, product: Mapping[str, Any]) -> list[dict]:
-    code = product.get("product_code") or product.get("edi_code")
-    if not code:
-        return []
-    labels = {"dose_caution": "용량주의 대상", "duration_caution": "투여기간주의 대상"}
-    rows = con.execute(
-        """
-        SELECT category, rule_value, details, notice_no, notice_date
-        FROM product_dur WHERE product_code=? AND category IN ('dose_caution','duration_caution')
-        """, (code,),
-    ).fetchall()
-    risks: list[dict] = []
-    for row in rows:
-        detail = row["details"]
-        if row["rule_value"]:
-            comparison_hint = (
-                "처방 일수를 입력하면 아래에서 DUR 최대 투여기간과 비교합니다."
-                if row["category"] == "duration_caution"
-                else "1회 복용량과 1일 횟수를 입력하면 아래에서 DUR 1일 최대용량과 비교합니다."
-            )
-            detail = f"기준: {row['rule_value']}. " + (
-                detail or comparison_hint
-            )
-        risks.append({
-            "type": row["category"],
-            "severity": "info",
-            "title": labels[row["category"]],
-            "details": detail,
-            "notice_no": row["notice_no"],
-            "notice_date": row["notice_date"],
-        })
-    return risks
-
-
 def collect_qualitative_risks(
     con: sqlite3.Connection,
     product: Mapping[str, Any],
@@ -296,7 +268,6 @@ def collect_qualitative_risks(
         _combination_risks(con, product, current, course)
         + _person_specific_risks(con, person, product, as_of)
         + _duplication_risks(con, product, current, course)
-        + _rule_presence_risks(con, product)
     )
     seen: set[tuple[Any, ...]] = set()
     unique: list[dict] = []
@@ -313,7 +284,6 @@ def collect_qualitative_risks(
 combination_risks = _combination_risks
 person_specific_risks = _person_specific_risks
 duplication_risks = _duplication_risks
-rule_presence_risks = _rule_presence_risks
 
 
 _UNIT_RE = re.compile(r"(?<![\d.])([+]?(?:\d+(?:\.\d*)?|\.\d+))(?:\s*)(mcg|μg|ug|mg|g|정|캡슐|캡|포)?", re.IGNORECASE)
@@ -569,6 +539,6 @@ def evaluate_quantitative(con: sqlite3.Connection, product: dict, draft: dict) -
 
 __all__ = [
     "age_years", "age_rule_matches", "collect_qualitative_risks",
-    "combination_risks", "person_specific_risks", "duplication_risks", "rule_presence_risks",
+    "combination_risks", "person_specific_risks", "duplication_risks",
     "evaluate_quantitative",
 ]
