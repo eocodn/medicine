@@ -89,6 +89,23 @@ function assessmentDetailsHtml(assessment) {
     ${coverageLimitHtml(assessment?.coverage)}`;
 }
 
+function hasClearDurCoverage(assessment) {
+  const coverage = assessment?.coverage;
+  const checks = assessment?.quantitative_checks || assessment || {};
+  const hasFinding = (assessment?.risks || []).length > 0;
+  // not_applicable means a mapped, completed lookup found no applicable rule;
+  // not_evaluable means the check could not be completed and must not look clean.
+  const hasUnresolvedQuantitativeCheck = [checks.duration, checks.dose]
+    .some((check) => check?.result === "exceeded" || check?.result === "not_evaluable");
+  const hasCoverageGap = (coverage?.not_evaluable_checks || []).length > 0;
+  return !hasFinding
+    && !hasUnresolvedQuantitativeCheck
+    && !hasCoverageGap
+    && coverage?.status === "complete"
+    && coverage?.product?.status === "matched"
+    && coverage?.ingredient?.status === "matched";
+}
+
 function coverageLimitHtml(coverage) {
   const items = [...new Map((coverage?.not_evaluable_checks || []).map((item) => [`${item.category}:${item.reason}`, item])).values()];
   if (!items.length) return "";
@@ -98,7 +115,21 @@ function coverageLimitHtml(coverage) {
     pregnancy_contraindication: "임신 여부가 입력되지 않아 임부금기는 확인하지 못했어요.",
     lactation_caution: "수유 여부가 입력되지 않아 수유부주의는 확인하지 못했어요.",
   };
-  return `<details class="coverage-details"><summary>자동 확인이 제한된 항목 ${items.length}개</summary><div>${items.map((item) => `<p>${escapeHtml(labels[item.category] || friendlyErrorMessage(item.reason || item.category || "판정 불가"))}</p>`).join("")}</div></details>`;
+  const mappingLabels = {
+    product_mapping: "제품 단위 DUR 매핑 실패",
+    ingredient_mapping: "성분 단위 DUR 매핑 실패",
+  };
+  const mappingItems = items.filter((item) => mappingLabels[item.category]);
+  const otherItems = items.filter((item) => !mappingLabels[item.category]);
+  const mappingHtml = mappingItems.map((item) => `
+    <div class="risk-card warning">
+      <strong>${escapeHtml(mappingLabels[item.category])}</strong>
+      <p>${escapeHtml(labels[item.category] || friendlyErrorMessage(item.reason || item.category || "판정 불가"))}</p>
+    </div>`).join("");
+  const otherHtml = otherItems.length
+    ? `<details class="coverage-details"><summary>자동 확인이 제한된 항목 ${otherItems.length}개</summary><div>${otherItems.map((item) => `<p>${escapeHtml(labels[item.category] || friendlyErrorMessage(item.reason || item.category || "판정 불가"))}</p>`).join("")}</div></details>`
+    : "";
+  return `${mappingHtml}${otherHtml}`;
 }
 
 async function reviewPrescriptionDraft(productRef, draft, buttonId) {

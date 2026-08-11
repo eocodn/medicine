@@ -115,3 +115,72 @@ test("authoritative confirmation response renders qualitative DUR details", () =
   assert.match(html, /임부금기/);
   assert.match(html, /임신 중 사용 금기입니다/);
 });
+
+test("clean DUR status requires complete product and ingredient mappings", () => {
+  const context = prescriptionContext({});
+  const clean = {
+    risks: [],
+    quantitative_checks: {
+      duration: { result: "not_applicable" },
+      dose: { result: "not_applicable" },
+    },
+    coverage: {
+      status: "complete",
+      product: { status: "matched" },
+      ingredient: { status: "matched" },
+    },
+  };
+
+  assert.equal(context.hasClearDurCoverage(clean), true);
+  assert.equal(context.hasClearDurCoverage({
+    ...clean,
+    coverage: { ...clean.coverage, product: { status: "not_matched" } },
+  }), false);
+  assert.equal(context.hasClearDurCoverage({
+    ...clean,
+    coverage: { ...clean.coverage, ingredient: { status: "not_evaluable" } },
+  }), false);
+  assert.equal(context.hasClearDurCoverage({
+    ...clean,
+    coverage: { ...clean.coverage, status: "limited" },
+  }), false);
+  assert.equal(context.hasClearDurCoverage({
+    ...clean,
+    risks: [{ severity: "warning", title: "주의", details: "확인 필요" }],
+  }), false);
+  assert.equal(context.hasClearDurCoverage({
+    ...clean,
+    quantitative_checks: {
+      ...clean.quantitative_checks,
+      duration: { result: "not_evaluable", reason: "기간 기준 판정 불가" },
+    },
+  }), false);
+  assert.equal(context.hasClearDurCoverage({
+    ...clean,
+    coverage: {
+      ...clean.coverage,
+      not_evaluable_checks: [{ category: "duration", reason: "일부 기준 판정 불가" }],
+    },
+  }), false);
+});
+
+test("mapping failures render as visible warning cards instead of collapsed details", () => {
+  const context = prescriptionContext({});
+  const html = context.coverageLimitHtml({
+    not_evaluable_checks: [
+      { category: "product_mapping", reason: "제품 매핑 실패" },
+      { category: "ingredient_mapping", reason: "성분 매핑 실패" },
+      { category: "dataset", reason: "데이터셋 확인 실패" },
+    ],
+  });
+
+  assert.match(html, /risk-card warning/);
+  assert.match(html, /제품 단위 DUR 매핑 실패/);
+  assert.match(html, /성분 단위 DUR 매핑 실패/);
+  const detailsIndex = html.indexOf("<details");
+  assert.ok(detailsIndex > 0);
+  assert.ok(html.indexOf("제품 단위 DUR 매핑 실패") < detailsIndex);
+  assert.ok(html.indexOf("성분 단위 DUR 매핑 실패") < detailsIndex);
+  assert.doesNotMatch(html.slice(detailsIndex), /제품 단위 DUR 매핑 실패|성분 단위 DUR 매핑 실패/);
+  assert.match(html.slice(detailsIndex), /데이터셋 확인 실패/);
+});
