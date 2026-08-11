@@ -151,6 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     meds = sub.add_parser("meds")
     meds.add_argument("--person", required=True)
+    meds.add_argument("--date")
     meds.add_argument("--json", action="store_true")
 
     preview = sub.add_parser("risk-preview")
@@ -262,7 +263,7 @@ def _dispatch(args, app: MedicationApp):
     elif args.command == "drug-search":
         payload = app.search_products(args.term, args.limit, include_inactive=args.include_inactive)
     elif args.command == "meds":
-        payload = app.list_medications(args.person)
+        payload = app.list_medications(args.person, as_of=args.date)
     elif args.command == "risk-preview":
         payload = app.preview_medication(args.person, {
             "product_ref": args.product_ref, "dose_amount": args.dose_amount,

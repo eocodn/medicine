@@ -226,13 +226,14 @@ function renderMedications() {
       <div class="med-row">
         <div><p class="eyebrow">${escapeHtml(med.ingredient_name || "MEDICINE")}</p><h3>${escapeHtml(med.product_name)}</h3></div>
       </div>
+      ${medicationCourseHtml(med.course_progress)}
       <div class="med-meta">
         ${med.dosage_text ? `<span class="chip">한 번에 ${escapeHtml(formatDoseText(med.dosage_text))}</span>` : ""}
         ${med.frequency_per_day ? `<span class="chip">하루 ${escapeHtml(med.frequency_per_day)}회</span>` : ""}
         ${med.as_needed ? `<span class="chip prn-chip">필요할 때 복용</span>` : ""}
         ${med.meal_relation && med.meal_relation !== "unspecified" ? `<span class="chip">${escapeHtml(mealRelationLabel(med.meal_relation))}</span>` : ""}
         ${med.administration_route ? `<span class="chip">${escapeHtml(routeLabel(med.administration_route))}</span>` : ""}
-        ${med.prescription_days ? `<span class="chip">${escapeHtml(med.prescription_days)}일 복용</span>` : ""}
+        ${med.prescription_days && !med.course_progress ? `<span class="chip">${escapeHtml(med.prescription_days)}일 복용</span>` : ""}
         ${(med.schedules || []).map((s) => `<span class="chip">매일 ${escapeHtml(s.time_of_day)}</span>`).join("")}
         ${med.source === "manual" ? `<span class="chip caution-chip">직접 입력 · DUR 제한</span>` : ""}
       </div>

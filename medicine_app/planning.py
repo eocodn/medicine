@@ -5,6 +5,49 @@ from datetime import date
 from typing import Callable
 
 
+def medication_course_progress(medication: dict, target: date) -> dict | None:
+    """Return inclusive calendar progress for a finite prescription course."""
+    if not medication.get("start_date") or not medication.get("end_date"):
+        return None
+    start = date.fromisoformat(medication["start_date"])
+    end = date.fromisoformat(medication["end_date"])
+    total_days = (end - start).days + 1
+    if total_days <= 0:
+        raise ValueError("medication end_date must be on or after start_date")
+    if target < start:
+        status, current_day, remaining_days, progress_percent = "upcoming", 0, total_days, 0
+    elif target > end:
+        status, current_day, remaining_days, progress_percent = "completed", total_days, 0, 100
+    else:
+        current_day = (target - start).days + 1
+        remaining_days = (end - target).days + 1
+        status = "active"
+        progress_percent = round(current_day * 100 / total_days)
+    return {
+        "status": status,
+        "total_days": total_days,
+        "current_day": current_day,
+        "remaining_days": remaining_days,
+        "progress_percent": progress_percent,
+    }
+
+
+def sort_medications_by_time(medications: list[dict], target: date) -> list[dict]:
+    """Annotate courses and sort explicit daily times before unscheduled medication."""
+    annotated: list[dict] = []
+    for medication in medications:
+        item = dict(medication)
+        item["course_progress"] = medication_course_progress(item, target)
+        annotated.append(item)
+
+    def key(item: dict) -> tuple[int, str]:
+        times = [schedule["time_of_day"] for schedule in item.get("schedules") or []]
+        return (0, min(times)) if times else (1, "")
+
+    # Python's stable sort preserves the database list order for equal times.
+    return sorted(annotated, key=key)
+
+
 def medication_applies_on(medication: dict, target: date) -> bool:
     if not medication.get("active"):
         return False

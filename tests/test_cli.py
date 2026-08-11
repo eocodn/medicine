@@ -109,6 +109,20 @@ class PrescriptionCliTest(unittest.TestCase):
         self.assertEqual(canceled["status"], "planned")
         self.assertIsNone(canceled["completed_at"])
 
+    def test_meds_exposes_date_relative_course_progress(self) -> None:
+        app = MedicationApp(self.dur_db, self.personal_db, self.catalog_db)
+        app.add_medication(
+            self.person["id"], product_ref="MFDS-SAFE", start_date="2026-08-10",
+            prescription_days=5, schedule_times=["08:00"],
+        )
+
+        status, medications = self.run_cli(
+            "meds", "--person", self.person["id"], "--date", "2026-08-11"
+        )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(medications[0]["course_progress"]["remaining_days"], 4)
+
 
     def test_generic_dose_log_command_is_not_exposed(self) -> None:
         parser = build_parser()

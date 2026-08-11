@@ -197,7 +197,7 @@ def create_web_app(
         try:
             return {
                 "person": service.get_person(person_id),
-                "medications": service.list_medications(person_id),
+                "medications": service.list_medications(person_id, as_of=date),
                 "recent_logs": service.list_dose_logs(person_id, limit=20),
                 "daily_plan": service.get_daily_plan(person_id, date),
             }

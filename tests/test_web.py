@@ -34,8 +34,8 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('id="include-inactive"', response.text)
         self.assertIn('src="/static/native-api.js?v=20260811k"', response.text)
         self.assertIn('src="/static/people.js?v=20260811k"', response.text)
-        self.assertIn('href="/static/styles.css?v=20260811n"', response.text)
-        self.assertIn('src="/static/app.js?v=20260811n"', response.text)
+        self.assertIn('href="/static/styles.css?v=20260811o"', response.text)
+        self.assertIn('src="/static/app.js?v=20260811o"', response.text)
         self.assertNotIn("로컬 우선", response.text)
         self.assertNotIn("personal.sqlite", response.text)
         self.assertIn("Content-Security-Policy", response.text)
@@ -108,6 +108,10 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("확인된 DUR 경고가 없어 바로 저장합니다", prescription_script.text)
         app_script = self.client.get("/static/app.js")
         self.assertIn("if (reviewRequired) return", app_script.text)
+        timeline_script = self.client.get("/static/timeline.js")
+        self.assertEqual(timeline_script.status_code, 200)
+        self.assertIn("medicationCourseHtml", timeline_script.text)
+        self.assertIn("/static/timeline.js", response.text)
         self.assertIn("하루 복용 횟수와 입력한 복용 시간 개수가 같아야 해요", prescription_script.text)
         self.assertIn("<details", prescription_script.text)
         native_api = self.client.get("/static/native-api.js")
@@ -417,6 +421,7 @@ class WebApiTest(unittest.TestCase):
 
         dashboard = self.client.get(f"/api/people/{person['id']}/dashboard", params={"date": "2026-08-10"})
         self.assertEqual(dashboard.json()["daily_plan"]["summary"]["taken"], 1)
+        self.assertEqual(dashboard.json()["medications"][0]["course_progress"]["remaining_days"], 2)
 
 
 if __name__ == "__main__":

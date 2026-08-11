@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Iterator
 
 from .persistence import ensure_personal_schema
-from .planning import cancel_instance_completion, materialize_daily_plan, record_instance
+from .planning import (
+    cancel_instance_completion,
+    materialize_daily_plan,
+    record_instance,
+    sort_medications_by_time,
+)
 from .prescriptions import draft_hash, normalize_draft
 from .products import ProductRepository
 from .ocr import OCRReviewStore, preview_ocr, validate_ocr_create
@@ -316,10 +321,24 @@ class MedicationApp:
         ).fetchall()
         return [self._get_medication_from_connection(con, row["id"]) for row in rows]
 
-    def list_medications(self, person_id: str, active_only: bool = True) -> list[dict]:
+    def list_medications(
+        self,
+        person_id: str,
+        active_only: bool = True,
+        as_of: str | date | None = None,
+    ) -> list[dict]:
+        target = (
+            datetime.now(APP_TIMEZONE).date()
+            if as_of is None
+            else as_of if isinstance(as_of, date)
+            else date.fromisoformat(as_of)
+        )
         with self._personal() as con:
             self._get_person_from_connection(con, person_id)
-            return self._list_medications_from_connection(con, person_id, active_only=active_only)
+            medications = self._list_medications_from_connection(
+                con, person_id, active_only=active_only
+            )
+        return sort_medications_by_time(medications, target)
 
     def get_daily_plan(self, person_id: str, target_date: str | date | None = None) -> dict:
         self.get_person(person_id)
@@ -329,7 +348,7 @@ class MedicationApp:
             target = target_date
         else:
             target = date.fromisoformat(target_date)
-        medications = self.list_medications(person_id, active_only=True)
+        medications = self.list_medications(person_id, active_only=True, as_of=target)
         with self._personal() as con:
             return materialize_daily_plan(con, person_id, medications, target, _uuid)
 

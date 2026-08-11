@@ -153,7 +153,7 @@ class MobileApi:
             target_date = (query.get("date") or [None])[-1]
             return 200, {
                 "person": service.get_person(person_id),
-                "medications": service.list_medications(person_id),
+                "medications": service.list_medications(person_id, as_of=target_date),
                 "recent_logs": service.list_dose_logs(person_id, limit=20),
                 "daily_plan": service.get_daily_plan(person_id, target_date),
             }

@@ -392,6 +392,40 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(self.app.list_dose_logs(person["id"]), [])
         self.assertEqual(self.app.get_daily_plan(person["id"], "2026-08-13")["doses"], [])
 
+    def test_medications_and_daily_doses_are_sorted_by_time_with_course_progress(self) -> None:
+        person = self.app.create_person("시간순", "1990-01-01", "female", "not_pregnant")
+        late = self.app.add_medication(
+            person["id"], product_code="P-D", start_date="2026-08-10",
+            prescription_days=5, schedule_times=["20:00"],
+        )
+        early = self.app.add_medication(
+            person["id"], product_code="P-A", start_date="2026-08-10",
+            prescription_days=5, schedule_times=["08:00"],
+        )
+        floating = self.app.add_medication(
+            person["id"], product_code="P-D", start_date="2026-08-10",
+            frequency_per_day=1,
+        )
+
+        medications = self.app.list_medications(person["id"], as_of=date(2026, 8, 11))
+        plan = self.app.get_daily_plan(person["id"], "2026-08-11")
+
+        self.assertEqual([item["id"] for item in medications], [early["id"], late["id"], floating["id"]])
+        self.assertEqual(
+            medications[0]["course_progress"],
+            {
+                "status": "active", "total_days": 5, "current_day": 2,
+                "remaining_days": 4, "progress_percent": 40,
+            },
+        )
+        self.assertIsNone(medications[2]["course_progress"])
+        self.assertEqual([dose["scheduled_time"] for dose in plan["doses"]], ["08:00", "20:00", None])
+
+        upcoming = self.app.list_medications(person["id"], as_of=date(2026, 8, 9))[0]["course_progress"]
+        completed = self.app.list_medications(person["id"], as_of=date(2026, 8, 15))[0]["course_progress"]
+        self.assertEqual((upcoming["status"], upcoming["current_day"], upcoming["remaining_days"]), ("upcoming", 0, 5))
+        self.assertEqual((completed["status"], completed["current_day"], completed["remaining_days"]), ("completed", 5, 0))
+
     def test_daily_plan_uses_unscheduled_frequency_slots_and_separates_prn(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
         self.app.add_medication(person["id"], product_code="P-A", frequency_per_day=3, start_date="2026-08-10")
