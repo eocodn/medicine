@@ -199,7 +199,8 @@ class MedicationAppTest(unittest.TestCase):
     def test_delete_person_erases_all_dependent_personal_records(self) -> None:
         person = self.app.create_person("Delete", "1990-01-01", "male")
         medication = self.app.add_medication(
-            person["id"], product_code="P-A", schedule_times=["08:00"], request_id="delete-person-med"
+            person["id"], product_code="P-A", schedule_times=["08:00"], start_date="2026-08-11",
+            request_id="delete-person-med"
         )
         plan = self.app.get_daily_plan(person["id"], "2026-08-11")
         self.app.record_dose_instance(
