@@ -20,6 +20,7 @@ const titles = {
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const todayInKorea = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -438,9 +439,7 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
     $("#pending-prn", root).checked = Boolean(medication.as_needed);
     $("#confirm-edit-med", root).addEventListener("click", confirmEditMedication);
   } else {
-    $("#pending-start-date", root).value = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
+    $("#pending-start-date", root).value = todayInKorea();
     $("#confirm-add-med", root).addEventListener("click", confirmAddMedication);
     MedicineOcr.prefillForm(ocrHints, MedicineOcr.getReview()?.issues);
   }
@@ -555,13 +554,14 @@ async function confirmAddMedication() {
 
 async function submitPerson(event) {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
   const payload = Object.fromEntries(form.entries());
   try {
     const person = await api("/api/people", { method: "POST", body: JSON.stringify(payload) });
     state.currentPersonId = person.id;
     localStorage.setItem("medicine.currentPersonId", person.id);
-    event.currentTarget.reset();
+    formElement.reset();
     closeSheets();
     await loadPeople();
     showScreen("home");
@@ -570,6 +570,8 @@ async function submitPerson(event) {
 }
 
 function bindEvents() {
+  const birthInput = $('#person-form input[name="birth_date"]');
+  birthInput.max = todayInKorea();
   $$("[data-nav]").forEach((button) => button.addEventListener("click", () => showScreen(button.dataset.nav)));
   $$("[data-go]").forEach((button) => button.addEventListener("click", () => showScreen(button.dataset.go)));
   $("#profile-shortcut").addEventListener("click", () => state.people.length ? showScreen("people") : openSheet("#person-sheet"));
