@@ -68,6 +68,7 @@ MEDICATION_COLUMNS = {
     "administration_route": "TEXT",
     "as_needed": "INTEGER NOT NULL DEFAULT 0",
     "prescription_days": "INTEGER",
+    "stopped_at": "TEXT",
     "revision": "INTEGER NOT NULL DEFAULT 1",
     # SQLite cannot add a column with a CURRENT_TIMESTAMP default via ALTER
     # TABLE. Existing rows are backfilled below and an insert trigger supplies
@@ -182,6 +183,13 @@ def ensure_personal_schema(con: sqlite3.Connection) -> None:
         SET updated_at=COALESCE(updated_at, created_at, CURRENT_TIMESTAMP),
             revision=COALESCE(revision, 1)
         WHERE updated_at IS NULL OR revision IS NULL
+        """
+    )
+    con.execute(
+        """
+        UPDATE medications
+        SET stopped_at=substr(COALESCE(updated_at, created_at), 1, 10)
+        WHERE active=0 AND stopped_at IS NULL
         """
     )
     con.execute(

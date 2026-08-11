@@ -492,9 +492,11 @@ class MedicationApp:
                     f"expected revision {expected_revision}, current revision is {current['revision']}"
                 )
             next_revision = current["revision"] + 1
+            stopped_at = current.get("stopped_at") or datetime.now(APP_TIMEZONE).date().isoformat()
             result = con.execute(
-                "UPDATE medications SET active=0,revision=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND revision=?",
-                (next_revision, medication_id, expected_revision),
+                "UPDATE medications SET active=0,stopped_at=?,revision=?,updated_at=CURRENT_TIMESTAMP "
+                "WHERE id=? AND revision=?",
+                (stopped_at, next_revision, medication_id, expected_revision),
             )
             if result.rowcount != 1:
                 raise RevisionConflict("medication revision changed during stop")

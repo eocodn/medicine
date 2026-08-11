@@ -464,7 +464,9 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(len(combination), 1)
         self.assertEqual(combination[0]["source_scope"], "ingredient")
         self.assertEqual(combination[0]["related_medication_id"], current["id"])
-        self.assertIn("조건", combination[0]["title"])
+        self.assertNotIn("조건", combination[0]["title"])
+        self.assertEqual(combination[0]["timing"]["kind"], "minimum_separation")
+        self.assertEqual(combination[0]["timing"]["hours"], 24)
         conditional_checks = [
             check for check in preview["coverage"]["not_evaluable_checks"]
             if check["category"] == "combination_contraindication"
@@ -479,6 +481,31 @@ class SafetyCoverageV2Test(unittest.TestCase):
             acknowledge_warnings=True, warning_token=blocked.exception.assessment["warning_token"],
         )
         self.assertEqual(medication["product_name"], "알프라졸람제품")
+
+    def test_washout_structure_does_not_hide_other_unresolved_conditions(self) -> None:
+        con = sqlite3.connect(self.dur_db)
+        con.execute(
+            """UPDATE ingredient_dur
+               SET note='75세 이상 남성',
+                   details='Itraconazole 투여 중 및 종료 후 2주 간 해당 성분 투여 금기'
+               WHERE category='combination_contraindication'"""
+        )
+        con.commit()
+        con.close()
+        self.app.add_medication(
+            self.person["id"], product_ref="MFDS-I", start_date="2026-08-01", prescription_days=1,
+        )
+
+        preview = self.app.preview_medication(
+            self.person["id"],
+            {"product_ref": "MFDS-A", "start_date": "2026-08-02", "prescription_days": 1},
+        )
+        combination = [risk for risk in preview["risks"] if risk["type"] == "combination_contraindication"]
+
+        self.assertEqual(len(combination), 1)
+        self.assertIn("조건", combination[0]["title"])
+        self.assertIn("75세 이상 남성", combination[0]["details"])
+        self.assertEqual(combination[0]["timing"]["kind"], "washout_after")
 
     def test_unmapped_catalog_ingredient_is_explicitly_not_evaluable(self) -> None:
         preview = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-X"})

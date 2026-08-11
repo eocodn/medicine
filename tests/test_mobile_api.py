@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +28,22 @@ class MobileApiTest(unittest.TestCase):
         raw = self.api.request(method, path, json.dumps(body, ensure_ascii=False) if body is not None else "")
         envelope = json.loads(raw)
         return envelope["status"], envelope["body"]
+
+    def test_prepare_for_seal_checkpoints_personal_database(self) -> None:
+        self.request("POST", "/api/people", {
+            "name": "암호화",
+            "birth_date": "1990-01-01",
+            "sex": "male",
+            "pregnancy_status": "not_applicable",
+        })
+
+        self.api.prepare_for_seal()
+
+        with sqlite3.connect(self.personal_db) as con:
+            self.assertEqual(con.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM people").fetchone()[0], 1)
+        wal = Path(str(self.personal_db) + "-wal")
+        self.assertTrue(not wal.exists() or wal.stat().st_size == 0)
 
     def test_people_search_dashboard_and_dose_routes_share_the_core(self) -> None:
         status, health = self.request("GET", "/api/health")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from medicine_app.core import MedicationApp
@@ -224,6 +224,100 @@ class MedicationAppTest(unittest.TestCase):
         self.assertIn("age_contraindication", risk_types)
         self.assertIn("pregnancy_contraindication", risk_types)
         self.assertIn("duration_caution", risk_types)
+
+    def test_interactions_follow_prescription_course_overlap_not_active_flag(self) -> None:
+        person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
+        self.app.add_medication(
+            person["id"], product_code="P-A", start_date="2026-08-01", prescription_days=7,
+        )
+
+        separated = self.app.preview_medication(
+            person["id"],
+            {"product_code": "P-B", "start_date": "2026-08-20", "prescription_days": 3},
+        )
+        overlapping = self.app.preview_medication(
+            person["id"],
+            {"product_code": "P-B", "start_date": "2026-08-07", "prescription_days": 3},
+        )
+
+        self.assertNotIn("combination_contraindication", {r["type"] for r in separated["risks"]})
+        self.assertIn("combination_contraindication", {r["type"] for r in overlapping["risks"]})
+
+    def test_product_washout_extends_interaction_after_source_course(self) -> None:
+        con = sqlite3.connect(self.dur_db)
+        con.execute(
+            """UPDATE product_dur
+               SET details='drug-a 투여 중 및 종료 후 7일 간 해당 성분 투여 금기'
+               WHERE category='combination_contraindication' AND product_code='P-A'"""
+        )
+        con.commit()
+        con.close()
+        person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
+        self.app.add_medication(
+            person["id"], product_code="P-A", start_date="2026-08-01", prescription_days=7,
+        )
+
+        within = self.app.preview_medication(
+            person["id"],
+            {"product_code": "P-B", "start_date": "2026-08-14", "prescription_days": 2},
+        )
+        outside = self.app.preview_medication(
+            person["id"],
+            {"product_code": "P-B", "start_date": "2026-08-15", "prescription_days": 2},
+        )
+
+        washout = [r for r in within["risks"] if r["type"] == "combination_contraindication"]
+        self.assertEqual(len(washout), 1)
+        self.assertEqual(washout[0]["timing"]["kind"], "washout_after")
+        self.assertEqual(washout[0]["timing"]["hours"], 7 * 24)
+        self.assertNotIn("combination_contraindication", {r["type"] for r in outside["risks"]})
+
+    def test_explicitly_stopped_medication_still_contributes_during_washout(self) -> None:
+        con = sqlite3.connect(self.dur_db)
+        con.execute(
+            """UPDATE product_dur
+               SET details='drug-a 투여 중 및 종료 후 7일 간 해당 성분 투여 금기'
+               WHERE category='combination_contraindication' AND product_code='P-A'"""
+        )
+        con.commit()
+        con.close()
+        person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
+        medication = self.app.add_medication(person["id"], product_code="P-A", start_date="2026-08-01")
+        stopped = self.app.stop_medication(medication["id"], expected_revision=medication["revision"])
+        stopped_on = date.fromisoformat(stopped["stopped_at"])
+
+        within = self.app.preview_medication(
+            person["id"],
+            {
+                "product_code": "P-B",
+                "start_date": (stopped_on + timedelta(days=7)).isoformat(),
+                "prescription_days": 1,
+            },
+        )
+        outside = self.app.preview_medication(
+            person["id"],
+            {
+                "product_code": "P-B",
+                "start_date": (stopped_on + timedelta(days=8)).isoformat(),
+                "prescription_days": 1,
+            },
+        )
+
+        self.assertIn("combination_contraindication", {r["type"] for r in within["risks"]})
+        self.assertNotIn("combination_contraindication", {r["type"] for r in outside["risks"]})
+
+    def test_therapeutic_duplication_also_requires_course_overlap(self) -> None:
+        person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
+        self.app.add_medication(
+            person["id"], product_code="P-A", start_date="2026-08-01", prescription_days=7,
+        )
+
+        separated = self.app.preview_medication(
+            person["id"],
+            {"product_code": "P-C", "start_date": "2026-08-20", "prescription_days": 3},
+        )
+
+        self.assertNotIn("therapeutic_duplication_caution", {r["type"] for r in separated["risks"]})
 
     def test_active_medication_is_reassessed_after_profile_change_without_rewriting_history(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant")

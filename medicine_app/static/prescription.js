@@ -62,7 +62,22 @@ function qualitativeRiskHtml(risks) {
     <div class="risk-card ${escapeHtml(risk.severity || "info")}">
       <strong>${escapeHtml(risk.title || "DUR 주의")}</strong>
       <p>${escapeHtml(risk.details || "상세 설명 없음")}</p>
+      ${interactionTimingHtml(risk.timing)}
     </div>`).join("");
+}
+
+function interactionTimingHtml(timing) {
+  if (!timing || timing.status !== "structured") return "";
+  const amount = timing.amount ?? "";
+  const unit = timing.unit || "시간";
+  if (timing.kind === "minimum_separation") {
+    return `<p>시간 조건: ${escapeHtml(amount)}${escapeHtml(unit)} 이내 병용금기</p>`;
+  }
+  if (timing.kind === "washout_after") {
+    const subject = timing.subject ? `${escapeHtml(timing.subject)} ` : "해당 성분 ";
+    return `<p>중단 후 주의기간: ${subject}종료 후 ${escapeHtml(amount)}${escapeHtml(unit)}</p>`;
+  }
+  return "";
 }
 
 function assessmentDetailsHtml(assessment) {

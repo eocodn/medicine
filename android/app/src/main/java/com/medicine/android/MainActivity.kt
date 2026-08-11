@@ -1,6 +1,8 @@
 package com.medicine.android
 
 import android.content.Intent
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -21,8 +23,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.security.KeyStore
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
 
 class MainActivity : ComponentActivity() {
     private var webView: WebView? = null
@@ -48,7 +53,13 @@ class MainActivity : ComponentActivity() {
             runCatching {
                 val reference = ReferenceAssetInstaller(this).install()
                 val personalDatabase = File(filesDir, "personal.sqlite")
-                MedicineBridge(reference.database, personalDatabase)
+                val encryptedPersonalDatabase = File(filesDir, "personal.sqlite.enc")
+                val vault = PersonalDatabaseVault(
+                    personalDatabase,
+                    encryptedPersonalDatabase,
+                    ::personalDatabaseKey,
+                )
+                MedicineBridge(reference.database, personalDatabase, vault)
             }.onSuccess { bridge ->
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) setupWebView(bridge)
@@ -61,6 +72,23 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun personalDatabaseKey(): SecretKey {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (store.getKey(PERSONAL_DB_KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                PERSONAL_DB_KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build()
+        )
+        return generator.generateKey()
     }
 
     private fun setupWebView(bridge: MedicineBridge) {
@@ -175,5 +203,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val APP_ASSET_DOMAIN = "appassets.androidplatform.net"
         private const val APP_URL = "https://$APP_ASSET_DOMAIN/static/index.html"
+        private const val PERSONAL_DB_KEY_ALIAS = "medicine.personal-db.v1"
     }
 }

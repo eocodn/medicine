@@ -129,7 +129,7 @@ def assess_medication(
     as_of: date | None = None,
 ) -> dict[str, Any]:
     current = app._list_medications_from_connection(
-        personal_con, person["id"], exclude_id=exclude_medication_id
+        personal_con, person["id"], active_only=False, exclude_id=exclude_medication_id
     )
     current = _current_products(app, current)
     product_risks: list[dict] = []
@@ -143,14 +143,16 @@ def assess_medication(
     with app._dur() as dur_con:
         dataset = dataset_manifest(dur_con)
         if product.get("dur_match"):
-            product_risks = collect_qualitative_risks(dur_con, product, person, current, as_of)
+            product_risks = collect_qualitative_risks(
+                dur_con, product, person, current, as_of, candidate_course=draft
+            )
             quantitative = evaluate_quantitative(dur_con, product, draft)
             for dimension in quantitative.values():
                 dimension.setdefault("source_scope", "product")
         ingredient_status = product.get("ingredient_mapping_status")
         if ingredient_status in {"matched", "partial"}:
             ingredient_risks, ingredient_not_evaluable = collect_ingredient_risks(
-                dur_con, product, person, current, as_of
+                dur_con, product, person, current, as_of, candidate_course=draft
             )
             product_duration_result = quantitative["duration"].get("result")
             if product_duration_result in {"not_evaluable", "not_applicable"}:

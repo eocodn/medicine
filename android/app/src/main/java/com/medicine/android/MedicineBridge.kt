@@ -7,28 +7,60 @@ import com.chaquo.python.Python
 import org.json.JSONObject
 import java.io.File
 
-class MedicineBridge(referenceDatabase: File, personalDatabase: File) {
+class MedicineBridge(
+    referenceDatabase: File,
+    personalDatabase: File,
+    private val vault: PersonalDatabaseVault,
+) {
     private val lock = Any()
-    private val api: PyObject = Python.getInstance()
-        .getModule("medicine_app.mobile_api")
-        .callAttr(
-            "create_bridge",
-            referenceDatabase.absolutePath,
-            personalDatabase.absolutePath,
-            referenceDatabase.absolutePath,
-        )
+    private val api: PyObject
+
+    init {
+        vault.openForUse()
+        api = Python.getInstance()
+            .getModule("medicine_app.mobile_api")
+            .callAttr(
+                "create_bridge",
+                referenceDatabase.absolutePath,
+                personalDatabase.absolutePath,
+                referenceDatabase.absolutePath,
+            )
+        api.callAttr("prepare_for_seal")
+        vault.sealAfterUse()
+    }
 
     @JavascriptInterface
     fun request(method: String, path: String, body: String?): String = synchronized(lock) {
         try {
-            api.callAttr("request", method, path, body ?: "").toString()
+            vault.openForUse()
+        } catch (error: Throwable) {
+            Log.e(TAG, "Personal database vault open failed", error)
+            return@synchronized JSONObject()
+                .put("status", 500)
+                .put("body", JSONObject().put("detail", "personal data encryption failure"))
+                .toString()
+        }
+        var response: String
+        try {
+            response = api.callAttr("request", method, path, body ?: "").toString()
         } catch (error: Throwable) {
             Log.e(TAG, "Native API bridge request failed", error)
-            JSONObject()
+            response = JSONObject()
                 .put("status", 500)
                 .put("body", JSONObject().put("detail", "native bridge failure"))
                 .toString()
         }
+        try {
+            api.callAttr("prepare_for_seal")
+            vault.sealAfterUse()
+        } catch (error: Throwable) {
+            Log.e(TAG, "Personal database vault seal failed", error)
+            response = JSONObject()
+                .put("status", 500)
+                .put("body", JSONObject().put("detail", "personal data encryption failure"))
+                .toString()
+        }
+        response
     }
 
     companion object {

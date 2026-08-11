@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
 from .coverage import normalize_ingredient_name
+from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 from .safety import age_rule_matches, age_years
 
 
@@ -140,12 +141,14 @@ def collect_ingredient_risks(
     person: Mapping[str, Any],
     current: list[dict],
     as_of: date | None = None,
+    candidate_course: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     new_ingredients = _ingredients(product)
     if not new_ingredients:
         return [], []
     risks: list[dict[str, Any]] = []
     not_evaluable: list[dict[str, Any]] = []
+    course = candidate_course or {}
 
     for medication in current:
         current_ingredients = _ingredients(medication)
@@ -156,13 +159,42 @@ def collect_ingredient_risks(
             right = normalize_ingredient_name(row.get("paired_ingredient_name"))
             if not left or not right:
                 continue
-            if (left in new_ingredients and right in current_ingredients) or (
-                right in new_ingredients and left in current_ingredients
-            ):
-                conditional_note = str(row.get("note") or "").strip() if _is_conditional_note(row.get("note")) else ""
+            left_match = left in new_ingredients and right in current_ingredients
+            right_match = right in new_ingredients and left in current_ingredients
+            if left_match or right_match:
+                timing_text = " ".join(
+                    part
+                    for part in (
+                        str(row.get("details") or "").strip(),
+                        str(row.get("note") or "").strip(),
+                    )
+                    if part
+                )
+                timing = parse_interaction_timing(
+                    timing_text, row.get("ingredient_name"), row.get("paired_ingredient_name")
+                )
+                if not interaction_timing_applies(
+                    timing, course, medication, candidate_side="left" if left_match else "right"
+                ):
+                    continue
+                note_text = str(row.get("note") or "").strip()
+                note_timing = parse_interaction_timing(
+                    note_text, row.get("ingredient_name"), row.get("paired_ingredient_name")
+                )
+                note_is_only_structured_timing = (
+                    note_timing.get("status") == "structured"
+                    and note_timing.get("kind") in {"minimum_separation", "washout_after"}
+                )
+                conditional_note = (
+                    note_text
+                    if _is_conditional_note(note_text) and not note_is_only_structured_timing
+                    else ""
+                )
                 details = row.get("details") or "성분 기준 DUR 병용금기 조합에 해당합니다."
                 if conditional_note:
                     details = f"조건: {conditional_note}. {details}"
+                if timing.get("status") == "not_evaluable":
+                    details = f"{details} 복용 간격 조건은 자동 판정하지 못해 경고를 유지합니다."
                 item = _risk(
                     row,
                     type_="combination_contraindication",
@@ -174,6 +206,7 @@ def collect_ingredient_risks(
                     details=details,
                 )
                 item["related_medication_id"] = medication["id"]
+                item["timing"] = timing
                 risks.append(item)
 
     current_age = age_years(person["birth_date"], as_of)
@@ -245,6 +278,8 @@ def collect_ingredient_risks(
         if normalize_ingredient_name(row.get("ingredient_name")) in new_ingredients and row.get("rule_value"):
             new_groups.setdefault(str(row["rule_value"]), []).append(row)
     for medication in current:
+        if courses_overlap(course, medication) is False:
+            continue
         current_ingredients = _ingredients(medication)
         if not current_ingredients:
             continue

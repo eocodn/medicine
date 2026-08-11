@@ -14,6 +14,8 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
+
+from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 APP_TIMEZONE = timezone(timedelta(hours=9), "Asia/Seoul")
 AGE_RULE_RE = re.compile(r"(?P<n>\d+)\s*(?P<unit>세|개월|주)\s*(?P<op>미만|이하|이상|초과)")
 
@@ -111,7 +113,12 @@ def _risk_row_fields(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _combination_risks(con: sqlite3.Connection, product: Mapping[str, Any], current: list[dict]) -> list[dict]:
+def _combination_risks(
+    con: sqlite3.Connection,
+    product: Mapping[str, Any],
+    current: list[dict],
+    candidate_course: Mapping[str, Any],
+) -> list[dict]:
     risks: list[dict] = []
     code = product.get("product_code") or product.get("edi_code")
     if not code:
@@ -122,7 +129,8 @@ def _combination_risks(con: sqlite3.Connection, product: Mapping[str, Any], curr
             continue
         rows = con.execute(
             """
-            SELECT details, notice_no, notice_date
+            SELECT ingredient_name, product_code, paired_ingredient_name, paired_product_code,
+                   details, notice_no, notice_date
             FROM product_dur
             WHERE category='combination_contraindication'
               AND ((product_code=? AND paired_product_code=?)
@@ -132,14 +140,26 @@ def _combination_risks(con: sqlite3.Connection, product: Mapping[str, Any], curr
             (code, paired_code, paired_code, code),
         ).fetchall()
         for row in rows:
+            candidate_side = "left" if row["product_code"] == code else "right"
+            timing = parse_interaction_timing(
+                row["details"], row["ingredient_name"], row["paired_ingredient_name"]
+            )
+            if not interaction_timing_applies(
+                timing, candidate_course, medication, candidate_side=candidate_side
+            ):
+                continue
+            details = row["details"] or "DUR 병용금기 조합에 해당합니다."
+            if timing.get("status") == "not_evaluable":
+                details = f"{details} 복용 간격 조건은 자동 판정하지 못해 경고를 유지합니다."
             risks.append({
                 "type": "combination_contraindication",
                 "severity": "danger",
                 "title": f"{medication['product_name']}와 병용금기",
-                "details": row["details"] or "DUR 병용금기 조합에 해당합니다.",
+                "details": details,
                 "related_medication_id": medication["id"],
                 "notice_no": row["notice_no"],
                 "notice_date": row["notice_date"],
+                "timing": timing,
             })
     return risks
 
@@ -189,7 +209,12 @@ def _person_specific_risks(
     return risks
 
 
-def _duplication_risks(con: sqlite3.Connection, product: Mapping[str, Any], current: list[dict]) -> list[dict]:
+def _duplication_risks(
+    con: sqlite3.Connection,
+    product: Mapping[str, Any],
+    current: list[dict],
+    candidate_course: Mapping[str, Any],
+) -> list[dict]:
     code = product.get("product_code") or product.get("edi_code")
     if not code:
         return []
@@ -201,6 +226,8 @@ def _duplication_risks(con: sqlite3.Connection, product: Mapping[str, Any], curr
     }
     risks: list[dict] = []
     for medication in current:
+        if courses_overlap(candidate_course, medication) is False:
+            continue
         paired_code = medication.get("product_code")
         if not paired_code:
             continue
@@ -261,12 +288,14 @@ def collect_qualitative_risks(
     person: Mapping[str, Any],
     current: list[dict],
     as_of: date | None = None,
+    candidate_course: Mapping[str, Any] | None = None,
 ) -> list[dict]:
     """Collect the four qualitative DUR risk families used by ``core``."""
+    course = candidate_course or {}
     risks = (
-        _combination_risks(con, product, current)
+        _combination_risks(con, product, current, course)
         + _person_specific_risks(con, person, product, as_of)
-        + _duplication_risks(con, product, current)
+        + _duplication_risks(con, product, current, course)
         + _rule_presence_risks(con, product)
     )
     seen: set[tuple[Any, ...]] = set()

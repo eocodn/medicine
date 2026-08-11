@@ -72,6 +72,27 @@ test("warning preview renders qualitative DUR details before acknowledgement", a
   assert.match(html, /함께 복용하면 안 됩니다/);
 });
 
+test("structured interaction timing is visible in the warning details", async () => {
+  const context = prescriptionContext({
+    warning_token: "warning-token",
+    risks: [{
+      severity: "danger",
+      title: "병용금기",
+      details: "두 성분을 함께 사용하지 않아야 합니다.",
+      timing: { status: "structured", kind: "minimum_separation", amount: 24, unit: "시간" },
+    }],
+    coverage: { not_evaluable_checks: [] },
+    quantitative_checks: {
+      duration: { result: "not_applicable" },
+      dose: { result: "not_applicable" },
+    },
+  });
+
+  await context.reviewPrescriptionDraft("product-1", { prescription_days: 7 }, "confirm-add-med");
+
+  assert.match(context.$("#quantitative-warning").innerHTML, /24시간 이내 병용금기/);
+});
+
 test("authoritative confirmation response renders qualitative DUR details", () => {
   const context = prescriptionContext({});
   const handled = context.handleConfirmationRequired({

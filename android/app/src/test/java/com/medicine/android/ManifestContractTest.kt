@@ -46,4 +46,17 @@ class ManifestContractTest {
         assertTrue(installer.contains("temporary.renameTo(target)"))
         assertTrue(installer.contains("target.setReadOnly()"))
     }
+
+    @Test
+    fun personalDatabaseIsSealedWithAndroidKeystoreBetweenBridgeRequests() {
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
+        val vault = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseVault.kt").readText()
+        assertTrue(activity.contains("personal.sqlite.enc"))
+        assertTrue(activity.contains("AndroidKeyStore"))
+        assertTrue(bridge.contains("openForUse"))
+        assertTrue(bridge.contains("prepare_for_seal"))
+        assertTrue(bridge.contains("sealAfterUse"))
+        assertTrue(vault.contains("AES/GCM/NoPadding"))
+    }
 }
