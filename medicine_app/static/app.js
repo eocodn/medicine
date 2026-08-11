@@ -175,7 +175,6 @@ function renderHome() {
       <p class="eyebrow">${escapeHtml(new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" }))}</p>
       <h2>${escapeHtml(person.name)}님의<br>복약을 챙겨볼게요.</h2>
       <p class="muted">현재 복용약 ${meds.length}개 · ${escapeHtml(profileMeta(person))}</p>
-      <div class="profile-line"><span class="profile-dot"></span><span class="small">개인 기록은 로컬 DB에 저장 중</span></div>
     </div>
     <div class="card today-card">
       <div class="today-header"><h3>오늘 복용 일정</h3><span class="count-pill">${doses.length}</span></div>
