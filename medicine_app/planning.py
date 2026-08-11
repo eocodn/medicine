@@ -15,7 +15,7 @@ def clock_sort_key(value: str) -> tuple[int, int]:
 
 
 def medication_course_progress(medication: dict, target: date) -> dict | None:
-    """Return inclusive calendar progress for a finite prescription course."""
+    """Return calendar progress; active remaining days exclude the target day."""
     if not medication.get("start_date") or not medication.get("end_date"):
         return None
     start = date.fromisoformat(medication["start_date"])
@@ -29,7 +29,7 @@ def medication_course_progress(medication: dict, target: date) -> dict | None:
         status, current_day, remaining_days, progress_percent = "completed", total_days, 0, 100
     else:
         current_day = (target - start).days + 1
-        remaining_days = (end - target).days + 1
+        remaining_days = (end - target).days
         status = "active"
         progress_percent = round(current_day * 100 / total_days)
     return {

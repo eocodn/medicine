@@ -422,15 +422,19 @@ class MedicationAppTest(unittest.TestCase):
             medications[0]["course_progress"],
             {
                 "status": "active", "total_days": 5, "current_day": 2,
-                "remaining_days": 4, "progress_percent": 40,
+                "remaining_days": 3, "progress_percent": 40,
             },
         )
         self.assertIsNone(medications[2]["course_progress"])
         self.assertEqual([dose["scheduled_time"] for dose in plan["doses"]], ["8:00", "20:00", None])
 
         upcoming = self.app.list_medications(person["id"], as_of=date(2026, 8, 9))[0]["course_progress"]
+        first_day = self.app.list_medications(person["id"], as_of=date(2026, 8, 10))[0]["course_progress"]
+        final_day = self.app.list_medications(person["id"], as_of=date(2026, 8, 14))[0]["course_progress"]
         completed = self.app.list_medications(person["id"], as_of=date(2026, 8, 15))[0]["course_progress"]
         self.assertEqual((upcoming["status"], upcoming["current_day"], upcoming["remaining_days"]), ("upcoming", 0, 5))
+        self.assertEqual((first_day["current_day"], first_day["remaining_days"]), (1, 4))
+        self.assertEqual((final_day["current_day"], final_day["remaining_days"]), (5, 0))
         self.assertEqual((completed["status"], completed["current_day"], completed["remaining_days"]), ("completed", 5, 0))
 
     def test_daily_plan_uses_unscheduled_frequency_slots_and_separates_prn(self) -> None:

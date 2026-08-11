@@ -426,7 +426,7 @@ class WebApiTest(unittest.TestCase):
 
         dashboard = self.client.get(f"/api/people/{person['id']}/dashboard", params={"date": "2026-08-10"})
         self.assertEqual(dashboard.json()["daily_plan"]["summary"]["taken"], 1)
-        self.assertEqual(dashboard.json()["medications"][0]["course_progress"]["remaining_days"], 2)
+        self.assertEqual(dashboard.json()["medications"][0]["course_progress"]["remaining_days"], 1)
 
 
 if __name__ == "__main__":

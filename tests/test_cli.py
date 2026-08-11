@@ -121,7 +121,7 @@ class PrescriptionCliTest(unittest.TestCase):
         )
 
         self.assertEqual(status, 0)
-        self.assertEqual(medications[0]["course_progress"]["remaining_days"], 4)
+        self.assertEqual(medications[0]["course_progress"]["remaining_days"], 3)
 
 
     def test_generic_dose_log_command_is_not_exposed(self) -> None:

@@ -14,17 +14,17 @@ function timelineContext() {
   return context;
 }
 
-test("renders active medication course day and inclusive remaining days", () => {
+test("renders active course day and remaining days after today", () => {
   const context = timelineContext();
 
   const html = context.medicationCourseHtml({
     status: "active", total_days: 5, current_day: 2,
-    remaining_days: 4, progress_percent: 40,
+    remaining_days: 3, progress_percent: 40,
   });
 
   assert.match(html, /전체 5일/);
   assert.match(html, /2일째/);
-  assert.match(html, /4일 남음/);
+  assert.match(html, /3일 남음/);
   assert.match(html, /<progress[^>]+value="40"[^>]+max="100"/);
   assert.match(html, /aria-label="복용 진행률 40%"/);
   assert.doesNotMatch(html, /style=/);
