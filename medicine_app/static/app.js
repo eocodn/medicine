@@ -199,10 +199,14 @@ function renderHome() {
 
 function scheduleHtml(item) {
   const done = item.status !== "planned";
+  const mealRelation = item.meal_relation && item.meal_relation !== "unspecified"
+    ? mealRelationLabel(item.meal_relation) : null;
+  const doseMeta = [item.dose_text ? formatDoseText(item.dose_text) : "복용량 미입력", mealRelation]
+    .filter(Boolean).join(" · ");
   return `
     <div class="schedule-item ${done ? "done" : ""}">
       <span class="schedule-time">${escapeHtml(item.scheduled_time || item.slot_label || "시간 미정")}</span>
-      <div class="schedule-name"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(item.dose_text ? formatDoseText(item.dose_text) : "복용량 미입력")}</span></div>
+      <div class="schedule-name"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(doseMeta)}</span></div>
       ${item.status === "taken"
         ? `<button class="mini-action" data-instance-cancel="${item.id}" type="button">취소</button>`
         : item.status === "skipped"
