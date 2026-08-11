@@ -8,11 +8,63 @@ from typing import Any, Mapping
 from medicine_dur.verification import dataset_manifest
 
 from .coverage import coverage_summary
-from .ingredient_safety import collect_ingredient_risks, evaluate_ingredient_duration
-from .safety import collect_qualitative_risks, evaluate_quantitative
+from .ingredient_safety import (
+    collect_ingredient_risks,
+    evaluate_ingredient_duration,
+    evaluate_ingredient_rule_applicability,
+)
+from .safety import age_years, collect_qualitative_risks, evaluate_quantitative
 
 
-EVALUATOR_VERSION = "2"
+EVALUATOR_VERSION = "3"
+
+
+def _coverage_only(reason: str, *, scope: str = "coverage") -> dict[str, Any]:
+    return {"result": "not_evaluable", "reason": reason, "source_scope": scope, "coverage_only": True}
+
+
+def _profile_rule_categories(
+    con: sqlite3.Connection,
+    product: Mapping[str, Any],
+    person: Mapping[str, Any],
+) -> set[str]:
+    categories: set[str] = set()
+    code = product.get("product_code") or product.get("edi_code")
+    if person.get("pregnancy_status") == "unknown":
+        product_match = bool(code and con.execute(
+            "SELECT 1 FROM product_dur WHERE product_code=? AND category='pregnancy_contraindication' LIMIT 1",
+            (code,),
+        ).fetchone())
+        ingredient = evaluate_ingredient_rule_applicability(con, product, "pregnancy_contraindication")
+        ingredient_match = (
+            ingredient.get("result") in {"applicable", "not_evaluable"}
+            and bool(ingredient.get("source_rows"))
+        )
+        if product_match or ingredient_match:
+            categories.add("pregnancy_contraindication")
+    if person.get("lactation_status", "unknown") == "unknown":
+        ingredient = evaluate_ingredient_rule_applicability(con, product, "lactation_caution")
+        if (
+            ingredient.get("result") in {"applicable", "not_evaluable"}
+            and ingredient.get("source_rows")
+        ):
+            categories.add("lactation_caution")
+    return categories
+
+
+def _ingredient_presence_result(applicability: dict[str, Any], category: str) -> dict[str, Any]:
+    if applicability["result"] != "applicable":
+        return applicability
+    rows = applicability.get("source_rows") or []
+    result = {
+        "result": "not_evaluable",
+        "reason": f"ingredient {category} rule is present but has no unambiguous product threshold",
+        "source_scope": "ingredient",
+        "source_rows": rows,
+    }
+    if len(rows) == 1:
+        result["source"] = rows[0]
+    return result
 
 
 def _fallback_product(medication: Mapping[str, Any]) -> dict[str, Any]:
@@ -83,9 +135,10 @@ def assess_medication(
     ingredient_risks: list[dict] = []
     ingredient_not_evaluable: list[dict] = []
     quantitative = {
-        "duration": {"result": "not_evaluable", "reason": "DUR product code is not linked", "source_scope": "product"},
-        "dose": {"result": "not_evaluable", "reason": "DUR product code is not linked", "source_scope": "product"},
+        "duration": _coverage_only("DUR product code is not linked", scope="product"),
+        "dose": _coverage_only("DUR product code is not linked", scope="product"),
     }
+    relevant_profile_categories: set[str] = set()
     with app._dur() as dur_con:
         dataset = dataset_manifest(dur_con)
         if product.get("dur_match"):
@@ -93,16 +146,59 @@ def assess_medication(
             quantitative = evaluate_quantitative(dur_con, product, draft)
             for dimension in quantitative.values():
                 dimension.setdefault("source_scope", "product")
-        if product.get("ingredient_mapping_status") in {"matched", "partial"}:
+        ingredient_status = product.get("ingredient_mapping_status")
+        if ingredient_status in {"matched", "partial"}:
             ingredient_risks, ingredient_not_evaluable = collect_ingredient_risks(
                 dur_con, product, person, current, as_of
             )
-            if quantitative["duration"].get("result") == "not_evaluable":
+            product_duration_result = quantitative["duration"].get("result")
+            if product_duration_result in {"not_evaluable", "not_applicable"}:
                 ingredient_duration = evaluate_ingredient_duration(dur_con, product, draft)
-                if not product.get("dur_match") or ingredient_duration.get("result") in {"within", "exceeded"}:
+                ingredient_result = ingredient_duration.get("result")
+                if ingredient_status == "matched" and (
+                    not product.get("dur_match") or product_duration_result == "not_applicable"
+                ):
+                    quantitative["duration"] = ingredient_duration
+                elif ingredient_result == "exceeded":
+                    quantitative["duration"] = ingredient_duration
+                elif ingredient_result == "within" and product.get("dur_match"):
                     quantitative["duration"] = ingredient_duration
 
-    coverage = coverage_summary(product, dataset, person)
+            product_dose_result = quantitative["dose"].get("result")
+            if not product.get("dur_match") or product_dose_result == "not_applicable":
+                ingredient_dose = evaluate_ingredient_rule_applicability(dur_con, product, "dose_caution")
+                if ingredient_status == "matched":
+                    quantitative["dose"] = _ingredient_presence_result(ingredient_dose, "dose_caution")
+                elif ingredient_dose.get("result") == "applicable":
+                    quantitative["dose"] = _ingredient_presence_result(ingredient_dose, "dose_caution")
+
+        for name in ("duration", "dose"):
+            if quantitative[name].get("result") == "not_applicable" and ingredient_status != "matched":
+                quantitative[name] = _coverage_only(
+                    "authoritative ingredient mapping is unavailable", scope="ingredient"
+                )
+
+        if age_years(person["birth_date"], as_of) < 19 and quantitative["dose"].get("result") == "within":
+            quantitative["dose"] = {
+                "result": "not_evaluable",
+                "reason": "adult dose-caution threshold is not a pediatric dose criterion",
+                "source_scope": "product",
+            }
+        relevant_profile_categories = _profile_rule_categories(dur_con, product, person)
+
+        if dataset.get("status") != "verified":
+            for name in ("duration", "dose"):
+                if quantitative[name].get("result") == "not_applicable":
+                    quantitative[name] = _coverage_only(
+                        "DUR dataset is not verified", scope="dataset"
+                    )
+
+    coverage = coverage_summary(
+        product,
+        dataset,
+        person,
+        relevant_profile_categories=relevant_profile_categories,
+    )
     coverage["not_evaluable_checks"].extend(ingredient_not_evaluable)
     risks = _dedupe_risks(product_risks, ingredient_risks)
     product_status = coverage["product"]["status"]

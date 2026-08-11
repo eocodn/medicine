@@ -206,6 +206,79 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(preview["quantitative_checks"]["duration"]["source_scope"], "ingredient")
         self.assertTrue(preview["warning_token"])
 
+    def test_exact_ingredient_without_quantitative_rules_is_not_applicable(self) -> None:
+        preview = self.app.preview_medication(
+            self.person["id"],
+            {
+                "product_ref": "MFDS-I", "prescription_days": 7,
+                "dose_amount": 1, "dose_unit": "캡슐", "frequency_per_day": 1,
+            },
+        )
+
+        self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "not_applicable")
+        self.assertEqual(preview["quantitative_checks"]["dose"]["result"], "not_applicable")
+
+    def test_unmapped_ingredient_keeps_quantitative_coverage_explicit(self) -> None:
+        preview = self.app.preview_medication(
+            self.person["id"],
+            {"product_ref": "MFDS-X", "prescription_days": 7, "dose_amount": 1, "dose_unit": "정"},
+        )
+
+        for dimension in ("duration", "dose"):
+            check = preview["quantitative_checks"][dimension]
+            self.assertEqual(check["result"], "not_evaluable")
+            self.assertTrue(check["coverage_only"])
+
+    def test_unverified_dataset_never_hides_missing_rules_as_not_applicable(self) -> None:
+        con = sqlite3.connect(self.dur_db)
+        con.execute("DELETE FROM source_files WHERE dataset_key='product:duration_caution'")
+        con.commit()
+        con.close()
+
+        preview = self.app.preview_medication(
+            self.person["id"], {"product_ref": "MFDS-I", "prescription_days": 7}
+        )
+
+        duration = preview["quantitative_checks"]["duration"]
+        self.assertEqual(duration["result"], "not_evaluable")
+        self.assertTrue(duration["coverage_only"])
+
+    def test_profile_gap_is_reported_only_for_a_matching_rule(self) -> None:
+        unknown = self.app.create_person("미입력", "1990-01-01", "female", "unknown")
+
+        unrelated = self.app.preview_medication(unknown["id"], {"product_ref": "MFDS-I"})
+        related = self.app.preview_medication(unknown["id"], {"product_ref": "MFDS-Z"})
+        unrelated_categories = {item["category"] for item in unrelated["coverage"]["not_evaluable_checks"]}
+        related_categories = {item["category"] for item in related["coverage"]["not_evaluable_checks"]}
+
+        self.assertNotIn("pregnancy_contraindication", unrelated_categories)
+        self.assertNotIn("lactation_caution", unrelated_categories)
+        self.assertNotIn("pregnancy_contraindication", related_categories)
+        self.assertIn("lactation_caution", related_categories)
+
+    def test_conditional_ingredient_duration_is_not_automatically_compared(self) -> None:
+        con = sqlite3.connect(self.dur_db)
+        con.execute(
+            """INSERT INTO ingredient_dur(
+                dataset_key,source_row,category,ingredient_name,rule_value,dosage_form,note,sequence_text
+            ) VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                "ingredient:duration_caution", 90, "duration_caution", "Itraconazole",
+                "14일", "캡슐제", "특정 적응증에 한함", "90",
+            ),
+        )
+        con.commit()
+        con.close()
+
+        preview = self.app.preview_medication(
+            self.person["id"],
+            {"product_ref": "MFDS-I", "prescription_days": 7, "start_date": "2026-08-11"},
+        )
+
+        duration = preview["quantitative_checks"]["duration"]
+        self.assertEqual(duration["result"], "not_evaluable")
+        self.assertIn("condition", duration["reason"])
+
     def test_unique_normalized_name_and_ingredient_can_recover_missing_edi_product_link(self) -> None:
         dur = sqlite3.connect(self.dur_db)
         dur.execute(
@@ -345,8 +418,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
             check for check in preview["coverage"]["not_evaluable_checks"]
             if check["category"] == "combination_contraindication"
         ]
-        self.assertEqual(len(conditional_checks), 1)
-        self.assertIn("24시간", conditional_checks[0]["reason"])
+        self.assertEqual(conditional_checks, [])
         self.assertTrue(preview["warning_token"])
 
         with self.assertRaises(ConfirmationRequired) as blocked:

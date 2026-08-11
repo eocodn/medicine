@@ -174,14 +174,25 @@ def resolve_safety_mapping(
     }
 
 
-def coverage_summary(product: Mapping[str, Any], dataset: Mapping[str, Any], person: Mapping[str, Any]) -> dict[str, Any]:
+def coverage_summary(
+    product: Mapping[str, Any],
+    dataset: Mapping[str, Any],
+    person: Mapping[str, Any],
+    *,
+    relevant_profile_categories: set[str] | None = None,
+) -> dict[str, Any]:
     ingredient_status = product.get("ingredient_mapping_status") or "not_evaluable"
     product_status = product.get("product_mapping_status") or "not_matched"
     profile_gaps: list[str] = []
     reproductive_applicable = person.get("sex") != "male"
-    if reproductive_applicable and person.get("pregnancy_status") == "unknown":
+    relevant = relevant_profile_categories
+    if reproductive_applicable and person.get("pregnancy_status") == "unknown" and (
+        relevant is None or "pregnancy_contraindication" in relevant
+    ):
         profile_gaps.append("pregnancy_contraindication")
-    if reproductive_applicable and person.get("lactation_status", "unknown") == "unknown":
+    if reproductive_applicable and person.get("lactation_status", "unknown") == "unknown" and (
+        relevant is None or "lactation_caution" in relevant
+    ):
         profile_gaps.append("lactation_caution")
 
     not_evaluable_checks: list[dict[str, Any]] = []
@@ -216,7 +227,6 @@ def coverage_summary(product: Mapping[str, Any], dataset: Mapping[str, Any], per
             else "수유 여부가 미입력이라 수유부주의 적용 여부를 판정할 수 없습니다."
         )
         not_evaluable_checks.append({"category": category, "result": "not_evaluable", "reason": reason})
-
     limited = (
         dataset.get("status") != "verified"
         or product_status != "matched"

@@ -66,6 +66,62 @@ def _form_applicable(rule_form: Any, product_form: Any) -> bool | None:
     return False
 
 
+def evaluate_ingredient_rule_applicability(
+    con: sqlite3.Connection,
+    product: Mapping[str, Any],
+    category: str,
+) -> dict[str, Any]:
+    """Resolve whether a current ingredient rule applies without guessing.
+
+    An exact ingredient mapping makes an empty match a candidate for
+    ``not_applicable``; the assessment layer separately requires a verified
+    dataset before allowing the UI to hide it. A matching rule with unresolved
+    form or condition is still a real rule and remains observable.
+    """
+    result: dict[str, Any] = {"result": "not_evaluable", "source_scope": "ingredient"}
+    ingredients = _ingredients(product)
+    if not ingredients:
+        result["reason"] = "ingredient mapping is unavailable"
+        return result
+    matching = [
+        row for row in _rows(con, category)
+        if normalize_ingredient_name(row.get("ingredient_name")) in ingredients
+    ]
+    if not matching:
+        result["result"] = "not_applicable"
+        result.pop("reason", None)
+        return result
+    applicable: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    for row in matching:
+        form = _form_applicable(row.get("dosage_form"), product.get("dosage_form"))
+        if form is True:
+            applicable.append(row)
+        elif form is None:
+            unresolved.append(row)
+    if applicable:
+        conditional = [str(row.get("note") or "").strip() for row in applicable if _is_conditional_note(row.get("note"))]
+        if conditional:
+            result.update({
+                "reason": f"ingredient {category} rule condition cannot be resolved: {' / '.join(conditional)}",
+                "source_rows": applicable,
+            })
+            return result
+        result.update({"result": "applicable", "source_rows": applicable})
+        if len(applicable) == 1:
+            result["source"] = applicable[0]
+        return result
+    if unresolved:
+        result.update({
+            "reason": f"ingredient {category} rule dosage form cannot be resolved",
+            "source_rows": unresolved,
+        })
+        return result
+    result["result"] = "not_applicable"
+    result.pop("reason", None)
+    return result
+
+
 def _risk(row: Mapping[str, Any], *, type_: str, severity: str, title: str, details: str | None = None) -> dict[str, Any]:
     return {
         "type": type_,
@@ -119,13 +175,6 @@ def collect_ingredient_risks(
                 )
                 item["related_medication_id"] = medication["id"]
                 risks.append(item)
-                if conditional_note:
-                    not_evaluable.append(_not_evaluable(
-                        row,
-                        "combination_contraindication",
-                        f"조건부 병용금기의 조건을 자동 판정하지 못했습니다: {conditional_note}",
-                        related_medication_id=medication["id"],
-                    ))
 
     current_age = age_years(person["birth_date"], as_of)
     for row in _rows(con, "age_contraindication"):
@@ -220,12 +269,6 @@ def collect_ingredient_risks(
                 )
                 item["related_medication_id"] = medication["id"]
                 risks.append(item)
-                not_evaluable.append(_not_evaluable(
-                    source_row,
-                    "therapeutic_duplication_caution",
-                    f"효능군 중복 조건을 자동 판정하지 못했습니다: {reason}",
-                    related_medication_id=medication["id"],
-                ))
                 continue
             item = _risk(
                 source_row, type_="therapeutic_duplication_caution", severity="warning",
@@ -251,6 +294,7 @@ def collect_ingredient_risks(
                     category,
                     f"제품 제형 정보가 없어 {label} 규칙의 적용 여부를 판정할 수 없습니다.",
                 ))
+                continue
             risks.append(_risk(row, type_=category, severity="info", title=label, details=details))
 
     seen: set[tuple[Any, ...]] = set()
@@ -279,11 +323,10 @@ def evaluate_ingredient_duration(
     product: Mapping[str, Any],
     draft: Mapping[str, Any],
 ) -> dict[str, Any]:
-    ingredients = _ingredients(product)
+    applicability = evaluate_ingredient_rule_applicability(con, product, "duration_caution")
+    if applicability["result"] != "applicable":
+        return applicability
     result: dict[str, Any] = {"result": "not_evaluable", "source_scope": "ingredient"}
-    if not ingredients:
-        result["reason"] = "ingredient mapping is unavailable"
-        return result
     raw_days = draft.get("prescription_days")
     try:
         parsed_days = Decimal(str(raw_days)) if raw_days is not None and not isinstance(raw_days, bool) else None
@@ -293,16 +336,7 @@ def evaluate_ingredient_duration(
         result["reason"] = "prescription duration is missing or invalid"
         return result
 
-    applicable: list[dict[str, Any]] = []
-    unresolved_form = False
-    for row in _rows(con, "duration_caution"):
-        if normalize_ingredient_name(row.get("ingredient_name")) not in ingredients:
-            continue
-        form = _form_applicable(row.get("dosage_form"), product.get("dosage_form"))
-        if form is True:
-            applicable.append(row)
-        elif form is None:
-            unresolved_form = True
+    applicable = applicability["source_rows"]
     thresholds: set[int] = set()
     for row in applicable:
         text = str(row.get("rule_value") or "")
@@ -312,9 +346,6 @@ def evaluate_ingredient_duration(
             result["source_rows"] = applicable
             return result
         thresholds.add(int(matches[0]))
-    if not applicable:
-        result["reason"] = "ingredient duration rule is missing" if not unresolved_form else "ingredient duration rule dosage form cannot be resolved"
-        return result
     if len(thresholds) != 1:
         result["reason"] = "ingredient duration rules have multiple thresholds"
         result["source_rows"] = applicable
@@ -332,4 +363,7 @@ def evaluate_ingredient_duration(
     return result
 
 
-__all__ = ["collect_ingredient_risks", "evaluate_ingredient_duration"]
+__all__ = [
+    "collect_ingredient_risks", "evaluate_ingredient_duration",
+    "evaluate_ingredient_rule_applicability",
+]

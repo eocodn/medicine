@@ -236,8 +236,13 @@ def _rule_presence_risks(con: sqlite3.Connection, product: Mapping[str, Any]) ->
     for row in rows:
         detail = row["details"]
         if row["rule_value"]:
+            comparison_hint = (
+                "처방 일수를 입력하면 아래에서 DUR 최대 투여기간과 비교합니다."
+                if row["category"] == "duration_caution"
+                else "1회 복용량과 1일 횟수를 입력하면 아래에서 DUR 1일 최대용량과 비교합니다."
+            )
             detail = f"기준: {row['rule_value']}. " + (
-                detail or "입력한 복용량/기간과의 자동 비교는 아직 지원하지 않습니다."
+                detail or comparison_hint
             )
         risks.append({
             "type": row["category"],
@@ -307,6 +312,9 @@ def _quantity(value: Any, inherited_unit: str | None = None) -> tuple[Decimal, s
     if not isinstance(value, (str, int, float, Decimal)) or isinstance(value, bool):
         return None
     text = str(value).strip()
+    # Official sources use both 4000 and 4,000.  Remove only grouping commas;
+    # commas separating alternative values remain ambiguity markers below.
+    text = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", text)
     if not text or any(marker in text.lower() for marker in _AMBIGUOUS_MARKERS):
         return None
     matches = list(_UNIT_RE.finditer(text))
@@ -375,8 +383,10 @@ def _detail_content(details: Any) -> Decimal | None:
 
 
 def _source_quantity(rows: list[dict[str, Any]]) -> tuple[tuple[Decimal, str | None] | None, str | None]:
+    if not rows:
+        return None, "dose rule is missing"
     if len(rows) != 1:
-        return None, "dose rule is missing or has multiple rows"
+        return None, "dose rule has multiple rows"
     row = rows[0]
     original = _quantity(row.get("rule_value"))
     structured = _detail_maximum(row.get("details"))
@@ -467,9 +477,11 @@ def evaluate_quantitative(con: sqlite3.Connection, product: dict, draft: dict) -
             malformed_duration = True
             continue
         distinct_days.add(int(matches[0]))
-    if prescription_days is None or prescription_days <= 0:
+    if not duration_rows:
+        duration["result"] = "not_applicable"
+    elif prescription_days is None or prescription_days <= 0:
         duration["reason"] = "prescription duration is missing or invalid"
-    elif not duration_rows or malformed_duration or len(distinct_days) != 1:
+    elif malformed_duration or len(distinct_days) != 1:
         duration["reason"] = "duration rule is missing, malformed, or ambiguous"
     else:
         maximum_days = next(iter(distinct_days))
@@ -482,10 +494,12 @@ def evaluate_quantitative(con: sqlite3.Connection, product: dict, draft: dict) -
 
     dose: dict[str, Any] = {"result": "not_evaluable"}
     dose_rows = _query_product_rows(con, product, "dose_caution")
-    source, source_reason = _source_quantity(dose_rows)
+    source, source_reason = _source_quantity(dose_rows) if dose_rows else (None, None)
     entered, entered_reason = _draft_quantity(draft, product)
     frequency, frequency_reason = _frequency(draft)
-    if source is None:
+    if not dose_rows:
+        dose["result"] = "not_applicable"
+    elif source is None:
         dose["reason"] = source_reason
     elif entered is None:
         dose["reason"] = entered_reason

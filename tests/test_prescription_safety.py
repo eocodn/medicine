@@ -186,12 +186,27 @@ class PrescriptionSafetyTest(unittest.TestCase):
         return preview["quantitative_checks"][name]
 
     def test_full_preview_reports_duration_exceeded_and_dose_within(self) -> None:
+        con = sqlite3.connect(self.dur_db)
+        con.execute(
+            "UPDATE product_dur SET details=NULL WHERE product_code='P-SAFE' AND category='duration_caution'"
+        )
+        con.commit()
+        con.close()
         preview = self.app.preview_medication(
             self.person["id"], self._draft(prescription_days=35, dose_amount=5)
         )
 
         self.assertEqual(self._dimension(preview, "duration")["result"], "exceeded")
         self.assertEqual(self._dimension(preview, "dose")["result"], "within")
+        quantitative_risks = [
+            risk for risk in preview["risks"]
+            if risk["type"] in {"duration_caution", "dose_caution"}
+        ]
+        self.assertTrue(quantitative_risks)
+        self.assertTrue(all(
+            "자동 비교는 아직 지원하지 않습니다" not in risk["details"]
+            for risk in quantitative_risks
+        ))
 
     def test_full_preview_reports_duration_within_and_dose_exceeded(self) -> None:
         preview = self.app.preview_medication(
@@ -251,6 +266,33 @@ class PrescriptionSafetyTest(unittest.TestCase):
         )
 
         self.assertEqual(self._dimension(preview, "dose")["result"], "not_evaluable")
+
+    def test_thousands_separator_in_source_threshold_is_supported(self) -> None:
+        con = sqlite3.connect(self.dur_db)
+        con.execute(
+            "UPDATE product_dur SET rule_value=?, details=? WHERE product_code='P-SAFE' AND category='dose_caution'",
+            (
+                "예시성분 4,000mg",
+                json.dumps({"1일최대 투여기준량": "4000", "점검기준 성분함량 (총함량)": "5"}),
+            ),
+        )
+        con.commit()
+        con.close()
+
+        preview = self.app.preview_medication(self.person["id"], self._draft(dose_amount=5))
+
+        self.assertEqual(self._dimension(preview, "dose")["result"], "within")
+        self.assertEqual(self._dimension(preview, "dose")["maximum_daily_amount"], 4000.0)
+
+    def test_adult_dose_threshold_does_not_reassure_a_child(self) -> None:
+        child = self.app.create_person("소아", "2015-01-01", "female", "not_pregnant")
+
+        preview = self.app.preview_medication(child["id"], self._draft(dose_amount=5))
+
+        dose = self._dimension(preview, "dose")
+        self.assertEqual(dose["result"], "not_evaluable")
+        self.assertIn("adult", dose["reason"])
+        self.assertNotIn("coverage_only", dose)
 
     def test_concurrent_schema_initialization_is_serialized(self) -> None:
         concurrent_db = Path(self.tmp.name) / "concurrent.sqlite"

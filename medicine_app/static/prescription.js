@@ -16,6 +16,10 @@ function friendlyErrorMessage(message) {
     "ingredient duration rule is missing": "이 성분에 자동 비교 가능한 투여기간 기준이 없어요.",
     "ingredient duration rule dosage form cannot be resolved": "제품 제형을 확인하지 못해 투여기간 기준을 비교할 수 없어요.",
     "prescription duration is missing or invalid": "처방 일수를 입력하면 투여기간 기준을 비교할 수 있어요.",
+    "adult dose-caution threshold is not a pediatric dose criterion": "소아 용량은 체중·나이·적응증에 따른 처방 기준이 필요해 자동 비교하지 않았어요.",
+    "dose rule has multiple rows": "성분별 용량 기준이 여러 개라 자동으로 하나의 기준과 비교하지 않았어요.",
+    "duration rule is missing, malformed, or ambiguous": "투여기간 기준값을 하나로 확정하지 못했어요.",
+    "dose rule value or structured details are not a single numeric threshold": "용량 기준값을 하나의 수치로 확정하지 못했어요.",
   };
   return exact[text] || text;
 }
@@ -37,6 +41,7 @@ function prescriptionPayloadFromForm() {
 
 function quantitativeCheckHtml(label, check) {
   if (!check) return "";
+  if (check.result === "not_applicable" || check.coverage_only) return "";
   if (check.result === "exceeded") {
     const requested = check.requested_days ?? check.daily_amount;
     const maximum = check.maximum_days ?? check.maximum_daily_amount;
@@ -45,7 +50,7 @@ function quantitativeCheckHtml(label, check) {
   if (check.result === "not_evaluable") {
     return `<div class="risk-card info"><strong>${label} 자동 판정 불가</strong><p>${escapeHtml(friendlyErrorMessage(check.reason || "기준을 정확히 비교할 수 없습니다."))}</p></div>`;
   }
-  return `<div class="risk-card info"><strong>${label} 입력 기준 이내</strong></div>`;
+  return `<div class="risk-card info"><strong>${label} DUR 기준 미초과</strong></div>`;
 }
 
 function coverageLimitHtml(coverage) {
