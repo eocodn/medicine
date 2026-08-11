@@ -23,6 +23,13 @@ def _validate_time(value: str) -> None:
         raise ValueError("schedule time must be HH:MM") from exc
 
 
+def _format_decimal(value: Decimal) -> str:
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
 def normalize_draft(values: dict) -> dict:
     schedule_times = list(values.get("schedule_times") or [])
     for value in schedule_times:
@@ -40,7 +47,7 @@ def normalize_draft(values: dict) -> dict:
             raise ValueError("dose_amount must be a finite number") from exc
         if not amount_decimal.is_finite() or amount_decimal <= 0:
             raise ValueError("dose_amount must be > 0")
-        amount = format(amount_decimal, "f")
+        amount = _format_decimal(amount_decimal)
     dose_unit = (values.get("dose_unit") or "").strip() or None
     if frequency is not None:
         try:

@@ -32,6 +32,14 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function formatDoseText(value) {
+  const text = String(value ?? "");
+  const match = text.match(/^(\d+)\.(\d+)([^\d]*)$/);
+  if (!match) return text;
+  const fraction = match[2].replace(/0+$/, "");
+  return `${match[1]}${fraction ? `.${fraction}` : ""}${match[3]}`;
+}
+
 async function api(path, options = {}) {
   const local = window.MedicineLocalApi?.request(path, options);
   if (local !== undefined) return local;
@@ -194,7 +202,7 @@ function scheduleHtml(item) {
   return `
     <div class="schedule-item ${done ? "done" : ""}">
       <span class="schedule-time">${escapeHtml(item.scheduled_time || item.slot_label || "시간 미정")}</span>
-      <div class="schedule-name"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(item.dose_text || "복용량 미입력")}</span></div>
+      <div class="schedule-name"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(item.dose_text ? formatDoseText(item.dose_text) : "복용량 미입력")}</span></div>
       ${item.status === "taken"
         ? `<button class="mini-action" data-instance-cancel="${item.id}" type="button">취소</button>`
         : item.status === "skipped"
@@ -215,7 +223,7 @@ function renderMedications() {
         <div><p class="eyebrow">${escapeHtml(med.ingredient_name || "MEDICINE")}</p><h3>${escapeHtml(med.product_name)}</h3></div>
       </div>
       <div class="med-meta">
-        ${med.dosage_text ? `<span class="chip">${escapeHtml(med.dosage_text)}</span>` : ""}
+        ${med.dosage_text ? `<span class="chip">${escapeHtml(formatDoseText(med.dosage_text))}</span>` : ""}
         ${med.frequency_per_day ? `<span class="chip">1일 ${escapeHtml(med.frequency_per_day)}회</span>` : ""}
         ${med.as_needed ? `<span class="chip prn-chip">필요시 복용</span>` : ""}
         ${med.meal_relation && med.meal_relation !== "unspecified" ? `<span class="chip">${escapeHtml(mealRelationLabel(med.meal_relation))}</span>` : ""}

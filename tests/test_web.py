@@ -35,7 +35,7 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('src="/static/native-api.js?v=20260811k"', response.text)
         self.assertIn('src="/static/people.js?v=20260811k"', response.text)
         self.assertIn('href="/static/styles.css?v=20260811f"', response.text)
-        self.assertIn('src="/static/app.js?v=20260811k"', response.text)
+        self.assertIn('src="/static/app.js?v=20260811l"', response.text)
         self.assertNotIn("로컬 우선", response.text)
         self.assertNotIn("personal.sqlite", response.text)
         self.assertIn("Content-Security-Policy", response.text)
@@ -45,6 +45,7 @@ class WebApiTest(unittest.TestCase):
         script = self.client.get("/static/app.js")
         self.assertEqual(script.status_code, 200)
         self.assertIn("MedicineLocalApi", script.text)
+        self.assertIn("formatDoseText", script.text)
         self.assertIn("warning_token", script.text)
         self.assertIn("openMedicationEdit", script.text)
         self.assertNotIn("변경 이력", script.text)
@@ -376,6 +377,7 @@ class WebApiTest(unittest.TestCase):
         plan = self.client.get(f"/api/people/{person['id']}/daily-plan", params={"date": "2026-08-10"})
         self.assertEqual(plan.status_code, 200)
         self.assertEqual(len(plan.json()["doses"]), 2)
+        self.assertEqual(plan.json()["doses"][0]["dose_text"], "1정")
 
         instance_id = plan.json()["doses"][0]["id"]
         completed = self.client.post(
