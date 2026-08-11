@@ -225,7 +225,7 @@ function renderMedications() {
       </div>
       <div class="med-actions">
         <button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>
-        <button class="danger-ghost" data-stop="${med.id}" type="button">복용 목록에서 종료</button>
+        <button class="danger-ghost" data-stop="${med.id}" type="button">삭제</button>
       </div>
     </article>`).join("") : `<div class="empty-state"><strong>복용 중인 약이 없어요</strong>약 검색 탭에서 추가해보세요.</div>`;
 
@@ -262,14 +262,14 @@ async function cancelDoseInstance(instanceId) {
 }
 
 async function stopMedication(medicationId) {
-  if (!confirm("복용 중 목록에서 종료할까요? 처방 중단 판단은 의사·약사와 확인하세요.")) return;
+  if (!confirm("복용약 목록에서 삭제할까요? 기존 복용 기록은 남습니다.")) return;
   try {
     const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
     const query = medication ? `?expected_revision=${medication.revision}` : "";
     await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
     await loadDashboard();
     renderAll();
-    toast("복용 목록에서 종료했어요");
+    toast("복용약 목록에서 삭제했어요");
   } catch (error) { toast(error.message); }
 }
 
