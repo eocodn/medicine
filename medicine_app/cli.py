@@ -228,6 +228,10 @@ def build_parser() -> argparse.ArgumentParser:
     instance.add_argument("--at")
     instance.add_argument("--json", action="store_true")
 
+    instance_cancel = sub.add_parser("dose-instance-cancel")
+    instance_cancel.add_argument("--instance", required=True)
+    instance_cancel.add_argument("--json", action="store_true")
+
     log = sub.add_parser("dose-log")
     log.add_argument("--medication", required=True)
     log.add_argument("--status", choices=["taken", "skipped"], required=True)
@@ -315,6 +319,8 @@ def _dispatch(args, app: MedicationApp):
         payload = app.get_daily_plan(args.person, args.date)
     elif args.command == "dose-instance":
         payload = app.record_dose_instance(args.instance, args.status, args.at)
+    elif args.command == "dose-instance-cancel":
+        payload = app.cancel_dose_instance(args.instance)
     elif args.command == "dose-log":
         payload = app.record_dose(args.medication, args.status, args.at)
     elif args.command == "screenshot":

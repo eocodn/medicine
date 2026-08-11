@@ -360,6 +360,18 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(completed["status"], "taken")
         self.assertEqual(refreshed["doses"][0]["status"], "taken")
         self.assertEqual(len(self.app.list_dose_logs(person["id"])), 1)
+        self.assertEqual(refreshed["summary"]["skipped"], 0)
+
+        canceled = self.app.cancel_dose_instance(first["doses"][0]["id"])
+        restored = self.app.get_daily_plan(person["id"], "2026-08-10")
+        self.assertEqual(canceled["status"], "planned")
+        self.assertIsNone(canceled["completed_at"])
+        self.assertEqual(restored["doses"][0]["status"], "planned")
+        self.assertEqual(self.app.list_dose_logs(person["id"]), [])
+
+        canceled_again = self.app.cancel_dose_instance(first["doses"][0]["id"])
+        self.assertEqual(canceled_again["status"], "planned")
+        self.assertEqual(self.app.list_dose_logs(person["id"]), [])
         self.assertEqual(self.app.get_daily_plan(person["id"], "2026-08-13")["doses"], [])
 
     def test_daily_plan_uses_unscheduled_frequency_slots_and_separates_prn(self) -> None:

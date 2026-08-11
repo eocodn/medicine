@@ -89,6 +89,26 @@ class PrescriptionCliTest(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertTrue(deleted["deleted"])
 
+    def test_dose_instance_completion_can_be_canceled(self) -> None:
+        app = MedicationApp(self.dur_db, self.personal_db, self.catalog_db)
+        app.add_medication(
+            self.person["id"], product_ref="MFDS-SAFE", frequency_per_day=1,
+            start_date="2026-08-10", schedule_times=["08:00"],
+        )
+        instance = app.get_daily_plan(self.person["id"], "2026-08-10")["doses"][0]
+
+        status, completed = self.run_cli(
+            "dose-instance", "--instance", instance["id"], "--status", "taken",
+            "--at", "2026-08-10T08:05:00+09:00",
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(completed["status"], "taken")
+
+        status, canceled = self.run_cli("dose-instance-cancel", "--instance", instance["id"])
+        self.assertEqual(status, 0)
+        self.assertEqual(canceled["status"], "planned")
+        self.assertIsNone(canceled["completed_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

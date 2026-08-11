@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .persistence import ensure_personal_schema
-from .planning import materialize_daily_plan, record_instance
+from .planning import cancel_instance_completion, materialize_daily_plan, record_instance
 from .prescriptions import draft_hash, normalize_draft
 from .products import ProductRepository
 from .ocr import OCRReviewStore, preview_ocr, validate_ocr_create
@@ -346,6 +346,10 @@ class MedicationApp:
         datetime.fromisoformat(when)
         with self._personal() as con:
             return record_instance(con, instance_id, status, when, note, _uuid)
+
+    def cancel_dose_instance(self, instance_id: str) -> dict:
+        with self._personal() as con:
+            return cancel_instance_completion(con, instance_id)
 
     def update_medication(
         self,

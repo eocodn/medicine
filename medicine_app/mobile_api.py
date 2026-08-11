@@ -223,6 +223,10 @@ class MobileApi:
                 match.group(1), payload["status"], payload.get("occurred_at"), payload.get("note")
             )
 
+        match = re.fullmatch(r"/api/dose-instances/([^/]+)/completion", path)
+        if method == "DELETE" and match:
+            return 200, service.cancel_dose_instance(match.group(1))
+
         match = re.fullmatch(r"/api/dose-instances/([^/]+)", path)
         if method == "POST" and match:
             payload = _validated_fields(_body_object(body_json), _DOSE_FIELDS)

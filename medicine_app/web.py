@@ -295,6 +295,13 @@ def create_web_app(
         except Exception as exc:
             raise _translate_error(exc) from exc
 
+    @app.delete("/api/dose-instances/{instance_id}/completion")
+    def cancel_dose_instance_completion(instance_id: str) -> dict:
+        try:
+            return service.cancel_dose_instance(instance_id)
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
     return app
 
 

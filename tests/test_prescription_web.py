@@ -224,6 +224,43 @@ class PrescriptionWebApiTest(unittest.TestCase):
             {"09:00", "21:00"},
         )
 
+    def test_completed_dose_can_be_canceled_back_to_planned(self) -> None:
+        created = self._create(
+            product_ref="MFDS-A",
+            prescription_days=5,
+            schedule_times=["08:00", "20:00"],
+        ).json()
+        self.assertIn("id", created)
+        plan = self.client.get(
+            f"/api/people/{self.person['id']}/daily-plan",
+            params={"date": "2026-08-10"},
+        ).json()
+        instance = next(dose for dose in plan["doses"] if dose["scheduled_time"] == "08:00")
+
+        completed = self.client.post(
+            f"/api/dose-instances/{instance['id']}",
+            json={"status": "taken", "occurred_at": "2026-08-10T08:05:00+09:00"},
+        )
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(completed.json()["status"], "taken")
+
+        canceled = self.client.delete(f"/api/dose-instances/{instance['id']}/completion")
+        self.assertEqual(canceled.status_code, 200)
+        self.assertEqual(canceled.json()["status"], "planned")
+        self.assertIsNone(canceled.json()["completed_at"])
+
+        dashboard = self.client.get(
+            f"/api/people/{self.person['id']}/dashboard",
+            params={"date": "2026-08-10"},
+        ).json()
+        restored = next(dose for dose in dashboard["daily_plan"]["doses"] if dose["id"] == instance["id"])
+        self.assertEqual(restored["status"], "planned")
+        self.assertEqual(dashboard["recent_logs"], [])
+
+        canceled_again = self.client.delete(f"/api/dose-instances/{instance['id']}/completion")
+        self.assertEqual(canceled_again.status_code, 200)
+        self.assertEqual(canceled_again.json()["status"], "planned")
+
 
 if __name__ == "__main__":
     unittest.main()

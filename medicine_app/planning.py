@@ -168,3 +168,19 @@ def record_instance(
         )
     updated = con.execute("SELECT * FROM dose_instances WHERE id=?", (instance_id,)).fetchone()
     return dict(updated)
+
+
+def cancel_instance_completion(con: sqlite3.Connection, instance_id: str) -> dict:
+    row = con.execute("SELECT * FROM dose_instances WHERE id=?", (instance_id,)).fetchone()
+    if row is None:
+        raise KeyError("dose instance not found")
+    if row["status"] == "skipped":
+        raise ValueError("skipped dose is not a completed dose")
+
+    con.execute("DELETE FROM dose_logs WHERE dose_instance_id=?", (instance_id,))
+    con.execute(
+        "UPDATE dose_instances SET status='planned', completed_at=NULL WHERE id=?",
+        (instance_id,),
+    )
+    updated = con.execute("SELECT * FROM dose_instances WHERE id=?", (instance_id,)).fetchone()
+    return dict(updated)

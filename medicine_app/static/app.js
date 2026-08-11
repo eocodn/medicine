@@ -186,6 +186,7 @@ function renderHome() {
     </div>`;
 
   $$('[data-instance-taken]', root).forEach((button) => button.addEventListener("click", () => completeDoseInstance(button.dataset.instanceTaken, "taken")));
+  $$('[data-instance-cancel]', root).forEach((button) => button.addEventListener("click", () => cancelDoseInstance(button.dataset.instanceCancel)));
 }
 
 function scheduleHtml(item) {
@@ -194,9 +195,11 @@ function scheduleHtml(item) {
     <div class="schedule-item ${done ? "done" : ""}">
       <span class="schedule-time">${escapeHtml(item.scheduled_time || item.slot_label || "시간 미정")}</span>
       <div class="schedule-name"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(item.dose_text || "복용량 미입력")}</span></div>
-      ${done
-        ? `<span class="dose-status ${escapeHtml(item.status)}">${item.status === "taken" ? "완료" : "건너뜀"}</span>`
-        : `<button class="mini-action" data-instance-taken="${item.id}" type="button">먹었어요</button>`}
+      ${item.status === "taken"
+        ? `<button class="mini-action" data-instance-cancel="${item.id}" type="button">취소</button>`
+        : item.status === "skipped"
+          ? `<span class="dose-status skipped">건너뜀</span>`
+          : `<button class="mini-action" data-instance-taken="${item.id}" type="button">먹었어요</button>`}
     </div>`;
 }
 
@@ -258,6 +261,15 @@ async function completeDoseInstance(instanceId, status) {
     await loadDashboard();
     renderAll();
     toast(status === "taken" ? "오늘 복용 완료로 기록했어요" : "건너뜀으로 기록했어요");
+  } catch (error) { toast(error.message); }
+}
+
+async function cancelDoseInstance(instanceId) {
+  try {
+    await api(`/api/dose-instances/${instanceId}/completion`, { method: "DELETE" });
+    await loadDashboard();
+    renderAll();
+    toast("복용 완료를 취소했어요");
   } catch (error) { toast(error.message); }
 }
 

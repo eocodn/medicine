@@ -57,6 +57,35 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(dashboard["person"]["id"], person["id"])
         self.assertEqual(dashboard["medications"], [])
 
+    def test_dose_completion_can_be_canceled_through_mobile_bridge(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "복용취소",
+            "birth_date": "1990-01-01",
+            "sex": "male",
+            "pregnancy_status": "not_applicable",
+        })
+        self.api.service.add_medication(
+            person["id"], product_ref="MFDS-A", dose_amount=1, dose_unit="정",
+            frequency_per_day=1, start_date="2026-08-10", schedule_times=["08:00"],
+        )
+        _, plan = self.request("GET", f"/api/people/{person['id']}/daily-plan?date=2026-08-10")
+        instance = plan["doses"][0]
+
+        status, completed = self.request("POST", f"/api/dose-instances/{instance['id']}", {
+            "status": "taken", "occurred_at": "2026-08-10T08:05:00+09:00",
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(completed["status"], "taken")
+
+        status, canceled = self.request("DELETE", f"/api/dose-instances/{instance['id']}/completion")
+        self.assertEqual(status, 200)
+        self.assertEqual(canceled["status"], "planned")
+        self.assertIsNone(canceled["completed_at"])
+
+        _, dashboard = self.request("GET", f"/api/people/{person['id']}/dashboard?date=2026-08-10")
+        self.assertEqual(dashboard["daily_plan"]["doses"][0]["status"], "planned")
+        self.assertEqual(dashboard["recent_logs"], [])
+
     def test_confirmation_and_validation_errors_keep_http_compatible_envelopes(self) -> None:
         _, person = self.request("POST", "/api/people", {
             "name": "테스트",
