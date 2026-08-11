@@ -217,16 +217,18 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .ocr-status { margin: 8px 2px 0; }
 .search-status { padding: 14px 4px 8px; min-height: 40px; }
 .result-card { padding: 15px 16px; }
-.result-row { align-items: start; }
+.result-card[data-product-select] { cursor: pointer; overflow: hidden; }
+.result-card[data-product-select]:focus-visible { outline: 3px solid rgba(33, 76, 53, .24); outline-offset: 2px; }
+.result-row { align-items: start; min-width: 0; }
 .result-copy { min-width: 0; flex: 1; }
-.result-copy span { display: block; color: var(--muted); font-size: 12px; margin-top: 5px; }
+.result-copy span { display: block; color: var(--muted); font-size: 12px; margin-top: 5px; overflow-wrap: anywhere; word-break: break-word; }
 .result-title-line { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.result-title-line strong { min-width: 0; flex: 1; }
+.result-title-line strong { min-width: 0; flex: 1; overflow-wrap: anywhere; word-break: break-word; }
 .result-title-line .permit-badge { flex: 0 0 auto; display: inline-flex; margin: 0; padding: 4px 7px; border-radius: 99px; font-size: 10px; font-weight: 850; }
 .permit-badge.active { background: var(--brand-soft); color: var(--brand); }
 .permit-badge.expired, .permit-badge.withdrawn, .permit-badge.business_closed, .permit-badge.canceled, .permit-badge.inactive_unknown { background: var(--warning-soft); color: var(--warning); }
 .permit-badge.unknown { background: var(--surface-soft); color: var(--muted); }
-.add-button { flex: 0 0 auto; min-width: 58px; min-height: 40px; border: 0; border-radius: 13px; background: var(--brand); color: white; font-weight: 800; }
+.add-button { flex: 0 0 auto; min-width: 58px; min-height: 40px; display: grid; place-items: center; border: 0; border-radius: 13px; background: var(--brand); color: white; font-weight: 800; }
 
 .person-card { padding: 17px; }
 .person-select {
@@ -247,6 +249,21 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .person-copy p { margin: 0; color: var(--muted); font-size: 13px; }
 .selected-badge { color: var(--brand); background: var(--brand-soft); padding: 5px 8px; border-radius: 99px; font-size: 11px; font-weight: 800; }
 .person-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 12px; }
+.people-screen { min-height: 0; overflow: hidden; }
+.people-screen.active {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 180px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+.people-screen .section-heading { flex: 0 0 auto; }
+#people-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 2px 14px;
+}
+#open-person-form { flex: 0 0 auto; margin-top: 16px; }
 
 .settings-card { padding: 20px; margin-bottom: 12px; }
 .settings-card h2 { margin-bottom: 8px; font-size: 19px; }

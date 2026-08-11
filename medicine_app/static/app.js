@@ -291,21 +291,32 @@ async function runDrugSearch() {
     state.fullCatalog = true;
     status.textContent = `${results.length}개 결과 · 식약처 허가상태 + DUR 연결`;
     root.innerHTML = results.length ? results.map((item) => `
-      <article class="card result-card">
+      <article class="card result-card" data-product-select="${escapeHtml(item.product_ref)}" role="button" tabindex="0">
         <div class="result-row">
           <div class="result-copy">
             <div class="result-title-line"><strong>${escapeHtml(item.product_name)}</strong><span class="permit-badge ${escapeHtml(item.permit_status)}">${escapeHtml(permitStatusLabel(item.permit_status, item.permit_status_name))}</span></div>
             <span>${escapeHtml(item.ingredient_name || "성분 정보 없음")}${item.manufacturer ? ` · ${escapeHtml(item.manufacturer)}` : ""}</span>
             <span>${item.dur_match ? "DUR 자동 확인 가능" : "DUR 자동 확인 일부 제한"}${item.cancel_date ? ` · 상태일 ${escapeHtml(item.cancel_date)}` : ""}</span>
           </div>
-          <button class="add-button" data-add-ref="${escapeHtml(item.product_ref)}" type="button">추가</button>
+          <span class="add-button" aria-hidden="true">추가</span>
         </div>
       </article>`).join("") : `<div class="empty-state"><strong>검색 결과가 없어요</strong>${state.fullCatalog ? "다른 제품명이나 성분명으로 검색해보세요." : "전체 카탈로그를 동기화하면 검색 범위를 넓힐 수 있어요."}</div>`;
-    $$('[data-add-ref]', root).forEach((button) => button.addEventListener("click", () => previewProduct(button.dataset.addRef)));
+    $$('[data-product-select]', root).forEach((card) => {
+      card.addEventListener("click", () => selectProductResult(card));
+      card.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        selectProductResult(card);
+      });
+    });
   } catch (error) {
     status.textContent = error.message;
     root.innerHTML = "";
   }
+}
+
+function selectProductResult(card) {
+  previewProduct(card.dataset.productSelect);
 }
 
 async function previewProduct(productRef) {
