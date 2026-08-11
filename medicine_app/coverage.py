@@ -8,6 +8,11 @@ from typing import Any, Mapping
 
 _ANNOTATION_RE = re.compile(r"\(\s*분류번호\s*:[^)]+\)\s*$", re.IGNORECASE)
 _DUR_DOSE_SUFFIX_RE = re.compile(r"_\((?=[^)]*\d)(?=[^)]*/)[^)]*\)\s*$")
+_INGREDIENT_STRENGTH_SUFFIX_RE = re.compile(
+    r"\s+(?:\d+(?:\.\d+)?|\.\d+)\s*(?:mcg|μg|ug|mg|g|kg|ml|l|%)"
+    r"(?:\s*\([^)]*\))?\s*$",
+    re.IGNORECASE,
+)
 
 
 def normalize_ingredient_name(value: Any) -> str:
@@ -22,6 +27,22 @@ def normalize_product_name(value: Any) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
     text = _DUR_DOSE_SUFFIX_RE.sub("", text)
     return re.sub(r"[\s_]+", "", text)
+
+
+def _normalize_product_mapping_ingredient(value: Any) -> str:
+    """Strip only a terminal quantitative strength annotation for product matching.
+
+    DUR product labels sometimes append a strength such as ``0.5g(25mg/mL)``
+    to an otherwise exact ingredient identity. This helper is deliberately
+    narrower than ingredient-level normalization: salts and other identity
+    words are never removed.
+    """
+    normalized = normalize_ingredient_name(value)
+    return _INGREDIENT_STRENGTH_SUFFIX_RE.sub("", normalized).strip()
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def split_edi_codes(value: Any) -> list[str]:
@@ -89,28 +110,51 @@ def resolve_safety_mapping(
         ).fetchall())
     product_mapping_method = "edi_exact" if product_rows else "none"
     if not product_rows and not edi_codes and catalog_product_name and catalog_ingredient:
+        raw_ingredient = str(catalog_ingredient).strip()
         normalized_ingredient = normalize_ingredient_name(catalog_ingredient)
         normalized_name = normalize_product_name(catalog_product_name)
         candidate_rows = con.execute(
             """SELECT product_code,product_name,ingredient_code,ingredient_name
             FROM product_catalog
             WHERE ingredient_name=? COLLATE NOCASE
+               OR ingredient_name LIKE ? ESCAPE '\\' COLLATE NOCASE
             ORDER BY product_code""",
-            (str(catalog_ingredient).strip(),),
+            (raw_ingredient, f"{_escape_like(raw_ingredient)} %"),
         ).fetchall()
-        product_rows = [
-            row for row in candidate_rows
-            if normalize_ingredient_name(row["ingredient_name"]) == normalized_ingredient
-            and normalize_product_name(row["product_name"]) == normalized_name
-        ]
+        matched_rows: list[Mapping[str, Any]] = []
+        strength_annotation_used = False
+        for row in candidate_rows:
+            if normalize_product_name(row["product_name"]) != normalized_name:
+                continue
+            exact_ingredient = normalize_ingredient_name(row["ingredient_name"])
+            if exact_ingredient == normalized_ingredient:
+                matched_rows.append(row)
+                continue
+            if _normalize_product_mapping_ingredient(row["ingredient_name"]) == normalized_ingredient:
+                matched_rows.append(row)
+                strength_annotation_used = True
+        product_rows = matched_rows
         if product_rows:
-            product_mapping_method = "normalized_name_ingredient_unique"
+            product_mapping_method = (
+                "normalized_name_ingredient_strength_unique"
+                if strength_annotation_used
+                else "normalized_name_ingredient_unique"
+            )
     matched_product_codes = sorted({str(row["product_code"]) for row in product_rows})
     selected_product_code = matched_product_codes[0] if len(matched_product_codes) == 1 else None
-    if len(matched_product_codes) > 1 and product_mapping_method == "normalized_name_ingredient_unique":
-        product_mapping_method = "normalized_name_ingredient_ambiguous"
+    if len(matched_product_codes) > 1:
+        if product_mapping_method == "normalized_name_ingredient_unique":
+            product_mapping_method = "normalized_name_ingredient_ambiguous"
+        elif product_mapping_method == "normalized_name_ingredient_strength_unique":
+            product_mapping_method = "normalized_name_ingredient_strength_ambiguous"
 
-    canonical_names = [row["ingredient_name"] for row in product_rows if row["ingredient_name"]]
+    if product_mapping_method.startswith("normalized_name_ingredient_strength_"):
+        # The fallback proved that the DUR label differs only by a terminal
+        # quantitative strength annotation, so retain the catalog's exact base
+        # ingredient for the separate ingredient-level DUR bridge.
+        canonical_names = [catalog_ingredient]
+    else:
+        canonical_names = [row["ingredient_name"] for row in product_rows if row["ingredient_name"]]
     known_ingredients = known_ingredients if known_ingredients is not None else ingredient_index(con)
     matched_ingredients: list[str] = []
     unmatched_ingredients: list[str] = []
