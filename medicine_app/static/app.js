@@ -225,6 +225,7 @@ function renderMedications() {
     <article class="card med-card">
       <div class="med-row">
         <div><p class="eyebrow">${escapeHtml(med.ingredient_name || "MEDICINE")}</p><h3>${escapeHtml(med.product_name)}</h3></div>
+        ${med.dur_alert ? `<span class="dur-alert-badge" aria-label="현재 DUR 주의 항목 있음" title="현재 DUR 주의 항목 있음">!</span>` : ""}
       </div>
       ${medicationCourseHtml(med.course_progress)}
       <div class="med-meta">

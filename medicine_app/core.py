@@ -20,7 +20,13 @@ from .planning import (
 from .prescriptions import draft_hash, normalize_draft
 from .products import ProductRepository
 from .ocr import OCRReviewStore, preview_ocr, validate_ocr_create
-from .assessment import assess_medication, bind_warning_token, requires_acknowledgement
+from .assessment import (
+    assess_current_medication,
+    assess_medication,
+    bind_warning_token,
+    has_dur_alert,
+    requires_acknowledgement,
+)
 from .profiles import create_person_record, delete_person_record, person_dict, update_person_record
 from .safety import APP_TIMEZONE, age_years
 
@@ -328,6 +334,8 @@ class MedicationApp:
         person_id: str,
         active_only: bool = True,
         as_of: str | date | None = None,
+        *,
+        include_current_assessment: bool = True,
     ) -> list[dict]:
         target = (
             datetime.now(APP_TIMEZONE).date()
@@ -336,10 +344,25 @@ class MedicationApp:
             else date.fromisoformat(as_of)
         )
         with self._personal() as con:
-            self._get_person_from_connection(con, person_id)
+            person = self._get_person_from_connection(con, person_id)
             medications = self._list_medications_from_connection(
                 con, person_id, active_only=active_only
             )
+            if include_current_assessment:
+                for medication in medications:
+                    if not medication.get("active"):
+                        medication["current_assessment"] = None
+                        medication["dur_alert"] = False
+                        continue
+                    current_assessment = assess_current_medication(
+                        self,
+                        con,
+                        person,
+                        medication,
+                        as_of=target,
+                    )
+                    medication["current_assessment"] = current_assessment
+                    medication["dur_alert"] = has_dur_alert(current_assessment)
         return sort_medications_by_time(medications, target)
 
     def get_daily_plan(self, person_id: str, target_date: str | date | None = None) -> dict:
@@ -350,7 +373,12 @@ class MedicationApp:
             target = target_date
         else:
             target = date.fromisoformat(target_date)
-        medications = self.list_medications(person_id, active_only=True, as_of=target)
+        medications = self.list_medications(
+            person_id,
+            active_only=True,
+            as_of=target,
+            include_current_assessment=False,
+        )
         with self._personal() as con:
             return materialize_daily_plan(con, person_id, medications, target, _uuid)
 

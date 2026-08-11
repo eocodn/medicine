@@ -164,6 +164,20 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .stack.compact { gap: 8px; }
 .card { padding: 17px; box-shadow: 0 8px 24px rgba(34, 52, 40, .05); }
 .med-card h3 { margin: 0 0 5px; font-size: 17px; }
+.dur-alert-badge {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e7bbb5;
+  border-radius: 50%;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+}
 .course-progress { margin-top: 13px; }
 .course-progress > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
 .course-progress > div:first-child strong { color: var(--ink); }

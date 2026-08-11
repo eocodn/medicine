@@ -160,6 +160,36 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(people, [])
 
+    def test_dashboard_reassesses_active_medications_after_profile_update(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "현재 DUR",
+            "birth_date": "1990-01-01",
+            "sex": "female",
+            "pregnancy_status": "not_pregnant",
+            "lactation_status": "unknown",
+        })
+        self.api.service.add_medication(person["id"], product_ref="MFDS-B")
+
+        _, before = self.request("GET", f"/api/people/{person['id']}/dashboard?date=2026-08-11")
+        self.assertFalse(before["medications"][0]["dur_alert"])
+
+        status, _ = self.request("PATCH", f"/api/people/{person['id']}", {
+            "name": "현재 DUR",
+            "birth_date": "1990-01-01",
+            "sex": "female",
+            "pregnancy_status": "pregnant",
+            "lactation_status": "unknown",
+        })
+        self.assertEqual(status, 200)
+        _, after = self.request("GET", f"/api/people/{person['id']}/dashboard?date=2026-08-11")
+
+        medication = after["medications"][0]
+        self.assertTrue(medication["dur_alert"])
+        self.assertIn(
+            "pregnancy_contraindication",
+            {risk["type"] for risk in medication["current_assessment"]["risks"]},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

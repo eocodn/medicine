@@ -248,4 +248,74 @@ def requires_acknowledgement(assessment: Mapping[str, Any]) -> bool:
     return bool(assessment.get("requires_review"))
 
 
-__all__ = ["assess_medication", "bind_warning_token", "requires_acknowledgement"]
+def has_dur_alert(assessment: Mapping[str, Any]) -> bool:
+    """Return whether an assessment contains an actual current DUR finding.
+
+    Generic review-only states such as pediatric dosing uncertainty or incomplete
+    coverage are intentionally excluded: the persistent medication-list marker
+    means that a DUR danger/warning matched or a quantitative DUR limit was
+    exceeded, not merely that the evaluator could not conclude something.
+    """
+    return (
+        any(
+            risk.get("severity") in {"danger", "warning"}
+            for risk in assessment.get("risks") or []
+        )
+        or any(
+            (assessment.get(name) or {}).get("result") == "exceeded"
+            for name in ("duration", "dose")
+        )
+    )
+
+
+def assess_current_medication(
+    app: Any,
+    personal_con: sqlite3.Connection,
+    person: dict,
+    medication: Mapping[str, Any],
+    *,
+    as_of: date | None = None,
+) -> dict[str, Any]:
+    """Re-evaluate a stored medication without mutating its revision history."""
+    ref = medication.get("catalog_item_seq") or medication.get("product_code")
+    if ref:
+        try:
+            product = app.get_product(str(ref))
+        except (KeyError, FileNotFoundError, sqlite3.DatabaseError):
+            product = _fallback_product(medication)
+    else:
+        product = _fallback_product(medication)
+    draft = {
+        "dosage_text": medication.get("dosage_text"),
+        "dose_amount": medication.get("dose_amount"),
+        "dose_unit": medication.get("dose_unit"),
+        "frequency_per_day": medication.get("frequency_per_day"),
+        "meal_relation": medication.get("meal_relation") or "unspecified",
+        "administration_route": medication.get("administration_route") or "oral",
+        "as_needed": bool(medication.get("as_needed")),
+        "prescription_days": medication.get("prescription_days"),
+        "schedule_times": [
+            item["time_of_day"] for item in medication.get("schedules") or []
+        ],
+        "start_date": medication.get("start_date"),
+        "end_date": medication.get("end_date"),
+    }
+    return assess_medication(
+        app,
+        personal_con,
+        person,
+        product,
+        draft,
+        False,
+        exclude_medication_id=str(medication["id"]),
+        as_of=as_of,
+    )
+
+
+__all__ = [
+    "assess_current_medication",
+    "assess_medication",
+    "bind_warning_token",
+    "has_dur_alert",
+    "requires_acknowledgement",
+]

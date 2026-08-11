@@ -225,6 +225,72 @@ class MedicationAppTest(unittest.TestCase):
         self.assertIn("pregnancy_contraindication", risk_types)
         self.assertIn("duration_caution", risk_types)
 
+    def test_active_medication_is_reassessed_after_profile_change_without_rewriting_history(self) -> None:
+        person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant")
+        medication = self.app.add_medication(person["id"], product_code="P-B")
+        historical = self.app.get_medication(medication["id"])["assessment"]
+        self.assertNotIn(
+            "pregnancy_contraindication",
+            {risk["type"] for risk in historical["risks"]},
+        )
+        before_change = self.app.list_medications(person["id"], as_of=date(2026, 8, 11))[0]
+        self.assertFalse(before_change["dur_alert"])
+
+        self.app.update_person(
+            person["id"], "Adult", "1990-01-01", "female", "pregnant", "unknown"
+        )
+        current = self.app.list_medications(person["id"], as_of=date(2026, 8, 11))[0]
+
+        self.assertTrue(current["dur_alert"])
+        self.assertIn(
+            "pregnancy_contraindication",
+            {risk["type"] for risk in current["current_assessment"]["risks"]},
+        )
+        preserved = self.app.get_medication(medication["id"])["assessment"]
+        self.assertEqual(preserved, historical)
+
+    def test_acknowledged_dur_findings_remain_flagged_for_all_active_medications(self) -> None:
+        person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant")
+        first = self.app.add_medication(person["id"], product_code="P-A")
+        second_preview = self.app.preview_medication(person["id"], "P-B")
+        second = self.app.add_medication(
+            person["id"],
+            product_code="P-B",
+            acknowledge_warnings=True,
+            warning_token=second_preview["warning_token"],
+        )
+
+        listed = {item["id"]: item for item in self.app.list_medications(person["id"])}
+
+        self.assertTrue(listed[first["id"]]["dur_alert"])
+        self.assertTrue(listed[second["id"]]["dur_alert"])
+        self.assertTrue(self.app.get_medication(second["id"])["assessment"]["acknowledged"])
+        for medication_id in (first["id"], second["id"]):
+            self.assertIn(
+                "combination_contraindication",
+                {risk["type"] for risk in listed[medication_id]["current_assessment"]["risks"]},
+            )
+
+    def test_exceeded_quantitative_dur_limit_keeps_persistent_alert(self) -> None:
+        person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
+        preview = self.app.preview_medication(
+            person["id"],
+            {"product_code": "P-B", "prescription_days": 29},
+        )
+        medication = self.app.add_medication(
+            person["id"],
+            product_code="P-B",
+            prescription_days=29,
+            acknowledge_warnings=True,
+            warning_token=preview["warning_token"],
+        )
+
+        current = self.app.list_medications(person["id"], as_of=date(2026, 8, 11))[0]
+
+        self.assertEqual(current["id"], medication["id"])
+        self.assertTrue(current["dur_alert"])
+        self.assertEqual(current["current_assessment"]["duration"]["result"], "exceeded")
+
     def test_detects_therapeutic_duplication_and_elderly_caution(self) -> None:
         older = self.app.create_person("Older", "1940-02-01", "female", "not_pregnant")
         self.app.add_medication(older["id"], product_code="P-A")
