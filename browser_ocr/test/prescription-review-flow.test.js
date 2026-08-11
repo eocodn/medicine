@@ -184,3 +184,32 @@ test("DUR status UI renders all eight categories with compact non-hit states", (
   assert.match(html, /함께 사용하지 않아야 합니다/);
   assert.match(html, /복용정보를 확인해주세요/);
 });
+
+test("quantitative hit cards use category-specific titles without a category header", () => {
+  const context = prescriptionContext({});
+  const html = context.durStatusHtml([
+    {
+      category: "dose_caution",
+      label: "용량주의",
+      status: "hit",
+      summary: "용량주의 기준 초과",
+      details: "입력한 1일 용량 30.0mg · DUR 기준 20.0mg",
+      findings: [],
+    },
+    {
+      category: "duration_caution",
+      label: "투여기간주의",
+      status: "hit",
+      summary: "투여기간주의 기준 초과",
+      details: "입력한 투여기간 35일 · DUR 기준 28일",
+      findings: [],
+    },
+  ]);
+
+  assert.match(html, /용량주의 기준 초과/);
+  assert.match(html, /입력한 1일 용량 30\.0mg · DUR 기준 20\.0mg/);
+  assert.match(html, /투여기간주의 기준 초과/);
+  assert.match(html, /입력한 투여기간 35일 · DUR 기준 28일/);
+  assert.doesNotMatch(html, /dur-check-heading/);
+  assert.doesNotMatch(html, />DUR 기준 초과</);
+});

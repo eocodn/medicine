@@ -155,8 +155,11 @@ def _quantitative_item(
         unit = check.get("unit") or ("일" if category == "duration_caution" else "")
         details = None
         if requested is not None and maximum is not None:
-            details = f"입력값 {requested}{unit} · 기준 {maximum}{unit}"
-        return _item(category, label, "hit", "DUR 기준 초과", details=details)
+            if category == "dose_caution":
+                details = f"입력한 1일 용량 {requested}{unit} · DUR 기준 {maximum}{unit}"
+            else:
+                details = f"입력한 투여기간 {requested}{unit} · DUR 기준 {maximum}{unit}"
+        return _item(category, label, "hit", f"{label} 기준 초과", details=details)
     if not dataset_verified:
         return _item(
             category, label, "unknown", "자동 확인 제한",
@@ -220,7 +223,7 @@ def build_dur_checks(
                 category,
                 label,
                 "hit",
-                str(first.get("title") or "DUR 주의사항 있음"),
+                str(first.get("title") or f"{label} 주의사항 있음"),
                 details=str(first.get("details") or "") or None,
                 findings=findings,
             ))

@@ -207,6 +207,11 @@ class PrescriptionSafetyTest(unittest.TestCase):
         self.assertEqual(quantitative_risks, [])
         statuses = {item["category"]: item for item in preview["dur_checks"]}
         self.assertEqual(statuses["duration_caution"]["status"], "hit")
+        self.assertEqual(statuses["duration_caution"]["summary"], "투여기간주의 기준 초과")
+        self.assertEqual(
+            statuses["duration_caution"]["details"],
+            "입력한 투여기간 35일 · DUR 기준 28일",
+        )
         self.assertEqual(statuses["dose_caution"]["status"], "clear")
 
     def test_full_preview_reports_duration_within_and_dose_exceeded(self) -> None:
@@ -216,6 +221,13 @@ class PrescriptionSafetyTest(unittest.TestCase):
 
         self.assertEqual(self._dimension(preview, "duration")["result"], "within")
         self.assertEqual(self._dimension(preview, "dose")["result"], "exceeded")
+        statuses = {item["category"]: item for item in preview["dur_checks"]}
+        self.assertEqual(statuses["dose_caution"]["status"], "hit")
+        self.assertEqual(statuses["dose_caution"]["summary"], "용량주의 기준 초과")
+        self.assertEqual(
+            statuses["dose_caution"]["details"],
+            "입력한 1일 용량 11.0mg · DUR 기준 10.0mg",
+        )
 
     def test_rules_within_threshold_do_not_require_a_second_registration_click(self) -> None:
         draft = self._draft(prescription_days=7, dose_amount=5)
