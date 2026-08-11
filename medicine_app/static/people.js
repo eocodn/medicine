@@ -38,19 +38,26 @@ function renderPeople() {
   const root = $("#people-list");
   root.innerHTML = state.people.length ? state.people.map((person) => `
     <article class="card person-card">
-      <button class="person-select" data-person-select="${person.id}" type="button">
+      <div class="person-select" role="button" tabindex="0" data-person-select="${person.id}">
         <div class="person-row">
           <span class="person-avatar">${escapeHtml(person.name.slice(0, 1))}</span>
           <div class="person-copy"><h3>${escapeHtml(person.name)}</h3><p>${escapeHtml(profileMeta(person))}</p></div>
           ${person.id === state.currentPersonId ? `<span class="selected-badge">관리 중</span>` : ""}
         </div>
-      </button>
+      </div>
       <div class="person-actions">
         <button class="secondary-button" data-person-edit="${person.id}" type="button">정보 수정</button>
         <button class="danger-ghost" data-person-delete="${person.id}" type="button">삭제</button>
       </div>
     </article>`).join("") : `<div class="empty-state"><strong>프로필이 없어요</strong>여러 사람의 복약을 한 기기에서 따로 관리할 수 있어요.</div>`;
-  $$('[data-person-select]', root).forEach((button) => button.addEventListener("click", () => selectPerson(button.dataset.personSelect)));
+  $$('[data-person-select]', root).forEach((target) => {
+    target.addEventListener("click", () => selectPerson(target.dataset.personSelect));
+    target.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      selectPerson(target.dataset.personSelect);
+    });
+  });
   $$('[data-person-edit]', root).forEach((button) => button.addEventListener("click", () => openPersonForm(button.dataset.personEdit)));
   $$('[data-person-delete]', root).forEach((button) => button.addEventListener("click", () => deletePerson(button.dataset.personDelete)));
 }
