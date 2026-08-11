@@ -57,12 +57,10 @@ test("warning preview pauses registration for a second click", async () => {
 test("warning preview renders qualitative DUR details before acknowledgement", async () => {
   const context = prescriptionContext({
     warning_token: "warning-token",
-    risks: [{ severity: "danger", title: "병용금기", details: "함께 복용하면 안 됩니다." }],
-    coverage: { not_evaluable_checks: [] },
-    quantitative_checks: {
-      duration: { result: "not_applicable" },
-      dose: { result: "not_applicable" },
-    },
+    dur_checks: [{
+      category: "combination_contraindication", label: "병용금기", status: "hit",
+      summary: "병용금기", findings: [{ title: "병용금기", details: "함께 복용하면 안 됩니다." }],
+    }],
   });
 
   await context.reviewPrescriptionDraft("product-1", { prescription_days: 7 }, "confirm-add-med");
@@ -75,17 +73,13 @@ test("warning preview renders qualitative DUR details before acknowledgement", a
 test("structured interaction timing is visible in the warning details", async () => {
   const context = prescriptionContext({
     warning_token: "warning-token",
-    risks: [{
-      severity: "danger",
-      title: "병용금기",
-      details: "두 성분을 함께 사용하지 않아야 합니다.",
-      timing: { status: "structured", kind: "minimum_separation", amount: 24, unit: "시간" },
+    dur_checks: [{
+      category: "combination_contraindication", label: "병용금기", status: "hit",
+      summary: "병용금기", findings: [{
+        title: "병용금기", details: "두 성분을 함께 사용하지 않아야 합니다.",
+        timing: { status: "structured", kind: "minimum_separation", amount: 24, unit: "시간" },
+      }],
     }],
-    coverage: { not_evaluable_checks: [] },
-    quantitative_checks: {
-      duration: { result: "not_applicable" },
-      dose: { result: "not_applicable" },
-    },
   });
 
   await context.reviewPrescriptionDraft("product-1", { prescription_days: 7 }, "confirm-add-med");
@@ -101,10 +95,10 @@ test("authoritative confirmation response renders qualitative DUR details", () =
       confirmation_required: true,
       warning_token: "new-token",
       assessment: {
-        risks: [{ severity: "danger", title: "임부금기", details: "임신 중 사용 금기입니다." }],
-        coverage: { not_evaluable_checks: [] },
-        duration: { result: "not_applicable" },
-        dose: { result: "not_applicable" },
+        dur_checks: [{
+          category: "pregnancy_contraindication", label: "임부금기", status: "hit",
+          summary: "임부금기", findings: [{ title: "임부금기", details: "임신 중 사용 금기입니다." }],
+        }],
       },
     },
   }, "confirm-edit-med");
@@ -116,73 +110,51 @@ test("authoritative confirmation response renders qualitative DUR details", () =
   assert.match(html, /임신 중 사용 금기입니다/);
 });
 
-test("clean DUR status requires complete product and ingredient mappings", () => {
+test("clean DUR status requires exactly eight authoritative category checks", () => {
   const context = prescriptionContext({});
-  const clean = {
-    risks: [],
-    quantitative_checks: {
-      duration: { result: "not_applicable" },
-      dose: { result: "not_applicable" },
-    },
-    coverage: {
-      status: "complete",
-      product: { status: "matched" },
-      ingredient: { status: "matched" },
-    },
-  };
+  const checks = [
+    ["combination_contraindication", "clear"],
+    ["age_contraindication", "clear"],
+    ["pregnancy_contraindication", "not_applicable"],
+    ["lactation_caution", "not_applicable"],
+    ["elderly_caution", "not_applicable"],
+    ["dose_caution", "clear"],
+    ["duration_caution", "clear"],
+    ["therapeutic_duplication_caution", "clear"],
+  ].map(([category, status]) => ({ category, status }));
 
-  assert.equal(context.hasClearDurCoverage(clean), true);
+  assert.equal(context.hasClearDurCoverage({ dur_checks: checks }), true);
   assert.equal(context.hasClearDurCoverage({
-    ...clean,
-    coverage: { ...clean.coverage, product: { status: "not_matched" } },
+    dur_checks: checks.map((item) => item.category === "dose_caution" ? { ...item, status: "unknown" } : item),
   }), false);
   assert.equal(context.hasClearDurCoverage({
-    ...clean,
-    coverage: { ...clean.coverage, ingredient: { status: "not_evaluable" } },
+    dur_checks: checks.map((item) => item.category === "duration_caution" ? { ...item, status: "hit" } : item),
   }), false);
+  assert.equal(context.hasClearDurCoverage({ dur_checks: checks.slice(0, 7) }), false);
   assert.equal(context.hasClearDurCoverage({
-    ...clean,
-    coverage: { ...clean.coverage, status: "limited" },
-  }), false);
-  assert.equal(context.hasClearDurCoverage({
-    ...clean,
-    risks: [{ severity: "warning", title: "주의", details: "확인 필요" }],
-  }), false);
-  assert.equal(context.hasClearDurCoverage({
-    ...clean,
-    quantitative_checks: {
-      ...clean.quantitative_checks,
-      duration: { result: "not_evaluable", reason: "기간 기준 판정 불가" },
-    },
-  }), false);
-  assert.equal(context.hasClearDurCoverage({
-    ...clean,
-    coverage: {
-      ...clean.coverage,
-      not_evaluable_checks: [{ category: "duration", reason: "일부 기준 판정 불가" }],
-    },
-  }), false);
+    dur_checks: checks,
+    coverage: { status: "limited", not_evaluable_checks: [{ category: "dataset", reason: "legacy" }] },
+  }), true);
 });
 
-test("mapping failures render as visible warning cards instead of collapsed details", () => {
+test("authoritative DUR details never render legacy coverage output", () => {
   const context = prescriptionContext({});
-  const html = context.coverageLimitHtml({
-    not_evaluable_checks: [
-      { category: "product_mapping", reason: "제품 매핑 실패" },
-      { category: "ingredient_mapping", reason: "성분 매핑 실패" },
-      { category: "dataset", reason: "데이터셋 확인 실패" },
+  const html = context.assessmentDetailsHtml({
+    dur_checks: [
+      { category: "age_contraindication", label: "연령금기", status: "unknown", summary: "확인 필요", details: "제품 제형을 확정하지 못했습니다.", findings: [] },
     ],
+    coverage: {
+      not_evaluable_checks: [
+        { category: "age_contraindication", reason: "제품 제형 정보가 없어 성분 연령금기의 제형 적용 여부를 판정할 수 없습니다." },
+        { category: "dataset", reason: "데이터셋 확인 실패" },
+      ],
+    },
   });
 
-  assert.match(html, /risk-card warning/);
-  assert.match(html, /제품 단위 DUR 매핑 실패/);
-  assert.match(html, /성분 단위 DUR 매핑 실패/);
-  const detailsIndex = html.indexOf("<details");
-  assert.ok(detailsIndex > 0);
-  assert.ok(html.indexOf("제품 단위 DUR 매핑 실패") < detailsIndex);
-  assert.ok(html.indexOf("성분 단위 DUR 매핑 실패") < detailsIndex);
-  assert.doesNotMatch(html.slice(detailsIndex), /제품 단위 DUR 매핑 실패|성분 단위 DUR 매핑 실패/);
-  assert.match(html.slice(detailsIndex), /데이터셋 확인 실패/);
+  assert.match(html, /제품 제형을 확정하지 못했습니다/);
+  assert.doesNotMatch(html, /자동 확인이 제한된 항목/);
+  assert.doesNotMatch(html, /데이터셋 확인 실패/);
+  assert.doesNotMatch(html, /제품 제형 정보가 없어 성분 연령금기/);
 });
 
 test("DUR status UI renders all eight categories with compact non-hit states", () => {
@@ -198,10 +170,14 @@ test("DUR status UI renders all eight categories with compact non-hit states", (
     { category: "therapeutic_duplication_caution", label: "효능군 중복주의", status: "clear", summary: "중복 없음", findings: [] },
   ]);
 
-  for (const label of ["병용금기", "연령금기", "임부금기", "수유부주의", "노인주의", "용량주의", "투여기간주의", "효능군 중복주의"]) {
+  for (const label of ["연령금기", "임부금기", "수유부주의", "노인주의", "용량주의", "투여기간주의", "효능군 중복주의"]) {
     assert.match(html, new RegExp(label));
   }
   assert.match(html, /dur-check hit/);
+  const hitHtml = html.slice(html.indexOf('dur-check hit'), html.indexOf('dur-check unknown'));
+  assert.doesNotMatch(hitHtml, /dur-check-heading/);
+  assert.doesNotMatch(hitHtml, />병용금기</);
+  assert.match(hitHtml, /약A와 병용금기/);
   assert.match(html, /dur-check unknown/);
   assert.match(html, /dur-check compact clear/);
   assert.match(html, /dur-check compact not_applicable/);

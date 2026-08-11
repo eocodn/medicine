@@ -39,33 +39,6 @@ function prescriptionPayloadFromForm() {
   };
 }
 
-function quantitativeCheckHtml(label, check) {
-  if (!check) return "";
-  if (check.result === "not_applicable" || check.coverage_only) return "";
-  if (check.result === "exceeded") {
-    const requested = check.requested_days ?? check.daily_amount;
-    const maximum = check.maximum_days ?? check.maximum_daily_amount;
-    return `<div class="risk-card warning"><strong>${label} 기준 초과</strong><p>입력값 ${escapeHtml(requested)} · 기준 ${escapeHtml(maximum)}${check.unit ? ` ${escapeHtml(check.unit)}` : ""}</p></div>`;
-  }
-  if (check.result === "not_evaluable") {
-    return `<div class="risk-card info"><strong>${label} 자동 판정 불가</strong><p>${escapeHtml(friendlyErrorMessage(check.reason || "기준을 정확히 비교할 수 없습니다."))}</p></div>`;
-  }
-  return `<div class="risk-card info"><strong>${label} DUR 기준 미초과</strong></div>`;
-}
-
-function quantitativeAlertHtml(label, check) {
-  return check?.result === "exceeded" ? quantitativeCheckHtml(label, check) : "";
-}
-
-function qualitativeRiskHtml(risks) {
-  return (risks || []).map((risk) => `
-    <div class="risk-card ${escapeHtml(risk.severity || "info")}">
-      <strong>${escapeHtml(risk.title || "DUR 주의")}</strong>
-      <p>${escapeHtml(risk.details || "상세 설명 없음")}</p>
-      ${interactionTimingHtml(risk.timing)}
-    </div>`).join("");
-}
-
 function interactionTimingHtml(timing) {
   if (!timing || timing.status !== "structured") return "";
   const amount = timing.amount ?? "";
@@ -95,8 +68,8 @@ function durStatusHtml(items) {
             <p>${escapeHtml(finding.details || item.details || "상세 설명 없음")}</p>
             ${interactionTimingHtml(finding.timing)}
           </div>`).join("")
-        : (item.details ? `<p>${escapeHtml(item.details)}</p>` : "");
-      return `<section class="dur-check hit"><div class="dur-check-heading"><strong>${label}</strong><span>${summary}</span></div>${detailHtml}</section>`;
+        : `<div class="dur-finding"><strong>${summary}</strong>${item.details ? `<p>${escapeHtml(item.details)}</p>` : ""}</div>`;
+      return `<section class="dur-check hit">${detailHtml}</section>`;
     }
     if (status === "unknown") {
       return `<section class="dur-check unknown"><div class="dur-check-heading"><strong>${label}</strong><span>${summary}</span></div>${item.details ? `<p>${escapeHtml(item.details)}</p>` : ""}</section>`;
@@ -106,64 +79,13 @@ function durStatusHtml(items) {
 }
 
 function assessmentDetailsHtml(assessment) {
-  const durChecks = assessment?.dur_checks || [];
-  if (durChecks.length) {
-    return `${durStatusHtml(durChecks)}${coverageLimitHtml(assessment?.coverage)}`;
-  }
-  const checks = assessment?.quantitative_checks || assessment || {};
-  return `
-    ${qualitativeRiskHtml(assessment?.risks)}
-    ${quantitativeCheckHtml("투여기간", checks.duration)}
-    ${quantitativeCheckHtml("1일 용량", checks.dose)}
-    ${coverageLimitHtml(assessment?.coverage)}`;
+  return durStatusHtml(assessment?.dur_checks || []);
 }
 
 function hasClearDurCoverage(assessment) {
   const durChecks = assessment?.dur_checks || [];
-  if (durChecks.length) {
-    return durChecks.length === 8
-      && durChecks.every((item) => item.status === "clear" || item.status === "not_applicable");
-  }
-  const coverage = assessment?.coverage;
-  const checks = assessment?.quantitative_checks || assessment || {};
-  const hasFinding = (assessment?.risks || []).length > 0;
-  // not_applicable means a mapped, completed lookup found no applicable rule;
-  // not_evaluable means the check could not be completed and must not look clean.
-  const hasUnresolvedQuantitativeCheck = [checks.duration, checks.dose]
-    .some((check) => check?.result === "exceeded" || check?.result === "not_evaluable");
-  const hasCoverageGap = (coverage?.not_evaluable_checks || []).length > 0;
-  return !hasFinding
-    && !hasUnresolvedQuantitativeCheck
-    && !hasCoverageGap
-    && coverage?.status === "complete"
-    && coverage?.product?.status === "matched"
-    && coverage?.ingredient?.status === "matched";
-}
-
-function coverageLimitHtml(coverage) {
-  const items = [...new Map((coverage?.not_evaluable_checks || []).map((item) => [`${item.category}:${item.reason}`, item])).values()];
-  if (!items.length) return "";
-  const labels = {
-    product_mapping: "제품 단위 DUR 규칙을 연결하지 못했어요.",
-    ingredient_mapping: "성분 단위 DUR 규칙을 정확히 연결하지 못했어요.",
-    pregnancy_contraindication: "임신 여부가 입력되지 않아 임부금기는 확인하지 못했어요.",
-    lactation_caution: "수유 여부가 입력되지 않아 수유부주의는 확인하지 못했어요.",
-  };
-  const mappingLabels = {
-    product_mapping: "제품 단위 DUR 매핑 실패",
-    ingredient_mapping: "성분 단위 DUR 매핑 실패",
-  };
-  const mappingItems = items.filter((item) => mappingLabels[item.category]);
-  const otherItems = items.filter((item) => !mappingLabels[item.category]);
-  const mappingHtml = mappingItems.map((item) => `
-    <div class="risk-card warning">
-      <strong>${escapeHtml(mappingLabels[item.category])}</strong>
-      <p>${escapeHtml(labels[item.category] || friendlyErrorMessage(item.reason || item.category || "판정 불가"))}</p>
-    </div>`).join("");
-  const otherHtml = otherItems.length
-    ? `<details class="coverage-details"><summary>자동 확인이 제한된 항목 ${otherItems.length}개</summary><div>${otherItems.map((item) => `<p>${escapeHtml(labels[item.category] || friendlyErrorMessage(item.reason || item.category || "판정 불가"))}</p>`).join("")}</div></details>`
-    : "";
-  return `${mappingHtml}${otherHtml}`;
+  return durChecks.length === 8
+    && durChecks.every((item) => item.status === "clear" || item.status === "not_applicable");
 }
 
 async function reviewPrescriptionDraft(productRef, draft, buttonId) {
@@ -174,7 +96,7 @@ async function reviewPrescriptionDraft(productRef, draft, buttonId) {
   state.reviewedDraftKey = JSON.stringify(draft);
   state.warningToken = preview.warning_token || null;
   $("#quantitative-warning").innerHTML = `
-    <div class="coverage-note ${reviewRequired ? "limited" : "matched"}"><strong>입력한 복용 정보를 확인해주세요</strong><br>${reviewRequired ? "확인된 주의사항이나 자동 확인이 제한된 항목이 있어요. 내용을 확인한 뒤에도 저장할 수 있습니다." : "확인된 DUR 경고가 없어 바로 저장합니다."}</div>
+    <div class="coverage-note ${reviewRequired ? "limited" : "matched"}"><strong>입력한 복용 정보를 확인해주세요</strong><br>${reviewRequired ? "확인된 주의사항이나 확인이 필요한 DUR 항목이 있어요. 내용을 확인한 뒤에도 저장할 수 있습니다." : "확인된 DUR 경고가 없어 바로 저장합니다."}</div>
     ${assessmentDetailsHtml(preview)}`;
   const button = $(`#${buttonId}`);
   if (button) button.textContent = reviewRequired ? "경고를 확인했고 계속 저장" : "저장 중...";
@@ -186,7 +108,7 @@ function handleConfirmationRequired(error, buttonId) {
   state.warningToken = error.body.warning_token;
   const assessment = error.body.assessment || {};
   $("#quantitative-warning").innerHTML = `
-    <div class="coverage-note limited"><strong>저장하기 전에 확인해주세요</strong><br>금기·주의 정보나 입력 기준 초과, 자동 확인이 제한된 항목이 있어요. 내용을 확인한 뒤 아래 버튼을 다시 누르면 저장됩니다.</div>
+    <div class="coverage-note limited"><strong>저장하기 전에 확인해주세요</strong><br>금기·주의 정보나 확인이 필요한 DUR 항목이 있어요. 내용을 확인한 뒤 아래 버튼을 다시 누르면 저장됩니다.</div>
     ${assessmentDetailsHtml(assessment)}`;
   const button = $(`#${buttonId}`);
   if (button) button.textContent = "경고를 확인했고 계속 저장";

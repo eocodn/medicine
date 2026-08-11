@@ -354,14 +354,9 @@ async function previewProduct(productRef) {
 
 function renderRiskSheet(preview, medication = null, ocrHints = null) {
   const root = $("#risk-sheet-content");
-  const risks = preview.risks || [];
-  const checks = preview.quantitative_checks || {};
   const durChecks = preview.dur_checks || [];
   const hitCount = durChecks.filter((item) => item.status === "hit").length;
   const unknownCount = durChecks.filter((item) => item.status === "unknown").length;
-  const dangerous = risks.some((risk) => risk.severity === "danger" && risk.evaluation_status !== "unknown");
-  const quantitativeAlert = [checks.duration, checks.dose].some((check) => check?.result === "exceeded");
-  const hasDurFinding = durChecks.length ? hitCount > 0 : risks.length > 0 || quantitativeAlert;
   const clearDurCoverage = hasClearDurCoverage(preview);
   const statusHeading = medication
     ? "처방 정보를 수정합니다"
@@ -369,13 +364,9 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
       ? `DUR 주의사항 ${hitCount}건이 있어요`
       : unknownCount
         ? `확인이 필요한 DUR 항목 ${unknownCount}건이 있어요`
-        : dangerous
-          ? "확인이 필요한 위험이 있어요"
-          : hasDurFinding
-            ? "주의 정보를 확인하세요"
-            : clearDurCoverage
-              ? "현재 확인된 DUR 주의사항이 없어요"
-              : "현재 확인된 위험은 없지만 일부 항목은 확인이 필요해요";
+        : clearDurCoverage
+          ? "현재 확인된 DUR 주의사항이 없어요"
+          : "DUR 판정 결과를 확인할 수 없어요";
   root.innerHTML = `
     <div class="sheet-header">
       <div><p class="eyebrow">DUR CHECK</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>
@@ -386,18 +377,7 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
       <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필, 현재 복용약 ${preview.current_medication_count}개와 중단 이력을 기준으로 확인했습니다.</p>
     </div>
     ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 허가 상태와 실제 보유·유통 여부는 별개일 수 있어요.</div>` : ""}
-    <div>${durChecks.length
-      ? durStatusHtml(durChecks)
-      : risks.length
-        ? qualitativeRiskHtml(risks)
-        : quantitativeAlert
-          ? ""
-          : clearDurCoverage
-            ? `<div class="risk-card info"><strong>현재 확인된 DUR 위험 없음</strong><p>확인 가능한 DUR 범위에서 일치하는 금기·주의 신호가 발견되지 않았어요.</p></div>`
-            : ""}</div>
-    ${durChecks.length ? "" : quantitativeAlertHtml("투여기간", checks.duration)}
-    ${durChecks.length ? "" : quantitativeAlertHtml("1일 용량", checks.dose)}
-    ${coverageLimitHtml(preview.coverage)}
+    <div>${durStatusHtml(durChecks)}</div>
     <div class="coverage-note"><strong>DUR 자동 확인에 포함되지 않는 정보</strong><br>알레르기, 신장·간 기능, 체중·적응증, 등록하지 않은 일반약·건강기능식품은 현재 판정에 반영하지 않습니다.</div>
     <div class="prescription-form">
       <div class="form-grid two">
