@@ -37,6 +37,7 @@ def capture_screenshot(
     output: Path,
     width: int,
     height: int,
+    screen: str = "home",
 ) -> dict:
     browser = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
     if browser is None:
@@ -69,7 +70,7 @@ def capture_screenshot(
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    url = f"http://127.0.0.1:{port}"
+    url = f"http://127.0.0.1:{port}/?screen={screen}"
     try:
         deadline = time.monotonic() + 10
         while True:
@@ -109,7 +110,7 @@ def capture_screenshot(
             server.kill()
             server.wait(timeout=5)
 
-    return {"path": str(output), "width": width, "height": height, "size_bytes": output.stat().st_size}
+    return {"path": str(output), "width": width, "height": height, "screen": screen, "size_bytes": output.stat().st_size}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -237,6 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot.add_argument("--output", type=Path, default=Path("data/debug/mobile.png"))
     screenshot.add_argument("--width", type=int, default=390)
     screenshot.add_argument("--height", type=int, default=844)
+    screenshot.add_argument("--screen", choices=["home", "meds", "search", "people", "settings"], default="home")
     screenshot.add_argument("--json", action="store_true")
 
     ocr = sub.add_parser("ocr-inspect")
@@ -319,7 +321,10 @@ def _dispatch(args, app: MedicationApp):
     elif args.command == "screenshot":
         if args.width < 320 or args.height < 480:
             raise SystemExit("screenshot dimensions are too small")
-        payload = capture_screenshot(args.dur_db, args.personal_db, args.catalog_db, args.output, args.width, args.height)
+        payload = capture_screenshot(
+            args.dur_db, args.personal_db, args.catalog_db, args.output,
+            args.width, args.height, args.screen,
+        )
     else:
         raise AssertionError(args.command)
 

@@ -129,6 +129,10 @@ class PrescriptionCliTest(unittest.TestCase):
         command_action = next(action for action in parser._actions if action.dest == "command")
         self.assertNotIn("dose-log", command_action.choices)
 
+    def test_screenshot_can_target_the_medication_screen(self) -> None:
+        args = build_parser().parse_args(["screenshot", "--screen", "meds"])
+        self.assertEqual(args.screen, "meds")
+
 
 if __name__ == "__main__":
     unittest.main()

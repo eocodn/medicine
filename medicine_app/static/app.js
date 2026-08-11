@@ -553,6 +553,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadHealth();
     await loadPeople();
+    const requestedScreen = new URLSearchParams(window.location.search).get("screen");
+    if (requestedScreen && Object.hasOwn(titles, requestedScreen)) showScreen(requestedScreen);
   }
   catch (error) {
     console.error("app initialization failed", error);

@@ -12,6 +12,6 @@ function medicationCourseHtml(course) {
   return `
     <div class="course-progress">
       <div><strong>전체 ${course.total_days}일</strong><span>${statusText}</span></div>
-      <div class="course-progress-track" aria-hidden="true"><span style="width:${percent}%"></span></div>
+      <progress class="course-progress-track" value="${percent}" max="100" aria-label="복용 진행률 ${percent}%">${percent}%</progress>
     </div>`;
 }

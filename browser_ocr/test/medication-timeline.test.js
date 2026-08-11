@@ -25,13 +25,19 @@ test("renders active medication course day and inclusive remaining days", () => 
   assert.match(html, /전체 5일/);
   assert.match(html, /2일째/);
   assert.match(html, /4일 남음/);
-  assert.match(html, /width:40%/);
+  assert.match(html, /<progress[^>]+value="40"[^>]+max="100"/);
+  assert.match(html, /aria-label="복용 진행률 40%"/);
+  assert.doesNotMatch(html, /style=/);
 });
 
 test("renders upcoming, completed, and indefinite courses explicitly", () => {
   const context = timelineContext();
 
-  assert.match(context.medicationCourseHtml({ status: "upcoming", total_days: 3, current_day: 0, remaining_days: 3, progress_percent: 0 }), /시작 전/);
-  assert.match(context.medicationCourseHtml({ status: "completed", total_days: 3, current_day: 3, remaining_days: 0, progress_percent: 100 }), /복용기간 종료/);
+  const upcoming = context.medicationCourseHtml({ status: "upcoming", total_days: 3, current_day: 0, remaining_days: 3, progress_percent: 0 });
+  const completed = context.medicationCourseHtml({ status: "completed", total_days: 3, current_day: 3, remaining_days: 0, progress_percent: 100 });
+  assert.match(upcoming, /시작 전/);
+  assert.match(upcoming, /value="0"/);
+  assert.match(completed, /복용기간 종료/);
+  assert.match(completed, /value="100"/);
   assert.equal(context.medicationCourseHtml(null), "");
 });
