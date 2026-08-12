@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .db import build_database, database_stats, search_records
 from .mobile import build_mobile_database
+from .product_code_bridge import sync_product_code_bridge
 from .product_items import sync_product_item_sources
 from .verification import verify_database
 
@@ -58,6 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
     sync_items.add_argument("--quiet", action="store_true")
     sync_items.add_argument("--json", action="store_true")
 
+    sync_bridge = sub.add_parser(
+        "sync-product-code-bridge",
+        help="Download the current HIRA ITEM_SEQ-to-product-code mapping snapshot",
+    )
+    sync_bridge.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW)
+    sync_bridge.add_argument("--quiet", action="store_true")
+    sync_bridge.add_argument("--json", action="store_true")
+
     stats = sub.add_parser("stats", help="Show DB row counts and source coverage")
     stats.add_argument("--db", type=Path, default=DEFAULT_DB)
     stats.add_argument("--json", action="store_true")
@@ -99,6 +108,9 @@ def main(argv=None) -> int:
             page_size=args.page_size,
             progress=not args.quiet,
         )
+        _emit(result, args.json)
+    elif args.command == "sync-product-code-bridge":
+        result = sync_product_code_bridge(args.raw_dir, progress=not args.quiet)
         _emit(result, args.json)
     elif args.command == "stats":
         _emit(database_stats(args.db), args.json)

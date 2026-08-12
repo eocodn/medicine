@@ -19,6 +19,7 @@ REQUIRED_SOURCE_KEYS = (
     "product:therapeutic_duplication_caution",
     "product_item:dur_product_info",
     "product_item:split_caution",
+    "product_bridge:hira_standard_code",
     "ingredient:combination_contraindication",
     "ingredient:age_contraindication",
     "ingredient:pregnancy_contraindication",
@@ -42,6 +43,7 @@ REQUIRED_HEADERS: dict[str, set[str]] = {
     "product:therapeutic_duplication_caution": {"성분코드", "성분명", "제품코드", "효능군"},
     "product_item:dur_product_info": {"ITEM_SEQ", "ITEM_NAME", "EDI_CODE", "TYPE_CODE", "TYPE_NAME"},
     "product_item:split_caution": {"ITEM_SEQ", "ITEM_NAME", "TYPE_NAME", "PROHBT_CONTENT"},
+    "product_bridge:hira_standard_code": {"한글상품명", "품목기준코드", "표준코드", "제품코드(개정후)"},
     "ingredient:combination_contraindication": {"연번", "유효성분 '1'", "유효성분 '2'"},
     "ingredient:age_contraindication": {"연번", "성분명", "연령기준", "제형"},
     "ingredient:pregnancy_contraindication": {"연번", "성분명", "임부금기(등급)"},
@@ -158,7 +160,7 @@ def _freshness_by_source(con: sqlite3.Connection, rows: list[dict[str, Any]]) ->
         # the snapshot freshness date; the package/import time is authoritative.
         freshness = (
             _parse_date(row.get("imported_at"))
-            if row.get("source_kind") in {"product", "product_item"}
+            if row.get("source_kind") in {"product", "product_item", "product_bridge"}
             else None
         )
         if row.get("source_kind") == "ingredient":
@@ -211,6 +213,7 @@ def verify_database(
                 "product": "product_dur",
                 "ingredient": "ingredient_dur",
                 "product_item": "product_item_flags",
+                "product_bridge": "product_code_bridge",
             }.get(row["source_kind"])
             if table is None:
                 issues.append(f"unknown source kind: {row['source_kind']}")

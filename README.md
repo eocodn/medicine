@@ -38,7 +38,9 @@ docker compose down
   - `취소·취하·만료 품목도 검색` 옵션으로 과거 허가 이력 조회 가능
   - 허가상태를 `active / expired / withdrawn / business_closed / canceled`로 정규화
 - 약 추가 전 자동 DUR 확인
-  - 식약처 허가품목과 DUR 품목이 공유하는 `ITEM_SEQ`를 최우선 제품 식별키로 사용하고 EDI는 보조키로 사용
+  - 식약처 허가품목의 `ITEM_SEQ`를 canonical 제품 식별키로 사용
+  - 상세 DUR 제품코드는 현재 식약처 EDI를 우선 사용하고, EDI가 상세 DUR과 연결되지 않으면 심평원 약가마스터의 `ITEM_SEQ → 제품코드` exact 매핑을 사용
+  - 공식 코드 매핑이 없을 때만 제품명+성분명 정규화 fallback을 사용하며, 공식 매핑이 복수이면 추측하지 않고 판정 제한
   - 제품코드가 연결되면 제품 단위 상세 DUR 규칙을 우선 확인
   - 제품코드가 없어도 `ITEM_SEQ`로 확인된 첨가제주의·DUR 품목 유형·서방정분할주의를 놓치지 않음
   - 제품코드가 없더라도 식약처 성분명이 DUR 성분에 정확히 연결되면 성분 단위 DUR을 함께 확인
@@ -103,14 +105,16 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제�
 - `ingredient_dur`: 성분 단위 DUR 규칙
 - `product_catalog`: 제품 단위 상세 DUR 규칙에서 파생한 정규화 제품코드 카탈로그
 - `product_item_flags`: 식약처 `ITEM_SEQ` 기준 DUR 품목 유형·첨가제주의·서방정분할주의
+- `product_code_bridge`: 심평원 약가마스터의 `ITEM_SEQ(품목기준코드) → 제품코드(개정후)` exact 매핑
 
 현재 로컬 DB 기준:
 
 - 제품 단위 상세 DUR: 558,637행
 - 성분 단위 DUR: 4,172행
 - `ITEM_SEQ` 제품 플래그: 43,295행
+- 심평원 제품코드 bridge: 22,308개 관계
 - 제품코드 카탈로그: 23,131개
-- 검증 원본 데이터 파일: 17개
+- 검증 원본 데이터 파일: 18개
 
 ### `data/db/personal.sqlite`
 
@@ -132,8 +136,8 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제�
 ### `data/db/catalog.sqlite`
 
 식약처 의약품 제품 허가정보 API에서 동기화한 전체 제품 카탈로그입니다. 식약처 품목기준코드
-(`item_seq`)를 앱 내부 참조키이자 DUR 제품 식별의 최우선 키로 사용하고, EDI 코드는 상세 제품규칙
-제품코드 연결을 위한 보조키로 사용합니다.
+(`item_seq`)를 앱 내부 canonical 제품 참조키로 사용합니다. 상세 DUR 제품코드는 식약처 EDI를 먼저
+확인하고, 그 코드가 상세 DUR에 없으면 심평원 약가마스터의 동일 `item_seq` exact 매핑으로 보완합니다.
 
 EDI/DUR 연결이 되지 않은 제품도 검색·복약 등록은 가능하지만, 개인별 DUR 자동 판정 범위가
 제한될 수 있다는 안내를 표시합니다. 이 경우 식약처 성분명이 DUR 성분 기준에 정확히 연결되면
@@ -199,6 +203,9 @@ API입니다. 각 API는 공공데이터포털에서 별도 활용신청이 필�
 # 공공데이터포털 키로 DUR 품목정보 + 서방정분할주의 최신 snapshot 동기화
 docker compose run --rm dur sync-product-items --json
 
+# 심평원 공개 약가마스터에서 ITEM_SEQ → 제품코드 exact bridge 동기화
+docker compose run --rm dur sync-product-code-bridge --json
+
 # 기존 DUR CSV/XLSX와 위 snapshot을 하나의 검증 DB로 빌드
 docker compose run --rm dur build --json
 docker compose run --rm dur stats --json
@@ -209,9 +216,10 @@ docker compose run --rm dur mobile-build --json
 
 원본 파일은 `data/raw/`, `data/kids/`에 보존하고 Git에는 넣지 않습니다. DUR 빌드도 임시 DB에서
 전체 import/검증을 끝낸 뒤 최종 DB를 원자 교체합니다. `dur verify`는 배포 전 release gate로
-17개 필수 원본의 존재·헤더·실제 파일 SHA-256 일치, 실제 import 행 수, SQLite 무결성, 성분 고시 기준일과
+18개 필수 원본의 존재·헤더·실제 파일 SHA-256 일치, 실제 import 행 수, SQLite 무결성, 성분 고시 기준일과
 제품 스냅샷 생성 시점을 확인하고 결정적인 `dataset_id`를 출력합니다. `sync-product-items`는 식약처
-`DUR품목정보`와 `서방정분할주의` OpenAPI를 checkpoint 가능한 JSONL snapshot으로 저장합니다. 이 식별자는 처방 안전성
+`DUR품목정보`와 `서방정분할주의` OpenAPI를 checkpoint 가능한 JSONL snapshot으로 저장하고,
+`sync-product-code-bridge`는 심평원 공개 약가마스터 CSV를 정상 공개 다운로드 절차로 원자 갱신합니다. 이 식별자는 처방 안전성
 평가와 변경 이력에 저장됩니다.
 
 `catalog ingredient-aliases --write`는 현재 식약처 카탈로그와 DUR 데이터에서 증명되거나 개별
@@ -228,7 +236,7 @@ docker compose run --rm dur mobile-build --json
 
 `dur mobile-build`는 검증된 `dur.sqlite`와 `catalog.sqlite`에서 Android 런타임에 필요한 컬럼과
 인덱스만 보존한 `data/db/mobile.sqlite`와 SHA-256 manifest를 만듭니다. DUR 규칙 행과 원본
-provenance, `ITEM_SEQ` 제품 플래그 및 검증된 ingredient alias를 유지하며 `dataset_id`도 원본 DUR DB와 같아야 빌드가
+provenance, `ITEM_SEQ` 제품 플래그, 심평원 제품코드 bridge 및 검증된 ingredient alias를 유지하며 `dataset_id`도 원본 DUR DB와 같아야 빌드가
 성공합니다. Android 빌드는 alias 재생성과 mobile DB 생성을 다시 실행하므로 검증에 실패한
 데이터나 오래된 alias는 APK에 패키징되지 않습니다.
 

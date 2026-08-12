@@ -34,6 +34,19 @@ class MobileDatabaseTest(unittest.TestCase):
             "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
             ("P-NAME", "이름연결약_(1정/1정)", "ING-NAME", "Zolpidem"),
         )
+        dur.executescript(
+            """
+            CREATE TABLE product_code_bridge(
+                dataset_key TEXT NOT NULL, item_seq TEXT NOT NULL, product_code TEXT NOT NULL,
+                product_name TEXT, PRIMARY KEY(item_seq,product_code)
+            );
+            CREATE INDEX idx_product_code_bridge_code ON product_code_bridge(product_code);
+            """
+        )
+        dur.execute(
+            "INSERT INTO product_code_bridge VALUES(?,?,?,?)",
+            ("product_bridge:hira_standard_code", "MFDS-NAME", "P-NAME", "이름연결약"),
+        )
         dur.commit()
         dur.close()
         catalog = sqlite3.connect(self.catalog_db)
@@ -120,6 +133,9 @@ class MobileDatabaseTest(unittest.TestCase):
             self.assertIn("product_name", product_catalog_columns)
             self.assertNotIn("raw_json", catalog_columns)
             self.assertEqual(
+                mobile.execute("SELECT COUNT(*) FROM product_code_bridge").fetchone()[0], 1
+            )
+            self.assertEqual(
                 mobile.execute("SELECT COUNT(*) FROM ingredient_aliases").fetchone()[0],
                 alias_result["validated_aliases"],
             )
@@ -147,7 +163,7 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "exceeded")
         linked = app.get_product("MFDS-NAME")
         self.assertEqual(linked["product_code"], "P-NAME")
-        self.assertEqual(linked["product_mapping_method"], "normalized_name_ingredient_unique")
+        self.assertEqual(linked["product_mapping_method"], "item_seq_hira_exact")
         aliased = app.get_product("MFDS-ALIAS-NO-EDI")
         self.assertEqual(aliased["ingredient_mapping_status"], "matched")
         self.assertEqual(aliased["ingredient_mapping_method"], "validated_alias")

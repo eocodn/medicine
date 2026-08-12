@@ -84,6 +84,13 @@ class DurVerificationTest(unittest.TestCase):
                 change_date TEXT,
                 PRIMARY KEY(item_seq, category)
             );
+            CREATE TABLE product_code_bridge (
+                dataset_key TEXT NOT NULL,
+                item_seq TEXT NOT NULL,
+                product_code TEXT NOT NULL,
+                product_name TEXT,
+                PRIMARY KEY(item_seq, product_code)
+            );
             """
         )
         for index, key in enumerate(REQUIRED_SOURCE_KEYS, 1):
@@ -114,12 +121,19 @@ class DurVerificationTest(unittest.TestCase):
                     ) VALUES(?,?,?,?,?)""",
                     (key, 1, category, "fixture", "1"),
                 )
-            else:
+            elif kind == "product_item":
                 con.execute(
                     """INSERT INTO product_item_flags(
                         dataset_key,item_seq,product_name,category,flag_code,flag_name
                     ) VALUES(?,?,?,?,?,?)""",
                     (key, f"MFDS-{index}", "fixture", category, f"X{index}", category),
+                )
+            else:
+                con.execute(
+                    """INSERT INTO product_code_bridge(
+                        dataset_key,item_seq,product_code,product_name
+                    ) VALUES(?,?,?,?)""",
+                    (key, f"MFDS-{index}", f"P-{index}", "fixture"),
                 )
         con.commit()
         con.close()

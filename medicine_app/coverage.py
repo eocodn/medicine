@@ -190,6 +190,20 @@ def _product_flags_for_item(con: sqlite3.Connection, item_seq: Any) -> list[dict
     return [dict(row) for row in rows]
 
 
+def _product_bridge_codes_for_item(con: sqlite3.Connection, item_seq: Any) -> list[str]:
+    item_seq = str(item_seq or "").strip()
+    if not item_seq:
+        return []
+    try:
+        rows = con.execute(
+            "SELECT product_code FROM product_code_bridge WHERE item_seq=? ORDER BY product_code",
+            (item_seq,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return sorted({str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()})
+
+
 def resolve_safety_mapping(
     con: sqlite3.Connection,
     *,
@@ -202,32 +216,47 @@ def resolve_safety_mapping(
     ingredient_multi_aliases: Mapping[str, tuple[str, ...]] | None = None,
 ) -> dict[str, Any]:
     product_flags = _product_flags_for_item(con, catalog_item_seq)
+    bridge_product_codes = _product_bridge_codes_for_item(con, catalog_item_seq)
     item_edi_codes = sorted({
         str(flag["edi_code"]).strip()
         for flag in product_flags
         if flag.get("edi_code") and str(flag["edi_code"]).strip()
     })
     catalog_edi_codes = split_edi_codes(edi_value)
-    # ITEM_SEQ is shared by the MFDS permit catalog and official DUR item data.
-    # Prefer the DUR item's EDI when it exists; this avoids trusting a stale or
-    # missing catalog EDI over an exact current product identity.
+    # Current MFDS EDI is authoritative when it resolves a detailed DUR row.
+    # HIRA deliberately retains historical reimbursement codes, so it is used
+    # only when current EDI has no detailed DUR row; a multi-code bridge fails closed.
     edi_codes = item_edi_codes if item_edi_codes else catalog_edi_codes
     product_rows: list[Mapping[str, Any]] = []
-    if edi_codes:
-        placeholders = ",".join("?" for _ in edi_codes)
+
+    def product_rows_for(codes: list[str]) -> list[Mapping[str, Any]]:
+        if not codes:
+            return []
+        placeholders = ",".join("?" for _ in codes)
         con.row_factory = sqlite3.Row
-        product_rows = list(con.execute(
+        return list(con.execute(
             f"""SELECT product_code,product_name,ingredient_code,ingredient_name
                 FROM product_catalog WHERE product_code IN ({placeholders})
                 ORDER BY product_code""",
-            edi_codes,
+            codes,
         ).fetchall())
-    product_mapping_method = (
-        "item_seq_edi_exact" if product_rows and product_flags and item_edi_codes
-        else "edi_exact" if product_rows
-        else "none"
-    )
-    if not product_rows and not edi_codes and catalog_product_name and catalog_ingredient:
+
+    if edi_codes:
+        product_rows = product_rows_for(edi_codes)
+    if product_rows:
+        product_mapping_method = (
+            "item_seq_edi_exact" if product_flags and item_edi_codes
+            else "edi_exact"
+        )
+    elif len(bridge_product_codes) > 1:
+        product_mapping_method = "item_seq_hira_ambiguous"
+    elif bridge_product_codes:
+        product_rows = product_rows_for(bridge_product_codes)
+        product_mapping_method = "item_seq_hira_exact" if product_rows else "item_seq_hira_no_detail"
+    else:
+        product_mapping_method = "none"
+
+    if not product_rows and not edi_codes and not bridge_product_codes and catalog_product_name and catalog_ingredient:
         raw_ingredient = str(catalog_ingredient).strip()
         normalized_ingredient = normalize_ingredient_name(catalog_ingredient)
         normalized_name = normalize_product_name(catalog_product_name)
@@ -285,7 +314,7 @@ def resolve_safety_mapping(
     # while ingredient-level checks fail closed until the source conflict is fixed.
     ingredient_identity_conflict = False
     catalog_multi_expansion: list[str] = []
-    if product_mapping_method in {"edi_exact", "item_seq_edi_exact"} and canonical_names and catalog_ingredient:
+    if product_mapping_method in {"edi_exact", "item_seq_edi_exact", "item_seq_hira_exact"} and canonical_names and catalog_ingredient:
         catalog_matched, catalog_unmatched, _ = _candidate_parts(
             catalog_ingredient, known_ingredients, ingredient_aliases, ingredient_multi_aliases
         )
@@ -383,15 +412,24 @@ def resolve_safety_mapping(
         "product_code": selected_product_code,
         "product_mapping_method": product_mapping_method,
         "product_status": (
-            "matched" if selected_product_code else "ambiguous" if len(matched_product_codes) > 1 else "not_matched"
+            "matched"
+            if selected_product_code
+            else "ambiguous" if product_mapping_method == "item_seq_hira_ambiguous" or len(matched_product_codes) > 1
+            else "not_matched"
         ),
         "product_identity_status": (
             "matched"
-            if product_flags or selected_product_code
-            else "ambiguous" if len(matched_product_codes) > 1
+            if product_flags or selected_product_code or len(bridge_product_codes) == 1
+            else "ambiguous" if product_mapping_method == "item_seq_hira_ambiguous" or len(matched_product_codes) > 1
             else "not_matched"
         ),
-        "product_identity_method": "item_seq_exact" if product_flags else product_mapping_method,
+        "product_identity_method": (
+            "item_seq_exact" if product_flags
+            else "item_seq_hira_exact" if len(bridge_product_codes) == 1
+            else "item_seq_hira_ambiguous" if len(bridge_product_codes) > 1
+            else product_mapping_method
+        ),
+        "bridge_product_codes": bridge_product_codes,
         "product_flags": product_flags,
         "ingredient_code": ingredient_code,
         "ingredients": matched_ingredients,

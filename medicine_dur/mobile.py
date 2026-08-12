@@ -11,7 +11,7 @@ from typing import Any
 from .verification import dataset_manifest, verify_database
 
 
-MOBILE_SCHEMA_VERSION = 2
+MOBILE_SCHEMA_VERSION = 3
 
 
 def _sha256(path: Path) -> str:
@@ -112,6 +112,20 @@ def build_mobile_database(
             CREATE INDEX idx_products_status ON products(permit_status);
             """
         )
+        product_bridge_source_exists = con.execute(
+            "SELECT 1 FROM dur.sqlite_master WHERE type='table' AND name='product_code_bridge'"
+        ).fetchone() is not None
+        if product_bridge_source_exists:
+            con.executescript(
+                """
+                CREATE TABLE product_code_bridge AS
+                SELECT dataset_key,item_seq,product_code,product_name
+                FROM dur.product_code_bridge;
+                CREATE UNIQUE INDEX idx_product_code_bridge_identity
+                    ON product_code_bridge(item_seq,product_code);
+                CREATE INDEX idx_product_code_bridge_code ON product_code_bridge(product_code);
+                """
+            )
         product_item_source_exists = con.execute(
             "SELECT 1 FROM dur.sqlite_master WHERE type='table' AND name='product_item_flags'"
         ).fetchone() is not None
@@ -178,6 +192,20 @@ def build_mobile_database(
         mobile_dur_rows = mobile_con.execute("SELECT COUNT(*) FROM product_dur").fetchone()[0]
         source_ingredient_rows = source_con.execute("SELECT COUNT(*) FROM ingredient_dur").fetchone()[0]
         mobile_ingredient_rows = mobile_con.execute("SELECT COUNT(*) FROM ingredient_dur").fetchone()[0]
+        source_product_bridge_rows = (
+            source_con.execute("SELECT COUNT(*) FROM product_code_bridge").fetchone()[0]
+            if source_con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_code_bridge'"
+            ).fetchone()
+            else 0
+        )
+        mobile_product_bridge_rows = (
+            mobile_con.execute("SELECT COUNT(*) FROM product_code_bridge").fetchone()[0]
+            if mobile_con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_code_bridge'"
+            ).fetchone()
+            else 0
+        )
         source_product_flag_rows = (
             source_con.execute("SELECT COUNT(*) FROM product_item_flags").fetchone()[0]
             if source_con.execute(
@@ -223,11 +251,11 @@ def build_mobile_database(
             if multi_alias_mobile_exists else 0
         )
         if (
-            source_dur_rows, source_ingredient_rows, source_product_flag_rows, source_product_rows,
-            source_alias_rows, source_multi_alias_rows
+            source_dur_rows, source_ingredient_rows, source_product_flag_rows, source_product_bridge_rows,
+            source_product_rows, source_alias_rows, source_multi_alias_rows
         ) != (
-            mobile_dur_rows, mobile_ingredient_rows, mobile_product_flag_rows, mobile_product_rows,
-            mobile_alias_rows, mobile_multi_alias_rows
+            mobile_dur_rows, mobile_ingredient_rows, mobile_product_flag_rows, mobile_product_bridge_rows,
+            mobile_product_rows, mobile_alias_rows, mobile_multi_alias_rows
         ):
             raise RuntimeError("mobile database row counts differ from source databases")
     finally:
@@ -244,6 +272,7 @@ def build_mobile_database(
         "product_dur_rows": source_dur_rows,
         "ingredient_dur_rows": source_ingredient_rows,
         "product_item_flag_rows": source_product_flag_rows,
+        "product_code_bridge_rows": source_product_bridge_rows,
         "catalog_product_rows": source_product_rows,
         "ingredient_alias_rows": source_alias_rows,
         "ingredient_multi_alias_rows": source_multi_alias_rows,

@@ -100,6 +100,7 @@ class ProductRepository:
             "product_mapping_method": mapping["product_mapping_method"],
             "product_identity_status": mapping["product_identity_status"],
             "product_identity_method": mapping["product_identity_method"],
+            "bridge_product_codes": mapping["bridge_product_codes"],
             "product_flags": mapping["product_flags"],
             "product_name": row["product_name"],
             "ingredient_code": mapping["ingredient_code"],

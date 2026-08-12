@@ -15,6 +15,7 @@ from typing import Iterable
 from openpyxl import load_workbook
 
 from .catalog import build_product_catalog
+from .product_code_bridge import import_product_code_bridge
 from .product_items import import_product_item_sources
 
 
@@ -438,6 +439,7 @@ def build_database(
     product_rows = 0
     ingredient_rows = 0
     product_flag_rows = 0
+    product_bridge_rows = 0
     catalog_products = 0
     source_files = 0
     started = time.monotonic()
@@ -468,6 +470,9 @@ def build_database(
             item_sources, product_flag_rows = import_product_item_sources(conn, raw_dir)
             source_files += item_sources
 
+            bridge_sources, product_bridge_rows = import_product_code_bridge(conn, raw_dir)
+            source_files += bridge_sources
+
             catalog_products = build_product_catalog(conn)
             conn.commit()
             conn.execute("ANALYZE")
@@ -487,8 +492,9 @@ def build_database(
         "product_rows": product_rows,
         "ingredient_rows": ingredient_rows,
         "product_flag_rows": product_flag_rows,
+        "product_bridge_rows": product_bridge_rows,
         "catalog_products": catalog_products,
-        "total_rows": product_rows + ingredient_rows + product_flag_rows,
+        "total_rows": product_rows + ingredient_rows + product_flag_rows + product_bridge_rows,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "size_bytes": db_path.stat().st_size,
     }
@@ -504,6 +510,13 @@ def database_stats(db_path: str | Path) -> dict:
             conn.execute("SELECT COUNT(*) AS n FROM product_item_flags").fetchone()["n"]
             if conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_item_flags'"
+            ).fetchone()
+            else 0
+        )
+        product_bridge_rows = (
+            conn.execute("SELECT COUNT(*) AS n FROM product_code_bridge").fetchone()["n"]
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_code_bridge'"
             ).fetchone()
             else 0
         )
@@ -526,8 +539,9 @@ def database_stats(db_path: str | Path) -> dict:
         "product_rows": product_rows,
         "ingredient_rows": ingredient_rows,
         "product_flag_rows": product_flag_rows,
+        "product_bridge_rows": product_bridge_rows,
         "catalog_products": catalog_products,
-        "total_rows": product_rows + ingredient_rows + product_flag_rows,
+        "total_rows": product_rows + ingredient_rows + product_flag_rows + product_bridge_rows,
         "size_bytes": db_path.stat().st_size,
         "categories": categories,
     }
