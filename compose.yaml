@@ -17,6 +17,15 @@ services:
       DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}
     entrypoint: ["python", "-m", "medicine_catalog.cli"]
 
+  canonical:
+    build: .
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}
+    entrypoint: ["python", "-m", "medicine_canonical.cli"]
+
   app:
     build: .
     working_dir: /app

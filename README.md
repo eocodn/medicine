@@ -161,6 +161,50 @@ EDI/DUR 연결이 되지 않은 제품도 검색·복약 등록은 가능하지�
 - 폐업: 257개
 - 취소: 48개
 
+### `data/db/canonical.sqlite` (병렬 실험 DB)
+
+기존 `dur.sqlite`/`catalog.sqlite` 런타임을 변경하지 않고, 세 공식 원본 계열만으로 다시 만든
+canonical DB입니다. 현재 앱 평가기는 아직 이 DB를 사용하지 않습니다.
+
+- `mfds_permit_api`: 식약처 허가제품 API. `ITEM_SEQ`를 제품 중심키로 사용
+- `mfds_dur_item_api`: 식약처 DUR 품목 API 9개 endpoint. 상세 규칙은 `ITEM_SEQ`, 병용금기는
+  `MIXTURE_ITEM_SEQ`를 직접 보존
+- `kids_mfds_xlsx`: 최신 성분/기준 XLSX 8종. 임부등급, 연령, 용량, 기간, 효능군, 수유부주의 등을 보존
+
+API 원본은 `data/canonical/raw/*.jsonl`에 페이지 순서대로 보존하고 SHA-256 metadata를 함께
+저장합니다. DB의 각 행은 `source_dataset_key + source_row`로 원본 행을 추적하며, DB 재조립 시
+원본 JSONL 해시가 metadata와 다르면 실패합니다. 기존 KIDS 제품코드 CSV와 HIRA 제품코드 bridge는
+이 canonical DB의 안전성 원본으로 사용하지 않습니다.
+
+현재 실데이터 빌드 기준(2026-08-12):
+
+- 허가제품 42,956개 / 정상 35,239개
+- `ITEM_SEQ` 상세 제품규칙 834,286행
+- 품목 플래그 43,295행
+- XLSX 성분/기준 규칙 4,172행
+- source snapshot 18개 = 허가 API 1 + DUR API 9 + XLSX 8
+- 상세/상대/플래그 ITEM_SEQ orphan 0건
+- SQLite 약 418.7MB
+
+전체 최신 API를 다시 받고 원자적으로 재구축:
+
+```bash
+docker compose run --rm canonical rebuild --json
+```
+
+이미 받은 API snapshot만 사용해 네트워크 없이 DB 재조립:
+
+```bash
+docker compose run --rm canonical build --json
+```
+
+검증/통계:
+
+```bash
+docker compose run --rm canonical verify --json
+docker compose run --rm canonical stats --json
+```
+
 ## 식약처 전체 의약품 카탈로그 동기화
 
 공공데이터포털에서 발급한 서비스키가 필요합니다. 키는 저장소에 넣지 말고 환경변수로

@@ -18,6 +18,7 @@ dependencies = [
 medicine-dur = "medicine_dur.cli:main"
 medicine-app = "medicine_app.cli:main"
 medicine-catalog = "medicine_catalog.cli:main"
+medicine-canonical = "medicine_canonical.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["medicine_dur*", "medicine_app*", "medicine_catalog*"]
