@@ -5,13 +5,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from medicine_dur.verification import dataset_manifest
+
 from .coverage import ingredient_index, resolve_safety_mapping
+from .ingredient_aliases import load_materialized_ingredient_aliases
 
 
 class ProductRepository:
     def __init__(self, dur_db: Path | str, catalog_db: Path | str | None = None):
         self.dur_db = Path(dur_db)
         self.catalog_db = Path(catalog_db) if catalog_db else None
+        self._ingredient_aliases = self._load_ingredient_aliases()
 
     @contextmanager
     def _dur(self) -> Iterator[sqlite3.Connection]:
@@ -37,6 +41,15 @@ class ProductRepository:
         finally:
             con.close()
 
+    def _load_ingredient_aliases(self) -> dict[str, str]:
+        if not self.catalog_db or not self.catalog_db.exists() or not self.dur_db.exists():
+            return {}
+        with self._dur() as dur_con, self._catalog() as catalog_con:
+            dataset_id = dataset_manifest(dur_con).get("dataset_id")
+            return load_materialized_ingredient_aliases(
+                catalog_con, dur_dataset_id=dataset_id
+            )
+
     def has_full_catalog(self) -> bool:
         if not self.catalog_db or not self.catalog_db.exists():
             return False
@@ -51,6 +64,7 @@ class ProductRepository:
         row: sqlite3.Row,
         dur_con: sqlite3.Connection,
         known_ingredients: set[str] | None = None,
+        ingredient_aliases: dict[str, str] | None = None,
     ) -> dict:
         mapping = resolve_safety_mapping(
             dur_con,
@@ -58,6 +72,7 @@ class ProductRepository:
             catalog_product_name=row["product_name"],
             catalog_ingredient=row["ingredient_name"],
             known_ingredients=known_ingredients,
+            ingredient_aliases=ingredient_aliases,
         )
         return {
             "product_ref": row["item_seq"],
@@ -114,7 +129,12 @@ class ProductRepository:
             ).fetchall()
         with self._dur() as dur_con:
             known_ingredients = ingredient_index(dur_con)
-            return [self._decorate_product(row, dur_con, known_ingredients) for row in rows]
+            return [
+                self._decorate_product(
+                    row, dur_con, known_ingredients, self._ingredient_aliases
+                )
+                for row in rows
+            ]
 
     def get(self, product_ref: str) -> dict:
         product_ref = product_ref.strip()
@@ -136,4 +156,6 @@ class ProductRepository:
         if row is None:
             raise KeyError("product not found")
         with self._dur() as dur_con:
-            return self._decorate_product(row, dur_con)
+            return self._decorate_product(
+                row, dur_con, ingredient_index(dur_con), self._ingredient_aliases
+            )

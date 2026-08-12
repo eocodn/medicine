@@ -5,11 +5,17 @@ import json
 import os
 from pathlib import Path
 
+from medicine_app.ingredient_aliases import (
+    inspect_validated_ingredient_aliases,
+    materialize_validated_ingredient_aliases,
+)
+
 from .db import catalog_stats, sync_catalog, upgrade_catalog
 from .status_sources import probe_status_sources
 
 
 DEFAULT_DB = Path("data/db/catalog.sqlite")
+DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
 
 
 def _emit(payload: dict, as_json: bool) -> None:
@@ -39,6 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument("--db", type=Path, default=DEFAULT_DB)
     upgrade.add_argument("--json", action="store_true")
 
+    aliases = sub.add_parser(
+        "ingredient-aliases",
+        help="Inspect or materialize EDI-validated catalog-to-DUR ingredient aliases",
+    )
+    aliases.add_argument("--db", type=Path, default=DEFAULT_DB)
+    aliases.add_argument("--dur-db", type=Path, default=DEFAULT_DUR_DB)
+    aliases.add_argument("--write", action="store_true", help="Replace the materialized alias table in the catalog DB")
+    aliases.add_argument("--json", action="store_true")
+
     sources = sub.add_parser("status-sources", help="Probe reimbursement and supply data-source permissions")
     sources.add_argument("--service-key", default=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
     sources.add_argument("--json", action="store_true")
@@ -53,6 +68,12 @@ def main(argv=None) -> int:
         payload = sync_catalog(args.db, service_key=args.service_key, page_size=args.page_size, progress=not args.quiet)
     elif args.command == "upgrade":
         payload = upgrade_catalog(args.db)
+    elif args.command == "ingredient-aliases":
+        payload = (
+            materialize_validated_ingredient_aliases(args.dur_db, args.db)
+            if args.write
+            else inspect_validated_ingredient_aliases(args.dur_db, args.db)
+        )
     elif args.command == "status-sources":
         if not args.service_key.strip():
             raise SystemExit("DATA_GO_KR_SERVICE_KEY is required for status-source probe")

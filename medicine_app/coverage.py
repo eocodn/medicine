@@ -74,19 +74,88 @@ def ingredient_index(con: sqlite3.Connection) -> set[str]:
     return names
 
 
-def _candidate_parts(value: Any, ingredient_index: set[str]) -> tuple[list[str], list[str]]:
+def split_ingredient_components(value: Any) -> list[str]:
+    """Split explicit top-level ingredient delimiters without parsing chemistry.
+
+    Slashes and commas inside parenthetical strength/annotation text are kept
+    intact. This prevents strings such as ``5mg(5mg/mL)`` from being treated as
+    multi-ingredient while still handling published ``A+B``, ``A/B`` and
+    ``A,B`` product labels.
+    """
     normalized = normalize_ingredient_name(value)
     if not normalized:
-        return [], []
-    if normalized in ingredient_index:
-        return [normalized], []
-    if re.search(r"\d", normalized):
-        return [], [normalized]
-    parts = [normalize_ingredient_name(part) for part in re.split(r"[+/]", normalized)]
-    parts = [part for part in parts if part]
-    matched = [part for part in parts if part in ingredient_index]
-    unmatched = [part for part in parts if part not in ingredient_index]
-    return matched, unmatched
+        return []
+    parts: list[str] = []
+    buffer: list[str] = []
+    depth = 0
+    for char in normalized:
+        if char in "([{":
+            depth += 1
+            buffer.append(char)
+            continue
+        if char in ")]}":
+            depth = max(depth - 1, 0)
+            buffer.append(char)
+            continue
+        if depth == 0 and char in "+/,":
+            part = normalize_ingredient_name("".join(buffer))
+            if part:
+                parts.append(part)
+            buffer = []
+            continue
+        buffer.append(char)
+    part = normalize_ingredient_name("".join(buffer))
+    if part:
+        parts.append(part)
+    return parts
+
+
+def _resolve_candidate_identity(
+    value: str,
+    ingredient_index: set[str],
+    ingredient_aliases: Mapping[str, str],
+) -> tuple[str | None, bool]:
+    if value in ingredient_index:
+        return value, False
+    alias_target = ingredient_aliases.get(value)
+    if alias_target in ingredient_index:
+        return alias_target, True
+    strengthless = _INGREDIENT_STRENGTH_SUFFIX_RE.sub("", value).strip()
+    if strengthless != value:
+        if strengthless in ingredient_index:
+            return strengthless, False
+        alias_target = ingredient_aliases.get(strengthless)
+        if alias_target in ingredient_index:
+            return alias_target, True
+    return None, False
+
+
+def _candidate_parts(
+    value: Any,
+    ingredient_index: set[str],
+    ingredient_aliases: Mapping[str, str] | None = None,
+) -> tuple[list[str], list[str], bool]:
+    normalized = normalize_ingredient_name(value)
+    if not normalized:
+        return [], [], False
+    aliases = ingredient_aliases or {}
+    target, used_alias = _resolve_candidate_identity(normalized, ingredient_index, aliases)
+    if target is not None:
+        return [target], [], used_alias
+    parts = split_ingredient_components(normalized)
+    if len(parts) == 1 and re.search(r"\d", normalized):
+        return [], [normalized], False
+    matched: list[str] = []
+    unmatched: list[str] = []
+    alias_used = False
+    for part in parts:
+        target, used_alias = _resolve_candidate_identity(part, ingredient_index, aliases)
+        if target is not None:
+            matched.append(target)
+            alias_used = alias_used or used_alias
+        else:
+            unmatched.append(part)
+    return matched, unmatched, alias_used
 
 
 def resolve_safety_mapping(
@@ -96,6 +165,7 @@ def resolve_safety_mapping(
     catalog_product_name: Any,
     catalog_ingredient: Any,
     known_ingredients: set[str] | None = None,
+    ingredient_aliases: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     edi_codes = split_edi_codes(edi_value)
     product_rows: list[Mapping[str, Any]] = []
@@ -158,19 +228,22 @@ def resolve_safety_mapping(
     known_ingredients = known_ingredients if known_ingredients is not None else ingredient_index(con)
     matched_ingredients: list[str] = []
     unmatched_ingredients: list[str] = []
+    alias_used = False
 
     if canonical_names:
-        # The product-code row is authoritative about the product's ingredient
-        # label, but it is not proof that this label is the same identity used
-        # by the separate ingredient-level DUR dataset. Only exact normalized
-        # names/components present in ingredient_dur establish that bridge.
+        # Product-code linkage identifies the product, but ingredient-level DUR
+        # identity still requires an exact known component or a separately
+        # materialized alias backed by authoritative source evidence.
         for name in canonical_names:
-            matched, unmatched = _candidate_parts(name, known_ingredients)
+            matched, unmatched, used_alias = _candidate_parts(
+                name, known_ingredients, ingredient_aliases
+            )
             matched_ingredients.extend(matched)
             unmatched_ingredients.extend(unmatched)
+            alias_used = alias_used or used_alias
         matched_ingredients = sorted(set(matched_ingredients))
         unmatched_ingredients = sorted(set(unmatched_ingredients))
-        mapping_method = "product_code_exact"
+        mapping_method = "validated_alias" if alias_used else "product_code_exact"
         if matched_ingredients and not unmatched_ingredients:
             ingredient_status = "matched"
         elif matched_ingredients:
@@ -178,10 +251,12 @@ def resolve_safety_mapping(
         else:
             ingredient_status = "not_evaluable"
     else:
-        matched, unmatched = _candidate_parts(catalog_ingredient, known_ingredients)
+        matched, unmatched, alias_used = _candidate_parts(
+            catalog_ingredient, known_ingredients, ingredient_aliases
+        )
         matched_ingredients = sorted(set(matched))
         unmatched_ingredients = sorted(set(unmatched))
-        mapping_method = "catalog_exact"
+        mapping_method = "validated_alias" if alias_used else "catalog_exact"
         if matched_ingredients and not unmatched_ingredients:
             ingredient_status = "matched"
         elif matched_ingredients:
@@ -305,5 +380,6 @@ def coverage_summary(
 
 
 __all__ = [
-    "coverage_summary", "ingredient_index", "normalize_ingredient_name", "resolve_safety_mapping", "split_edi_codes",
+    "coverage_summary", "ingredient_index", "normalize_ingredient_name", "resolve_safety_mapping",
+    "split_edi_codes", "split_ingredient_components",
 ]

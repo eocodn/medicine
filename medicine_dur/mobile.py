@@ -112,6 +112,20 @@ def build_mobile_database(
             CREATE INDEX idx_products_status ON products(permit_status);
             """
         )
+        alias_source_exists = con.execute(
+            "SELECT 1 FROM cat.sqlite_master WHERE type='table' AND name='ingredient_aliases'"
+        ).fetchone() is not None
+        if alias_source_exists:
+            con.executescript(
+                """
+                CREATE TABLE ingredient_aliases AS
+                SELECT alias_name,target_name,evidence_kind,evidence_count,
+                       dur_dataset_id,built_at,provenance_json
+                FROM cat.ingredient_aliases;
+                CREATE UNIQUE INDEX idx_ingredient_alias_name ON ingredient_aliases(alias_name);
+                CREATE INDEX idx_ingredient_alias_target ON ingredient_aliases(target_name);
+                """
+            )
         con.execute("ANALYZE")
         con.commit()
         con.execute("VACUUM")
@@ -134,8 +148,22 @@ def build_mobile_database(
         mobile_ingredient_rows = mobile_con.execute("SELECT COUNT(*) FROM ingredient_dur").fetchone()[0]
         source_product_rows = catalog_con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
         mobile_product_rows = mobile_con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-        if (source_dur_rows, source_ingredient_rows, source_product_rows) != (
-            mobile_dur_rows, mobile_ingredient_rows, mobile_product_rows
+        alias_source_exists = catalog_con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ingredient_aliases'"
+        ).fetchone() is not None
+        source_alias_rows = (
+            catalog_con.execute("SELECT COUNT(*) FROM ingredient_aliases").fetchone()[0]
+            if alias_source_exists else 0
+        )
+        alias_mobile_exists = mobile_con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ingredient_aliases'"
+        ).fetchone() is not None
+        mobile_alias_rows = (
+            mobile_con.execute("SELECT COUNT(*) FROM ingredient_aliases").fetchone()[0]
+            if alias_mobile_exists else 0
+        )
+        if (source_dur_rows, source_ingredient_rows, source_product_rows, source_alias_rows) != (
+            mobile_dur_rows, mobile_ingredient_rows, mobile_product_rows, mobile_alias_rows
         ):
             raise RuntimeError("mobile database row counts differ from source databases")
     finally:
@@ -152,6 +180,7 @@ def build_mobile_database(
         "product_dur_rows": source_dur_rows,
         "ingredient_dur_rows": source_ingredient_rows,
         "catalog_product_rows": source_product_rows,
+        "ingredient_alias_rows": source_alias_rows,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     _atomic_json(manifest_out, payload)

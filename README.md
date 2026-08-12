@@ -193,6 +193,7 @@ API입니다. 각 API는 공공데이터포털에서 별도 활용신청이 필�
 docker compose run --rm dur build --json
 docker compose run --rm dur stats --json
 docker compose run --rm dur verify --json
+docker compose run --rm catalog ingredient-aliases --write --json
 docker compose run --rm dur mobile-build --json
 ```
 
@@ -202,10 +203,18 @@ docker compose run --rm dur mobile-build --json
 제품 스냅샷 생성 시점을 확인하고 결정적인 `dataset_id`를 출력합니다. 이 식별자는 처방 안전성
 평가와 변경 이력에 저장됩니다.
 
+`catalog ingredient-aliases --write`는 현재 식약처 카탈로그와 DUR 데이터에서 직접 증명되는
+성분명 관계만 `catalog.sqlite`의 별도 alias 테이블에 저장합니다. 정확한 EDI 제품 연결,
+식약처에서 단일성분으로 확인되는 동일 DUR 제품·성분코드 표기, 안전하게 소거 가능한 복합성분
+대응만 사용하며, 충돌하거나 근거가 부족한 염·수화물·철자 후보는 자동 매칭하지 않습니다.
+alias에는 현재 DUR `dataset_id`와 provenance를 함께 저장하므로 데이터셋이 바뀐 뒤 재생성하지
+않은 alias는 런타임에서 사용되지 않습니다.
+
 `dur mobile-build`는 검증된 `dur.sqlite`와 `catalog.sqlite`에서 Android 런타임에 필요한 컬럼과
 인덱스만 보존한 `data/db/mobile.sqlite`와 SHA-256 manifest를 만듭니다. DUR 규칙 행과 원본
-provenance는 유지하며 `dataset_id`도 원본 DUR DB와 같아야 빌드가 성공합니다. Android 빌드도
-이 과정을 다시 실행하므로 검증에 실패한 데이터는 APK에 패키징되지 않습니다.
+provenance 및 검증된 ingredient alias를 유지하며 `dataset_id`도 원본 DUR DB와 같아야 빌드가
+성공합니다. Android 빌드는 alias 재생성과 mobile DB 생성을 다시 실행하므로 검증에 실패한
+데이터나 오래된 alias는 APK에 패키징되지 않습니다.
 
 ## 앱 제어 CLI
 

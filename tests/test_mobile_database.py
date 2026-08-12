@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from medicine_app.core import MedicationApp
+from medicine_app.ingredient_aliases import materialize_validated_ingredient_aliases
 from medicine_dur.mobile import build_mobile_database
 from medicine_dur.verification import dataset_manifest
 from tests.test_safety_coverage import make_catalog_db, make_dur_db
@@ -43,8 +44,37 @@ class MobileDatabaseTest(unittest.TestCase):
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             ("MFDS-NAME", "이름연결약", "제약", "Zolpidem", "정제", None, "2026-01-01", None, "정상", "active", "fixture", "{}"),
         )
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "MFDS-ALIAS-EVIDENCE", "졸피뎀별칭근거약", "제약", "Zolpidem Tartrate", "정제",
+                "P-ALIAS-EVIDENCE", "2026-01-01", None, "정상", "active", "fixture", "{}",
+            ),
+        )
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "MFDS-ALIAS-NO-EDI", "졸피뎀별칭약", "제약", "Zolpidem Tartrate", "정제",
+                None, "2026-01-01", None, "정상", "active", "fixture", "{}",
+            ),
+        )
         catalog.commit()
         catalog.close()
+        dur = sqlite3.connect(self.dur_db)
+        dur.execute(
+            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
+            ("P-ALIAS-EVIDENCE", "졸피뎀별칭근거약", "ING-ZA", "zolpidem"),
+        )
+        dur.commit()
+        dur.close()
+        alias_result = materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
+        self.assertGreaterEqual(alias_result["validated_aliases"], 1)
 
         result = build_mobile_database(
             self.dur_db,
@@ -65,6 +95,10 @@ class MobileDatabaseTest(unittest.TestCase):
             self.assertNotIn("paired_ingredient_name", product_columns)
             self.assertIn("product_name", product_catalog_columns)
             self.assertNotIn("raw_json", catalog_columns)
+            self.assertEqual(
+                mobile.execute("SELECT COUNT(*) FROM ingredient_aliases").fetchone()[0],
+                alias_result["validated_aliases"],
+            )
             self.assertEqual(mobile.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         finally:
             source.close()
@@ -86,6 +120,10 @@ class MobileDatabaseTest(unittest.TestCase):
         linked = app.get_product("MFDS-NAME")
         self.assertEqual(linked["product_code"], "P-NAME")
         self.assertEqual(linked["product_mapping_method"], "normalized_name_ingredient_unique")
+        aliased = app.get_product("MFDS-ALIAS-NO-EDI")
+        self.assertEqual(aliased["ingredient_mapping_status"], "matched")
+        self.assertEqual(aliased["ingredient_mapping_method"], "validated_alias")
+        self.assertEqual(aliased["safety_ingredients"], ["zolpidem"])
 
 
 if __name__ == "__main__":
