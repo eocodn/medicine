@@ -15,13 +15,17 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .schema import SCHEMA_VERSION
+from .substance_external import (
+    ExternalEvidence,
+    build_external_index,
+    load_gsrs_names_snapshot,
+    load_openfda_unii_snapshot,
+)
 from .substance_inspection import substance_stats, verify_substance_database
 from .substance_schema import SUBSTANCE_SCHEMA, SUBSTANCE_SCHEMA_VERSION
 from .substance_sources import (
     OPENFDA_UNII_DATASET_KEY,
-    OPENFDA_UNII_FILENAME,
-    inspect_unii_archive,
-    sync_openfda_unii,
+    sync_substance_identity_sources,
 )
 
 
@@ -84,14 +88,6 @@ def _split_top_level(value: object, separators: frozenset[str]) -> list[str]:
     return parts
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _stable_substance_id(normalized_name: str) -> str:
     # The opaque local key is anchored to the strict local exact identity, not to
     # UNII. External identifiers can therefore be added or removed without making
@@ -106,29 +102,6 @@ def _stable_external_substance_id(system: str, value: str) -> str:
     # identifier, not the literal primary-key value.
     digest = hashlib.sha256((f"external-group\0{system}\0{value}").encode("utf-8")).hexdigest()
     return "SUB_" + digest[:20].upper()
-
-
-def _load_unii_snapshot(raw_dir: Path) -> tuple[list[dict], dict, Path]:
-    path = raw_dir / OPENFDA_UNII_FILENAME
-    meta_path = path.with_suffix(path.suffix + ".meta.json")
-    if not path.exists() or not meta_path.exists():
-        raise FileNotFoundError(f"missing openFDA UNII snapshot or metadata under {raw_dir}")
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    required = {"dataset_key", "source_family", "source_locator", "row_count", "sha256"}
-    missing = required - meta.keys()
-    if missing:
-        raise ValueError(f"invalid openFDA UNII metadata: missing {sorted(missing)}")
-    if meta["dataset_key"] != OPENFDA_UNII_DATASET_KEY or meta["source_family"] != "openfda_unii":
-        raise ValueError("openFDA UNII snapshot provenance mismatch")
-    actual_sha = _sha256_file(path)
-    if actual_sha != meta["sha256"]:
-        raise ValueError(f"sha256 mismatch for openFDA UNII snapshot: expected {meta['sha256']}, got {actual_sha}")
-    records, archive_meta = inspect_unii_archive(path.read_bytes())
-    if len(records) != int(meta["row_count"]):
-        raise RuntimeError(f"openFDA UNII row-count mismatch: metadata {meta['row_count']}, archive {len(records)}")
-    merged = dict(meta)
-    merged["archive_meta"] = archive_meta
-    return records, merged, path
 
 
 def _canonical_source_fingerprint(con: sqlite3.Connection) -> str:
@@ -316,17 +289,6 @@ def _extract_domestic_identities(
     return identities, unparsed
 
 
-def _external_index(records: list[dict]) -> dict[str, dict[str, set[str]]]:
-    index: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for row in records:
-        name = str(row["substance_name"]).strip()
-        unii = str(row["unii"]).strip()
-        normalized = normalize_substance_name(name)
-        if normalized and unii:
-            index[normalized][unii].add(name)
-    return index
-
-
 def _representative_name(observations: list[SourceIdentity]) -> str:
     english = sorted({row.name_en for row in observations if row.name_en}, key=lambda value: (len(value), value.casefold(), value))
     if english:
@@ -340,12 +302,11 @@ def _representative_name(observations: list[SourceIdentity]) -> str:
 def _insert_substance_layer(
     con: sqlite3.Connection,
     observations: list[SourceIdentity],
-    external_records: list[dict],
+    external: dict[str, dict[str, ExternalEvidence]],
 ) -> None:
     by_name: dict[str, list[SourceIdentity]] = defaultdict(list)
     for observation in observations:
         by_name[observation.normalized_name].append(observation)
-    external = _external_index(external_records)
     name_to_substance: dict[str, str] = {}
     name_candidates: dict[str, list[str]] = {}
     group_names: dict[str, list[str]] = defaultdict(list)
@@ -390,6 +351,17 @@ def _insert_substance_layer(
             )
 
         if resolved:
+            selected_unii = group_unii[substance_id]
+            evidence_sources = {
+                external[name][selected_unii].dataset_key
+                for name in normalized_names
+                if selected_unii in external.get(name, {})
+            }
+            evidence_source = (
+                OPENFDA_UNII_DATASET_KEY
+                if OPENFDA_UNII_DATASET_KEY in evidence_sources
+                else sorted(evidence_sources)[0]
+            )
             con.execute(
                 """INSERT INTO substance_identifiers(
                        substance_id,system,value,evidence_source_dataset_key,match_method
@@ -397,8 +369,8 @@ def _insert_substance_layer(
                 (
                     substance_id,
                     "UNII",
-                    group_unii[substance_id],
-                    OPENFDA_UNII_DATASET_KEY,
+                    selected_unii,
+                    evidence_source,
                     "normalized_name_exact",
                 ),
             )
@@ -408,8 +380,9 @@ def _insert_substance_layer(
             candidate_uniis = name_candidates[normalized_name]
             selected_unii = group_unii.get(substance_id)
             for unii in candidate_uniis:
+                evidence = candidate_map[unii]
                 external_name = sorted(
-                    candidate_map[unii], key=lambda value: (value.casefold(), value)
+                    evidence.names, key=lambda value: (value.casefold(), value)
                 )[0]
                 con.execute(
                     """INSERT INTO substance_match_candidates(
@@ -423,7 +396,7 @@ def _insert_substance_layer(
                         unii,
                         external_name,
                         "normalized_name_exact",
-                        OPENFDA_UNII_DATASET_KEY,
+                        evidence.dataset_key,
                         1 if selected_unii == unii else 0,
                     ),
                 )
@@ -480,7 +453,13 @@ def assemble_substance_database(
     raw_dir = Path(raw_dir)
     if not canonical_db_path.exists():
         raise FileNotFoundError(f"canonical source database not found: {canonical_db_path}")
-    external_records, external_meta, external_path = _load_unii_snapshot(raw_dir)
+    external_records, external_meta, external_path = load_openfda_unii_snapshot(raw_dir)
+    gsrs_names_data, gsrs_names_meta, gsrs_names_path = load_gsrs_names_snapshot(raw_dir)
+    external = build_external_index(
+        external_records,
+        gsrs_names_data,
+        normalize_substance_name,
+    )
     db_path.parent.mkdir(parents=True, exist_ok=True)
     temp = db_path.with_name(db_path.name + ".tmp")
     temp.unlink(missing_ok=True)
@@ -491,26 +470,32 @@ def assemble_substance_database(
             con.executescript(SUBSTANCE_SCHEMA)
             con.execute("BEGIN")
             copied_snapshots = _copy_canonical_snapshots(source, con)
-            con.execute(
+            con.executemany(
                 """INSERT INTO source_snapshots(
                        dataset_key,source_family,source_locator,snapshot_path,effective_date,
                        fetched_at,row_count,sha256,metadata_json
                    ) VALUES(?,?,?,?,?,?,?,?,?)""",
-                (
-                    external_meta["dataset_key"],
-                    external_meta["source_family"],
-                    external_meta["source_locator"],
-                    str(external_path),
-                    external_meta.get("effective_date"),
-                    external_meta.get("fetched_at"),
-                    int(external_meta["row_count"]),
-                    external_meta["sha256"],
-                    json.dumps(external_meta, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
-                ),
+                [
+                    (
+                        meta["dataset_key"],
+                        meta["source_family"],
+                        meta["source_locator"],
+                        str(path),
+                        meta.get("effective_date"),
+                        meta.get("fetched_at"),
+                        int(meta["row_count"]),
+                        meta["sha256"],
+                        json.dumps(meta, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                    )
+                    for meta, path in (
+                        (external_meta, external_path),
+                        (gsrs_names_meta, gsrs_names_path),
+                    )
+                ],
             )
             observations, unparsed = _extract_domestic_identities(
                 source,
-                set(_external_index(external_records)),
+                set(external),
             )
             con.executemany(
                 """INSERT INTO source_unparsed_expressions(
@@ -518,7 +503,7 @@ def assemble_substance_database(
                    ) VALUES(?,?,?,?,?)""",
                 unparsed,
             )
-            _insert_substance_layer(con, observations, external_records)
+            _insert_substance_layer(con, observations, external)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(
                 "INSERT INTO substance_meta(key,value) VALUES(?,?)",
@@ -527,7 +512,10 @@ def assemble_substance_database(
                     ("built_at", built_at),
                     ("canonical_source_schema_version", SCHEMA_VERSION),
                     ("canonical_source_fingerprint", fingerprint),
-                    ("external_identity_policy", "openfda_unii_normalized_name_exact_only"),
+                    (
+                        "external_identity_policy",
+                        "openfda_preferred_or_gsrs_of_cn_sys_normalized_name_exact_only",
+                    ),
                     ("relation_policy", "no_automatic_relations_in_v1"),
                 ],
             )
@@ -546,7 +534,8 @@ def assemble_substance_database(
     stats.update(
         {
             "canonical_source_snapshots": copied_snapshots,
-            "external_source_rows": len(external_records),
+            "external_preferred_source_rows": len(external_records),
+            "external_name_source_rows": int(gsrs_names_meta["row_count"]),
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "raw_dir": str(raw_dir),
         }
@@ -559,7 +548,7 @@ def rebuild_substance_database(
     canonical_db_path: str | Path,
     raw_dir: str | Path,
 ) -> dict:
-    sync_openfda_unii(raw_dir)
+    sync_substance_identity_sources(raw_dir)
     return assemble_substance_database(db_path, canonical_db_path, raw_dir)
 
 

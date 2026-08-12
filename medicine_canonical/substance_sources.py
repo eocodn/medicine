@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import os
 import urllib.request
@@ -8,7 +10,7 @@ import zipfile
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 from zoneinfo import ZoneInfo
 
 
@@ -16,9 +18,13 @@ APP_TIMEZONE = ZoneInfo("Asia/Seoul")
 OPENFDA_DOWNLOAD_MANIFEST = "https://api.fda.gov/download.json"
 OPENFDA_UNII_DATASET_KEY = "openfda_unii:all"
 OPENFDA_UNII_FILENAME = "openfda_unii.json.zip"
+FDA_GSRS_UNII_NAMES_LATEST = "https://precision.fda.gov/uniisearch/archive/latest/UNIIs.zip"
+FDA_GSRS_UNII_NAMES_DATASET_KEY = "fda_gsrs_unii_names:all"
+FDA_GSRS_UNII_NAMES_FILENAME = "fda_gsrs_unii_names.zip"
 
 ManifestFetcher = Callable[[], dict]
 PartitionFetcher = Callable[[str], bytes]
+ArchiveFetcher = Callable[[str], bytes]
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -32,7 +38,13 @@ def _fetch_json(url: str) -> dict:
 
 
 def _fetch_bytes(url: str) -> bytes:
-    request = urllib.request.Request(url, headers={"Accept": "application/zip,application/octet-stream"})
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/zip,application/octet-stream",
+            "User-Agent": "medicine-canonical/1.0",
+        },
+    )
     with urllib.request.urlopen(request, timeout=90) as response:
         return response.read()
 
@@ -58,6 +70,81 @@ def inspect_unii_archive(data: bytes) -> tuple[list[dict], dict]:
     if reported is not None and int(reported) != len(results):
         raise RuntimeError(f"openFDA UNII archive row-count mismatch: metadata {reported}, rows {len(results)}")
     return results, meta
+
+
+def _gsrs_names_member(archive: zipfile.ZipFile) -> str:
+    members = [
+        name
+        for name in archive.namelist()
+        if not name.endswith("/")
+        and Path(name).name.startswith("UNII_Names_")
+        and name.lower().endswith(".txt")
+    ]
+    if len(members) != 1:
+        raise RuntimeError(
+            f"FDA GSRS UNII Names archive expected one UNII_Names text member, got {len(members)}"
+        )
+    return members[0]
+
+
+def _gsrs_names_effective_date(member: str) -> str:
+    token = Path(member).stem.removeprefix("UNII_Names_")
+    try:
+        return datetime.strptime(token, "%d%b%Y").date().isoformat()
+    except ValueError as exc:
+        raise RuntimeError(
+            f"FDA GSRS UNII Names archive has unrecognized date token: {token}"
+        ) from exc
+
+
+def iter_gsrs_unii_names(data: bytes) -> Iterator[dict[str, str]]:
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            member = _gsrs_names_member(archive)
+            with archive.open(member) as raw, io.TextIOWrapper(
+                raw, encoding="utf-8-sig", newline=""
+            ) as text:
+                reader = csv.DictReader(text, delimiter="\t")
+                expected = {"Name", "TYPE", "UNII", "Display Name"}
+                if set(reader.fieldnames or []) != expected:
+                    raise RuntimeError(
+                        "FDA GSRS UNII Names columns mismatch: "
+                        f"expected {sorted(expected)}, got {reader.fieldnames}"
+                    )
+                for index, row in enumerate(reader, start=1):
+                    name = str(row.get("Name") or "").strip()
+                    name_type = str(row.get("TYPE") or "").strip()
+                    unii = str(row.get("UNII") or "").strip()
+                    display_name = str(row.get("Display Name") or "").strip()
+                    if not name or not name_type or not unii or not display_name:
+                        raise RuntimeError(
+                            f"FDA GSRS UNII Names row {index} has an empty required field"
+                        )
+                    yield {
+                        "name": name,
+                        "name_type": name_type,
+                        "unii": unii,
+                        "display_name": display_name,
+                    }
+    except (zipfile.BadZipFile, UnicodeDecodeError, csv.Error) as exc:
+        raise RuntimeError(f"invalid FDA GSRS UNII Names archive: {exc}") from exc
+
+
+def inspect_gsrs_unii_names_archive(data: bytes) -> dict:
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            member = _gsrs_names_member(archive)
+            effective_date = _gsrs_names_effective_date(member)
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(f"invalid FDA GSRS UNII Names archive: {exc}") from exc
+    row_count = sum(1 for _ in iter_gsrs_unii_names(data))
+    if row_count < 1:
+        raise RuntimeError("FDA GSRS UNII Names archive is empty")
+    return {
+        "effective_date": effective_date,
+        "member": member,
+        "row_count": row_count,
+    }
 
 
 def _write_atomic(path: Path, data: bytes) -> None:
@@ -122,10 +209,50 @@ def sync_openfda_unii(
     return metadata
 
 
+def sync_fda_gsrs_unii_names(
+    raw_dir: str | Path,
+    *,
+    archive_fetcher: ArchiveFetcher | None = None,
+) -> dict:
+    archive_fetcher = archive_fetcher or _fetch_bytes
+    data = archive_fetcher(FDA_GSRS_UNII_NAMES_LATEST)
+    inspected = inspect_gsrs_unii_names_archive(data)
+    root = Path(raw_dir)
+    path = root / FDA_GSRS_UNII_NAMES_FILENAME
+    _write_atomic(path, data)
+    metadata = {
+        "dataset_key": FDA_GSRS_UNII_NAMES_DATASET_KEY,
+        "source_family": "fda_gsrs_unii_names",
+        "source_locator": FDA_GSRS_UNII_NAMES_LATEST,
+        "effective_date": inspected["effective_date"],
+        "fetched_at": datetime.now(APP_TIMEZONE).isoformat(timespec="seconds"),
+        "row_count": inspected["row_count"],
+        "sha256": _sha256_bytes(data),
+        "archive_member": inspected["member"],
+        "authority": "FDA GSRS / UNII Names via precisionFDA",
+    }
+    _write_json_atomic(path.with_suffix(path.suffix + ".meta.json"), metadata)
+    return metadata
+
+
+def sync_substance_identity_sources(raw_dir: str | Path) -> dict:
+    return {
+        "openfda_unii": sync_openfda_unii(raw_dir),
+        "fda_gsrs_unii_names": sync_fda_gsrs_unii_names(raw_dir),
+    }
+
+
 __all__ = [
+    "FDA_GSRS_UNII_NAMES_DATASET_KEY",
+    "FDA_GSRS_UNII_NAMES_FILENAME",
+    "FDA_GSRS_UNII_NAMES_LATEST",
     "OPENFDA_DOWNLOAD_MANIFEST",
     "OPENFDA_UNII_DATASET_KEY",
     "OPENFDA_UNII_FILENAME",
+    "inspect_gsrs_unii_names_archive",
     "inspect_unii_archive",
+    "iter_gsrs_unii_names",
+    "sync_fda_gsrs_unii_names",
     "sync_openfda_unii",
+    "sync_substance_identity_sources",
 ]

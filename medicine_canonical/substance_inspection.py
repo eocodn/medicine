@@ -158,6 +158,8 @@ def verify_substance_database(db_path: str | Path) -> dict:
             }
             if "openfda_unii" not in source_families:
                 errors.append("missing openFDA UNII source snapshot")
+            if "fda_gsrs_unii_names" not in source_families:
+                errors.append("missing FDA GSRS UNII Names source snapshot")
             stats = substance_stats(path)
             if not stats["substances"]:
                 errors.append("no substances materialized")

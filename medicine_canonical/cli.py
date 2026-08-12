@@ -18,7 +18,7 @@ from .substance_inspection import (
     substance_unsolved_rows,
     verify_substance_database,
 )
-from .substance_sources import sync_openfda_unii
+from .substance_sources import sync_substance_identity_sources
 
 DEFAULT_DB = Path("data/db/canonical.sqlite")
 DEFAULT_RAW = Path("data/canonical/raw")
@@ -166,7 +166,7 @@ def main(argv=None) -> int:
             limit=args.limit,
         )
     elif args.command == "substance-sync":
-        payload = sync_openfda_unii(args.raw_dir)
+        payload = sync_substance_identity_sources(args.raw_dir)
     elif args.command == "substance-build":
         payload = assemble_substance_database(args.db, args.canonical_db, args.raw_dir)
     elif args.command == "substance-rebuild":

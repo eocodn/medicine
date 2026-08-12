@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -19,7 +20,9 @@ from medicine_canonical.substance_inspection import (
     verify_substance_database,
 )
 from medicine_canonical.substance_sources import (
+    FDA_GSRS_UNII_NAMES_FILENAME,
     OPENFDA_UNII_FILENAME,
+    sync_fda_gsrs_unii_names,
     sync_openfda_unii,
 )
 
@@ -36,6 +39,16 @@ def _zip_unii(records: list[dict[str, str]], *, last_updated: str = "2026-08-12"
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("other-unii-0001-of-0001.json", json.dumps(payload))
+    return buffer.getvalue()
+
+
+def _zip_gsrs_names(rows: list[tuple[str, str, str, str]], *, date_token: str = "26Feb2026") -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        lines = ["Name\tTYPE\tUNII\tDisplay Name"]
+        lines.extend("\t".join(row) for row in rows)
+        archive.writestr(f"UNII_Names_{date_token}.txt", "\n".join(lines) + "\n")
+        archive.writestr("READ ME UNII Lists.txt", "UNII Names fixture\n")
     return buffer.getvalue()
 
 
@@ -116,8 +129,6 @@ class CanonicalSubstanceTest(unittest.TestCase):
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         path = self.raw_dir / OPENFDA_UNII_FILENAME
         path.write_bytes(archive)
-        import hashlib
-
         meta = {
             "dataset_key": "openfda_unii:all",
             "source_family": "openfda_unii",
@@ -128,6 +139,30 @@ class CanonicalSubstanceTest(unittest.TestCase):
             "sha256": hashlib.sha256(archive).hexdigest(),
         }
         path.with_suffix(path.suffix + ".meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        self._write_gsrs_names_snapshot()
+
+    def _write_gsrs_names_snapshot(
+        self,
+        rows: list[tuple[str, str, str, str]] | None = None,
+    ) -> None:
+        rows = rows or [
+            ("GAMMA", "cn", "UNIIGAMMA1", "GAMMA PREFERRED"),
+            ("ALPHA", "bn", "UNIIALPHA0", "ALPHA PREFERRED"),
+        ]
+        archive = _zip_gsrs_names(rows)
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        path = self.raw_dir / FDA_GSRS_UNII_NAMES_FILENAME
+        path.write_bytes(archive)
+        meta = {
+            "dataset_key": "fda_gsrs_unii_names:all",
+            "source_family": "fda_gsrs_unii_names",
+            "source_locator": "https://precision.fda.gov/uniisearch/archive/latest/UNIIs.zip",
+            "effective_date": "2026-02-26",
+            "fetched_at": "2026-08-12T23:00:00+09:00",
+            "row_count": len(rows),
+            "sha256": hashlib.sha256(archive).hexdigest(),
+        }
+        path.with_suffix(path.suffix + ".meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
     def test_builds_exact_substance_layer_and_keeps_unsolved_visible(self) -> None:
         self._write_unii_snapshot()
@@ -135,12 +170,12 @@ class CanonicalSubstanceTest(unittest.TestCase):
 
         self.assertEqual(result["substances"], 6)
         self.assertEqual(result["local_exact_names"], 7)
-        self.assertEqual(result["resolved_external_exact"], 3)
-        self.assertEqual(result["unsolved_substances"], 3)
+        self.assertEqual(result["resolved_external_exact"], 4)
+        self.assertEqual(result["unsolved_substances"], 2)
         self.assertEqual(result["unparsed_source_expressions"], 1)
         self.assertEqual(
             result["unsolved_reasons"],
-            {"external_exact_multiple_matches": 1, "external_exact_no_match": 2},
+            {"external_exact_multiple_matches": 1, "external_exact_no_match": 1},
         )
 
         with closing(sqlite3.connect(self.substance_db)) as con:
@@ -152,6 +187,13 @@ class CanonicalSubstanceTest(unittest.TestCase):
                    WHERE n.normalized_name='alpha hydrochloride' AND i.system='UNII'"""
             ).fetchone()
             self.assertEqual(alpha_hcl, ("Alpha Hydrochloride", "UNIIALPHA1"))
+            gamma = con.execute(
+                """SELECT i.value,i.evidence_source_dataset_key
+                   FROM substance_identifiers i
+                   JOIN substance_names n ON n.substance_id=i.substance_id
+                   WHERE n.normalized_name='gamma' AND i.system='UNII'"""
+            ).fetchone()
+            self.assertEqual(gamma, ("UNIIGAMMA1", "fda_gsrs_unii_names:all"))
             self.assertIsNone(
                 con.execute(
                     """SELECT value FROM substance_identifiers i
@@ -159,6 +201,14 @@ class CanonicalSubstanceTest(unittest.TestCase):
                        JOIN substance_names n ON n.substance_id=s.substance_id
                        WHERE n.normalized_name='alpha'"""
                 ).fetchone()
+            )
+            self.assertEqual(
+                con.execute(
+                    """SELECT reason FROM substance_unsolved u
+                       JOIN substance_names n ON n.substance_id=u.substance_id
+                       WHERE n.normalized_name='alpha'"""
+                ).fetchone()[0],
+                "external_exact_no_match",
             )
             beta_permit = con.execute(
                 """SELECT occurrence_count FROM source_identities
@@ -205,6 +255,12 @@ class CanonicalSubstanceTest(unittest.TestCase):
                 "UNIIEE0001",
             )
             self.assertEqual(con.execute("SELECT COUNT(*) FROM substance_relations").fetchone()[0], 0)
+            self.assertEqual(
+                con.execute(
+                    "SELECT COUNT(*) FROM source_snapshots WHERE source_family='fda_gsrs_unii_names'"
+                ).fetchone()[0],
+                1,
+            )
 
         verification = verify_substance_database(self.substance_db)
         self.assertEqual(verification["status"], "verified")
@@ -239,6 +295,49 @@ class CanonicalSubstanceTest(unittest.TestCase):
         self.assertEqual(result["effective_date"], "2026-08-12")
         self.assertTrue((self.raw_dir / OPENFDA_UNII_FILENAME).exists())
         self.assertEqual(result["source_family"], "openfda_unii")
+
+    def test_sync_fda_gsrs_names_is_atomic_and_preserves_name_types(self) -> None:
+        archive = _zip_gsrs_names([
+            ("RIFAMPICIN", "of", "UNIIRIFAMP", "RIFAMPIN"),
+            ("ALPHA BRAND", "bn", "UNIIALPHA0", "ALPHA"),
+        ])
+        result = sync_fda_gsrs_unii_names(
+            self.raw_dir,
+            archive_fetcher=lambda _: archive,
+        )
+        self.assertEqual(result["row_count"], 2)
+        self.assertEqual(result["effective_date"], "2026-02-26")
+        self.assertEqual(result["source_family"], "fda_gsrs_unii_names")
+        self.assertTrue((self.raw_dir / FDA_GSRS_UNII_NAMES_FILENAME).exists())
+
+    def test_gsrs_exact_names_can_release_only_fully_known_permit_composition(self) -> None:
+        self._write_unii_snapshot()
+        self._write_gsrs_names_snapshot([
+            ("GAMMA", "cn", "UNIIGAMMA1", "GAMMA PREFERRED"),
+            ("DELTA", "sys", "UNIIDELTA1", "DELTA PREFERRED"),
+        ])
+        with closing(sqlite3.connect(self.canonical_db)) as con:
+            con.execute(
+                """INSERT INTO products(
+                       item_seq,source_row,product_name,ingredient_text,permit_status,source_dataset_key
+                   ) VALUES('P3',3,'감마델타정','Gamma/Delta','active','mfds_permit:products')"""
+            )
+            con.commit()
+
+        assemble_substance_database(self.substance_db, self.canonical_db, self.raw_dir)
+        with closing(sqlite3.connect(self.substance_db)) as con:
+            self.assertIsNone(
+                con.execute(
+                    "SELECT 1 FROM source_unparsed_expressions WHERE raw_text='Gamma/Delta'"
+                ).fetchone()
+            )
+            delta = con.execute(
+                """SELECT i.value,i.evidence_source_dataset_key
+                   FROM substance_identifiers i
+                   JOIN substance_names n ON n.substance_id=i.substance_id
+                   WHERE n.normalized_name='delta' AND i.system='UNII'"""
+            ).fetchone()
+            self.assertEqual(delta, ("UNIIDELTA1", "fda_gsrs_unii_names:all"))
 
     def test_sync_rejects_manifest_and_archive_count_mismatch(self) -> None:
         archive = _zip_unii([{"substance_name": "ALPHA", "unii": "UNIIALPHA1"}])
