@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from .db import build_database, database_stats, search_records
 from .mobile import build_mobile_database
+from .product_items import sync_product_item_sources
 from .verification import verify_database
 
 
@@ -46,6 +48,16 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--json", action="store_true")
     build.add_argument("--quiet", action="store_true", help="Suppress import progress output")
 
+    sync_items = sub.add_parser(
+        "sync-product-items",
+        help="Download current MFDS DUR product flags and split-caution snapshots",
+    )
+    sync_items.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW)
+    sync_items.add_argument("--service-key", default=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
+    sync_items.add_argument("--page-size", type=int, default=500)
+    sync_items.add_argument("--quiet", action="store_true")
+    sync_items.add_argument("--json", action="store_true")
+
     stats = sub.add_parser("stats", help="Show DB row counts and source coverage")
     stats.add_argument("--db", type=Path, default=DEFAULT_DB)
     stats.add_argument("--json", action="store_true")
@@ -77,6 +89,16 @@ def main(argv=None) -> int:
 
     if args.command == "build":
         result = build_database(args.db, args.raw_dir, args.kids_dir, progress=not args.quiet)
+        _emit(result, args.json)
+    elif args.command == "sync-product-items":
+        if not args.service_key.strip():
+            raise SystemExit("DATA_GO_KR_SERVICE_KEY is required for DUR product-item sync")
+        result = sync_product_item_sources(
+            args.raw_dir,
+            service_key=args.service_key,
+            page_size=args.page_size,
+            progress=not args.quiet,
+        )
         _emit(result, args.json)
     elif args.command == "stats":
         _emit(database_stats(args.db), args.json)

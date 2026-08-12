@@ -70,6 +70,20 @@ class DurVerificationTest(unittest.TestCase):
                 details TEXT,
                 sequence_text TEXT
             );
+            CREATE TABLE product_item_flags (
+                dataset_key TEXT NOT NULL,
+                item_seq TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                edi_code TEXT,
+                category TEXT NOT NULL,
+                flag_code TEXT NOT NULL,
+                flag_name TEXT NOT NULL,
+                dosage_form TEXT,
+                ingredient_name TEXT,
+                details TEXT,
+                change_date TEXT,
+                PRIMARY KEY(item_seq, category)
+            );
             """
         )
         for index, key in enumerate(REQUIRED_SOURCE_KEYS, 1):
@@ -93,12 +107,19 @@ class DurVerificationTest(unittest.TestCase):
                     ) VALUES(?,?,?,?,?,?,?)""",
                     (key, 1, category, "fixture", "fixture", f"P-{index}", "2026-08-01"),
                 )
-            else:
+            elif kind == "ingredient":
                 con.execute(
                     """INSERT INTO ingredient_dur(
                         dataset_key,source_row,category,ingredient_name,sequence_text
                     ) VALUES(?,?,?,?,?)""",
                     (key, 1, category, "fixture", "1"),
+                )
+            else:
+                con.execute(
+                    """INSERT INTO product_item_flags(
+                        dataset_key,item_seq,product_name,category,flag_code,flag_name
+                    ) VALUES(?,?,?,?,?,?)""",
+                    (key, f"MFDS-{index}", "fixture", category, f"X{index}", category),
                 )
         con.commit()
         con.close()

@@ -15,6 +15,7 @@ from typing import Iterable
 from openpyxl import load_workbook
 
 from .catalog import build_product_catalog
+from .product_items import import_product_item_sources
 
 
 PRODUCT_DATASETS = {
@@ -436,6 +437,7 @@ def build_database(
 
     product_rows = 0
     ingredient_rows = 0
+    product_flag_rows = 0
     catalog_products = 0
     source_files = 0
     started = time.monotonic()
@@ -463,6 +465,9 @@ def build_database(
                 conn.commit()
                 conn.execute("BEGIN")
 
+            item_sources, product_flag_rows = import_product_item_sources(conn, raw_dir)
+            source_files += item_sources
+
             catalog_products = build_product_catalog(conn)
             conn.commit()
             conn.execute("ANALYZE")
@@ -481,8 +486,9 @@ def build_database(
         "source_files": source_files,
         "product_rows": product_rows,
         "ingredient_rows": ingredient_rows,
+        "product_flag_rows": product_flag_rows,
         "catalog_products": catalog_products,
-        "total_rows": product_rows + ingredient_rows,
+        "total_rows": product_rows + ingredient_rows + product_flag_rows,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "size_bytes": db_path.stat().st_size,
     }
@@ -494,6 +500,13 @@ def database_stats(db_path: str | Path) -> dict:
         conn.row_factory = sqlite3.Row
         product_rows = conn.execute("SELECT COUNT(*) AS n FROM product_dur").fetchone()["n"]
         ingredient_rows = conn.execute("SELECT COUNT(*) AS n FROM ingredient_dur").fetchone()["n"]
+        product_flag_rows = (
+            conn.execute("SELECT COUNT(*) AS n FROM product_item_flags").fetchone()["n"]
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_item_flags'"
+            ).fetchone()
+            else 0
+        )
         catalog_products = conn.execute("SELECT COUNT(*) AS n FROM product_catalog").fetchone()["n"]
         source_files = conn.execute("SELECT COUNT(*) AS n FROM source_files").fetchone()["n"]
         categories = [
@@ -512,8 +525,9 @@ def database_stats(db_path: str | Path) -> dict:
         "source_files": source_files,
         "product_rows": product_rows,
         "ingredient_rows": ingredient_rows,
+        "product_flag_rows": product_flag_rows,
         "catalog_products": catalog_products,
-        "total_rows": product_rows + ingredient_rows,
+        "total_rows": product_rows + ingredient_rows + product_flag_rows,
         "size_bytes": db_path.stat().st_size,
         "categories": categories,
     }

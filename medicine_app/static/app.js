@@ -365,7 +365,7 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
       : unknownCount
         ? `확인이 필요한 DUR 항목 ${unknownCount}건이 있어요`
         : clearDurCoverage
-          ? "현재 확인된 DUR 주의사항이 없어요"
+          ? "DUR 주의사항 없음"
           : "DUR 판정 결과를 확인할 수 없어요";
   root.innerHTML = `
     <div class="sheet-header">

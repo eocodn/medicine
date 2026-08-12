@@ -15,10 +15,11 @@ from .ingredient_safety import (
     evaluate_ingredient_duration,
     evaluate_ingredient_rule_applicability,
 )
+from .product_flags import apply_product_flag_fallbacks, build_product_flag_checks
 from .safety import age_years, collect_qualitative_risks, evaluate_quantitative
 
 
-EVALUATOR_VERSION = "5"
+EVALUATOR_VERSION = "6"
 
 
 def _coverage_only(reason: str, *, scope: str = "coverage") -> dict[str, Any]:
@@ -141,6 +142,7 @@ def assess_medication(
         "dose": _coverage_only("DUR product code is not linked", scope="product"),
     }
     relevant_profile_categories: set[str] = set()
+    detailed_product_categories: set[str] = set()
     with app._dur() as dur_con:
         dataset = dataset_manifest(dur_con)
         if product.get("dur_match"):
@@ -193,6 +195,16 @@ def assess_medication(
         elif pediatric:
             quantitative["dose"]["pediatric_review"] = True
         relevant_profile_categories = _profile_rule_categories(dur_con, product, person)
+        product_code = product.get("product_code")
+        if product_code:
+            detailed_product_categories = {
+                str(row[0])
+                for row in dur_con.execute(
+                    "SELECT DISTINCT category FROM product_dur WHERE product_code=?",
+                    (product_code,),
+                ).fetchall()
+                if row[0]
+            }
 
         if dataset.get("status") != "verified":
             for name in ("duration", "dose"):
@@ -220,9 +232,17 @@ def assess_medication(
         candidate_course=draft,
         as_of=as_of,
     )
-    # The eight-category status model is authoritative for acknowledgement.
-    # A definite hit and an unresolved check both require one explicit review;
-    # clear and not_applicable are the only non-blocking states.
+    dur_checks = apply_product_flag_fallbacks(
+        dur_checks,
+        product,
+        person,
+        detailed_product_categories=detailed_product_categories,
+        as_of=as_of,
+    )
+    dur_checks.extend(build_product_flag_checks(product))
+    # Core DUR categories plus authoritative product-only flags are used for
+    # acknowledgement. A definite hit and an unresolved check both require one
+    # explicit review; clear and not_applicable are non-blocking.
     requires_review = any(
         item.get("status") in {"hit", "unknown"}
         for item in dur_checks

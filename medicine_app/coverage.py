@@ -173,9 +173,27 @@ def _candidate_parts(
     return matched, unmatched, alias_used
 
 
+def _product_flags_for_item(con: sqlite3.Connection, item_seq: Any) -> list[dict[str, Any]]:
+    item_seq = str(item_seq or "").strip()
+    if not item_seq:
+        return []
+    try:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """SELECT item_seq,product_name,edi_code,category,flag_code,flag_name,
+                      dosage_form,ingredient_name,details,change_date
+               FROM product_item_flags WHERE item_seq=? ORDER BY category""",
+            (item_seq,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [dict(row) for row in rows]
+
+
 def resolve_safety_mapping(
     con: sqlite3.Connection,
     *,
+    catalog_item_seq: Any = None,
     edi_value: Any,
     catalog_product_name: Any,
     catalog_ingredient: Any,
@@ -183,7 +201,17 @@ def resolve_safety_mapping(
     ingredient_aliases: Mapping[str, str] | None = None,
     ingredient_multi_aliases: Mapping[str, tuple[str, ...]] | None = None,
 ) -> dict[str, Any]:
-    edi_codes = split_edi_codes(edi_value)
+    product_flags = _product_flags_for_item(con, catalog_item_seq)
+    item_edi_codes = sorted({
+        str(flag["edi_code"]).strip()
+        for flag in product_flags
+        if flag.get("edi_code") and str(flag["edi_code"]).strip()
+    })
+    catalog_edi_codes = split_edi_codes(edi_value)
+    # ITEM_SEQ is shared by the MFDS permit catalog and official DUR item data.
+    # Prefer the DUR item's EDI when it exists; this avoids trusting a stale or
+    # missing catalog EDI over an exact current product identity.
+    edi_codes = item_edi_codes if item_edi_codes else catalog_edi_codes
     product_rows: list[Mapping[str, Any]] = []
     if edi_codes:
         placeholders = ",".join("?" for _ in edi_codes)
@@ -194,7 +222,11 @@ def resolve_safety_mapping(
                 ORDER BY product_code""",
             edi_codes,
         ).fetchall())
-    product_mapping_method = "edi_exact" if product_rows else "none"
+    product_mapping_method = (
+        "item_seq_edi_exact" if product_rows and product_flags and item_edi_codes
+        else "edi_exact" if product_rows
+        else "none"
+    )
     if not product_rows and not edi_codes and catalog_product_name and catalog_ingredient:
         raw_ingredient = str(catalog_ingredient).strip()
         normalized_ingredient = normalize_ingredient_name(catalog_ingredient)
@@ -253,7 +285,7 @@ def resolve_safety_mapping(
     # while ingredient-level checks fail closed until the source conflict is fixed.
     ingredient_identity_conflict = False
     catalog_multi_expansion: list[str] = []
-    if product_mapping_method == "edi_exact" and canonical_names and catalog_ingredient:
+    if product_mapping_method in {"edi_exact", "item_seq_edi_exact"} and canonical_names and catalog_ingredient:
         catalog_matched, catalog_unmatched, _ = _candidate_parts(
             catalog_ingredient, known_ingredients, ingredient_aliases, ingredient_multi_aliases
         )
@@ -353,6 +385,14 @@ def resolve_safety_mapping(
         "product_status": (
             "matched" if selected_product_code else "ambiguous" if len(matched_product_codes) > 1 else "not_matched"
         ),
+        "product_identity_status": (
+            "matched"
+            if product_flags or selected_product_code
+            else "ambiguous" if len(matched_product_codes) > 1
+            else "not_matched"
+        ),
+        "product_identity_method": "item_seq_exact" if product_flags else product_mapping_method,
+        "product_flags": product_flags,
         "ingredient_code": ingredient_code,
         "ingredients": matched_ingredients,
         "ingredient_status": ingredient_status,
@@ -371,6 +411,7 @@ def coverage_summary(
 ) -> dict[str, Any]:
     ingredient_status = product.get("ingredient_mapping_status") or "not_evaluable"
     product_status = product.get("product_mapping_status") or "not_matched"
+    product_identity_status = product.get("product_identity_status") or product_status
     profile_gaps: list[str] = []
     reproductive_applicable = person.get("sex") != "male"
     relevant = relevant_profile_categories
@@ -400,7 +441,11 @@ def coverage_summary(
         not_evaluable_checks.append({
             "category": "product_mapping",
             "result": "not_evaluable",
-            "reason": "DUR 제품코드가 연결되지 않아 제품 단위 규칙을 확인할 수 없습니다.",
+            "reason": (
+                "식약처 DUR 품목은 확인했지만 상세 DUR 제품코드를 연결하지 못해 제품 단위 상세 규칙을 완전히 확인할 수 없습니다."
+                if product_identity_status == "matched"
+                else "DUR 제품코드가 연결되지 않아 제품 단위 규칙을 확인할 수 없습니다."
+            ),
         })
     if ingredient_status != "matched":
         not_evaluable_checks.append({
@@ -431,6 +476,8 @@ def coverage_summary(
         "dataset": dict(dataset),
         "product": {
             "status": product_status,
+            "identity_status": product_identity_status,
+            "identity_method": product.get("product_identity_method"),
             "edi_codes": list(product.get("edi_codes") or []),
             "matched_product_codes": list(product.get("matched_product_codes") or []),
         },

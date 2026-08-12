@@ -4,6 +4,8 @@ services:
     working_dir: /app
     volumes:
       - .:/app
+    environment:
+      DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}
     entrypoint: ["python", "-m", "medicine_dur.cli"]
 
   catalog:

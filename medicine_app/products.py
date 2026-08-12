@@ -82,6 +82,7 @@ class ProductRepository:
     ) -> dict:
         mapping = resolve_safety_mapping(
             dur_con,
+            catalog_item_seq=row["item_seq"],
             edi_value=row["edi_code"],
             catalog_product_name=row["product_name"],
             catalog_ingredient=row["ingredient_name"],
@@ -97,6 +98,9 @@ class ProductRepository:
             "matched_product_codes": mapping["matched_product_codes"],
             "product_mapping_status": mapping["product_status"],
             "product_mapping_method": mapping["product_mapping_method"],
+            "product_identity_status": mapping["product_identity_status"],
+            "product_identity_method": mapping["product_identity_method"],
+            "product_flags": mapping["product_flags"],
             "product_name": row["product_name"],
             "ingredient_code": mapping["ingredient_code"],
             "ingredient_name": row["ingredient_name"],

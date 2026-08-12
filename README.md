@@ -38,9 +38,11 @@ docker compose down
   - `취소·취하·만료 품목도 검색` 옵션으로 과거 허가 이력 조회 가능
   - 허가상태를 `active / expired / withdrawn / business_closed / canceled`로 정규화
 - 약 추가 전 자동 DUR 확인
-  - 제품코드가 연결되면 제품 단위 DUR을 우선 확인
+  - 식약처 허가품목과 DUR 품목이 공유하는 `ITEM_SEQ`를 최우선 제품 식별키로 사용하고 EDI는 보조키로 사용
+  - 제품코드가 연결되면 제품 단위 상세 DUR 규칙을 우선 확인
+  - 제품코드가 없어도 `ITEM_SEQ`로 확인된 첨가제주의·DUR 품목 유형·서방정분할주의를 놓치지 않음
   - 제품코드가 없더라도 식약처 성분명이 DUR 성분에 정확히 연결되면 성분 단위 DUR을 함께 확인
-  - 다중 EDI는 실제 DUR 제품과 단일하게 연결되는 경우에만 제품 단위 판정에 사용
+  - 다중 EDI는 실제 DUR 제품과 단일하게 연결되는 경우에만 제품 단위 상세 판정에 사용
   - 병용금기·효능군 중복은 `active` 플래그만 보지 않고 두 처방의 시작·종료일이 실제로 겹치는지 확인
   - `24/48시간 이내 병용금기`, `특정 성분 투여 중 및 종료 후 N일/N주`처럼 기간과 방향을 확정할 수 있는 원문은 구조화해 washout까지 적용
   - 중단 후 제한이 있다는 사실만 있고 기간·방향을 확정할 수 없는 원문은 추측하지 않고 판정 불가 상태로 계속 경고
@@ -51,6 +53,8 @@ docker compose down
   - 65세 이상 노인주의
   - 효능군중복주의
   - 용량주의/투여기간주의 대상 여부 안내
+  - 첨가제주의
+  - 서방정분할주의
 - 구조화된 처방 정보
   - 1회 복용량 / 단위
   - 1일 횟수
@@ -84,8 +88,8 @@ docker compose down
   - 배포 reference DB는 읽기 전용으로 분리
 
 DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제품·성분 매핑, 데이터셋 검증 상태,
-지원하는 프로필 범위를 함께 기록하고 `DUR 위험 정보가 발견되지 않음`과 `DUR 자동 확인 범위 제한`을
-구분해 표시합니다. 현재 자동 판정에는 알레르기, 신장·간 기능, 체중·적응증, 등록하지 않은
+지원하는 프로필 범위를 함께 기록하고, 지원 범위의 검사가 모두 명확하게 끝난 경우에만
+`DUR 주의사항 없음`을 표시하며 `DUR 자동 확인 범위 제한`과 구분합니다. 현재 자동 판정에는 알레르기, 신장·간 기능, 체중·적응증, 등록하지 않은
 일반약·건강기능식품 등의 임상정보가 포함되지 않습니다.
 
 ## DB 구조
@@ -97,15 +101,16 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제�
 - `source_files`: 원본 provenance, SHA-256, 행 수
 - `product_dur`: 제품 단위 DUR 규칙
 - `ingredient_dur`: 성분 단위 DUR 규칙
-- `product_catalog`: DUR 기반 검색용 정규화 제품 카탈로그
+- `product_catalog`: 제품 단위 상세 DUR 규칙에서 파생한 정규화 제품코드 카탈로그
+- `product_item_flags`: 식약처 `ITEM_SEQ` 기준 DUR 품목 유형·첨가제주의·서방정분할주의
 
 현재 로컬 DB 기준:
 
-- 제품 단위 DUR: 558,637행
+- 제품 단위 상세 DUR: 558,637행
 - 성분 단위 DUR: 4,172행
-- 총 DUR 규칙: 562,809행
-- 검색용 제품: 23,131개
-- 원본 데이터 파일: 15개
+- `ITEM_SEQ` 제품 플래그: 43,295행
+- 제품코드 카탈로그: 23,131개
+- 검증 원본 데이터 파일: 17개
 
 ### `data/db/personal.sqlite`
 
@@ -126,8 +131,9 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제�
 
 ### `data/db/catalog.sqlite`
 
-식약처 의약품 제품 허가정보 API에서 동기화한 전체 제품 카탈로그입니다. 제품 허가번호
-(`item_seq`)를 앱 내부 참조키로 사용하고, EDI 코드가 있는 제품은 DUR 제품코드와 연결합니다.
+식약처 의약품 제품 허가정보 API에서 동기화한 전체 제품 카탈로그입니다. 식약처 품목기준코드
+(`item_seq`)를 앱 내부 참조키이자 DUR 제품 식별의 최우선 키로 사용하고, EDI 코드는 상세 제품규칙
+제품코드 연결을 위한 보조키로 사용합니다.
 
 EDI/DUR 연결이 되지 않은 제품도 검색·복약 등록은 가능하지만, 개인별 DUR 자동 판정 범위가
 제한될 수 있다는 안내를 표시합니다. 이 경우 식약처 성분명이 DUR 성분 기준에 정확히 연결되면
@@ -190,6 +196,10 @@ API입니다. 각 API는 공공데이터포털에서 별도 활용신청이 필�
 ## DUR 데이터 다시 만들기
 
 ```bash
+# 공공데이터포털 키로 DUR 품목정보 + 서방정분할주의 최신 snapshot 동기화
+docker compose run --rm dur sync-product-items --json
+
+# 기존 DUR CSV/XLSX와 위 snapshot을 하나의 검증 DB로 빌드
 docker compose run --rm dur build --json
 docker compose run --rm dur stats --json
 docker compose run --rm dur verify --json
@@ -199,8 +209,9 @@ docker compose run --rm dur mobile-build --json
 
 원본 파일은 `data/raw/`, `data/kids/`에 보존하고 Git에는 넣지 않습니다. DUR 빌드도 임시 DB에서
 전체 import/검증을 끝낸 뒤 최종 DB를 원자 교체합니다. `dur verify`는 배포 전 release gate로
-15개 필수 원본의 존재·헤더·실제 파일 SHA-256 일치, 실제 import 행 수, SQLite 무결성, 성분 고시 기준일과
-제품 스냅샷 생성 시점을 확인하고 결정적인 `dataset_id`를 출력합니다. 이 식별자는 처방 안전성
+17개 필수 원본의 존재·헤더·실제 파일 SHA-256 일치, 실제 import 행 수, SQLite 무결성, 성분 고시 기준일과
+제품 스냅샷 생성 시점을 확인하고 결정적인 `dataset_id`를 출력합니다. `sync-product-items`는 식약처
+`DUR품목정보`와 `서방정분할주의` OpenAPI를 checkpoint 가능한 JSONL snapshot으로 저장합니다. 이 식별자는 처방 안전성
 평가와 변경 이력에 저장됩니다.
 
 `catalog ingredient-aliases --write`는 현재 식약처 카탈로그와 DUR 데이터에서 증명되거나 개별
@@ -217,7 +228,7 @@ docker compose run --rm dur mobile-build --json
 
 `dur mobile-build`는 검증된 `dur.sqlite`와 `catalog.sqlite`에서 Android 런타임에 필요한 컬럼과
 인덱스만 보존한 `data/db/mobile.sqlite`와 SHA-256 manifest를 만듭니다. DUR 규칙 행과 원본
-provenance 및 검증된 ingredient alias를 유지하며 `dataset_id`도 원본 DUR DB와 같아야 빌드가
+provenance, `ITEM_SEQ` 제품 플래그 및 검증된 ingredient alias를 유지하며 `dataset_id`도 원본 DUR DB와 같아야 빌드가
 성공합니다. Android 빌드는 alias 재생성과 mobile DB 생성을 다시 실행하므로 검증에 실패한
 데이터나 오래된 alias는 APK에 패키징되지 않습니다.
 
