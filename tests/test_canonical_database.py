@@ -100,16 +100,18 @@ class CanonicalDatabaseTest(unittest.TestCase):
         rows = {
             "getUsjntTabooInfoList03": [{
                 "ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파",
+                "INGR_CODE": "D-ALPHA", "INGR_ENG_NAME": "Alpha",
                 "MIXTURE_ITEM_SEQ": "P2", "MIXTURE_ITEM_NAME": "베타정",
-                "MIXTURE_INGR_KOR_NAME": "베타", "PROHBT_CONTENT": "병용 금기",
+                "MIXTURE_INGR_KOR_NAME": "베타", "MIXTURE_INGR_CODE": "D-BETA",
+                "MIXTURE_INGR_ENG_NAME": "Beta", "PROHBT_CONTENT": "병용 금기",
                 "NOTIFICATION_DATE": "20260721", "CHANGE_DATE": "20260721",
             }],
-            "getSpcifyAgrdeTabooInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파", "PROHBT_CONTENT": "연령 금기"}],
-            "getPwnmTabooInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파", "PROHBT_CONTENT": "임부 금기"}],
-            "getCpctyAtentInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파"}],
-            "getMdctnPdAtentInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파"}],
-            "getOdsnAtentInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파"}],
-            "getEfcyDplctInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파", "EFFECT_NAME": "진통제"}],
+            "getSpcifyAgrdeTabooInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파", "INGR_CODE": "D-ALPHA", "INGR_ENG_NAME": "Alpha", "PROHBT_CONTENT": "연령 금기"}],
+            "getPwnmTabooInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파", "INGR_CODE": "D-ALPHA", "INGR_ENG_NAME": "Alpha", "PROHBT_CONTENT": "임부 금기"}],
+            "getCpctyAtentInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파", "INGR_CODE": "D-ALPHA", "INGR_ENG_NAME": "Alpha Hydrochloride"}],
+            "getMdctnPdAtentInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파", "INGR_CODE": "D-ALPHA", "INGR_ENG_NAME": "Alpha"}],
+            "getOdsnAtentInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파", "INGR_CODE": "D-ALPHA", "INGR_ENG_NAME": "Alpha"}],
+            "getEfcyDplctInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "INGR_NAME": "알파", "INGR_CODE": "D-ALPHA", "INGR_ENG_NAME": "Alpha", "EFFECT_NAME": "진통제"}],
             "getDurPrdlstInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "TYPE_CODE": "C,I", "TYPE_NAME": "임부금기,첨가제주의"}],
             "getSeobangjeongPartitnAtentInfoList03": [{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "PROHBT_CONTENT": "분할불가", "FORM_CODE_NAME": "서방정"}],
         }
@@ -132,6 +134,8 @@ class CanonicalDatabaseTest(unittest.TestCase):
         self.assertEqual(result["product_rules"], 7)
         self.assertEqual(result["product_flags"], 3)
         self.assertEqual(result["ingredient_rules"], 8)
+        self.assertEqual(result["product_criterion_links"], 7)
+        self.assertEqual(result["linked_product_rules"], 7)
         self.assertEqual(result["source_snapshots"], 18)
 
         with closing(sqlite3.connect(self.db)) as con:
@@ -147,6 +151,20 @@ class CanonicalDatabaseTest(unittest.TestCase):
             self.assertEqual(lactation, ("Alpha", "알파", "수유 주의"))
             identifiers = set(con.execute("SELECT system,value FROM product_identifiers WHERE item_seq='P1'").fetchall())
             self.assertEqual(identifiers, {("MFDS_ITEM_SEQ", "P1"), ("EDI", "E1")})
+            dose_product = con.execute(
+                "SELECT ingredient_code,ingredient_name_en FROM product_rules WHERE category='dose_caution'"
+            ).fetchone()
+            self.assertEqual(dose_product, ("D-ALPHA", "Alpha Hydrochloride"))
+            dose_link = con.execute(
+                """SELECT item_seq,criterion_rule_value,match_method
+                   FROM product_rule_criteria WHERE category='dose_caution'"""
+            ).fetchone()
+            self.assertEqual(dose_link, ("P1", "알파 240mg", "mfds_ingredient_code"))
+            combination_link = con.execute(
+                """SELECT item_seq,paired_item_seq,match_method,pair_orientation
+                   FROM product_rule_criteria WHERE category='combination_contraindication'"""
+            ).fetchone()
+            self.assertEqual(combination_link, ("P1", "P2", "english_exact", "forward"))
 
     def test_reassemble_rejects_tampered_api_snapshot(self) -> None:
         self._build()
@@ -199,6 +217,15 @@ class CanonicalDatabaseTest(unittest.TestCase):
                 code = canonical_main(args)
             self.assertEqual(code, 0)
             self.assertIn('"db_path"', buf.getvalue())
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = canonical_main([
+                "criteria", "--db", str(self.db), "--item-seq", "P1",
+                "--category", "dose_caution", "--json",
+            ])
+        self.assertEqual(code, 0)
+        self.assertIn('"criterion_rule_value": "알파 240mg"', buf.getvalue())
 
     def test_mfds_api_page_limits_are_enforced(self) -> None:
         self.assertEqual(PERMIT_PAGE_SIZE_MAX, 500)

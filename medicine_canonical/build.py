@@ -10,7 +10,9 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .schema import CORE_SOURCE_FAMILIES, SCHEMA, SCHEMA_VERSION
+from .inspection import canonical_stats, verify_canonical_database
+from .linking import materialize_product_criterion_links
+from .schema import SCHEMA, SCHEMA_VERSION
 from .sources import (
     DUR_ENDPOINTS,
     PERMIT_DATASET_KEY,
@@ -19,7 +21,7 @@ from .sources import (
     PermitFetchPage,
     sync_canonical_api_sources,
 )
-from .xlsx import XLSX_DATASETS, import_xlsx_sources
+from .xlsx import import_xlsx_sources
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
 FLAG_CATEGORY_BY_CODE = {
@@ -203,19 +205,24 @@ def _import_rule_row(con: sqlite3.Connection, dataset_key: str, source_row: int,
     con.execute(
         """
         INSERT INTO product_rules(
-            source_dataset_key,source_row,category,item_seq,ingredient_name,
-            paired_item_seq,paired_ingredient_name,effect_name,dosage_form,
+            source_dataset_key,source_row,category,item_seq,ingredient_code,ingredient_name,
+            ingredient_name_en,paired_item_seq,paired_ingredient_code,paired_ingredient_name,
+            paired_ingredient_name_en,effect_name,dosage_form,
             details,notification_date,change_date
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             dataset_key,
             source_row,
             category,
             item_seq,
+            _text(_field(row, "INGR_CODE")),
             _text(_field(row, "INGR_NAME", "INGR_KOR_NAME")),
+            _text(_field(row, "INGR_ENG_NAME")),
             _text(_field(row, "MIXTURE_ITEM_SEQ")),
+            _text(_field(row, "MIXTURE_INGR_CODE")),
             _text(_field(row, "MIXTURE_INGR_KOR_NAME", "MIXTURE_INGR_NAME")),
+            _text(_field(row, "MIXTURE_INGR_ENG_NAME")),
             _text(_field(row, "EFFECT_NAME")),
             _text(_field(row, "FORM_NAME", "FORM_CODE_NAME")),
             _text(_field(row, "PROHBT_CONTENT")),
@@ -343,6 +350,7 @@ def assemble_canonical_database(
             permit_rows = _import_permit_snapshot(con, raw_root)
             product_rule_rows, product_flag_rows = _import_dur_snapshots(con, raw_root)
             xlsx_result = import_xlsx_sources(con, kids_dir)
+            link_result = materialize_product_criterion_links(con)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(
                 "INSERT INTO canonical_meta(key,value) VALUES(?,?)",
@@ -370,6 +378,7 @@ def assemble_canonical_database(
             "product_rule_rows_imported": product_rule_rows,
             "product_flag_rows_imported": product_flag_rows,
             "ingredient_rule_rows_imported": xlsx_result["ingredient_rules"],
+            **link_result,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "raw_dir": str(raw_root),
         }
@@ -403,122 +412,3 @@ def build_canonical_database(
         dur_fetch_page=dur_fetch_page,
     )
     return assemble_canonical_database(db_path, kids_dir, raw_root)
-
-def canonical_stats(db_path: str | Path) -> dict:
-    path = Path(db_path)
-    if not path.exists():
-        raise FileNotFoundError(f"canonical database not found: {path}")
-    with closing(sqlite3.connect(path)) as con:
-        con.row_factory = sqlite3.Row
-        products = con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-        active = con.execute("SELECT COUNT(*) FROM products WHERE permit_status='active'").fetchone()[0]
-        product_rules = con.execute("SELECT COUNT(*) FROM product_rules").fetchone()[0]
-        product_flags = con.execute("SELECT COUNT(*) FROM product_flags").fetchone()[0]
-        ingredient_rules = con.execute("SELECT COUNT(*) FROM ingredient_rules").fetchone()[0]
-        source_snapshots = con.execute("SELECT COUNT(*) FROM source_snapshots").fetchone()[0]
-        source_families = {
-            row[0]: row[1]
-            for row in con.execute("SELECT source_family,COUNT(*) FROM source_snapshots GROUP BY source_family")
-        }
-        categories = [
-            dict(row)
-            for row in con.execute(
-                """
-                SELECT 'product_rule' AS scope,category,COUNT(*) AS rows FROM product_rules GROUP BY category
-                UNION ALL
-                SELECT 'product_flag',category,COUNT(*) FROM product_flags GROUP BY category
-                UNION ALL
-                SELECT 'ingredient_rule',category,COUNT(*) FROM ingredient_rules GROUP BY category
-                ORDER BY scope,category
-                """
-            )
-        ]
-        orphan_rules = con.execute(
-            "SELECT COUNT(*) FROM product_rules r LEFT JOIN products p ON p.item_seq=r.item_seq WHERE p.item_seq IS NULL"
-        ).fetchone()[0]
-        orphan_pairs = con.execute(
-            """SELECT COUNT(*) FROM product_rules r LEFT JOIN products p ON p.item_seq=r.paired_item_seq
-               WHERE r.paired_item_seq IS NOT NULL AND p.item_seq IS NULL"""
-        ).fetchone()[0]
-        orphan_flags = con.execute(
-            "SELECT COUNT(*) FROM product_flags f LEFT JOIN products p ON p.item_seq=f.item_seq WHERE p.item_seq IS NULL"
-        ).fetchone()[0]
-        meta = dict(con.execute("SELECT key,value FROM canonical_meta").fetchall())
-    return {
-        "db_path": str(path),
-        "schema_version": meta.get("schema_version"),
-        "built_at": meta.get("built_at"),
-        "products": products,
-        "active_products": active,
-        "product_rules": product_rules,
-        "product_flags": product_flags,
-        "ingredient_rules": ingredient_rules,
-        "source_snapshots": source_snapshots,
-        "source_families": source_families,
-        "orphan_product_rules": orphan_rules,
-        "orphan_paired_product_rules": orphan_pairs,
-        "orphan_product_flags": orphan_flags,
-        "categories": categories,
-        "size_bytes": path.stat().st_size,
-    }
-
-
-def verify_canonical_database(db_path: str | Path) -> dict:
-    path = Path(db_path)
-    errors: list[str] = []
-    warnings: list[str] = []
-    if not path.exists():
-        return {"db_path": str(path), "status": "invalid", "errors": ["database not found"], "warnings": []}
-    try:
-        with closing(sqlite3.connect(path)) as con:
-            integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
-            if integrity != "ok":
-                errors.append(f"integrity_check: {integrity}")
-            families = {row[0] for row in con.execute("SELECT DISTINCT source_family FROM source_snapshots")}
-            unsupported = families - CORE_SOURCE_FAMILIES
-            missing_families = CORE_SOURCE_FAMILIES - families
-            if unsupported:
-                errors.append("unsupported source families: " + ", ".join(sorted(unsupported)))
-            if missing_families:
-                errors.append("missing core source families: " + ", ".join(sorted(missing_families)))
-            expected_keys = {PERMIT_DATASET_KEY}
-            expected_keys.update(f"mfds_dur:{operation}" for operation in DUR_ENDPOINTS)
-            expected_keys.update(f"kids_mfds_xlsx:{category}" for category in XLSX_DATASETS.values())
-            actual_keys = {row[0] for row in con.execute("SELECT dataset_key FROM source_snapshots")}
-            missing_keys = expected_keys - actual_keys
-            extra_keys = actual_keys - expected_keys
-            if missing_keys:
-                errors.append("missing source snapshots: " + ", ".join(sorted(missing_keys)))
-            if extra_keys:
-                errors.append("unexpected source snapshots: " + ", ".join(sorted(extra_keys)))
-            bad_hashes = con.execute(
-                "SELECT COUNT(*) FROM source_snapshots WHERE LENGTH(sha256) != 64"
-            ).fetchone()[0]
-            if bad_hashes:
-                errors.append(f"invalid source hashes: {bad_hashes}")
-            schema_version = con.execute(
-                "SELECT value FROM canonical_meta WHERE key='schema_version'"
-            ).fetchone()
-            if not schema_version or schema_version[0] != SCHEMA_VERSION:
-                errors.append("schema version mismatch")
-            stats = canonical_stats(path)
-            if stats["products"] == 0:
-                errors.append("no products imported")
-            if stats["product_rules"] == 0:
-                errors.append("no product rules imported")
-            if stats["ingredient_rules"] == 0:
-                errors.append("no ingredient rules imported")
-            if stats["orphan_product_rules"]:
-                warnings.append(f"product rules with ITEM_SEQ absent from permit snapshot: {stats['orphan_product_rules']}")
-            if stats["orphan_paired_product_rules"]:
-                warnings.append(f"paired product rules absent from permit snapshot: {stats['orphan_paired_product_rules']}")
-            if stats["orphan_product_flags"]:
-                warnings.append(f"product flags with ITEM_SEQ absent from permit snapshot: {stats['orphan_product_flags']}")
-    except sqlite3.DatabaseError as exc:
-        errors.append(f"database error: {exc}")
-    return {
-        "db_path": str(path),
-        "status": "verified" if not errors else "invalid",
-        "errors": errors,
-        "warnings": warnings,
-    }

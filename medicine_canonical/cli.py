@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from .build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
+from .inspection import canonical_product_criteria
 from .sources import sync_canonical_api_sources
 
 DEFAULT_DB = Path("data/db/canonical.sqlite")
@@ -54,6 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
     stats.add_argument("--db", type=Path, default=DEFAULT_DB)
     stats.add_argument("--json", action="store_true")
 
+    criteria = sub.add_parser("criteria", help="Show XLSX criteria linked to one ITEM_SEQ product")
+    criteria.add_argument("--db", type=Path, default=DEFAULT_DB)
+    criteria.add_argument("--item-seq", required=True)
+    criteria.add_argument("--category")
+    criteria.add_argument("--limit", type=int, default=100)
+    criteria.add_argument("--json", action="store_true")
+
     verify = sub.add_parser("verify", help="Verify canonical source policy, schema and SQLite integrity")
     verify.add_argument("--db", type=Path, default=DEFAULT_DB)
     verify.add_argument("--json", action="store_true")
@@ -93,6 +101,13 @@ def main(argv=None) -> int:
         )
     elif args.command == "stats":
         payload = canonical_stats(args.db)
+    elif args.command == "criteria":
+        payload = canonical_product_criteria(
+            args.db,
+            args.item_seq,
+            category=args.category,
+            limit=args.limit,
+        )
     else:
         payload = verify_canonical_database(args.db)
         _emit(payload, args.json)

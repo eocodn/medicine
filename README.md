@@ -171,6 +171,11 @@ canonical DB입니다. 현재 앱 평가기는 아직 이 DB를 사용하지 않
   `MIXTURE_ITEM_SEQ`를 직접 보존
 - `kids_mfds_xlsx`: 최신 성분/기준 XLSX 8종. 임부등급, 연령, 용량, 기간, 효능군, 수유부주의 등을 보존
 
+상세 DUR API의 `INGR_CODE`/`INGR_ENG_NAME`과 병용 상대 성분 identity를 함께 보존하고,
+동일 카테고리의 XLSX 성분 기준과 연결한 `product_rule_criteria` view를 제공합니다. 영문 성분명이
+직접 일치하면 `english_exact`, API가 같은 `INGR_CODE`에 여러 공식 영문명을 제공하는 경우에는
+`mfds_ingredient_code` 근거로 연결합니다. 임의의 salt stripping이나 legacy alias는 사용하지 않습니다.
+
 API 원본은 `data/canonical/raw/*.jsonl`에 페이지 순서대로 보존하고 SHA-256 metadata를 함께
 저장합니다. DB의 각 행은 `source_dataset_key + source_row`로 원본 행을 추적하며, DB 재조립 시
 원본 JSONL 해시가 metadata와 다르면 실패합니다. 기존 KIDS 제품코드 CSV와 HIRA 제품코드 bridge는
@@ -182,9 +187,11 @@ API 원본은 `data/canonical/raw/*.jsonl`에 페이지 순서대로 보존하�
 - `ITEM_SEQ` 상세 제품규칙 834,286행
 - 품목 플래그 43,295행
 - XLSX 성분/기준 규칙 4,172행
+- 제품 DUR ↔ XLSX 기준 링크 722,470행 / 연결된 제품규칙 722,368행
+- 링크 방식: 영문명 직접 일치 153,808행 / MFDS 성분코드 연결 568,662행
 - source snapshot 18개 = 허가 API 1 + DUR API 9 + XLSX 8
 - 상세/상대/플래그 ITEM_SEQ orphan 0건
-- SQLite 약 418.7MB
+- SQLite 약 627.9MB
 
 전체 최신 API를 다시 받고 원자적으로 재구축:
 
@@ -203,6 +210,12 @@ docker compose run --rm canonical build --json
 ```bash
 docker compose run --rm canonical verify --json
 docker compose run --rm canonical stats --json
+```
+
+특정 제품의 결합된 XLSX 기준 조회:
+
+```bash
+docker compose run --rm canonical criteria --item-seq 198600630 --json
 ```
 
 ## 식약처 전체 의약품 카탈로그 동기화
