@@ -5,6 +5,8 @@ import sqlite3
 import unicodedata
 from typing import Any, Mapping
 
+from .ingredient_alias_curated import is_reviewed_exact_edi_identity_conflict
+
 
 _ANNOTATION_RE = re.compile(r"\(\s*분류번호\s*:[^)]+\)\s*$", re.IGNORECASE)
 _DUR_DOSE_SUFFIX_RE = re.compile(r"_\((?=[^)]*\d)(?=[^)]*/)[^)]*\)\s*$")
@@ -110,38 +112,49 @@ def split_ingredient_components(value: Any) -> list[str]:
     return parts
 
 
-def _resolve_candidate_identity(
+def _resolve_candidate_identities(
     value: str,
     ingredient_index: set[str],
     ingredient_aliases: Mapping[str, str],
-) -> tuple[str | None, bool]:
+    ingredient_multi_aliases: Mapping[str, tuple[str, ...]],
+) -> tuple[list[str], bool]:
+    multi_targets = tuple(ingredient_multi_aliases.get(value, ()))
+    if multi_targets and all(target in ingredient_index for target in multi_targets):
+        return sorted(set(multi_targets)), True
     if value in ingredient_index:
-        return value, False
+        return [value], False
     alias_target = ingredient_aliases.get(value)
     if alias_target in ingredient_index:
-        return alias_target, True
+        return [alias_target], True
     strengthless = _INGREDIENT_STRENGTH_SUFFIX_RE.sub("", value).strip()
     if strengthless != value:
+        multi_targets = tuple(ingredient_multi_aliases.get(strengthless, ()))
+        if multi_targets and all(target in ingredient_index for target in multi_targets):
+            return sorted(set(multi_targets)), True
         if strengthless in ingredient_index:
-            return strengthless, False
+            return [strengthless], False
         alias_target = ingredient_aliases.get(strengthless)
         if alias_target in ingredient_index:
-            return alias_target, True
-    return None, False
+            return [alias_target], True
+    return [], False
 
 
 def _candidate_parts(
     value: Any,
     ingredient_index: set[str],
     ingredient_aliases: Mapping[str, str] | None = None,
+    ingredient_multi_aliases: Mapping[str, tuple[str, ...]] | None = None,
 ) -> tuple[list[str], list[str], bool]:
     normalized = normalize_ingredient_name(value)
     if not normalized:
         return [], [], False
     aliases = ingredient_aliases or {}
-    target, used_alias = _resolve_candidate_identity(normalized, ingredient_index, aliases)
-    if target is not None:
-        return [target], [], used_alias
+    multi_aliases = ingredient_multi_aliases or {}
+    targets, used_alias = _resolve_candidate_identities(
+        normalized, ingredient_index, aliases, multi_aliases
+    )
+    if targets:
+        return targets, [], used_alias
     parts = split_ingredient_components(normalized)
     if len(parts) == 1 and re.search(r"\d", normalized):
         return [], [normalized], False
@@ -149,9 +162,11 @@ def _candidate_parts(
     unmatched: list[str] = []
     alias_used = False
     for part in parts:
-        target, used_alias = _resolve_candidate_identity(part, ingredient_index, aliases)
-        if target is not None:
-            matched.append(target)
+        targets, used_alias = _resolve_candidate_identities(
+            part, ingredient_index, aliases, multi_aliases
+        )
+        if targets:
+            matched.extend(targets)
             alias_used = alias_used or used_alias
         else:
             unmatched.append(part)
@@ -166,6 +181,7 @@ def resolve_safety_mapping(
     catalog_ingredient: Any,
     known_ingredients: set[str] | None = None,
     ingredient_aliases: Mapping[str, str] | None = None,
+    ingredient_multi_aliases: Mapping[str, tuple[str, ...]] | None = None,
 ) -> dict[str, Any]:
     edi_codes = split_edi_codes(edi_value)
     product_rows: list[Mapping[str, Any]] = []
@@ -218,6 +234,7 @@ def resolve_safety_mapping(
         elif product_mapping_method == "normalized_name_ingredient_strength_unique":
             product_mapping_method = "normalized_name_ingredient_strength_ambiguous"
 
+    known_ingredients = known_ingredients if known_ingredients is not None else ingredient_index(con)
     if product_mapping_method.startswith("normalized_name_ingredient_strength_"):
         # The fallback proved that the DUR label differs only by a terminal
         # quantitative strength annotation, so retain the catalog's exact base
@@ -225,22 +242,72 @@ def resolve_safety_mapping(
         canonical_names = [catalog_ingredient]
     else:
         canonical_names = [row["ingredient_name"] for row in product_rows if row["ingredient_name"]]
-    known_ingredients = known_ingredients if known_ingredients is not None else ingredient_index(con)
     matched_ingredients: list[str] = []
     unmatched_ingredients: list[str] = []
     alias_used = False
 
-    if canonical_names:
+    # An exact EDI code proves product identity, but a corrupted DUR product
+    # ingredient label must not override a different MFDS ingredient when both
+    # labels independently resolve to established ingredient-level DUR identities.
+    # In that case product-level DUR checks remain usable through the exact code,
+    # while ingredient-level checks fail closed until the source conflict is fixed.
+    ingredient_identity_conflict = False
+    catalog_multi_expansion: list[str] = []
+    if product_mapping_method == "edi_exact" and canonical_names and catalog_ingredient:
+        catalog_matched, catalog_unmatched, _ = _candidate_parts(
+            catalog_ingredient, known_ingredients, ingredient_aliases, ingredient_multi_aliases
+        )
+        dur_matched: list[str] = []
+        dur_unmatched: list[str] = []
+        for name in canonical_names:
+            matched, unmatched, _ = _candidate_parts(
+                name, known_ingredients, ingredient_aliases, ingredient_multi_aliases
+            )
+            dur_matched.extend(matched)
+            dur_unmatched.extend(unmatched)
+        multi_aliases = ingredient_multi_aliases or {}
+        catalog_components = split_ingredient_components(catalog_ingredient)
+        if (
+            any(component in multi_aliases for component in catalog_components)
+            and catalog_matched
+            and not catalog_unmatched
+            and dur_matched
+            and not dur_unmatched
+            and set(dur_matched).issubset(set(catalog_matched))
+        ):
+            catalog_multi_expansion = sorted(set(catalog_matched))
+        if (
+            catalog_matched
+            and not catalog_unmatched
+            and dur_matched
+            and not dur_unmatched
+            and is_reviewed_exact_edi_identity_conflict(
+                selected_product_code, catalog_matched, dur_matched
+            )
+        ):
+            ingredient_identity_conflict = True
+
+    if ingredient_identity_conflict:
+        mapping_method = "conflicting_exact_edi_identity"
+        ingredient_status = "not_evaluable"
+    elif canonical_names:
         # Product-code linkage identifies the product, but ingredient-level DUR
         # identity still requires an exact known component or a separately
         # materialized alias backed by authoritative source evidence.
         for name in canonical_names:
             matched, unmatched, used_alias = _candidate_parts(
-                name, known_ingredients, ingredient_aliases
+                name, known_ingredients, ingredient_aliases, ingredient_multi_aliases
             )
             matched_ingredients.extend(matched)
             unmatched_ingredients.extend(unmatched)
             alias_used = alias_used or used_alias
+        if (
+            catalog_multi_expansion
+            and not unmatched_ingredients
+            and set(matched_ingredients).issubset(set(catalog_multi_expansion))
+        ):
+            matched_ingredients.extend(catalog_multi_expansion)
+            alias_used = True
         matched_ingredients = sorted(set(matched_ingredients))
         unmatched_ingredients = sorted(set(unmatched_ingredients))
         mapping_method = "validated_alias" if alias_used else "product_code_exact"
@@ -252,7 +319,7 @@ def resolve_safety_mapping(
             ingredient_status = "not_evaluable"
     else:
         matched, unmatched, alias_used = _candidate_parts(
-            catalog_ingredient, known_ingredients, ingredient_aliases
+            catalog_ingredient, known_ingredients, ingredient_aliases, ingredient_multi_aliases
         )
         matched_ingredients = sorted(set(matched))
         unmatched_ingredients = sorted(set(unmatched))
@@ -265,7 +332,9 @@ def resolve_safety_mapping(
             ingredient_status = "not_evaluable"
 
     reason = None
-    if ingredient_status == "not_evaluable":
+    if ingredient_identity_conflict:
+        reason = "식약처 성분과 DUR 제품 성분이 서로 다른 DUR 성분 기준으로 연결되어 자동 성분 판정을 중단했습니다."
+    elif ingredient_status == "not_evaluable":
         reason = "식약처 성분명을 DUR 성분 기준에 단일하게 연결하지 못했습니다."
     elif ingredient_status == "partial":
         reason = "일부 성분만 DUR 성분 기준에 단일하게 연결되었습니다."

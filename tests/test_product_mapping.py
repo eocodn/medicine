@@ -253,6 +253,211 @@ class ProductMappingStrengthFallbackTest(unittest.TestCase):
         self.assertEqual(product["safety_ingredients"], ["clopidogrel"])
         self.assertEqual(product["ingredient_mapping_method"], "validated_alias")
 
+
+    def test_manually_reviewed_combo_active_moiety_alias_is_materialized(self) -> None:
+        dur = sqlite3.connect(self.dur_db)
+        dur.executemany(
+            "INSERT INTO ingredient_dur(ingredient_name) VALUES(?)",
+            [("Alogliptin",), ("Metformin",)],
+        )
+        dur.execute(
+            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
+            (
+                "P-ALO-COMBO", "알로글립틴복합정", "ING-ALO-COMBO",
+                "alogliptin benzoate (as alogliptin)+metformin hydrochloride",
+            ),
+        )
+        dur.commit()
+        dur.close()
+        catalog = sqlite3.connect(self.catalog_db)
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "MFDS-ALO-COMBO", "알로글립틴복합정", "제약",
+                "Alogliptin Benzoate/Metformin Hydrochloride", None,
+                "P-ALO-COMBO", "2026-01-01", None, "정상", "active", "fixture", "{}",
+            ),
+        )
+        catalog.commit()
+        catalog.close()
+
+        result = materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
+        product = ProductRepository(self.dur_db, self.catalog_db).get("MFDS-ALO-COMBO")
+
+        self.assertIn("alogliptin benzoate (as alogliptin)", result["aliases"])
+        self.assertEqual(product["ingredient_mapping_status"], "partial")
+        self.assertIn("alogliptin", product["safety_ingredients"])
+
+    def test_manually_reviewed_salt_alias_requires_current_source_observation(self) -> None:
+        dur = sqlite3.connect(self.dur_db)
+        dur.execute("INSERT INTO ingredient_dur(ingredient_name) VALUES(?)", ("Alfuzosin",))
+        dur.commit()
+        dur.close()
+        catalog = sqlite3.connect(self.catalog_db)
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "MFDS-ALF-NO-EVIDENCE", "알푸조신정", "제약", "Alfuzosin Hydrochloride", None,
+                None, "2026-01-01", None, "정상", "active", "fixture", "{}",
+            ),
+        )
+        catalog.commit()
+        catalog.close()
+
+        result = materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
+        product = ProductRepository(self.dur_db, self.catalog_db).get("MFDS-ALF-NO-EVIDENCE")
+
+        self.assertNotIn("alfuzosin hydrochloride", result["aliases"])
+        self.assertEqual(product["ingredient_mapping_status"], "not_evaluable")
+
+    def test_manually_reviewed_salt_alias_accepts_current_product_dur_observation(self) -> None:
+        dur = sqlite3.connect(self.dur_db)
+        dur.execute("INSERT INTO ingredient_dur(ingredient_name) VALUES(?)", ("Phendimetrazine",))
+        dur.execute(
+            """INSERT INTO product_dur(
+                dataset_key,source_row,ingredient_name,ingredient_code,product_code,
+                paired_ingredient_name,paired_ingredient_code,paired_product_code
+            ) VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                "product:age_contraindication", 1, "Phendimetrazine Tartrate",
+                "552601ATB", "P-PHEND", None, None, None,
+            ),
+        )
+        dur.commit()
+        dur.close()
+        catalog = sqlite3.connect(self.catalog_db)
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "MFDS-PHEND", "펜디메트라진정", "제약", "Phendimetrazine Tartrate", None,
+                None, "2026-01-01", None, "정상", "active", "fixture", "{}",
+            ),
+        )
+        catalog.commit()
+        catalog.close()
+
+        result = materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
+        product = ProductRepository(self.dur_db, self.catalog_db).get("MFDS-PHEND")
+
+        self.assertIn("phendimetrazine tartrate", result["aliases"])
+        self.assertEqual(
+            result["aliases"]["phendimetrazine tartrate"]["target"],
+            "phendimetrazine",
+        )
+        self.assertEqual(product["ingredient_mapping_status"], "matched")
+        self.assertEqual(product["safety_ingredients"], ["phendimetrazine"])
+
+    def test_manually_reviewed_alias_accepts_current_dur_product_catalog_observation(self) -> None:
+        dur = sqlite3.connect(self.dur_db)
+        dur.execute("INSERT INTO ingredient_dur(ingredient_name) VALUES(?)", ("Gemcitabine",))
+        dur.execute(
+            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
+            (
+                "P-GEM", "젬시타빈주", "ING-GEM",
+                "Gemcitabine Hydrochloride (as Gemcitabine 2g(38mg/mL))",
+            ),
+        )
+        dur.commit()
+        dur.close()
+        catalog = sqlite3.connect(self.catalog_db)
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "MFDS-GEM", "젬시타빈주", "제약",
+                "Gemcitabine Hydrochloride", None, None,
+                "2026-01-01", None, "정상", "active", "fixture", "{}",
+            ),
+        )
+        catalog.commit()
+        catalog.close()
+
+        result = materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
+
+        self.assertIn(
+            "gemcitabine hydrochloride (as gemcitabine 2g(38mg/ml))",
+            result["aliases"],
+        )
+        self.assertEqual(
+            result["aliases"][
+                "gemcitabine hydrochloride (as gemcitabine 2g(38mg/ml))"
+            ]["target"],
+            "gemcitabine",
+        )
+
+
+    def test_manually_reviewed_salt_alias_uses_exact_edi_observation(self) -> None:
+        dur = sqlite3.connect(self.dur_db)
+        dur.execute("INSERT INTO ingredient_dur(ingredient_name) VALUES(?)", ("Alfuzosin",))
+        dur.execute(
+            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
+            ("P-ALF", "알푸조신정", "ING-ALF", "alfuzosin hydrochloride"),
+        )
+        dur.commit()
+        dur.close()
+        catalog = sqlite3.connect(self.catalog_db)
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "MFDS-ALF", "알푸조신정", "제약", "Alfuzosin Hydrochloride", None,
+                "P-ALF", "2026-01-01", None, "정상", "active", "fixture", "{}",
+            ),
+        )
+        catalog.commit()
+        catalog.close()
+
+        result = materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
+        product = ProductRepository(self.dur_db, self.catalog_db).get("MFDS-ALF")
+
+        self.assertIn("alfuzosin hydrochloride", result["aliases"])
+        self.assertEqual(product["ingredient_mapping_status"], "matched")
+        self.assertEqual(product["safety_ingredients"], ["alfuzosin"])
+
+    def test_manually_reviewed_nomenclature_variant_is_materialized(self) -> None:
+        dur = sqlite3.connect(self.dur_db)
+        dur.execute("INSERT INTO ingredient_dur(ingredient_name) VALUES(?)", ("Raloxifen",))
+        dur.execute(
+            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
+            ("P-RAL", "라록시펜캡슐", "ING-RAL", "raloxifene"),
+        )
+        dur.commit()
+        dur.close()
+        catalog = sqlite3.connect(self.catalog_db)
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "MFDS-RAL", "라록시펜캡슐", "제약", "Raloxifene Hydrochloride", None,
+                "P-RAL", "2026-01-01", None, "정상", "active", "fixture", "{}",
+            ),
+        )
+        catalog.commit()
+        catalog.close()
+
+        result = materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
+        product = ProductRepository(self.dur_db, self.catalog_db).get("MFDS-RAL")
+
+        self.assertIn("raloxifene", result["aliases"])
+        self.assertEqual(product["ingredient_mapping_status"], "matched")
+        self.assertEqual(product["safety_ingredients"], ["raloxifen"])
+
+
     def test_exact_edi_combo_can_resolve_single_remaining_component(self) -> None:
         dur = sqlite3.connect(self.dur_db)
         dur.executemany(
@@ -334,213 +539,6 @@ class ProductMappingStrengthFallbackTest(unittest.TestCase):
         self.assertEqual(product["ingredient_mapping_status"], "not_evaluable")
         self.assertEqual(product["safety_ingredients"], [])
 
-    def test_same_dur_ingredient_code_validates_name_variants(self) -> None:
-        dur = sqlite3.connect(self.dur_db)
-        dur.execute("INSERT INTO ingredient_dur(ingredient_name) VALUES(?)", ("Tramadol",))
-        dur.executemany(
-            """INSERT INTO product_dur(
-                dataset_key,source_row,ingredient_name,ingredient_code,product_code,
-                paired_ingredient_name,paired_ingredient_code,paired_product_code
-            ) VALUES(?,?,?,?,?,?,?,?)""",
-            [
-                ("product:dose_caution", 1, "Tramadol", "ING-TRAM", "P-TRAM", None, None, None),
-                ("product:age_contraindication", 2, "Tramadol Hydrochloride", "ING-TRAM", "P-TRAM", None, None, None),
-            ],
-        )
-        dur.execute(
-            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-            ("P-TRAM", "트라마돌근거정", "ING-TRAM", "Tramadol Hydrochloride"),
-        )
-        dur.commit()
-        dur.close()
-        catalog = sqlite3.connect(self.catalog_db)
-        catalog.execute(
-            """INSERT INTO products(
-                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
-                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                "MFDS-TRAM", "트라마돌정", "제약", "Tramadol Hydrochloride", None,
-                "P-TRAM", "2026-01-01", None, "정상", "active", "fixture", "{}",
-            ),
-        )
-        catalog.commit()
-        catalog.close()
-
-        materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
-        product = ProductRepository(self.dur_db, self.catalog_db).get("MFDS-TRAM")
-
-        self.assertEqual(product["ingredient_mapping_status"], "matched")
-        self.assertEqual(product["safety_ingredients"], ["tramadol"])
-        self.assertEqual(product["ingredient_mapping_method"], "validated_alias")
-
-    def test_combination_product_code_cannot_prove_cross_ingredient_alias(self) -> None:
-        dur = sqlite3.connect(self.dur_db)
-        dur.executemany(
-            "INSERT INTO ingredient_dur(ingredient_name) VALUES(?)",
-            [("Amlodipine",), ("Metformin",)],
-        )
-        dur.execute(
-            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-            ("P-COMBO-CODE", "복합근거정", "ING-COMBO", "amlodipine+metformin"),
-        )
-        dur.executemany(
-            """INSERT INTO product_dur(
-                dataset_key,source_row,ingredient_name,ingredient_code,product_code,
-                paired_ingredient_name,paired_ingredient_code,paired_product_code
-            ) VALUES(?,?,?,?,?,?,?,?)""",
-            [
-                ("product:dose_caution", 1, "Amlodipine", "ING-COMBO", "P-COMBO-CODE", None, None, None),
-                ("product:age_contraindication", 2, "Metformin Hydrochloride", "ING-COMBO", "P-COMBO-CODE", None, None, None),
-            ],
-        )
-        dur.commit()
-        dur.close()
-        catalog = sqlite3.connect(self.catalog_db)
-        catalog.execute(
-            """INSERT INTO products(
-                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
-                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                "MFDS-MET-CODE", "메트포르민정", "제약", "Metformin Hydrochloride", None,
-                None, "2026-01-01", None, "정상", "active", "fixture", "{}",
-            ),
-        )
-        catalog.commit()
-        catalog.close()
-
-        materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
-        product = ProductRepository(self.dur_db, self.catalog_db).get("MFDS-MET-CODE")
-
-        self.assertEqual(product["ingredient_mapping_status"], "not_evaluable")
-        self.assertEqual(product["safety_ingredients"], [])
-
-    def test_transitive_edi_evidence_recovers_product_side_hcl_variant(self) -> None:
-        dur = sqlite3.connect(self.dur_db)
-        dur.execute("INSERT INTO ingredient_dur(ingredient_name) VALUES(?)", ("Amitriptyline",))
-        dur.executemany(
-            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-            [
-                ("P-AMIT-BASE", "아미트립틸린근거정", "ING-A1", "amitriptyline"),
-                ("P-AMIT-HCL", "아미트립틸린HCL정", "ING-A2", "amitriptyline HCl"),
-            ],
-        )
-        dur.commit()
-        dur.close()
-        catalog = sqlite3.connect(self.catalog_db)
-        catalog.executemany(
-            """INSERT INTO products(
-                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
-                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            [
-                (
-                    "MFDS-AMIT-BASE", "아미트립틸린근거정", "제약", "Amitriptyline Hydrochloride", None,
-                    "P-AMIT-BASE", "2026-01-01", None, "정상", "active", "fixture", "{}",
-                ),
-                (
-                    "MFDS-AMIT-HCL", "아미트립틸린HCL정", "제약", "Amitriptyline Hydrochloride", None,
-                    "P-AMIT-HCL", "2026-01-01", None, "정상", "active", "fixture", "{}",
-                ),
-            ],
-        )
-        catalog.commit()
-        catalog.close()
-
-        materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
-        product = ProductRepository(self.dur_db, self.catalog_db).get("MFDS-AMIT-HCL")
-
-        self.assertEqual(product["ingredient_mapping_status"], "matched")
-        self.assertEqual(product["safety_ingredients"], ["amitriptyline"])
-        self.assertEqual(product["ingredient_mapping_method"], "validated_alias")
-
-    def test_validated_aliases_apply_to_comma_delimited_product_ingredients(self) -> None:
-        dur = sqlite3.connect(self.dur_db)
-        dur.executemany(
-            "INSERT INTO ingredient_dur(ingredient_name) VALUES(?)",
-            [("Acetaminophen",), ("Tramadol",)],
-        )
-        dur.executemany(
-            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-            [
-                ("P-TRA-BASE", "트라마돌근거정", "ING-T1", "tramadol"),
-                ("P-COMBO", "아세트라마정", "ING-C1", "acetaminophen,tramadol hydrochloride"),
-            ],
-        )
-        dur.commit()
-        dur.close()
-        catalog = sqlite3.connect(self.catalog_db)
-        catalog.executemany(
-            """INSERT INTO products(
-                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
-                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            [
-                (
-                    "MFDS-TRA-BASE", "트라마돌근거정", "제약", "Tramadol Hydrochloride", None,
-                    "P-TRA-BASE", "2026-01-01", None, "정상", "active", "fixture", "{}",
-                ),
-                (
-                    "MFDS-COMBO", "아세트라마정", "제약", "Acetaminophen/Tramadol Hydrochloride", None,
-                    "P-COMBO", "2026-01-01", None, "정상", "active", "fixture", "{}",
-                ),
-            ],
-        )
-        catalog.commit()
-        catalog.close()
-
-        materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
-        product = ProductRepository(self.dur_db, self.catalog_db).get("MFDS-COMBO")
-
-        self.assertEqual(product["ingredient_mapping_status"], "matched")
-        self.assertEqual(product["safety_ingredients"], ["acetaminophen", "tramadol"])
-        self.assertEqual(product["ingredient_mapping_method"], "validated_alias")
-
-    def test_conflicting_sibling_evidence_is_not_materialized(self) -> None:
-        dur = sqlite3.connect(self.dur_db)
-        dur.executemany(
-            "INSERT INTO ingredient_dur(ingredient_name) VALUES(?)",
-            [("Morphine",), ("Morphine Sulfate",)],
-        )
-        dur.executemany(
-            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-            [
-                ("P-MOR-1", "모르핀근거1", "ING-M1", "morphine"),
-                ("P-MOR-2", "모르핀근거2", "ING-M2", "morphine sulfate"),
-            ],
-        )
-        dur.commit()
-        dur.close()
-
-        catalog = sqlite3.connect(self.catalog_db)
-        catalog.executemany(
-            """INSERT INTO products(
-                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
-                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            [
-                (
-                    "MFDS-MOR-1", "모르핀근거1", "제약", "Morphine Sulfate Hydrate", None,
-                    "P-MOR-1", "2026-01-01", None, "정상", "active", "fixture", "{}",
-                ),
-                (
-                    "MFDS-MOR-2", "모르핀근거2", "제약", "Morphine Sulfate Hydrate", None,
-                    "P-MOR-2", "2026-01-01", None, "정상", "active", "fixture", "{}",
-                ),
-            ],
-        )
-        catalog.commit()
-        catalog.close()
-
-        with sqlite3.connect(self.dur_db) as dur, sqlite3.connect(self.catalog_db) as catalog:
-            report = derive_validated_ingredient_aliases(dur, catalog)
-
-        self.assertNotIn("morphine sulfate hydrate", report["aliases"])
-        self.assertEqual(
-            report["ambiguous"]["morphine sulfate hydrate"]["targets"],
-            ["morphine", "morphine sulfate"],
-        )
 
 
 if __name__ == "__main__":

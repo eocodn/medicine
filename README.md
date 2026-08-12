@@ -203,12 +203,17 @@ docker compose run --rm dur mobile-build --json
 제품 스냅샷 생성 시점을 확인하고 결정적인 `dataset_id`를 출력합니다. 이 식별자는 처방 안전성
 평가와 변경 이력에 저장됩니다.
 
-`catalog ingredient-aliases --write`는 현재 식약처 카탈로그와 DUR 데이터에서 직접 증명되는
-성분명 관계만 `catalog.sqlite`의 별도 alias 테이블에 저장합니다. 정확한 EDI 제품 연결,
+`catalog ingredient-aliases --write`는 현재 식약처 카탈로그와 DUR 데이터에서 증명되거나 개별
+검토된 성분명 관계를 `catalog.sqlite`의 alias 테이블에 저장합니다. 정확한 EDI 제품 연결,
 식약처에서 단일성분으로 확인되는 동일 DUR 제품·성분코드 표기, 안전하게 소거 가능한 복합성분
-대응만 사용하며, 충돌하거나 근거가 부족한 염·수화물·철자 후보는 자동 매칭하지 않습니다.
-alias에는 현재 DUR `dataset_id`와 provenance를 함께 저장하므로 데이터셋이 바뀐 뒤 재생성하지
-않은 alias는 런타임에서 사용되지 않습니다.
+대응을 자동 근거로 사용합니다. 염·활성형·철자 차이는 일반 규칙으로 제거하지 않고 개별 검토 목록에
+있는 항목도 현재 DUR 제품 규칙·DUR 제품 카탈로그 또는 활성 exact-EDI에서 그 표기가 실제 관찰되고
+목표 DUR 성분이 모두 존재할 때만 materialize합니다. 하나의 제품 성분에 서로 다른 DUR 규칙
+정체성이 함께 필요한 검토 항목은
+`ingredient_multi_aliases`에 여러 target을 보존해 어느 한쪽 규칙을 버리지 않습니다. 검토된 원천
+오류가 현재 데이터와 정확히 일치하면 제품 단위 DUR 연결은 유지하되 성분 단위 판정은 fail-closed
+합니다. 모든 alias에는 현재 DUR `dataset_id`와 provenance를 함께 저장하므로 데이터셋이 바뀐 뒤
+재생성하지 않은 매핑은 런타임에서 사용되지 않습니다.
 
 `dur mobile-build`는 검증된 `dur.sqlite`와 `catalog.sqlite`에서 Android 런타임에 필요한 컬럼과
 인덱스만 보존한 `data/db/mobile.sqlite`와 SHA-256 manifest를 만듭니다. DUR 규칙 행과 원본

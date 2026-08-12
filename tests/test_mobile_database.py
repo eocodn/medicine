@@ -64,6 +64,16 @@ class MobileDatabaseTest(unittest.TestCase):
                 None, "2026-01-01", None, "정상", "active", "fixture", "{}",
             ),
         )
+        catalog.execute(
+            """INSERT INTO products(
+                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
+                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "MFDS-MENO-HP", "메노트로핀에이치피주", "제약", "Menotrophin HP", "주사제",
+                "P-MENO-HP", "2026-01-01", None, "정상", "active", "fixture", "{}",
+            ),
+        )
         catalog.commit()
         catalog.close()
         dur = sqlite3.connect(self.dur_db)
@@ -71,10 +81,24 @@ class MobileDatabaseTest(unittest.TestCase):
             "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
             ("P-ALIAS-EVIDENCE", "졸피뎀별칭근거약", "ING-ZA", "zolpidem"),
         )
+        dur.executemany(
+            """INSERT INTO ingredient_dur(
+                dataset_key,source_row,category,ingredient_name
+            ) VALUES(?,?,?,?)""",
+            [
+                ("ingredient:pregnancy_contraindication", 9001, "pregnancy_contraindication", "Menotrophin"),
+                ("ingredient:duration_caution", 9002, "duration_caution", "Menotrophin HP"),
+            ],
+        )
+        dur.execute(
+            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
+            ("P-MENO-HP", "메노트로핀에이치피주", "ING-MENO", "Menotrophin"),
+        )
         dur.commit()
         dur.close()
         alias_result = materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
         self.assertGreaterEqual(alias_result["validated_aliases"], 1)
+        self.assertGreaterEqual(alias_result["validated_multi_aliases"], 1)
 
         result = build_mobile_database(
             self.dur_db,
@@ -98,6 +122,10 @@ class MobileDatabaseTest(unittest.TestCase):
             self.assertEqual(
                 mobile.execute("SELECT COUNT(*) FROM ingredient_aliases").fetchone()[0],
                 alias_result["validated_aliases"],
+            )
+            self.assertEqual(
+                mobile.execute("SELECT COUNT(*) FROM ingredient_multi_aliases").fetchone()[0],
+                2,
             )
             self.assertEqual(mobile.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         finally:
@@ -124,6 +152,9 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertEqual(aliased["ingredient_mapping_status"], "matched")
         self.assertEqual(aliased["ingredient_mapping_method"], "validated_alias")
         self.assertEqual(aliased["safety_ingredients"], ["zolpidem"])
+        multi = app.get_product("MFDS-MENO-HP")
+        self.assertEqual(multi["ingredient_mapping_status"], "matched")
+        self.assertEqual(multi["safety_ingredients"], ["menotrophin", "menotrophin hp"])
 
 
 if __name__ == "__main__":

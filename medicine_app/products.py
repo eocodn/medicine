@@ -8,7 +8,10 @@ from typing import Iterator
 from medicine_dur.verification import dataset_manifest
 
 from .coverage import ingredient_index, resolve_safety_mapping
-from .ingredient_aliases import load_materialized_ingredient_aliases
+from .ingredient_aliases import (
+    load_materialized_ingredient_aliases,
+    load_materialized_multi_ingredient_aliases,
+)
 
 
 class ProductRepository:
@@ -16,6 +19,7 @@ class ProductRepository:
         self.dur_db = Path(dur_db)
         self.catalog_db = Path(catalog_db) if catalog_db else None
         self._ingredient_aliases = self._load_ingredient_aliases()
+        self._ingredient_multi_aliases = self._load_ingredient_multi_aliases()
 
     @contextmanager
     def _dur(self) -> Iterator[sqlite3.Connection]:
@@ -50,6 +54,15 @@ class ProductRepository:
                 catalog_con, dur_dataset_id=dataset_id
             )
 
+    def _load_ingredient_multi_aliases(self) -> dict[str, tuple[str, ...]]:
+        if not self.catalog_db or not self.catalog_db.exists() or not self.dur_db.exists():
+            return {}
+        with self._dur() as dur_con, self._catalog() as catalog_con:
+            dataset_id = dataset_manifest(dur_con).get("dataset_id")
+            return load_materialized_multi_ingredient_aliases(
+                catalog_con, dur_dataset_id=dataset_id
+            )
+
     def has_full_catalog(self) -> bool:
         if not self.catalog_db or not self.catalog_db.exists():
             return False
@@ -65,6 +78,7 @@ class ProductRepository:
         dur_con: sqlite3.Connection,
         known_ingredients: set[str] | None = None,
         ingredient_aliases: dict[str, str] | None = None,
+        ingredient_multi_aliases: dict[str, tuple[str, ...]] | None = None,
     ) -> dict:
         mapping = resolve_safety_mapping(
             dur_con,
@@ -73,6 +87,7 @@ class ProductRepository:
             catalog_ingredient=row["ingredient_name"],
             known_ingredients=known_ingredients,
             ingredient_aliases=ingredient_aliases,
+            ingredient_multi_aliases=ingredient_multi_aliases,
         )
         return {
             "product_ref": row["item_seq"],
@@ -131,7 +146,8 @@ class ProductRepository:
             known_ingredients = ingredient_index(dur_con)
             return [
                 self._decorate_product(
-                    row, dur_con, known_ingredients, self._ingredient_aliases
+                    row, dur_con, known_ingredients, self._ingredient_aliases,
+                    self._ingredient_multi_aliases
                 )
                 for row in rows
             ]
@@ -157,5 +173,6 @@ class ProductRepository:
             raise KeyError("product not found")
         with self._dur() as dur_con:
             return self._decorate_product(
-                row, dur_con, ingredient_index(dur_con), self._ingredient_aliases
+                row, dur_con, ingredient_index(dur_con), self._ingredient_aliases,
+                self._ingredient_multi_aliases
             )

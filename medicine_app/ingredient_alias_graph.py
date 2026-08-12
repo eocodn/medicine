@@ -11,6 +11,11 @@ from .coverage import (
     split_edi_codes,
     split_ingredient_components,
 )
+from .ingredient_alias_curated import (
+    MANUALLY_REVIEWED_INGREDIENT_ALIASES,
+    MANUAL_REVIEW_MULTI_IDENTITY,
+    is_reviewed_exact_edi_identity_conflict,
+)
 
 
 _ALIAS_EVIDENCE_KIND = "authoritative_identity_graph"
@@ -171,7 +176,9 @@ def derive_validated_ingredient_aliases(
     }
 
     exact_edi_evidence_products = 0
+    exact_edi_identity_conflicts = 0
     edi_component_pairs: list[tuple[list[str], list[str], dict[str, Any]]] = []
+    observed_exact_edi_components: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in catalog_rows:
         catalog_parts = _unique_components(row["ingredient_name"])
         edi_codes = split_edi_codes(row["edi_code"])
@@ -197,7 +204,18 @@ def derive_validated_ingredient_aliases(
             "dur_product_name": str(product_rows[0]["product_name"] or ""),
         }
         edi_component_pairs.append((catalog_parts, dur_parts, evidence))
+        for component in sorted(set(catalog_parts + dur_parts)):
+            observed_exact_edi_components[component].append(evidence)
         if len(catalog_parts) != 1 or len(dur_parts) != 1:
+            continue
+        if is_reviewed_exact_edi_identity_conflict(
+            str(product_rows[0]["product_code"] or ""), catalog_parts, dur_parts
+        ):
+            # This exact source conflict was reviewed against MFDS product data.
+            # The guard is tuple-specific so intentional DUR naming differences
+            # remain usable, while a future corrected source automatically stops
+            # matching this rejection.
+            exact_edi_identity_conflicts += 1
             continue
         exact_edi_evidence_products += 1
         _add_edge(
@@ -209,15 +227,24 @@ def derive_validated_ingredient_aliases(
         )
 
     explicit_active_relations = 0
+    observed_product_catalog_components: dict[str, list[dict[str, Any]]] = defaultdict(list)
     if _table_exists(dur_con, "product_catalog"):
         for product_row in dur_con.execute(
             """SELECT product_code,ingredient_name
                FROM product_catalog
                WHERE ingredient_name IS NOT NULL AND TRIM(ingredient_name)<>''"""
         ).fetchall():
+            product_components = split_ingredient_components(product_row["ingredient_name"])
+            product_catalog_evidence = {
+                "evidence_kind": "dur_product_catalog_observation",
+                "product_code": str(product_row["product_code"] or ""),
+                "source_name": str(product_row["ingredient_name"] or ""),
+            }
+            for component in product_components:
+                observed_product_catalog_components[component].append(product_catalog_evidence)
             if str(product_row["product_code"] or "") not in safe_single_product_codes:
                 continue
-            for component in split_ingredient_components(product_row["ingredient_name"]):
+            for component in product_components:
                 explicit = _explicit_active_moiety(component)
                 if explicit is None:
                     continue
@@ -257,6 +284,7 @@ def derive_validated_ingredient_aliases(
                 "source_name": str(product_row["ingredient_name"] or ""),
             })
     product_dur_rows = 0
+    observed_product_dur_components: dict[str, list[dict[str, Any]]] = defaultdict(list)
     if _table_exists(dur_con, "product_dur"):
         rows = dur_con.execute(
             """
@@ -291,6 +319,8 @@ def derive_validated_ingredient_aliases(
                 "source_name": str(name or ""),
                 "side": side,
             }
+            for component in parts:
+                observed_product_dur_components[component].append(source_record)
             if code and product_code and len(parts) == 1:
                 key = (str(product_code), str(code))
                 if key in eligible_identity_keys:
@@ -335,6 +365,67 @@ def derive_validated_ingredient_aliases(
             # number of supporting source rows in the record itself.
             evidence["source_support_count"] = len(variants[anchor]) + len(variants[variant])
             _add_edge(adjacency, evidence_by_edge, anchor, variant, evidence)
+
+    manually_reviewed_relations = 0
+    for alias_name, record in sorted(MANUALLY_REVIEWED_INGREDIENT_ALIASES.items()):
+        alias_name = normalize_ingredient_name(alias_name)
+        target_name = normalize_ingredient_name(record["target"])
+        exact_observations = observed_exact_edi_components.get(alias_name, [])
+        product_dur_observations = observed_product_dur_components.get(alias_name, [])
+        product_catalog_observations = observed_product_catalog_components.get(alias_name, [])
+        observations = exact_observations or product_dur_observations or product_catalog_observations
+        if not observations or target_name not in known_ingredients:
+            continue
+        if exact_observations:
+            observation_kind = "active_exact_edi_product"
+        elif product_dur_observations:
+            observation_kind = "current_product_dur"
+        else:
+            observation_kind = "current_dur_product_catalog"
+        _add_edge(
+            adjacency,
+            evidence_by_edge,
+            alias_name,
+            target_name,
+            {
+                "evidence_kind": "manual_reviewed_identity",
+                "review_basis": record["basis"],
+                "observation_kind": observation_kind,
+                "observation_count": len(observations),
+                **observations[0],
+            },
+        )
+        manually_reviewed_relations += 1
+
+    reviewed_multi_aliases: dict[str, dict[str, Any]] = {}
+    for alias_name, target_names in sorted(MANUAL_REVIEW_MULTI_IDENTITY.items()):
+        alias_name = normalize_ingredient_name(alias_name)
+        targets = sorted({normalize_ingredient_name(target) for target in target_names})
+        exact_observations = observed_exact_edi_components.get(alias_name, [])
+        product_dur_observations = observed_product_dur_components.get(alias_name, [])
+        product_catalog_observations = observed_product_catalog_components.get(alias_name, [])
+        observations = exact_observations or product_dur_observations or product_catalog_observations
+        if not observations or not targets or not all(target in known_ingredients for target in targets):
+            continue
+        if exact_observations:
+            observation_kind = "active_exact_edi_product"
+        elif product_dur_observations:
+            observation_kind = "current_product_dur"
+        else:
+            observation_kind = "current_dur_product_catalog"
+        reviewed_multi_aliases[alias_name] = {
+            "targets": targets,
+            "evidence_kind": "manual_reviewed_multi_identity",
+            "evidence_count": len(observations),
+            "evidence": [
+                {
+                    "evidence_kind": "manual_reviewed_multi_identity",
+                    "observation_kind": observation_kind,
+                    "observation_count": len(observations),
+                    **observations[0],
+                }
+            ],
+        }
 
     component_elimination_relations = 0
     for _ in range(12):
@@ -440,14 +531,18 @@ def derive_validated_ingredient_aliases(
 
     return {
         "aliases": aliases,
+        "multi_aliases": reviewed_multi_aliases,
         "ambiguous": ambiguous,
         "validated_aliases": len(aliases),
+        "validated_multi_aliases": len(reviewed_multi_aliases),
         "ambiguous_aliases": len(ambiguous),
         "eligible_active_edi_products": len(catalog_rows),
         "mfds_confirmed_single_ingredient_product_codes": len(safe_single_product_codes),
         "exact_edi_evidence_products": exact_edi_evidence_products,
+        "exact_edi_identity_conflicts": exact_edi_identity_conflicts,
         "product_dur_identity_rows_scanned": product_dur_rows,
         "product_ingredient_keys_with_name_variants": product_ingredient_keys_with_variants,
         "explicit_active_moiety_relations": explicit_active_relations,
+        "manually_reviewed_relations": manually_reviewed_relations,
         "component_elimination_relations": component_elimination_relations,
     }
