@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 CORE_SOURCE_FAMILIES = frozenset({"mfds_permit_api", "mfds_dur_item_api", "kids_mfds_xlsx"})
 
 SCHEMA = r"""
@@ -121,7 +121,7 @@ CREATE INDEX idx_ingredient_rules_pair ON ingredient_rules(paired_ingredient_nam
 CREATE TABLE product_criterion_links (
     product_rule_id INTEGER NOT NULL REFERENCES product_rules(id),
     criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
-    match_method TEXT NOT NULL CHECK(match_method IN ('english_exact','mfds_ingredient_code')),
+    match_method TEXT NOT NULL CHECK(match_method IN ('english_exact','mfds_ingredient_code','ingredient_preprocessed','permit_composition','rule_value_identity','product_detail_evidence')),
     pair_orientation TEXT CHECK(pair_orientation IN ('forward','reverse') OR pair_orientation IS NULL),
     PRIMARY KEY(product_rule_id, criterion_rule_id)
 ) WITHOUT ROWID;

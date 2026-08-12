@@ -162,7 +162,7 @@ class CanonicalDatabaseTest(unittest.TestCase):
                 """SELECT item_seq,criterion_rule_value,match_method
                    FROM product_rule_criteria WHERE category='dose_caution'"""
             ).fetchone()
-            self.assertEqual(dose_link, ("P1", "알파 240mg", "mfds_ingredient_code"))
+            self.assertEqual(dose_link, ("P1", "알파 240mg", "ingredient_preprocessed"))
             combination_link = con.execute(
                 """SELECT item_seq,paired_item_seq,match_method,pair_orientation
                    FROM product_rule_criteria WHERE category='combination_contraindication'"""
@@ -325,6 +325,7 @@ class CanonicalDatabaseTest(unittest.TestCase):
                     "category": "combination_contraindication",
                     "ingredient_name": "FutureDrug",
                     "candidate_codes": ["D-FUTURE-1", "D-FUTURE-2"],
+                    "reason": "active_moiety_multiple_codes",
                 }],
             )
         finally:

@@ -171,13 +171,25 @@ canonical DB입니다. 현재 앱 평가기는 아직 이 DB를 사용하지 않
   `MIXTURE_ITEM_SEQ`를 직접 보존
 - `kids_mfds_xlsx`: 최신 성분/기준 XLSX 8종. 임부등급, 연령, 용량, 기간, 효능군, 수유부주의 등을 보존
 
-상세 DUR API의 `INGR_CODE`/`INGR_ENG_NAME`과 병용 상대 성분 identity를 함께 보존하고,
-동일 카테고리의 XLSX 성분 기준과 연결한 `product_rule_criteria` view를 제공합니다. 영문 성분명이
-직접 일치하면 `english_exact`, 공식 MFDS 성분코드 identity로 이어지면 `mfds_ingredient_code` 근거로
-연결합니다. 현재 소스에서 확인된 카테고리별 코드 차이는 Ketorolac/Naproxen/Piroxicam/Mizolastine
-4개만 link-time equivalence로 명시하며, 원본 `INGR_CODE`는 변경하지 않습니다. 이후 다른 성분에서
-복수 코드 때문에 fallback이 막히면 자동 추정하지 않고 `stats`에 성분명/후보 코드를 노출하고
-`verify`를 실패시킵니다. 임의의 salt stripping이나 legacy alias는 사용하지 않습니다.
+상세 DUR API의 `INGR_CODE`/영문·국문 성분 identity와 병용 상대 성분을 원문 그대로 보존하고,
+동일 카테고리의 XLSX 기준을 연결한 `product_rule_criteria` view를 제공합니다. schema v5의 링크 전처리는
+원본 값을 수정하지 않고 다음 공식 근거만 사용합니다.
+
+- 영문명 직접 일치(`english_exact`)와 MFDS 코드 identity(`mfds_ingredient_code`)
+- 해당 카테고리에서 하나의 공식 코드로만 귀결되는 염·수화물·제형 표기의 active-moiety 정규화
+  (`ingredient_preprocessed`)
+- XLSX가 직접 선언한 괄호 동의어와 `주사제`/`정제`/`경구제` 같은 적용조건 분리
+- 동일 `ITEM_SEQ` 허가 성분구성과 XLSX 복합제 구성의 exact 비교, 중복 성분 collapse
+  (`permit_composition`)
+- DUR 코드가 없는 복합제 성분은 해당 비교 안에서만 exact active-name token으로 유지하며 전역 alias로 만들지 않음
+- 용량주의는 XLSX `rule_value` 속 정확한 국문 성분명(`rule_value_identity`)과 MFDS 제품별 상세 기준
+  (`product_detail_evidence`)을 보조 근거로 사용
+
+현재 확인된 카테고리별 코드 차이 Ketorolac/Naproxen/Piroxicam/Mizolastine 4개만 명시적
+link-time equivalence로 유지하며, 원본 `INGR_CODE`는 변경하지 않습니다. 새로운 이름/코드 ambiguity가
+실제로 현재 제품규칙 연결을 막으면 자동 추정하지 않고 `stats`에 성분명·후보 코드를 노출하고
+`verify`를 실패시킵니다. 반대로 MFDS 제품별 상세 용량기준이 XLSX 기준과 명확히 다르면 이름이 같더라도
+잘못된 기준을 붙이지 않고 미연결로 유지합니다. 임의의 전역 salt stripping이나 legacy alias는 사용하지 않습니다.
 
 API 원본은 `data/canonical/raw/*.jsonl`에 페이지 순서대로 보존하고 SHA-256 metadata를 함께
 저장합니다. DB의 각 행은 `source_dataset_key + source_row`로 원본 행을 추적하며, DB 재조립 시
@@ -186,15 +198,18 @@ API 원본은 `data/canonical/raw/*.jsonl`에 페이지 순서대로 보존하�
 
 현재 실데이터 빌드 기준(2026-08-12):
 
+- schema version 5
 - 허가제품 42,956개 / 정상 35,239개
 - `ITEM_SEQ` 상세 제품규칙 834,286행
 - 품목 플래그 43,295행
 - XLSX 성분/기준 규칙 4,172행
-- 제품 DUR ↔ XLSX 기준 링크 782,146행 / 연결된 제품규칙 782,044행
-- 링크 방식: 영문명 직접 일치 153,808행 / MFDS 성분코드 연결 628,338행
+- 제품 DUR ↔ XLSX 기준 링크 1,080,696행 / 연결된 제품규칙 829,200행 / 미연결 5,086행
+- 링크 방식: 영문명 직접 152,976 / MFDS 코드 164,928 / 전처리 identity 503,323 / 허가 복합성분 259,397 /
+  제품 상세근거 20 / XLSX 기준값 성분근거 52
+- 미해결 blocking identity ambiguity 0건
 - source snapshot 18개 = 허가 API 1 + DUR API 9 + XLSX 8
 - 상세/상대/플래그 ITEM_SEQ orphan 0건
-- SQLite 약 633.7MB
+- SQLite 약 664.1MB
 
 전체 최신 API를 다시 받고 원자적으로 재구축:
 

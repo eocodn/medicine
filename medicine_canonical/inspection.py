@@ -109,6 +109,8 @@ def canonical_stats(db_path: str | Path) -> dict:
         "paired_product_rules_missing_ingredient_identity": missing_paired_rule_identity,
         "unresolved_link_ambiguities": unresolved_link_ambiguities,
         "unresolved_link_ambiguity_count": len(unresolved_link_ambiguities),
+        "unresolved_link_identities": unresolved_link_ambiguities,
+        "unresolved_link_identity_count": len(unresolved_link_ambiguities),
         "source_snapshots": source_snapshots,
         "source_families": source_families,
         "orphan_product_rules": orphan_rules,
@@ -260,7 +262,7 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                     for row in stats["unresolved_link_ambiguities"][:20]
                 )
                 errors.append(
-                    "unresolved XLSX link code ambiguities: "
+                    "unresolved XLSX link identity ambiguities: "
                     f"{stats['unresolved_link_ambiguity_count']} ({rendered})"
                 )
     except sqlite3.DatabaseError as exc:
