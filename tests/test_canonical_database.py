@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -12,6 +13,8 @@ from openpyxl import Workbook
 from medicine_canonical.build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_PAGE_SIZE_MAX, sync_canonical_api_sources
+from medicine_canonical import linking as canonical_linking
+from medicine_canonical.schema import SCHEMA
 
 
 class CanonicalDatabaseTest(unittest.TestCase):
@@ -238,6 +241,114 @@ class CanonicalDatabaseTest(unittest.TestCase):
                 permit_fetch_page=self._permit_fetch,
                 dur_fetch_page=self._dur_fetch,
             )
+
+    def test_link_code_preprocessing_has_only_four_explicit_equivalences(self) -> None:
+        cases = {
+            "D001289": "D000274",  # Ketorolac
+            "D000195": "D000982",  # Naproxen
+            "D000983": "D000309",  # Piroxicam
+            "D000904": "D000719",  # Mizolastine
+        }
+        for raw_code, expected in cases.items():
+            self.assertEqual(canonical_linking.canonicalize_link_ingredient_code(raw_code), expected)
+        self.assertEqual(canonical_linking.canonicalize_link_ingredient_code("D999999"), "D999999")
+
+    def test_ketorolac_alias_links_without_mutating_raw_mfds_code(self) -> None:
+        con = sqlite3.connect(":memory:")
+        try:
+            con.executescript(SCHEMA)
+            for key, family in (("mfds", "mfds_dur_item_api"), ("xlsx", "kids_mfds_xlsx")):
+                con.execute(
+                    "INSERT INTO source_snapshots(dataset_key,source_family,source_locator,snapshot_path,row_count,sha256,metadata_json) VALUES(?,?,?,?,?,?,?)",
+                    (key, family, key, key, 1, "0" * 64, "{}"),
+                )
+            con.execute(
+                """INSERT INTO product_rules(
+                    source_dataset_key,source_row,category,item_seq,ingredient_code,ingredient_name_en,
+                    paired_item_seq,paired_ingredient_code,paired_ingredient_name_en
+                ) VALUES('mfds',1,'combination_contraindication','P1','D000274','Ketorolac Tromethamine','P2','D-BETA','Beta')"""
+            )
+            con.execute(
+                """INSERT INTO product_rules(
+                    source_dataset_key,source_row,category,item_seq,ingredient_code,ingredient_name_en
+                ) VALUES('mfds',2,'elderly_caution','P1','D001289','Ketorolac')"""
+            )
+            con.execute(
+                """INSERT INTO ingredient_rules(
+                    source_dataset_key,source_row,category,ingredient_name,paired_ingredient_name
+                ) VALUES('xlsx',1,'combination_contraindication','Ketorolac','Beta')"""
+            )
+            result = canonical_linking.materialize_product_criterion_links(con)
+            self.assertEqual(result["product_criterion_links"], 1)
+            self.assertEqual(result["unresolved_link_ambiguities"], [])
+            self.assertEqual(
+                con.execute("SELECT match_method FROM product_criterion_links").fetchone()[0],
+                "mfds_ingredient_code",
+            )
+            self.assertEqual(
+                con.execute("SELECT ingredient_code FROM product_rules WHERE category='elderly_caution'").fetchone()[0],
+                "D001289",
+            )
+        finally:
+            con.close()
+
+    def test_new_unhandled_code_ambiguity_is_reported(self) -> None:
+        con = sqlite3.connect(":memory:")
+        try:
+            con.executescript(SCHEMA)
+            for key, family in (("mfds", "mfds_dur_item_api"), ("xlsx", "kids_mfds_xlsx")):
+                con.execute(
+                    "INSERT INTO source_snapshots(dataset_key,source_family,source_locator,snapshot_path,row_count,sha256,metadata_json) VALUES(?,?,?,?,?,?,?)",
+                    (key, family, key, key, 1, "0" * 64, "{}"),
+                )
+            con.executemany(
+                """INSERT INTO product_rules(
+                    source_dataset_key,source_row,category,item_seq,ingredient_code,ingredient_name_en,
+                    paired_item_seq,paired_ingredient_code,paired_ingredient_name_en
+                ) VALUES('mfds',?,?,?,?,?,?,?,?)""",
+                [
+                    (1, 'combination_contraindication', 'P1', 'D-FUTURE-1', 'FutureDrug Salt', 'P2', 'D-BETA', 'Beta'),
+                    (2, 'age_contraindication', 'P3', 'D-FUTURE-1', 'FutureDrug', None, None, None),
+                    (3, 'pregnancy_contraindication', 'P4', 'D-FUTURE-2', 'FutureDrug', None, None, None),
+                ],
+            )
+            con.execute(
+                """INSERT INTO ingredient_rules(
+                    source_dataset_key,source_row,category,ingredient_name,paired_ingredient_name
+                ) VALUES('xlsx',1,'combination_contraindication','FutureDrug','Beta')"""
+            )
+            result = canonical_linking.materialize_product_criterion_links(con)
+            self.assertEqual(result["product_criterion_links"], 0)
+            self.assertEqual(
+                result["unresolved_link_ambiguities"],
+                [{
+                    "category": "combination_contraindication",
+                    "ingredient_name": "FutureDrug",
+                    "candidate_codes": ["D-FUTURE-1", "D-FUTURE-2"],
+                }],
+            )
+        finally:
+            con.close()
+
+    def test_verify_rejects_persisted_unhandled_link_ambiguity(self) -> None:
+        self._build()
+        ambiguity = [{
+            "category": "combination_contraindication",
+            "ingredient_name": "FutureDrug",
+            "candidate_codes": ["D-FUTURE-1", "D-FUTURE-2"],
+        }]
+        with closing(sqlite3.connect(self.db)) as con:
+            con.execute(
+                "UPDATE canonical_meta SET value=? WHERE key='unresolved_link_ambiguities'",
+                (json.dumps(ambiguity),),
+            )
+            con.commit()
+        stats = canonical_stats(self.db)
+        self.assertEqual(stats["unresolved_link_ambiguity_count"], 1)
+        self.assertEqual(stats["unresolved_link_ambiguities"], ambiguity)
+        verification = verify_canonical_database(self.db)
+        self.assertEqual(verification["status"], "invalid")
+        self.assertIn("FutureDrug", " ".join(verification["errors"]))
 
     def test_declares_all_expected_live_dur_endpoints(self) -> None:
         self.assertEqual(len(DUR_ENDPOINTS), 9)

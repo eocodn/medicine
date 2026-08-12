@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -89,6 +90,7 @@ def canonical_stats(db_path: str | Path) -> dict:
             "SELECT COUNT(*) FROM product_flags f LEFT JOIN products p ON p.item_seq=f.item_seq WHERE p.item_seq IS NULL"
         ).fetchone()[0]
         meta = dict(con.execute("SELECT key,value FROM canonical_meta").fetchall())
+        unresolved_link_ambiguities = json.loads(meta.get("unresolved_link_ambiguities", "[]"))
     return {
         "db_path": str(path),
         "schema_version": meta.get("schema_version"),
@@ -105,6 +107,8 @@ def canonical_stats(db_path: str | Path) -> dict:
         "criterion_link_coverage": criterion_link_coverage,
         "product_rules_missing_ingredient_identity": missing_product_rule_identity,
         "paired_product_rules_missing_ingredient_identity": missing_paired_rule_identity,
+        "unresolved_link_ambiguities": unresolved_link_ambiguities,
+        "unresolved_link_ambiguity_count": len(unresolved_link_ambiguities),
         "source_snapshots": source_snapshots,
         "source_families": source_families,
         "orphan_product_rules": orphan_rules,
@@ -249,6 +253,15 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 warnings.append(
                     "paired product rules missing MFDS ingredient code/English identity: "
                     f"{stats['paired_product_rules_missing_ingredient_identity']}"
+                )
+            if stats["unresolved_link_ambiguities"]:
+                rendered = "; ".join(
+                    f"{row['category']}:{row['ingredient_name']}=>{','.join(row['candidate_codes'])}"
+                    for row in stats["unresolved_link_ambiguities"][:20]
+                )
+                errors.append(
+                    "unresolved XLSX link code ambiguities: "
+                    f"{stats['unresolved_link_ambiguity_count']} ({rendered})"
                 )
     except sqlite3.DatabaseError as exc:
         errors.append(f"database error: {exc}")

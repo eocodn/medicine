@@ -358,6 +358,15 @@ def assemble_canonical_database(
                     ("schema_version", SCHEMA_VERSION),
                     ("built_at", built_at),
                     ("source_policy", "mfds_permit_api+mfds_dur_item_api+kids_mfds_xlsx"),
+                    (
+                        "unresolved_link_ambiguities",
+                        json.dumps(
+                            link_result["unresolved_link_ambiguities"],
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                    ),
                 ],
             )
             con.commit()

@@ -173,8 +173,11 @@ canonical DB입니다. 현재 앱 평가기는 아직 이 DB를 사용하지 않
 
 상세 DUR API의 `INGR_CODE`/`INGR_ENG_NAME`과 병용 상대 성분 identity를 함께 보존하고,
 동일 카테고리의 XLSX 성분 기준과 연결한 `product_rule_criteria` view를 제공합니다. 영문 성분명이
-직접 일치하면 `english_exact`, API가 같은 `INGR_CODE`에 여러 공식 영문명을 제공하는 경우에는
-`mfds_ingredient_code` 근거로 연결합니다. 임의의 salt stripping이나 legacy alias는 사용하지 않습니다.
+직접 일치하면 `english_exact`, 공식 MFDS 성분코드 identity로 이어지면 `mfds_ingredient_code` 근거로
+연결합니다. 현재 소스에서 확인된 카테고리별 코드 차이는 Ketorolac/Naproxen/Piroxicam/Mizolastine
+4개만 link-time equivalence로 명시하며, 원본 `INGR_CODE`는 변경하지 않습니다. 이후 다른 성분에서
+복수 코드 때문에 fallback이 막히면 자동 추정하지 않고 `stats`에 성분명/후보 코드를 노출하고
+`verify`를 실패시킵니다. 임의의 salt stripping이나 legacy alias는 사용하지 않습니다.
 
 API 원본은 `data/canonical/raw/*.jsonl`에 페이지 순서대로 보존하고 SHA-256 metadata를 함께
 저장합니다. DB의 각 행은 `source_dataset_key + source_row`로 원본 행을 추적하며, DB 재조립 시
@@ -187,11 +190,11 @@ API 원본은 `data/canonical/raw/*.jsonl`에 페이지 순서대로 보존하�
 - `ITEM_SEQ` 상세 제품규칙 834,286행
 - 품목 플래그 43,295행
 - XLSX 성분/기준 규칙 4,172행
-- 제품 DUR ↔ XLSX 기준 링크 722,470행 / 연결된 제품규칙 722,368행
-- 링크 방식: 영문명 직접 일치 153,808행 / MFDS 성분코드 연결 568,662행
+- 제품 DUR ↔ XLSX 기준 링크 782,146행 / 연결된 제품규칙 782,044행
+- 링크 방식: 영문명 직접 일치 153,808행 / MFDS 성분코드 연결 628,338행
 - source snapshot 18개 = 허가 API 1 + DUR API 9 + XLSX 8
 - 상세/상대/플래그 ITEM_SEQ orphan 0건
-- SQLite 약 627.9MB
+- SQLite 약 633.7MB
 
 전체 최신 API를 다시 받고 원자적으로 재구축:
 
