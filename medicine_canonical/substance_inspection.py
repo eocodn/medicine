@@ -37,6 +37,10 @@ def substance_stats(db_path: str | Path) -> dict:
             """SELECT COUNT(*) FROM substance_match_candidates
                WHERE selected=1 AND match_method='approved_typo_alias'"""
         ).fetchone()[0]
+        approved_nomenclature_matches = con.execute(
+            """SELECT COUNT(*) FROM substance_match_candidates
+               WHERE selected=1 AND match_method='approved_nomenclature_alias'"""
+        ).fetchone()[0]
         unsolved_reasons = {
             row[0]: row[1]
             for row in con.execute(
@@ -78,6 +82,16 @@ def substance_stats(db_path: str | Path) -> dict:
         "approved_typo_corpus_rows": int(meta.get("approved_typo_corpus_rows", "0")),
         "active_approved_typo_rows": int(meta.get("active_approved_typo_rows", "0")),
         "approved_typo_corpus_sha256": meta.get("approved_typo_corpus_sha256"),
+        "approved_nomenclature_alias_matches": approved_nomenclature_matches,
+        "approved_nomenclature_corpus_rows": int(
+            meta.get("approved_nomenclature_corpus_rows", "0")
+        ),
+        "active_approved_nomenclature_rows": int(
+            meta.get("active_approved_nomenclature_rows", "0")
+        ),
+        "approved_nomenclature_corpus_sha256": meta.get(
+            "approved_nomenclature_corpus_sha256"
+        ),
         "substance_relations": relations,
         "source_families": source_families,
         "size_bytes": path.stat().st_size,

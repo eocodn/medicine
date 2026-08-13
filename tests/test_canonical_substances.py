@@ -319,6 +319,51 @@ class CanonicalSubstanceTest(unittest.TestCase):
         verification = verify_substance_database(self.substance_db)
         self.assertEqual(verification["status"], "verified")
 
+    def test_build_applies_only_active_reviewed_nomenclature_alias(self) -> None:
+        with closing(sqlite3.connect(self.canonical_db)) as con:
+            con.execute(
+                """INSERT INTO ingredient_rules(
+                       source_dataset_key,source_row,category,ingredient_name,ingredient_name_ko
+                   ) VALUES('kids_mfds_xlsx:age',16,'age_contraindication',?,?)""",
+                ("Atorvastatin Calcium Hydrate", "아토르바스타틴칼슘수화물"),
+            )
+            con.commit()
+        self._write_unii_snapshot()
+        self._write_gsrs_names_snapshot(
+            [
+                ("GAMMA", "cn", "UNIIGAMMA1", "GAMMA PREFERRED"),
+                ("GAMMA SYNONYM", "cn", "UNIIGAMMA1", "GAMMA PREFERRED"),
+                ("FOLLITROPIN DELTA", "of", "UNIIFOLLID", "FOLLITROPIN DELTA"),
+                ("FLORBETABEN (18F)", "of", "UNIIFLOR18", "FLORBETABEN F18"),
+                ("ST JOHN'S WORT", "cn", "UNIISTJOHN", "ST JOHN'S WORT"),
+                ("ALPHA", "bn", "UNIIALPHA0", "ALPHA PREFERRED"),
+                (
+                    "ATORVASTATIN CALCIUM HYDRATE [JAN]",
+                    "cn",
+                    "48A5M73Z4Q",
+                    "ATORVASTATIN CALCIUM TRIHYDRATE",
+                ),
+            ]
+        )
+
+        result = assemble_substance_database(self.substance_db, self.canonical_db, self.raw_dir)
+        self.assertEqual(result["approved_nomenclature_alias_matches"], 1)
+        self.assertEqual(result["active_approved_nomenclature_rows"], 1)
+        with closing(sqlite3.connect(self.substance_db)) as con:
+            row = con.execute(
+                """SELECT c.value,c.external_name,c.match_method
+                   FROM substance_match_candidates c
+                   WHERE c.normalized_name='atorvastatin calcium hydrate'"""
+            ).fetchone()
+        self.assertEqual(
+            row,
+            (
+                "48A5M73Z4Q",
+                "ATORVASTATIN CALCIUM HYDRATE [JAN]",
+                "approved_nomenclature_alias",
+            ),
+        )
+
     def test_sync_openfda_unii_is_atomic_and_preserves_provenance(self) -> None:
         records = [
             {"substance_name": "ALPHA", "unii": "UNIIALPHA1"},

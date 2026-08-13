@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .substance_external import ExternalEvidence
+from .substance_nomenclature_corpus import ApprovedNomenclatureAlias
 from .substance_typo_corpus import ApprovedTypoAlias
 
 
@@ -40,15 +41,44 @@ _GREEK_WORDS = {"α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta"}
 MATCH_METHOD_PRIORITY = {
     "normalized_name_exact": 0,
     "approved_typo_alias": 1,
-    "source_wrapper_exact": 2,
-    "source_declared_alias": 3,
-    "typography_greek": 4,
-    "typography_apostrophe": 5,
-    "typography_isotope": 6,
+    "approved_nomenclature_alias": 2,
+    "source_wrapper_exact": 3,
+    "source_declared_alias": 4,
+    "typography_greek": 5,
+    "typography_apostrophe": 6,
+    "typography_isotope": 7,
 }
 
 _FORM_RELATION_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (
+        re.compile(r"^dilute\s+(.+?)\s+\(\s*\1\s+[^)]*\)$", re.IGNORECASE),
+        "formulation_of",
+        "dilute_carrier_material",
+    ),
+    (
+        re.compile(r"^dilute\s+(.+?)\s+solution$", re.IGNORECASE),
+        "formulation_of",
+        "dilute_solution",
+    ),
+    (re.compile(r"^dilute\s+(.+)$", re.IGNORECASE), "formulation_of", "dilute"),
+    (
+        re.compile(r"^(.+?)\s*\(\s*micronized\s*\)$", re.IGNORECASE),
+        "physical_form_of",
+        "micronized",
+    ),
     (re.compile(r"^(.*?)\s+\(?micronized\)?$", re.IGNORECASE), "physical_form_of", "micronized"),
+    (re.compile(r"^(.+?)\s+pellets$", re.IGNORECASE), "formulation_of", "pellets"),
+    (
+        re.compile(r"^(.+?)\s+concentrate\s+solution(?:\s+\d+(?:\.\d+)?%)?$", re.IGNORECASE),
+        "formulation_of",
+        "concentrate_solution",
+    ),
+    (
+        re.compile(r"^(.+?)\s+solution(?:\s+\d+(?:\.\d+)?%)?$", re.IGNORECASE),
+        "formulation_of",
+        "solution",
+    ),
+    (re.compile(r"^(.+?)\s+concentrate$", re.IGNORECASE), "formulation_of", "concentrate"),
     (re.compile(r"^(.*?)\s+solid dispersions?$", re.IGNORECASE), "formulation_of", "solid_dispersion"),
     (
         re.compile(r"^(.*?)\s+coated granules(?:\s*\(?\d+(?:\.\d+)?%\)?)?$", re.IGNORECASE),
@@ -206,18 +236,51 @@ def _approved_typo_candidate(
     ]
 
 
+def _approved_nomenclature_candidate(
+    local_name: str,
+    external: dict[str, dict[str, ExternalEvidence]],
+    normalize_name: Callable[[object], str],
+    approved_aliases: dict[str, ApprovedNomenclatureAlias],
+) -> list[MatchEvidence]:
+    row = approved_aliases.get(normalize_name(local_name))
+    if row is None:
+        return []
+    candidates = external.get(normalize_name(row.external_evidence_name), {})
+    evidence = candidates.get(row.target_unii)
+    if evidence is None or len(candidates) != 1:
+        return []
+    return [
+        MatchEvidence(
+            unii=row.target_unii,
+            external_name=row.external_evidence_name,
+            dataset_key=evidence.dataset_key,
+            match_method="approved_nomenclature_alias",
+        )
+    ]
+
+
 def candidates_for_local_name(
     local_name: str,
     external: dict[str, dict[str, ExternalEvidence]],
     normalize_name: Callable[[object], str],
     *,
     approved_typos: dict[str, ApprovedTypoAlias] | None = None,
+    approved_nomenclature_aliases: dict[str, ApprovedNomenclatureAlias] | None = None,
 ) -> list[MatchEvidence]:
     exact = _all_exact(local_name, external, normalize_name)
     if exact:
         return exact
     if approved_typos:
         candidate = _approved_typo_candidate(local_name, external, normalize_name, approved_typos)
+        if candidate:
+            return candidate
+    if approved_nomenclature_aliases:
+        candidate = _approved_nomenclature_candidate(
+            local_name,
+            external,
+            normalize_name,
+            approved_nomenclature_aliases,
+        )
         if candidate:
             return candidate
     for resolver in (_wrapper_candidate, _declared_alias_candidate, _typography_candidate):

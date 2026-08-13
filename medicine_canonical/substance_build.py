@@ -28,19 +28,18 @@ from .substance_matching import (
     candidates_for_local_name,
     relation_for_local_name,
 )
+from .substance_reviewed_aliases import (
+    ActiveReviewedAliases,
+    load_reviewed_alias_corpora,
+    reviewed_alias_meta_rows,
+    validate_active_reviewed_aliases,
+)
 from .substance_schema import SUBSTANCE_SCHEMA, SUBSTANCE_SCHEMA_VERSION
 from .substance_sources import sync_substance_identity_sources
 from .substance_text import (
     normalize_substance_name,
     split_top_level as _split_top_level,
     text_or_none as _text,
-)
-from .substance_typo_corpus import (
-    APPROVED_TYPO_CORPUS_PATH,
-    ApprovedTypoAlias,
-    corpus_sha256,
-    load_approved_typo_corpus,
-    validate_approved_typo_corpus,
 )
 
 
@@ -258,7 +257,7 @@ def _insert_substance_layer(
     con: sqlite3.Connection,
     observations: list[SourceIdentity],
     external: dict[str, dict[str, ExternalEvidence]],
-    approved_typos: dict[str, ApprovedTypoAlias],
+    reviewed_aliases: ActiveReviewedAliases,
 ) -> None:
     by_name: dict[str, list[SourceIdentity]] = defaultdict(list)
     for observation in observations:
@@ -277,7 +276,8 @@ def _insert_substance_layer(
             representative,
             external,
             normalize_substance_name,
-            approved_typos=approved_typos,
+            approved_typos=reviewed_aliases.typos,
+            approved_nomenclature_aliases=reviewed_aliases.nomenclature,
         )
         evidence_by_unii = {row.unii: row for row in evidence_rows}
         name_evidence[normalized_name] = evidence_by_unii
@@ -464,8 +464,7 @@ def assemble_substance_database(
         gsrs_names_data,
         normalize_substance_name,
     )
-    typo_corpus = load_approved_typo_corpus(APPROVED_TYPO_CORPUS_PATH, normalize_substance_name)
-    typo_corpus_hash = corpus_sha256(APPROVED_TYPO_CORPUS_PATH)
+    reviewed_corpora = load_reviewed_alias_corpora(normalize_substance_name)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     temp = db_path.with_name(db_path.name + ".tmp")
     temp.unlink(missing_ok=True)
@@ -503,11 +502,11 @@ def assemble_substance_database(
                 source,
                 set(external),
             )
-            approved_typos = validate_approved_typo_corpus(
-                typo_corpus,
+            reviewed_aliases = validate_active_reviewed_aliases(
+                reviewed_corpora,
                 external,
                 normalize_substance_name,
-                active_observed_names={row.normalized_name for row in observations},
+                {row.normalized_name for row in observations},
             )
             con.executemany(
                 """INSERT INTO source_unparsed_expressions(
@@ -515,7 +514,7 @@ def assemble_substance_database(
                    ) VALUES(?,?,?,?,?)""",
                 unparsed,
             )
-            _insert_substance_layer(con, observations, external, approved_typos)
+            _insert_substance_layer(con, observations, external, reviewed_aliases)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(
                 "INSERT INTO substance_meta(key,value) VALUES(?,?)",
@@ -526,11 +525,9 @@ def assemble_substance_database(
                     ("canonical_source_fingerprint", fingerprint),
                     (
                         "external_identity_policy",
-                        "openfda_preferred_or_gsrs_of_cn_sys_exact_plus_reviewed_typo_and_explicit_source_structure",
+                        "openfda_preferred_or_gsrs_of_cn_sys_exact_plus_reviewed_aliases_and_explicit_source_structure",
                     ),
-                    ("approved_typo_corpus_rows", str(len(typo_corpus))),
-                    ("active_approved_typo_rows", str(len(approved_typos))),
-                    ("approved_typo_corpus_sha256", typo_corpus_hash),
+                    *reviewed_alias_meta_rows(reviewed_corpora, reviewed_aliases),
                     (
                         "relation_policy",
                         "explicit_source_form_relations_only_no_chemical_suffix_inference",
