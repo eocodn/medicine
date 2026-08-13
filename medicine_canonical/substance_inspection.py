@@ -18,6 +18,9 @@ def substance_stats(db_path: str | Path) -> dict:
         resolved = con.execute(
             "SELECT COUNT(*) FROM substances WHERE identity_status='resolved_external_exact'"
         ).fetchone()[0]
+        resolved_structured = con.execute(
+            "SELECT COUNT(*) FROM substances WHERE identity_status='resolved_external_structured'"
+        ).fetchone()[0]
         unsolved = con.execute(
             "SELECT COUNT(*) FROM substances WHERE identity_status='local_exact_unsolved'"
         ).fetchone()[0]
@@ -55,6 +58,8 @@ def substance_stats(db_path: str | Path) -> dict:
         "substances": substances,
         "local_exact_names": local_exact_names,
         "resolved_external_exact": resolved,
+        "resolved_external_structured": resolved_structured,
+        "resolved_external_total": resolved + resolved_structured,
         "unsolved_substances": unsolved,
         "unsolved_reasons": unsolved_reasons,
         "source_identities": source_identities,
@@ -174,7 +179,8 @@ def verify_substance_database(db_path: str | Path) -> dict:
                 """SELECT COUNT(*) FROM substances s
                    LEFT JOIN substance_identifiers i
                      ON i.substance_id=s.substance_id AND i.system='UNII'
-                   WHERE s.identity_status='resolved_external_exact' AND i.substance_id IS NULL"""
+                   WHERE s.identity_status IN ('resolved_external_exact','resolved_external_structured')
+                     AND i.substance_id IS NULL"""
             ).fetchone()[0]
             if missing_resolved_ids:
                 errors.append(f"resolved substances missing UNII: {missing_resolved_ids}")

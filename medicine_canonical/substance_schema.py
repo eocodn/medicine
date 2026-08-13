@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SUBSTANCE_SCHEMA_VERSION = "1"
+SUBSTANCE_SCHEMA_VERSION = "2"
 
 
 SUBSTANCE_SCHEMA = r"""
@@ -32,7 +32,11 @@ CREATE TABLE substances (
     substance_id TEXT PRIMARY KEY,
     canonical_name TEXT NOT NULL,
     identity_status TEXT NOT NULL CHECK(
-        identity_status IN ('resolved_external_exact','local_exact_unsolved')
+        identity_status IN (
+            'resolved_external_exact',
+            'resolved_external_structured',
+            'local_exact_unsolved'
+        )
     )
 );
 CREATE INDEX idx_substances_status ON substances(identity_status);
@@ -78,7 +82,7 @@ CREATE TABLE substance_match_candidates (
     system TEXT NOT NULL,
     value TEXT NOT NULL,
     external_name TEXT NOT NULL,
-    match_method TEXT NOT NULL CHECK(match_method='normalized_name_exact'),
+    match_method TEXT NOT NULL CHECK(match_method IN ('normalized_name_exact','source_wrapper_exact','source_declared_alias','typography_greek','typography_apostrophe','typography_isotope')),
     evidence_source_dataset_key TEXT NOT NULL REFERENCES source_snapshots(dataset_key),
     selected INTEGER NOT NULL CHECK(selected IN (0,1)),
     PRIMARY KEY(normalized_name,system,value)
@@ -90,7 +94,7 @@ CREATE TABLE substance_identifiers (
     system TEXT NOT NULL,
     value TEXT NOT NULL,
     evidence_source_dataset_key TEXT NOT NULL REFERENCES source_snapshots(dataset_key),
-    match_method TEXT NOT NULL CHECK(match_method='normalized_name_exact'),
+    match_method TEXT NOT NULL CHECK(match_method IN ('normalized_name_exact','source_wrapper_exact','source_declared_alias','typography_greek','typography_apostrophe','typography_isotope')),
     PRIMARY KEY(substance_id,system),
     UNIQUE(system,value)
 ) WITHOUT ROWID;

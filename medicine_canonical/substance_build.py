@@ -22,11 +22,9 @@ from .substance_external import (
     load_openfda_unii_snapshot,
 )
 from .substance_inspection import substance_stats, verify_substance_database
+from .substance_matching import MatchEvidence, candidates_for_local_name
 from .substance_schema import SUBSTANCE_SCHEMA, SUBSTANCE_SCHEMA_VERSION
-from .substance_sources import (
-    OPENFDA_UNII_DATASET_KEY,
-    sync_substance_identity_sources,
-)
+from .substance_sources import sync_substance_identity_sources
 
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
@@ -308,17 +306,19 @@ def _insert_substance_layer(
     for observation in observations:
         by_name[observation.normalized_name].append(observation)
     name_to_substance: dict[str, str] = {}
-    name_candidates: dict[str, list[str]] = {}
+    name_evidence: dict[str, dict[str, MatchEvidence]] = {}
     group_names: dict[str, list[str]] = defaultdict(list)
     group_unii: dict[str, str] = {}
 
-    # Decide each exact local spelling independently before grouping. A unique
-    # exact UNII match may converge multiple spellings into one substance, while
-    # ambiguous names remain separate and observable even if one candidate UNII
-    # is selected by some other spelling.
+    # Exact external matches remain highest priority. Structured matching is only
+    # admitted for explicit source wrappers/aliases and tightly scoped typography
+    # transformations; ambiguous exact names never fall through to those rules.
     for normalized_name in sorted(by_name):
-        candidate_uniis = sorted(external.get(normalized_name, {}))
-        name_candidates[normalized_name] = candidate_uniis
+        representative = _representative_name(by_name[normalized_name])
+        evidence_rows = candidates_for_local_name(representative, external, normalize_substance_name)
+        evidence_by_unii = {row.unii: row for row in evidence_rows}
+        name_evidence[normalized_name] = evidence_by_unii
+        candidate_uniis = sorted(evidence_by_unii)
         if len(candidate_uniis) == 1:
             unii = candidate_uniis[0]
             substance_id = _stable_external_substance_id("UNII", unii)
@@ -328,85 +328,76 @@ def _insert_substance_layer(
         name_to_substance[normalized_name] = substance_id
         group_names[substance_id].append(normalized_name)
 
+    method_priority = {
+        "normalized_name_exact": 0,
+        "source_wrapper_exact": 1,
+        "source_declared_alias": 2,
+        "typography_greek": 3,
+        "typography_apostrophe": 4,
+        "typography_isotope": 5,
+    }
+
     for substance_id in sorted(group_names):
         normalized_names = sorted(group_names[substance_id])
         grouped_rows = [row for name in normalized_names for row in by_name[name]]
         resolved = substance_id in group_unii
+        selected_evidence: list[MatchEvidence] = []
+        if resolved:
+            selected_unii = group_unii[substance_id]
+            selected_evidence = [
+                name_evidence[name][selected_unii]
+                for name in normalized_names
+                if selected_unii in name_evidence[name]
+            ]
+        has_exact = any(row.match_method == "normalized_name_exact" for row in selected_evidence)
+        identity_status = (
+            "resolved_external_exact"
+            if resolved and has_exact
+            else "resolved_external_structured"
+            if resolved
+            else "local_exact_unsolved"
+        )
         con.execute(
             "INSERT INTO substances(substance_id,canonical_name,identity_status) VALUES(?,?,?)",
-            (
-                substance_id,
-                _representative_name(grouped_rows),
-                "resolved_external_exact" if resolved else "local_exact_unsolved",
-            ),
+            (substance_id, _representative_name(grouped_rows), identity_status),
         )
         for normalized_name in normalized_names:
             con.execute(
                 "INSERT INTO substance_names(normalized_name,substance_id,representative_name) VALUES(?,?,?)",
-                (
-                    normalized_name,
-                    substance_id,
-                    _representative_name(by_name[normalized_name]),
-                ),
+                (normalized_name, substance_id, _representative_name(by_name[normalized_name])),
             )
 
         if resolved:
-            selected_unii = group_unii[substance_id]
-            evidence_sources = {
-                external[name][selected_unii].dataset_key
-                for name in normalized_names
-                if selected_unii in external.get(name, {})
-            }
-            evidence_source = (
-                OPENFDA_UNII_DATASET_KEY
-                if OPENFDA_UNII_DATASET_KEY in evidence_sources
-                else sorted(evidence_sources)[0]
-            )
+            best = sorted(
+                selected_evidence,
+                key=lambda row: (method_priority[row.match_method], row.dataset_key, row.external_name),
+            )[0]
             con.execute(
                 """INSERT INTO substance_identifiers(
                        substance_id,system,value,evidence_source_dataset_key,match_method
                    ) VALUES(?,?,?,?,?)""",
-                (
-                    substance_id,
-                    "UNII",
-                    selected_unii,
-                    evidence_source,
-                    "normalized_name_exact",
-                ),
+                (substance_id, "UNII", group_unii[substance_id], best.dataset_key, best.match_method),
             )
 
         for normalized_name in normalized_names:
-            candidate_map = external.get(normalized_name, {})
-            candidate_uniis = name_candidates[normalized_name]
+            candidate_map = name_evidence[normalized_name]
+            candidate_uniis = sorted(candidate_map)
             selected_unii = group_unii.get(substance_id)
             for unii in candidate_uniis:
                 evidence = candidate_map[unii]
-                external_name = sorted(
-                    evidence.names, key=lambda value: (value.casefold(), value)
-                )[0]
                 con.execute(
                     """INSERT INTO substance_match_candidates(
                            substance_id,normalized_name,system,value,external_name,match_method,
                            evidence_source_dataset_key,selected
                        ) VALUES(?,?,?,?,?,?,?,?)""",
                     (
-                        substance_id,
-                        normalized_name,
-                        "UNII",
-                        unii,
-                        external_name,
-                        "normalized_name_exact",
-                        evidence.dataset_key,
-                        1 if selected_unii == unii else 0,
+                        substance_id, normalized_name, "UNII", unii, evidence.external_name,
+                        evidence.match_method, evidence.dataset_key, 1 if selected_unii == unii else 0,
                     ),
                 )
             if resolved:
                 continue
-            reason = (
-                "external_exact_multiple_matches"
-                if candidate_uniis
-                else "external_exact_no_match"
-            )
+            reason = "external_exact_multiple_matches" if candidate_uniis else "external_exact_no_match"
             con.execute(
                 "INSERT INTO substance_unsolved(substance_id,reason,detail_json) VALUES(?,?,?)",
                 (
@@ -414,9 +405,7 @@ def _insert_substance_layer(
                     reason,
                     json.dumps(
                         {"normalized_name": normalized_name, "candidate_uniis": candidate_uniis},
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        sort_keys=True,
+                        ensure_ascii=False, separators=(",", ":"), sort_keys=True,
                     ),
                 ),
             )
@@ -428,15 +417,8 @@ def _insert_substance_layer(
            ) VALUES(?,?,?,?,?,?,?,?,?)""",
         [
             (
-                row.dataset_key,
-                row.scope,
-                row.source_row,
-                row.ingredient_code,
-                row.name_en,
-                row.name_ko,
-                row.normalized_name,
-                row.occurrence_count,
-                name_to_substance[row.normalized_name],
+                row.dataset_key, row.scope, row.source_row, row.ingredient_code, row.name_en, row.name_ko,
+                row.normalized_name, row.occurrence_count, name_to_substance[row.normalized_name],
             )
             for row in observations
         ],
@@ -514,9 +496,9 @@ def assemble_substance_database(
                     ("canonical_source_fingerprint", fingerprint),
                     (
                         "external_identity_policy",
-                        "openfda_preferred_or_gsrs_of_cn_sys_normalized_name_exact_only",
+                        "openfda_preferred_or_gsrs_of_cn_sys_exact_plus_explicit_source_structure",
                     ),
-                    ("relation_policy", "no_automatic_relations_in_v1"),
+                    ("relation_policy", "no_automatic_relations"),
                 ],
             )
             con.commit()
