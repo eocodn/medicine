@@ -332,6 +332,24 @@ def _import_dur_snapshots(con: sqlite3.Connection, raw_dir: Path) -> tuple[int, 
     return rule_rows, flag_rows
 
 
+def populate_canonical_source_tables(
+    con: sqlite3.Connection,
+    kids_dir: str | Path,
+    raw_dir: str | Path,
+) -> dict:
+    """Populate authoritative MFDS/KIDS source tables without identity linking."""
+    raw_root = Path(raw_dir)
+    permit_rows = _import_permit_snapshot(con, raw_root)
+    product_rule_rows, product_flag_rows = _import_dur_snapshots(con, raw_root)
+    xlsx_result = import_xlsx_sources(con, Path(kids_dir))
+    return {
+        "permit_source_rows": permit_rows,
+        "product_rule_rows_imported": product_rule_rows,
+        "product_flag_rows_imported": product_flag_rows,
+        "ingredient_rule_rows_imported": xlsx_result["ingredient_rules"],
+    }
+
+
 def assemble_canonical_database(
     db_path: str | Path,
     kids_dir: str | Path,
@@ -347,9 +365,7 @@ def assemble_canonical_database(
         with closing(sqlite3.connect(temp)) as con:
             con.executescript(SCHEMA)
             con.execute("BEGIN")
-            permit_rows = _import_permit_snapshot(con, raw_root)
-            product_rule_rows, product_flag_rows = _import_dur_snapshots(con, raw_root)
-            xlsx_result = import_xlsx_sources(con, kids_dir)
+            source_result = populate_canonical_source_tables(con, kids_dir, raw_root)
             link_result = materialize_product_criterion_links(con)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(
@@ -383,10 +399,7 @@ def assemble_canonical_database(
     stats = canonical_stats(db_path)
     stats.update(
         {
-            "permit_source_rows": permit_rows,
-            "product_rule_rows_imported": product_rule_rows,
-            "product_flag_rows_imported": product_flag_rows,
-            "ingredient_rule_rows_imported": xlsx_result["ingredient_rules"],
+            **source_result,
             **link_result,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "raw_dir": str(raw_root),

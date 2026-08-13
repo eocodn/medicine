@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 CORE_SOURCE_FAMILIES = frozenset({"mfds_permit_api", "mfds_dur_item_api", "kids_mfds_xlsx"})
 
 SCHEMA = r"""
@@ -117,6 +117,103 @@ CREATE INDEX idx_ingredient_rules_category ON ingredient_rules(category);
 CREATE INDEX idx_ingredient_rules_name ON ingredient_rules(ingredient_name);
 CREATE INDEX idx_ingredient_rules_name_ko ON ingredient_rules(ingredient_name_ko);
 CREATE INDEX idx_ingredient_rules_pair ON ingredient_rules(paired_ingredient_name);
+
+-- DUR ingredient codes are regulatory applicability concepts, not precise
+-- chemical identities. Keep this bridge separate from canonical substances so
+-- salts/hydrates/esters may remain distinct substances while still sharing the
+-- same Korean DUR scope when the official product-rule graph establishes it.
+CREATE TABLE dur_ingredient_concepts (
+    concept_id TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    ingredient_code TEXT NOT NULL,
+    UNIQUE(category, ingredient_code)
+);
+CREATE INDEX idx_dur_concepts_category_code
+    ON dur_ingredient_concepts(category, ingredient_code);
+
+CREATE TABLE dur_ingredient_code_map (
+    category TEXT NOT NULL,
+    source_ingredient_code TEXT NOT NULL,
+    canonical_ingredient_code TEXT NOT NULL,
+    concept_id TEXT NOT NULL REFERENCES dur_ingredient_concepts(concept_id),
+    PRIMARY KEY(category, source_ingredient_code)
+) WITHOUT ROWID;
+CREATE INDEX idx_dur_code_map_concept ON dur_ingredient_code_map(concept_id);
+
+CREATE TABLE dur_concept_substances (
+    concept_id TEXT NOT NULL REFERENCES dur_ingredient_concepts(concept_id),
+    category TEXT NOT NULL,
+    ingredient_code TEXT NOT NULL,
+    substance_id TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL CHECK(evidence_kind='direct_source_identity'),
+    PRIMARY KEY(concept_id, substance_id, source_name)
+) WITHOUT ROWID;
+CREATE INDEX idx_dur_concept_substances_substance
+    ON dur_concept_substances(substance_id);
+
+CREATE TABLE dur_product_item_signatures (
+    item_seq TEXT NOT NULL,
+    signature_type TEXT NOT NULL CHECK(signature_type IN ('code','hybrid')),
+    signature_key TEXT NOT NULL,
+    component_count INTEGER NOT NULL CHECK(component_count > 0),
+    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','permit_composition')),
+    evidence_kind TEXT NOT NULL,
+    PRIMARY KEY(item_seq, signature_type, signature_key)
+) WITHOUT ROWID;
+CREATE INDEX idx_dur_product_item_signatures_lookup
+    ON dur_product_item_signatures(signature_type, signature_key);
+
+CREATE TABLE dur_criterion_signatures (
+    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
+    category TEXT NOT NULL,
+    effect_key TEXT NOT NULL,
+    signature_type TEXT NOT NULL CHECK(signature_type IN ('code','rule_value')),
+    signature_key TEXT NOT NULL,
+    qualifier TEXT,
+    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','ingredient_preprocessed','permit_composition','rule_value_identity')),
+    evidence_kind TEXT NOT NULL,
+    PRIMARY KEY(criterion_rule_id, signature_type, signature_key)
+) WITHOUT ROWID;
+CREATE INDEX idx_dur_criterion_signatures_lookup
+    ON dur_criterion_signatures(category, effect_key, signature_type, signature_key);
+
+CREATE TABLE dur_criterion_pair_signatures (
+    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
+    signature_type TEXT NOT NULL CHECK(signature_type IN ('code','hybrid')),
+    left_signature_key TEXT NOT NULL,
+    right_signature_key TEXT NOT NULL,
+    left_qualifier TEXT,
+    right_qualifier TEXT,
+    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','ingredient_preprocessed','permit_composition')),
+    evidence_kind TEXT NOT NULL,
+    PRIMARY KEY(criterion_rule_id, signature_type, left_signature_key, right_signature_key)
+) WITHOUT ROWID;
+CREATE INDEX idx_dur_pair_signatures_lookup
+    ON dur_criterion_pair_signatures(signature_type, left_signature_key, right_signature_key);
+
+CREATE TABLE dur_single_ambiguities (
+    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
+    category TEXT NOT NULL,
+    effect_key TEXT NOT NULL,
+    signature_key TEXT NOT NULL,
+    record_json TEXT NOT NULL,
+    rule_value TEXT,
+    dosage_form TEXT,
+    PRIMARY KEY(criterion_rule_id, signature_key)
+) WITHOUT ROWID;
+CREATE INDEX idx_dur_single_ambiguities_lookup
+    ON dur_single_ambiguities(category, effect_key, signature_key);
+
+CREATE TABLE dur_pair_ambiguities (
+    left_signature_key TEXT NOT NULL,
+    right_signature_key TEXT NOT NULL,
+    record_key TEXT NOT NULL,
+    record_json TEXT NOT NULL,
+    PRIMARY KEY(left_signature_key, right_signature_key, record_key)
+) WITHOUT ROWID;
+CREATE INDEX idx_dur_pair_ambiguities_lookup
+    ON dur_pair_ambiguities(left_signature_key, right_signature_key);
 
 CREATE TABLE product_criterion_links (
     product_rule_id INTEGER NOT NULL REFERENCES product_rules(id),
