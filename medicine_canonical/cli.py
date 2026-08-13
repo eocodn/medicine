@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from .build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
-from .inspection import canonical_product_criteria
+from .inspection import canonical_product_criteria, canonical_product_ingredient_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .sources import sync_canonical_api_sources
 from .substance_build import (
@@ -96,6 +96,16 @@ def build_parser() -> argparse.ArgumentParser:
     criteria.add_argument("--category")
     criteria.add_argument("--limit", type=int, default=100)
     criteria.add_argument("--json", action="store_true")
+
+    ingredient_criteria = sub.add_parser(
+        "ingredient-criteria",
+        help="Show ingredient-only XLSX criteria applicable or unresolved for one ITEM_SEQ product",
+    )
+    ingredient_criteria.add_argument("--db", type=Path, default=DEFAULT_DB)
+    ingredient_criteria.add_argument("--item-seq", required=True)
+    ingredient_criteria.add_argument("--category")
+    ingredient_criteria.add_argument("--limit", type=int, default=100)
+    ingredient_criteria.add_argument("--json", action="store_true")
 
     verify = sub.add_parser("verify", help="Verify canonical source policy, schema and SQLite integrity")
     verify.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -203,6 +213,13 @@ def main(argv=None) -> int:
         payload = canonical_stats(args.db)
     elif args.command == "criteria":
         payload = canonical_product_criteria(
+            args.db,
+            args.item_seq,
+            category=args.category,
+            limit=args.limit,
+        )
+    elif args.command == "ingredient-criteria":
+        payload = canonical_product_ingredient_criteria(
             args.db,
             args.item_seq,
             category=args.category,

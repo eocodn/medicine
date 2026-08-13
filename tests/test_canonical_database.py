@@ -139,6 +139,8 @@ class CanonicalDatabaseTest(unittest.TestCase):
         self.assertEqual(result["ingredient_rules"], 8)
         self.assertEqual(result["product_criterion_links"], 7)
         self.assertEqual(result["linked_product_rules"], 7)
+        self.assertEqual(result["product_ingredient_criterion_links"], 1)
+        self.assertEqual(result["linked_product_ingredient_items"], 1)
         self.assertEqual(result["source_snapshots"], 18)
 
         with closing(sqlite3.connect(self.db)) as con:
@@ -168,6 +170,11 @@ class CanonicalDatabaseTest(unittest.TestCase):
                    FROM product_rule_criteria WHERE category='combination_contraindication'"""
             ).fetchone()
             self.assertEqual(combination_link, ("P1", "P2", "english_exact", "forward"))
+            lactation_link = con.execute(
+                """SELECT item_seq,criterion_ingredient_name,match_method
+                   FROM product_ingredient_criteria WHERE category='lactation_caution'"""
+            ).fetchone()
+            self.assertEqual(lactation_link, ("P1", "Alpha", "dur_scope_signature"))
 
     def test_reassemble_rejects_tampered_api_snapshot(self) -> None:
         self._build()
@@ -229,6 +236,16 @@ class CanonicalDatabaseTest(unittest.TestCase):
             ])
         self.assertEqual(code, 0)
         self.assertIn('"criterion_rule_value": "알파 240mg"', buf.getvalue())
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = canonical_main([
+                "ingredient-criteria", "--db", str(self.db), "--item-seq", "P1",
+                "--category", "lactation_caution", "--json",
+            ])
+        self.assertEqual(code, 0)
+        self.assertIn('"criterion_ingredient_name": "Alpha"', buf.getvalue())
+        self.assertIn('"match_method": "dur_scope_signature"', buf.getvalue())
 
     def test_mfds_api_page_limits_are_enforced(self) -> None:
         self.assertEqual(PERMIT_PAGE_SIZE_MAX, 500)
@@ -350,6 +367,23 @@ class CanonicalDatabaseTest(unittest.TestCase):
         verification = verify_canonical_database(self.db)
         self.assertEqual(verification["status"], "invalid")
         self.assertIn("FutureDrug", " ".join(verification["errors"]))
+
+    def test_verify_rejects_resolved_and_unresolved_ingredient_overlap(self) -> None:
+        self._build()
+        with closing(sqlite3.connect(self.db)) as con:
+            criterion_id = con.execute(
+                "SELECT criterion_rule_id FROM product_ingredient_criterion_links LIMIT 1"
+            ).fetchone()[0]
+            con.execute(
+                """INSERT INTO product_ingredient_criterion_unresolved(
+                       item_seq,criterion_rule_id,category,reason,evidence_json
+                   ) VALUES('P1',?,'lactation_caution','scope_relation_unproven','{}')""",
+                (criterion_id,),
+            )
+            con.commit()
+        verification = verify_canonical_database(self.db)
+        self.assertEqual(verification["status"], "invalid")
+        self.assertIn("resolved/unresolved ingredient applicability overlap", " ".join(verification["errors"]))
 
     def test_declares_all_expected_live_dur_endpoints(self) -> None:
         self.assertEqual(len(DUR_ENDPOINTS), 9)

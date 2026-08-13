@@ -13,6 +13,7 @@ from .build import populate_canonical_source_tables
 from .dur_bridge import materialize_dur_ingredient_bridge
 from .inspection import canonical_stats, verify_canonical_database
 from .linking import materialize_product_criterion_links
+from .product_ingredient_applicability import materialize_product_ingredient_criterion_links
 from .schema import SCHEMA, SCHEMA_VERSION
 from .sources import DurFetchPage, PermitFetchPage, sync_canonical_api_sources
 from .substance_build import assemble_substance_database
@@ -73,6 +74,9 @@ def assemble_integrated_databases(
             con.execute("BEGIN")
             bridge_result = materialize_dur_ingredient_bridge(con, staged_substance)
             link_result = materialize_product_criterion_links(con)
+            ingredient_applicability_result = materialize_product_ingredient_criterion_links(
+                con, staged_substance
+            )
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.execute("DELETE FROM canonical_meta WHERE key IN ('built_at','build_stage','unresolved_link_ambiguities','dur_bridge_substance_schema_version','dur_bridge_substance_source_fingerprint')")
             con.executemany(
@@ -134,6 +138,7 @@ def assemble_integrated_databases(
         "source_import": source_result,
         "dur_bridge": bridge_result,
         "linking": link_result,
+        "ingredient_applicability": ingredient_applicability_result,
         "elapsed_seconds": round(time.monotonic() - started, 3),
     }
 
