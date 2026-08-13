@@ -7,19 +7,17 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from medicine_app.web import create_web_app
-from tests.test_app_core import make_catalog_db, make_dur_db
+from tests.test_app_core import make_canonical_db
 
 
 class WebApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.dur_db = root / "dur.sqlite"
+        self.canonical_db = root / "canonical.sqlite"
         self.personal_db = root / "personal.sqlite"
-        self.catalog_db = root / "catalog.sqlite"
-        make_dur_db(self.dur_db)
-        make_catalog_db(self.catalog_db)
-        self.client = TestClient(create_web_app(self.dur_db, self.personal_db))
+        make_canonical_db(self.canonical_db)
+        self.client = TestClient(create_web_app(self.canonical_db, self.personal_db))
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -283,7 +281,7 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(response.json()[0]["permit_status_name"], "취하")
 
     def test_web_app_requires_canonical_reference_database(self) -> None:
-        missing = self.dur_db.with_name("missing-canonical.sqlite")
+        missing = self.canonical_db.with_name("missing-canonical.sqlite")
         with self.assertRaisesRegex(FileNotFoundError, "canonical database not found"):
             create_web_app(missing, self.personal_db.with_name("other.sqlite"))
 

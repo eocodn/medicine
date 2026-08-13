@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from medicine_app.web import create_web_app
-from tests.test_app_core import make_catalog_db, make_dur_db
+from tests.test_app_core import make_canonical_db
 
 
 class PrescriptionWebApiTest(unittest.TestCase):
@@ -21,12 +21,10 @@ class PrescriptionWebApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.dur_db = root / "dur.sqlite"
+        self.canonical_db = root / "canonical.sqlite"
         self.personal_db = root / "personal.sqlite"
-        self.catalog_db = root / "catalog.sqlite"
-        make_dur_db(self.dur_db)
-        make_catalog_db(self.catalog_db)
-        self.client = TestClient(create_web_app(self.dur_db, self.personal_db))
+        make_canonical_db(self.canonical_db)
+        self.client = TestClient(create_web_app(self.canonical_db, self.personal_db))
 
         person_response = self.client.post(
             "/api/people",

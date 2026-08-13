@@ -11,7 +11,7 @@ from tests.canonical_fixture_support import (
 )
 
 
-def make_dur_db(path: Path) -> None:
+def make_canonical_db(path: Path) -> None:
     con = create_canonical_fixture(path)
     add_product(con, "MFDS-Z", "졸피뎀제품", "Zolpidem", dosage_form="정제")
     add_product(con, "MFDS-ZU", "졸피뎀제형미상제품", "Zolpidem", dosage_form=None)
@@ -46,21 +46,15 @@ def make_dur_db(path: Path) -> None:
     con.close()
 
 
-def make_catalog_db(path: Path) -> None:
-    # Kept only for callers which still supply the deprecated third constructor argument.
-    sqlite3.connect(path).close()
-
 
 class SafetyCoverageV2Test(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.dur_db = root / "canonical.sqlite"
+        self.canonical_db = root / "canonical.sqlite"
         self.personal_db = root / "personal.sqlite"
-        self.catalog_db = root / "catalog.sqlite"
-        make_dur_db(self.dur_db)
-        make_catalog_db(self.catalog_db)
-        self.app = MedicationApp(self.dur_db, self.personal_db)
+        make_canonical_db(self.canonical_db)
+        self.app = MedicationApp(self.canonical_db, self.personal_db)
         self.person = self.app.create_person(
             "사용자", "1990-01-01", "female", "not_pregnant", lactation_status="not_breastfeeding"
         )
@@ -147,7 +141,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
         )
         draft = {"product_ref": "MFDS-Z"}
         first = self.app.preview_medication(breastfeeding["id"], draft)
-        con = sqlite3.connect(self.dur_db)
+        con = sqlite3.connect(self.canonical_db)
         con.execute(
             "UPDATE source_snapshots SET sha256=? WHERE dataset_key=(SELECT dataset_key FROM source_snapshots ORDER BY dataset_key LIMIT 1)",
             ("f" * 64,),
@@ -162,7 +156,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
             "수유", "1990-01-01", "female", "not_pregnant", lactation_status="breastfeeding"
         )
         first = self.app.preview_medication(breastfeeding["id"], {"product_ref": "MFDS-Z"})
-        con = sqlite3.connect(self.dur_db)
+        con = sqlite3.connect(self.canonical_db)
         con.execute(
             "UPDATE ingredient_rules SET details='변경된 수유 주의' WHERE category='lactation_caution' AND ingredient_name='Zolpidem'"
         )

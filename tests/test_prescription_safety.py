@@ -16,7 +16,7 @@ from medicine_app.core import ConfirmationRequired, MedicationApp
 APP_TZ = ZoneInfo("Asia/Seoul")
 
 
-def make_dur_db(path: Path) -> None:
+def make_canonical_db(path: Path) -> None:
     from tests.canonical_fixture_support import create_canonical_fixture, add_product, add_linked_rule
     con = create_canonical_fixture(path)
     add_product(con, "MFDS-SAFE", "정량비교약", "example", manufacturer="예시제약", dosage_form="정제", edi="P-SAFE")
@@ -42,52 +42,15 @@ def make_dur_db(path: Path) -> None:
     con.commit()
     con.close()
 
-def make_catalog_db(path: Path) -> None:
-    con = sqlite3.connect(path)
-    con.executescript(
-        """
-        CREATE TABLE products (
-            item_seq TEXT PRIMARY KEY,
-            product_name TEXT NOT NULL,
-            manufacturer TEXT,
-            ingredient_name TEXT,
-            dosage_form TEXT,
-            edi_code TEXT,
-            permit_date TEXT,
-            cancel_date TEXT,
-            cancel_name TEXT,
-            permit_status TEXT NOT NULL,
-            source TEXT NOT NULL,
-            raw_json TEXT NOT NULL
-        );
-        """
-    )
-    con.executemany(
-        """
-        INSERT INTO products(
-            item_seq,product_name,manufacturer,ingredient_name,dosage_form,
-            edi_code,permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        [
-            ("MFDS-SAFE", "정량비교약", "예시제약", "example", "정제", "P-SAFE", "2020-01-01", None, "정상", "active", "fixture", "{}"),
-            ("MFDS-UNKNOWN", "비교불가약", "예시제약", "unknown", "정제", "P-UNKNOWN", "2020-01-01", None, "정상", "active", "fixture", "{}"),
-        ],
-    )
-    con.commit()
-    con.close()
-
 
 class PrescriptionSafetyTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.dur_db = root / "dur.sqlite"
+        self.canonical_db = root / "canonical.sqlite"
         self.personal_db = root / "personal.sqlite"
-        self.catalog_db = root / "catalog.sqlite"
-        make_dur_db(self.dur_db)
-        make_catalog_db(self.catalog_db)
-        self.app = MedicationApp(self.dur_db, self.personal_db)
+        make_canonical_db(self.canonical_db)
+        self.app = MedicationApp(self.canonical_db, self.personal_db)
         self.person = self.app.create_person("환자", "1990-01-01", "unknown", "unknown")
 
     def tearDown(self) -> None:
@@ -112,7 +75,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
         return preview["quantitative_checks"][name]
 
     def test_full_preview_reports_duration_exceeded_and_dose_within(self) -> None:
-        con = sqlite3.connect(self.dur_db)
+        con = sqlite3.connect(self.canonical_db)
         con.execute(
             "UPDATE product_rules SET details=NULL WHERE item_seq='MFDS-SAFE' AND category='duration_caution'"
         )
@@ -217,7 +180,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
             )
 
     def test_unsupported_source_unit_is_not_evaluable(self) -> None:
-        con = sqlite3.connect(self.dur_db)
+        con = sqlite3.connect(self.canonical_db)
         con.execute(
             "UPDATE ingredient_rules SET rule_value='10 tablets' WHERE id IN (SELECT criterion_rule_id FROM product_criterion_links l JOIN product_rules r ON r.id=l.product_rule_id WHERE r.item_seq='MFDS-SAFE' AND r.category='dose_caution')"
         )
@@ -231,7 +194,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
         self.assertEqual(self._dimension(preview, "dose")["result"], "not_evaluable")
 
     def test_thousands_separator_in_source_threshold_is_supported(self) -> None:
-        con = sqlite3.connect(self.dur_db)
+        con = sqlite3.connect(self.canonical_db)
         con.execute(
             "UPDATE ingredient_rules SET rule_value=?, details=? WHERE id IN (SELECT criterion_rule_id FROM product_criterion_links l JOIN product_rules r ON r.id=l.product_rule_id WHERE r.item_seq='MFDS-SAFE' AND r.category='dose_caution')",
             (
@@ -294,7 +257,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
 
         def initialize(_: int) -> MedicationApp:
             barrier.wait()
-            return MedicationApp(self.dur_db, concurrent_db)
+            return MedicationApp(self.canonical_db, concurrent_db)
 
         with ThreadPoolExecutor(max_workers=12) as executor:
             apps = list(executor.map(initialize, range(12)))

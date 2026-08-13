@@ -32,19 +32,17 @@ docker compose down
 - 여러 사람 프로필을 한 기기에서 분리 관리
   - 이름, 생년월일, 성별, 임신 여부
 - 의약품 검색
-  - 식약처 전체 허가 의약품 `catalog.sqlite`를 필수 검색 소스로 사용
-  - 카탈로그가 없거나 아직 동기화 중이면 사용 불가 상태를 명시하며 DUR 제품목록으로 fallback하지 않음
+  - `canonical.sqlite`의 식약처 허가제품을 `ITEM_SEQ` 기준으로 검색
   - 기본 검색은 허가상태 `정상` 품목만 표시
   - `취소·취하·만료 품목도 검색` 옵션으로 과거 허가 이력 조회 가능
   - 허가상태를 `active / expired / withdrawn / business_closed / canceled`로 정규화
+  - EDI는 검색·표시용 보조 식별자로만 사용하고 안전성 identity로 사용하지 않음
 - 약 추가 전 자동 DUR 확인
   - 식약처 허가품목의 `ITEM_SEQ`를 canonical 제품 식별키로 사용
-  - 상세 DUR 제품코드는 현재 식약처 EDI를 우선 사용하고, EDI가 상세 DUR과 연결되지 않으면 심평원 약가마스터의 `ITEM_SEQ → 제품코드` exact 매핑을 사용
-  - 공식 코드 매핑이 없을 때만 제품명+성분명 정규화 fallback을 사용하며, 공식 매핑이 복수이면 추측하지 않고 판정 제한
-  - 제품코드가 연결되면 제품 단위 상세 DUR 규칙을 우선 확인
-  - 제품코드가 없어도 `ITEM_SEQ`로 확인된 첨가제주의·DUR 품목 유형·서방정분할주의를 놓치지 않음
-  - 제품코드가 없더라도 식약처 성분명이 DUR 성분에 정확히 연결되면 성분 단위 DUR을 함께 확인
-  - 다중 EDI는 실제 DUR 제품과 단일하게 연결되는 경우에만 제품 단위 상세 판정에 사용
+  - MFDS ITEM_SEQ 제품규칙과 최신 XLSX 상세기준을 연결한 canonical product criterion을 직접 평가
+  - 공식 제품규칙은 있으나 상세기준 연결이 확정되지 않은 경우 안전으로 추측하지 않고 `unknown`으로 표시
+  - 수유부주의는 canonical product→ingredient criterion applicability를 사용하며 미확정 범위는 `unknown`으로 표시
+  - EDI/HIRA/제품명 fallback이나 ingredient alias graph를 사용하지 않음
   - 병용금기·효능군 중복은 `active` 플래그만 보지 않고 두 처방의 시작·종료일이 실제로 겹치는지 확인
   - `24/48시간 이내 병용금기`, `특정 성분 투여 중 및 종료 후 N일/N주`처럼 기간과 방향을 확정할 수 있는 원문은 구조화해 washout까지 적용
   - 중단 후 제한이 있다는 사실만 있고 기간·방향을 확정할 수 없는 원문은 추측하지 않고 판정 불가 상태로 계속 경고
@@ -66,8 +64,8 @@ docker compose down
   - 처방 일수와 시작·종료일
   - 필요시 복용(PRN)
 - 입력 처방의 정량 DUR 확인
-  - 투여기간 기준과 처방 일수를 자동 비교
-  - 제품 기준으로 확정할 수 없는 투여기간은 성분 기준이 제형까지 단일하게 맞을 때만 보완 판정
+  - canonical 제품 기준 투여기간과 처방 일수를 자동 비교
+  - 제품규칙과 상세기준 연결을 확정할 수 없는 경우 보완 추측 없이 판정 불가로 표시
   - 단일 기준과 단위가 명확한 용량주의 항목은 1일 복용량을 자동 비교
   - 복수·조건부 기준이나 환산할 수 없는 단위는 안전으로 간주하지 않고 판정 불가 사유 표시
   - 금기·주의, 정량 기준 초과 또는 중요한 커버리지 제한은 경고를 먼저 표시하고 확인 후 등록 허용
@@ -83,7 +81,7 @@ docker compose down
 - 복용 종료 처리 / 최근 복용 기록 조회
 - JSON API와 동일 코어를 사용하는 headless CLI
 - 서버 없는 Android 패키징
-  - WebView UI, Python 앱 코어, 검증된 DUR/허가 카탈로그 snapshot, OCR ONNX/WASM 자산을 APK에 함께 포함
+  - WebView UI, Python 앱 코어, 검증된 canonical reference snapshot, OCR ONNX/WASM 자산을 APK에 함께 포함
   - Android 앱은 `INTERNET` 권한 없이 앱 내부 HTTPS asset origin과 네이티브 Python 브리지만 사용
   - 개인 복약 DB는 Android Keystore AES-GCM 키로 요청 사이에 암호화해 보관하고, SQLite 처리 중에만 앱 전용 저장소의 임시 평문 DB를 사용
   - 비정상 종료로 임시 평문 DB가 남으면 다음 시작 시 이를 최신 상태로 복구·checkpoint한 뒤 즉시 다시 암호화
@@ -95,26 +93,6 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제�
 일반약·건강기능식품 등의 임상정보가 포함되지 않습니다.
 
 ## DB 구조
-
-### `data/db/dur.sqlite`
-
-공개 DUR 규칙 DB입니다. 앱에서는 읽기 전용으로 엽니다.
-
-- `source_files`: 원본 provenance, SHA-256, 행 수
-- `product_dur`: 제품 단위 DUR 규칙
-- `ingredient_dur`: 성분 단위 DUR 규칙
-- `product_catalog`: 제품 단위 상세 DUR 규칙에서 파생한 정규화 제품코드 카탈로그
-- `product_item_flags`: 식약처 `ITEM_SEQ` 기준 DUR 품목 유형·첨가제주의·서방정분할주의
-- `product_code_bridge`: 심평원 약가마스터의 `ITEM_SEQ(품목기준코드) → 제품코드(개정후)` exact 매핑
-
-현재 로컬 DB 기준:
-
-- 제품 단위 상세 DUR: 558,637행
-- 성분 단위 DUR: 4,172행
-- `ITEM_SEQ` 제품 플래그: 43,295행
-- 심평원 제품코드 bridge: 22,308개 관계
-- 제품코드 카탈로그: 23,131개
-- 검증 원본 데이터 파일: 18개
 
 ### `data/db/personal.sqlite`
 
@@ -132,15 +110,6 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제�
 개인 DB는 Git에 포함하지 않습니다. Android 앱은 Keystore 키로 암호화된 `personal.sqlite.enc`를
 지속 저장본으로 사용합니다. 개발용 CLI/standalone web의 `data/db/personal.sqlite`는 로컬 개발
 파일로서 암호화하지 않으며, 웹 서비스도 기본적으로 `127.0.0.1`에만 바인딩합니다.
-
-### `data/db/catalog.sqlite`
-
-식약처 전체 제품 카탈로그를 별도로 보존하는 동기화/감사 DB입니다. 앱 런타임의 제품 식별이나
-DUR 판정에는 더 이상 사용하지 않습니다. 앱 검색과 안전성 판정의 제품 기준키는
-`canonical.sqlite`의 식약처 품목기준코드 `ITEM_SEQ`입니다. EDI는 canonical의
-`product_identifiers`에 검색·표시용 보조 식별자로만 보존하며 안전성 identity fallback으로 사용하지 않습니다.
-
-`medicine-catalog`의 sync/upgrade/status-source 명령은 원천 데이터 점검용으로 계속 유지합니다.
 
 ### `data/db/canonical.sqlite` (앱 기준 DB)
 
@@ -202,57 +171,6 @@ docker compose run --rm canonical mobile-build --json
 `canonical verify`가 실패하거나 runtime manifest에 unresolved product-link ambiguity가 남아 있으면 앱은
 데이터셋을 verified로 취급하지 않습니다. Android 빌드는 `canonical mobile-build`를 먼저 실행해
 `data/db/mobile.sqlite`와 SHA-256 manifest를 만든 뒤 동일한 Python core를 APK에 패키징합니다.
-
-## 식약처 전체 의약품 카탈로그 동기화
-
-공공데이터포털에서 발급한 서비스키가 필요합니다. 키는 저장소에 넣지 말고 환경변수로
-전달합니다.
-
-```bash
-export DATA_GO_KR_SERVICE_KEY='발급받은_서비스키'
-docker compose run --rm catalog sync --json
-```
-
-동기화는 `catalog.sqlite.tmp`에 페이지 단위로 저장하고 checkpoint를 남깁니다. 중간 실패 시
-완성 전 DB를 운영 DB로 취급하지 않으며, 같은 조건으로 다시 실행하면 checkpoint에서 이어
-받습니다. 전체 수집과 SQLite 무결성 검사를 통과한 뒤에만 `catalog.sqlite`로 원자 교체합니다.
-
-상태 확인:
-
-```bash
-docker compose run --rm catalog stats --json
-```
-
-기존 카탈로그가 구 스키마라면 보존된 `raw_json`으로 재다운로드 없이 원자적으로 업그레이드할 수 있습니다.
-
-```bash
-docker compose run --rm catalog upgrade --json
-```
-
-급여·공급 상태는 허가상태와 별도 데이터 축으로 관리합니다. 현재 서비스키의 추가 API 활용권한을
-확인하려면 다음 명령을 사용합니다. 키 값 자체는 출력하지 않습니다.
-
-```bash
-docker compose run --rm catalog status-sources --json
-```
-
-확인 대상은 건강보험심사평가원 약가기준정보, 식약처 생산·수입·공급중단, 식약처 공급부족
-API입니다. 각 API는 공공데이터포털에서 별도 활용신청이 필요할 수 있습니다.
-
-## Legacy DUR/카탈로그 ETL
-
-`medicine-dur`와 `medicine-catalog`의 원천 수집/검증 도구는 과거 데이터 비교와 provenance 감사 용도로
-남겨 둡니다. 이 DB와 HIRA 제품코드 bridge는 앱 런타임 classifier로 사용하지 않습니다.
-
-```bash
-docker compose run --rm dur sync-product-items --json
-docker compose run --rm dur sync-product-code-bridge --json
-docker compose run --rm dur build --json
-docker compose run --rm dur stats --json
-docker compose run --rm dur verify --json
-```
-
-Android/mobile 배포 DB는 위 legacy DB를 합치지 않고 `canonical mobile-build`로만 생성합니다.
 
 ## 앱 제어 CLI
 
@@ -317,11 +235,6 @@ docker compose run --rm app dose-instance \
   --json
 ```
 
-기존 DUR 저수준 검색 CLI도 유지합니다.
-
-```bash
-docker compose run --rm dur search acemetacin --limit 20 --json
-```
 
 ## 테스트 / 모바일 렌더링
 
@@ -331,8 +244,8 @@ docker compose run --rm --build test
 
 테스트는 개인 DB migration, 여러 사람 관리, 구조화 처방, 정량 용량·기간 판정, 경고 확인 토큰,
 중복 등록 방지, 처방 revision·이력, 날짜별 복용 인스턴스 멱등성, 수정 후 완료 이력 보존, PRN,
-복용 기록, 전체 허가품목/허가상태 검색, 병용금기, 연령/임부/노인주의, 효능군 중복, DUR import 정규화,
-MFDS 카탈로그 동기화·허가상태 migration, 모바일 HTML/API 흐름을 포함합니다.
+복용 기록, 전체 허가품목/허가상태 검색, 병용금기, 연령/임부/노인주의, 효능군 중복,
+canonical build/link/applicability 검증, 모바일 HTML/API 흐름을 포함합니다.
 
 개발 중 모바일 렌더링 확인용 Chromium은 별도 이미지로만 사용합니다.
 
@@ -374,7 +287,7 @@ Android 앱은 WebView와 시스템 사진 선택기를 UI 셸로 사용하지�
 코어를 직접 호출합니다. WebView의 다른 HTTP/HTTPS 요청은 차단하며 Android manifest에는
 `INTERNET` 권한이 없습니다.
 
-배포용 reference DB는 원본 `dur.sqlite` + `catalog.sqlite`를 compact한 `mobile.sqlite`입니다.
+배포용 reference DB는 검증된 `canonical.sqlite`에서 런타임 테이블과 view만 추린 `mobile.sqlite`입니다.
 APK에는 압축된 asset으로 들어가며 첫 실행 때 manifest의 크기와 SHA-256을 확인하면서 앱 전용
 저장소에 원자적으로 설치합니다. reference DB는 이후 읽기 전용으로 사용하고 개인 기록은 별도의
 `personal.sqlite`에 저장합니다. 데이터 snapshot이 바뀌면 새 해시 이름으로 설치한 뒤 이전 reference

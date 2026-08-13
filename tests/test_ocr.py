@@ -8,7 +8,7 @@ from pathlib import Path
 
 from medicine_app.ocr import OCRReviewStore, OCRValidationError, inspect_envelope, normalize_hint_envelope
 from medicine_app.web import create_web_app
-from tests.test_app_core import make_catalog_db, make_dur_db
+from tests.test_app_core import make_canonical_db
 
 
 class OcrContractTest(unittest.TestCase):
@@ -63,12 +63,11 @@ class OcrContractTest(unittest.TestCase):
     def test_ocr_preview_and_create_do_not_persist_raw_sentinel(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            dur_db, catalog_db, personal_db = root / "dur.sqlite", root / "catalog.sqlite", root / "personal.sqlite"
-            make_dur_db(dur_db)
-            make_catalog_db(catalog_db)
+            canonical_db, personal_db = root / "canonical.sqlite", root / "personal.sqlite"
+            make_canonical_db(canonical_db)
             from fastapi.testclient import TestClient
 
-            client = TestClient(create_web_app(dur_db, personal_db))
+            client = TestClient(create_web_app(canonical_db, personal_db))
             person = client.post(
                 "/api/people",
                 json={"name": "OCR", "birth_date": "1990-01-01"},
@@ -113,12 +112,11 @@ class OcrContractTest(unittest.TestCase):
     def test_changed_draft_invalidates_token_and_retries_are_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            dur_db, catalog_db, personal_db = root / "dur.sqlite", root / "catalog.sqlite", root / "personal.sqlite"
-            make_dur_db(dur_db)
-            make_catalog_db(catalog_db)
+            canonical_db, personal_db = root / "canonical.sqlite", root / "personal.sqlite"
+            make_canonical_db(canonical_db)
             from fastapi.testclient import TestClient
 
-            client = TestClient(create_web_app(dur_db, personal_db))
+            client = TestClient(create_web_app(canonical_db, personal_db))
             person = client.post("/api/people", json={"name": "OCR", "birth_date": "1990-01-01"}).json()
             envelope = {
                 "version": 1, "operation_id": "op-2",
@@ -148,12 +146,11 @@ class OcrContractTest(unittest.TestCase):
     def test_ocr_endpoint_and_medication_models_reject_raw_artifact_extras(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            dur_db, catalog_db, personal_db = root / "dur.sqlite", root / "catalog.sqlite", root / "personal.sqlite"
-            make_dur_db(dur_db)
-            make_catalog_db(catalog_db)
+            canonical_db, personal_db = root / "canonical.sqlite", root / "personal.sqlite"
+            make_canonical_db(canonical_db)
             from fastapi.testclient import TestClient
 
-            client = TestClient(create_web_app(dur_db, personal_db))
+            client = TestClient(create_web_app(canonical_db, personal_db))
             person = client.post("/api/people", json={"name": "OCR", "birth_date": "1990-01-01"}).json()
             envelope = {
                 "version": 1, "operation_id": "strict-1",

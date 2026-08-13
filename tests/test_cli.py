@@ -9,19 +9,17 @@ from pathlib import Path
 
 from medicine_app.cli import build_parser, main
 from medicine_app.core import MedicationApp
-from tests.test_prescription_safety import make_catalog_db, make_dur_db
+from tests.test_prescription_safety import make_canonical_db
 
 
 class PrescriptionCliTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.dur_db = root / "dur.sqlite"
+        self.canonical_db = root / "canonical.sqlite"
         self.personal_db = root / "personal.sqlite"
-        self.catalog_db = root / "catalog.sqlite"
-        make_dur_db(self.dur_db)
-        make_catalog_db(self.catalog_db)
-        app = MedicationApp(self.dur_db, self.personal_db)
+        make_canonical_db(self.canonical_db)
+        app = MedicationApp(self.canonical_db, self.personal_db)
         self.person = app.create_person("CLI", "1990-01-01")
 
     def tearDown(self) -> None:
@@ -30,7 +28,7 @@ class PrescriptionCliTest(unittest.TestCase):
     def run_cli(self, *arguments: str) -> tuple[int, object]:
         stdout = io.StringIO()
         base = [
-            "--canonical-db", str(self.dur_db), "--personal-db", str(self.personal_db),
+            "--canonical-db", str(self.canonical_db), "--personal-db", str(self.personal_db),
         ]
         with redirect_stdout(stdout):
             result = main([*base, *arguments, "--json"])
@@ -89,7 +87,7 @@ class PrescriptionCliTest(unittest.TestCase):
         self.assertTrue(deleted["deleted"])
 
     def test_dose_instance_completion_can_be_canceled(self) -> None:
-        app = MedicationApp(self.dur_db, self.personal_db)
+        app = MedicationApp(self.canonical_db, self.personal_db)
         app.add_medication(
             self.person["id"], product_ref="MFDS-SAFE", dose_amount=5, dose_unit="mg",
             frequency_per_day=1, prescription_days=5, start_date="2026-08-10",
@@ -110,7 +108,7 @@ class PrescriptionCliTest(unittest.TestCase):
         self.assertIsNone(canceled["completed_at"])
 
     def test_meds_exposes_date_relative_course_progress(self) -> None:
-        app = MedicationApp(self.dur_db, self.personal_db)
+        app = MedicationApp(self.canonical_db, self.personal_db)
         app.add_medication(
             self.person["id"], product_ref="MFDS-SAFE", dose_amount=5, dose_unit="mg",
             frequency_per_day=1, start_date="2026-08-10", prescription_days=5,

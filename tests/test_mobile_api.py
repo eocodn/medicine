@@ -7,19 +7,17 @@ import unittest
 from pathlib import Path
 
 from medicine_app.mobile_api import MobileApi
-from tests.test_app_core import make_catalog_db, make_dur_db
+from tests.test_app_core import make_canonical_db
 
 
 class MobileApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.dur_db = root / "dur.sqlite"
+        self.canonical_db = root / "canonical.sqlite"
         self.personal_db = root / "personal.sqlite"
-        self.catalog_db = root / "catalog.sqlite"
-        make_dur_db(self.dur_db)
-        make_catalog_db(self.catalog_db)
-        self.api = MobileApi(self.dur_db, self.personal_db)
+        make_canonical_db(self.canonical_db)
+        self.api = MobileApi(self.canonical_db, self.personal_db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

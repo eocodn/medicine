@@ -10,7 +10,7 @@ from medicine_app.core import MedicationApp
 from medicine_app.safety import age_rule_matches
 
 
-def make_dur_db(path: Path) -> None:
+def make_canonical_db(path: Path) -> None:
     from tests.canonical_fixture_support import create_canonical_fixture, add_product, add_linked_rule
     con = create_canonical_fixture(path)
     products = [
@@ -57,47 +57,6 @@ def make_dur_db(path: Path) -> None:
     con.commit()
     con.close()
 
-def make_catalog_db(path: Path) -> None:
-    con = sqlite3.connect(path)
-    con.executescript(
-        """
-        CREATE TABLE catalog_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE products (
-            item_seq TEXT PRIMARY KEY,
-            product_name TEXT NOT NULL,
-            manufacturer TEXT,
-            ingredient_name TEXT,
-            dosage_form TEXT,
-            edi_code TEXT,
-            permit_date TEXT,
-            cancel_date TEXT,
-            cancel_name TEXT,
-            permit_status TEXT NOT NULL,
-            source TEXT NOT NULL,
-            raw_json TEXT NOT NULL
-        );
-        """
-    )
-    con.executemany(
-        """
-        INSERT INTO products(
-            item_seq,product_name,manufacturer,ingredient_name,dosage_form,
-            edi_code,permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        [
-            ("MFDS-A", "약A", "제약A", "drug-a", "정제", "P-A", "2020-01-01", None, "정상", "active", "mfds", "{}"),
-            ("MFDS-B", "전체카탈로그약B", "제약B", "drug-b", "정제", "P-B", "2020-01-01", None, "정상", "active", "mfds", "{}"),
-            ("MFDS-C", "약C", "제약C", "drug-c", "정제", "P-C", "2020-01-01", None, "정상", "active", "mfds", "{}"),
-            ("MFDS-D", "약D", "제약D", "drug-d", "정제", "P-D", "2020-01-01", None, "정상", "active", "mfds", "{}"),
-            ("MFDS-X", "비급여전체약X", "제약X", "drug-x", "캡슐", None, "2021-01-01", None, "정상", "active", "mfds", "{}"),
-            ("MFDS-Y", "비급여전체약Y", "제약Y", "drug-y", "정제", None, "2021-01-01", None, "정상", "active", "mfds", "{}"),
-            ("MFDS-W", "과거취하약", "제약W", "drug-w", "정제", "P-W", "2019-01-01", "2025-07-01", "취하", "withdrawn", "mfds", "{}"),
-        ],
-    )
-    con.commit()
-    con.close()
-
 
 class AgeRuleTest(unittest.TestCase):
     def test_day_based_age_rule_uses_exact_calendar_days(self) -> None:
@@ -109,12 +68,10 @@ class MedicationAppTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.dur_db = root / "dur.sqlite"
+        self.canonical_db = root / "canonical.sqlite"
         self.personal_db = root / "personal.sqlite"
-        self.catalog_db = root / "catalog.sqlite"
-        make_dur_db(self.dur_db)
-        make_catalog_db(self.catalog_db)
-        self.app = MedicationApp(self.dur_db, self.personal_db)
+        make_canonical_db(self.canonical_db)
+        self.app = MedicationApp(self.canonical_db, self.personal_db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -209,7 +166,7 @@ class MedicationAppTest(unittest.TestCase):
         self.assertIn("combination_contraindication", {r["type"] for r in overlapping["risks"]})
 
     def test_product_washout_extends_interaction_after_source_course(self) -> None:
-        con = sqlite3.connect(self.dur_db)
+        con = sqlite3.connect(self.canonical_db)
         con.execute(
             """UPDATE product_rules
                SET details='drug-a 투여 중 및 종료 후 7일 간 해당 성분 투여 금기'
@@ -238,7 +195,7 @@ class MedicationAppTest(unittest.TestCase):
         self.assertNotIn("combination_contraindication", {r["type"] for r in outside["risks"]})
 
     def test_explicitly_stopped_medication_still_contributes_during_washout(self) -> None:
-        con = sqlite3.connect(self.dur_db)
+        con = sqlite3.connect(self.canonical_db)
         con.execute(
             """UPDATE product_rules
                SET details='drug-a 투여 중 및 종료 후 7일 간 해당 성분 투여 금기'
@@ -447,7 +404,7 @@ class MedicationAppTest(unittest.TestCase):
 
     def test_product_search_stays_one_row_when_product_has_multiple_dur_categories(self) -> None:
         from tests.canonical_fixture_support import add_linked_rule
-        con = sqlite3.connect(self.dur_db)
+        con = sqlite3.connect(self.canonical_db)
         add_linked_rule(
             con, category="pregnancy_contraindication", item_seq="MFDS-A",
             ingredient="drug-a", rule_value="2", details="임부금기",
@@ -487,9 +444,8 @@ class MedicationAppTest(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.app.get_product("P-A")
 
-    def test_search_does_not_require_legacy_catalog_database(self) -> None:
-        missing = self.catalog_db.with_name("missing-catalog.sqlite")
-        app = MedicationApp(self.dur_db, self.personal_db.with_name("other-personal.sqlite"))
+    def test_search_uses_canonical_reference_database_only(self) -> None:
+        app = MedicationApp(self.canonical_db, self.personal_db.with_name("other-personal.sqlite"))
         self.assertEqual(app.search_products("약A", limit=10)[0]["product_ref"], "MFDS-A")
 
     def test_adds_structured_prescription_and_computes_end_date(self) -> None:
@@ -650,7 +606,7 @@ class MedicationAppTest(unittest.TestCase):
         con.commit()
         con.close()
 
-        migrated = MedicationApp(self.dur_db, legacy)
+        migrated = MedicationApp(self.canonical_db, legacy)
         med = migrated.get_medication("med-1")
         self.assertEqual(med["product_name"], "약A")
         self.assertIn("frequency_per_day", med)

@@ -9,7 +9,7 @@ from pathlib import Path
 from medicine_app.core import MedicationApp
 from medicine_canonical.mobile import build_mobile_database
 from medicine_canonical.cli import main as canonical_main
-from tests.test_safety_coverage import make_dur_db
+from tests.test_safety_coverage import make_canonical_db
 
 
 class MobileDatabaseTest(unittest.TestCase):
@@ -20,7 +20,7 @@ class MobileDatabaseTest(unittest.TestCase):
         self.mobile_db = root / "mobile.sqlite"
         self.manifest = root / "mobile.manifest.json"
         self.personal_db = root / "personal.sqlite"
-        make_dur_db(self.canonical_db)
+        make_canonical_db(self.canonical_db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
