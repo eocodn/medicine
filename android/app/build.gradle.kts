@@ -2,8 +2,11 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import javax.inject.Inject
 
@@ -22,9 +25,29 @@ abstract class PrepareMobileAssets : DefaultTask() {
 
     @TaskAction
     fun prepare() {
-        fileSystemOperations.copy {
+        fileSystemOperations.sync {
             from(mobileDatabase)
             from(mobileManifest)
+            into(outputDirectory)
+        }
+    }
+}
+
+abstract class PrepareOcrAssets : DefaultTask() {
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val ocrAssets: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun prepare() {
+        fileSystemOperations.sync {
+            from(ocrAssets)
             into(outputDirectory)
         }
     }
@@ -44,11 +67,11 @@ val prepareMobileAssets = tasks.register<PrepareMobileAssets>("prepareMobileAsse
     mobileDatabase.set(layout.file(providers.provider { mobileDatabaseFile }))
     mobileManifest.set(layout.file(providers.provider { mobileManifestFile }))
     outputDirectory.set(layout.buildDirectory.dir("generated/mobileAssets"))
-    doFirst {
-        check(file(ocrAssetsDir.get()).isDirectory) {
-            "Missing browser OCR assets: ${ocrAssetsDir.get()}"
-        }
-    }
+}
+
+val prepareOcrAssets = tasks.register<PrepareOcrAssets>("prepareOcrAssets") {
+    ocrAssets.set(layout.dir(ocrAssetsDir.map { file(it) }))
+    outputDirectory.set(layout.buildDirectory.dir("generated/ocrAssets"))
 }
 
 android {
@@ -84,7 +107,7 @@ androidComponents {
             "Android assets source API is unavailable for ${variant.name}"
         }
         assets.addStaticSourceDirectory(rootProject.file("../medicine_app/static").absolutePath)
-        assets.addStaticSourceDirectory(file(ocrAssetsDir.get()).absolutePath)
+        assets.addGeneratedSourceDirectory(prepareOcrAssets, PrepareOcrAssets::outputDirectory)
         assets.addGeneratedSourceDirectory(prepareMobileAssets, PrepareMobileAssets::outputDirectory)
     }
 }

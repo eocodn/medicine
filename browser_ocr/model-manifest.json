@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "model_id": "pp-ocrv5-mobile-korean-onnx-2026-08-13",
+  "runtime": {
+    "backend": "onnxruntime-web-wasm",
+    "onnxruntime_web": "1.27.0",
+    "detector": "PP-OCRv5_mobile_det",
+    "recognizer": "korean_PP-OCRv5_mobile_rec"
+  },
+  "sources": {
+    "detection": {
+      "archive": "PP-OCRv5_mobile_det_onnx_infer.tar",
+      "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_det_onnx_infer.tar",
+      "sha256": "781056046c9ed77a15c94681605db6a0f62317c2e9cce6931c71da2478d4bc30"
+    },
+    "recognition": {
+      "archive": "korean_PP-OCRv5_mobile_rec_onnx_infer.tar",
+      "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/korean_PP-OCRv5_mobile_rec_onnx_infer.tar",
+      "sha256": "568ed8b43a260adc9f484d92105e425ea8cddf8ce16940c177bc12864cfb0eb0"
+    }
+  }
+}

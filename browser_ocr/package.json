@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "inspect": "node cli.js",
-    "probe-browser": "node probe_browser.mjs"
+    "probe-browser": "node probe_browser.mjs",
+    "model:eval": "node eval/run_eval.mjs"
   },
   "dependencies": {
     "onnxruntime-web": "1.27.0"

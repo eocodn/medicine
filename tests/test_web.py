@@ -249,6 +249,7 @@ class WebApiTest(unittest.TestCase):
             "/ocr-assets/models/detection.onnx",
             "/ocr-assets/models/korean-recognition.onnx",
             "/ocr-assets/models/korean-recognition-dictionary.json",
+            "/ocr-assets/runtime-manifest.json",
         ):
             response = self.client.get(asset)
             self.assertEqual(response.status_code, 200, asset)

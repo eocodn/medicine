@@ -281,6 +281,24 @@ printf '약명: 타이레놀정\n1정 1일 2회 7일\n오전 8시 오후 8시\n'
   | docker compose run -T --rm browser-ocr --input - --json
 ```
 
+
+OCR vision 모델은 앱과 별도로 `browser_ocr` 파이프라인에서 검증합니다. 모델 원본 URL과 SHA-256은
+`model-manifest.json`에 고정되고, 합성 corpus는 실제 production Worker를 Chromium에서 실행해
+문자 오류율, 중요 토큰 재현율, 숫자 토큰 재현율을 평가합니다. 기본 corpus에는 환자 데이터가 없습니다.
+
+```bash
+docker compose run --rm ocr-eval
+```
+
+실제 촬영본은 저장소 밖의 private corpus manifest를 read-only로 mount해서 같은 runner로 평가할 수 있습니다.
+평가 corpus·리포트·다운로드/빌드 도구는 배포 자산에 포함하지 않습니다. 배포 시에는 allowlist 기반
+`runtime` target으로 Worker, ONNX 모델, 인식 dictionary, ONNX Runtime WASM, 라이선스와 runtime manifest만
+잘라냅니다.
+
+```bash
+docker build -f browser_ocr/Dockerfile --target runtime \
+  --output type=local,dest=/tmp/medicine-ocr-runtime .
+```
 Android 앱은 WebView와 시스템 사진 선택기를 UI 셸로 사용하지만 외부 웹 서버에는 연결하지 않습니다.
 정적 UI와 OCR 자산은 AndroidX WebKit의 `https://appassets.androidplatform.net` 로컬 asset origin에서
 제공하고, 앱의 `/api/...` 호출은 `MedicineNative` 브리지를 통해 APK에 포함된 Python `MedicationApp`

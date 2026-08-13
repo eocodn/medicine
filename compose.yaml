@@ -53,6 +53,12 @@ services:
       - .:/workspace
     entrypoint: ["node", "browser_ocr/cli.js"]
 
+  ocr-eval:
+    build:
+      context: .
+      dockerfile: browser_ocr/Dockerfile
+      target: eval
+
   android:
     build:
       context: .
