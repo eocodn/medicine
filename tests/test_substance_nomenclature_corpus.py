@@ -24,7 +24,7 @@ class SubstanceNomenclatureCorpusTest(unittest.TestCase):
             _normalize,
         )
 
-        self.assertEqual(len(corpus), 43)
+        self.assertEqual(len(corpus), 59)
         self.assertEqual(corpus["atorvastatin calcium hydrate"].target_unii, "48A5M73Z4Q")
         self.assertEqual(
             corpus["atorvastatin calcium hydrate"].external_evidence_name,
@@ -42,6 +42,18 @@ class SubstanceNomenclatureCorpusTest(unittest.TestCase):
             corpus["doxycycline hydrate"].external_evidence_name,
             "DOXYCYCLINE MONOHYDRATE",
         )
+        self.assertEqual(corpus["sitagliptin hydrochloride hydrate"].target_unii, "6DH2XG35TG")
+        self.assertEqual(corpus["norepinephrine tartrate hydrate"].target_unii, "IFY5PE3ZRW")
+        self.assertEqual(
+            corpus["diclofenac beta-dimethylaminoethanol"].target_unii,
+            "409Q1531N0",
+        )
+        self.assertEqual(corpus["donepezil hydrochloride hydrate"].target_unii, "7KZL5YRL6W")
+        self.assertEqual(corpus["ketoprofen lysin"].target_unii, "5WD00E3D4C")
+        self.assertEqual(corpus["s-amlodipine besylate dihydrate"].target_unii, "6WFN2P6FAQ")
+        self.assertEqual(corpus["glutathione (reduced)"].target_unii, "GAN16C9B8O")
+        self.assertEqual(corpus["precipitated calcium carbonate"].target_unii, "H0G9379FGK")
+        self.assertNotIn("s-amlodipine besylate 2.5 hydrate", corpus)
         self.assertNotIn("anhydrous risedronate sodium", corpus)
         self.assertNotIn("hyaluronidase", corpus)
         self.assertNotIn("sennae fructus", corpus)
