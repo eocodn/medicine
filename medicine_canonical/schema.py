@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 CORE_SOURCE_FAMILIES = frozenset({"mfds_permit_api", "mfds_dur_item_api", "kids_mfds_xlsx"})
 
 SCHEMA = r"""
@@ -226,6 +226,49 @@ CREATE INDEX idx_product_criterion_links_criterion
     ON product_criterion_links(criterion_rule_id);
 CREATE INDEX idx_product_criterion_links_method ON product_criterion_links(match_method);
 
+-- Ingredient-only regulatory criteria (currently lactation caution) need a
+-- product applicability layer even when MFDS publishes no ITEM_SEQ rule family
+-- for that category. Positive rows are limited to authoritative evidence. Name
+-- similarity may appear only in the unresolved table so it can never silently
+-- merge precise substances or create a clinical hit.
+CREATE TABLE product_ingredient_criterion_links (
+    item_seq TEXT NOT NULL REFERENCES products(item_seq),
+    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
+    category TEXT NOT NULL,
+    match_method TEXT NOT NULL CHECK(match_method IN (
+        'dur_scope_signature','precise_substance_exact',
+        'reviewed_substance_relation','same_item_official_dur_name'
+    )),
+    evidence_kind TEXT NOT NULL CHECK(evidence_kind IN (
+        'dur_scope_signature','precise_substance_identity',
+        'reviewed_substance_relation','same_item_official_dur_scope'
+    )),
+    evidence_json TEXT NOT NULL,
+    PRIMARY KEY(item_seq, criterion_rule_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_product_ingredient_criteria_criterion
+    ON product_ingredient_criterion_links(criterion_rule_id);
+CREATE INDEX idx_product_ingredient_criteria_category_item
+    ON product_ingredient_criterion_links(category,item_seq);
+CREATE INDEX idx_product_ingredient_criteria_method
+    ON product_ingredient_criterion_links(match_method);
+
+CREATE TABLE product_ingredient_criterion_unresolved (
+    item_seq TEXT NOT NULL REFERENCES products(item_seq),
+    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
+    category TEXT NOT NULL,
+    reason TEXT NOT NULL CHECK(reason IN (
+        'scope_relation_unproven','product_composition_unresolved',
+        'product_component_identity_unresolved','criterion_identity_unresolved'
+    )),
+    evidence_json TEXT NOT NULL,
+    PRIMARY KEY(item_seq, criterion_rule_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_product_ingredient_unresolved_category_item
+    ON product_ingredient_criterion_unresolved(category,item_seq);
+CREATE INDEX idx_product_ingredient_unresolved_reason
+    ON product_ingredient_criterion_unresolved(reason);
+
 CREATE VIEW product_rule_criteria AS
 SELECT
     r.source_dataset_key AS product_source_dataset_key,
@@ -259,4 +302,29 @@ JOIN product_rules r
   ON r.id = l.product_rule_id
 JOIN ingredient_rules i
   ON i.id = l.criterion_rule_id;
+
+CREATE VIEW product_ingredient_criteria AS
+SELECT
+    l.item_seq,
+    p.product_name,
+    p.ingredient_text AS product_ingredient_text,
+    p.dosage_form AS product_dosage_form,
+    p.permit_status,
+    i.source_dataset_key AS criterion_source_dataset_key,
+    i.source_row AS criterion_source_row,
+    l.criterion_rule_id,
+    l.category,
+    i.sequence_text AS criterion_sequence_text,
+    i.ingredient_name AS criterion_ingredient_name,
+    i.ingredient_name_ko AS criterion_ingredient_name_ko,
+    i.rule_value AS criterion_rule_value,
+    i.dosage_form AS criterion_dosage_form,
+    i.note AS criterion_note,
+    i.details AS criterion_details,
+    l.match_method,
+    l.evidence_kind,
+    l.evidence_json
+FROM product_ingredient_criterion_links l
+JOIN products p ON p.item_seq=l.item_seq
+JOIN ingredient_rules i ON i.id=l.criterion_rule_id;
 """

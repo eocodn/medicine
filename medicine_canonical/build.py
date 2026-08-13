@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from .inspection import canonical_stats, verify_canonical_database
 from .linking import materialize_product_criterion_links
+from .product_ingredient_applicability import materialize_product_ingredient_criterion_links
 from .schema import SCHEMA, SCHEMA_VERSION
 from .sources import (
     DUR_ENDPOINTS,
@@ -367,6 +368,7 @@ def assemble_canonical_database(
             con.execute("BEGIN")
             source_result = populate_canonical_source_tables(con, kids_dir, raw_root)
             link_result = materialize_product_criterion_links(con)
+            ingredient_applicability_result = materialize_product_ingredient_criterion_links(con)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(
                 "INSERT INTO canonical_meta(key,value) VALUES(?,?)",
@@ -401,6 +403,7 @@ def assemble_canonical_database(
         {
             **source_result,
             **link_result,
+            **ingredient_applicability_result,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "raw_dir": str(raw_root),
         }
