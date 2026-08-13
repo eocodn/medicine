@@ -24,13 +24,27 @@ class SubstanceNomenclatureCorpusTest(unittest.TestCase):
             _normalize,
         )
 
-        self.assertEqual(len(corpus), 13)
+        self.assertEqual(len(corpus), 43)
         self.assertEqual(corpus["atorvastatin calcium hydrate"].target_unii, "48A5M73Z4Q")
         self.assertEqual(
             corpus["atorvastatin calcium hydrate"].external_evidence_name,
             "ATORVASTATIN CALCIUM HYDRATE [JAN]",
         )
-        self.assertNotIn("azithromycin hydrate", corpus)
+        self.assertEqual(corpus["azithromycin hydrate"].target_unii, "5FD1131I7S")
+        self.assertEqual(
+            corpus["azithromycin hydrate"].external_evidence_name,
+            "AZITHROMYCIN HYDRATE [JAN]",
+        )
+        self.assertEqual(corpus["aminophylline hydrate"].target_unii, "Y7E0LU9ZMS")
+        self.assertEqual(corpus["thallium (201tl) chloride"].target_unii, "3I8Y076A0E")
+        self.assertEqual(corpus["doxycycline hydrate"].target_unii, "N12000U13O")
+        self.assertEqual(
+            corpus["doxycycline hydrate"].external_evidence_name,
+            "DOXYCYCLINE MONOHYDRATE",
+        )
+        self.assertNotIn("anhydrous risedronate sodium", corpus)
+        self.assertNotIn("hyaluronidase", corpus)
+        self.assertNotIn("sennae fructus", corpus)
         self.assertNotIn("anhydrous atorvastatin calcium", corpus)
 
     def test_validation_requires_exact_gsrs_evidence_name_and_pinned_unii(self) -> None:

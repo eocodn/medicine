@@ -24,15 +24,20 @@ from .substance_ids import stable_external_substance_id, stable_substance_id
 from .substance_matching import (
     MATCH_METHOD_PRIORITY,
     MatchEvidence,
-    RelationEvidence,
     candidates_for_local_name,
-    relation_for_local_name,
 )
+from .substance_relation_resolution import select_source_relations
 from .substance_reviewed_aliases import (
     ActiveReviewedAliases,
     load_reviewed_alias_corpora,
     reviewed_alias_meta_rows,
     validate_active_reviewed_aliases,
+)
+from .substance_reviewed_relations import (
+    APPROVED_FORM_RELATION_CORPUS_PATH,
+    ApprovedFormRelation,
+    load_approved_form_relation_corpus,
+    reviewed_form_relation_meta_rows,
 )
 from .substance_schema import SUBSTANCE_SCHEMA, SUBSTANCE_SCHEMA_VERSION
 from .substance_sources import sync_substance_identity_sources
@@ -258,7 +263,8 @@ def _insert_substance_layer(
     observations: list[SourceIdentity],
     external: dict[str, dict[str, ExternalEvidence]],
     reviewed_aliases: ActiveReviewedAliases,
-) -> None:
+    reviewed_form_relations: dict[str, ApprovedFormRelation],
+) -> int:
     by_name: dict[str, list[SourceIdentity]] = defaultdict(list)
     for observation in observations:
         by_name[observation.normalized_name].append(observation)
@@ -291,28 +297,14 @@ def _insert_substance_layer(
         name_to_substance[normalized_name] = substance_id
         group_names[substance_id].append(normalized_name)
 
-    # Physical/formulation expressions remain separate local nodes. Link them to
-    # a base substance only when that base is itself present locally and has one
-    # direct exact external identity; never assign the base UNII to the form node.
-    name_relations: dict[str, RelationEvidence] = {}
-    for normalized_name in sorted(by_name):
-        if name_evidence[normalized_name]:
-            continue
-        relation = relation_for_local_name(
-            _representative_name(by_name[normalized_name]),
-            normalize_substance_name,
-        )
-        if relation is None or relation.base_normalized_name not in by_name:
-            continue
-        base_candidates = name_evidence[relation.base_normalized_name]
-        if len(base_candidates) != 1:
-            continue
-        base_evidence = next(iter(base_candidates.values()))
-        if base_evidence.match_method != "normalized_name_exact":
-            continue
-        if name_to_substance[normalized_name] == name_to_substance[relation.base_normalized_name]:
-            continue
-        name_relations[normalized_name] = relation
+    representatives = {name: _representative_name(rows) for name, rows in by_name.items()}
+    name_relations = select_source_relations(
+        representatives,
+        name_evidence,
+        name_to_substance,
+        reviewed_form_relations,
+        normalize_substance_name,
+    )
 
     pending_relations: list[tuple[str, str, str, str, str]] = []
 
@@ -397,9 +389,10 @@ def _insert_substance_layer(
             )
 
         for normalized_name in normalized_names:
-            relation = name_relations.get(normalized_name)
-            if relation is None:
+            selected_relation = name_relations.get(normalized_name)
+            if selected_relation is None:
                 continue
+            relation = selected_relation.relation
             source_row = sorted(
                 by_name[normalized_name],
                 key=lambda row: (row.dataset_key, row.scope, row.source_row),
@@ -412,10 +405,25 @@ def _insert_substance_layer(
                     source_row.dataset_key,
                     json.dumps(
                         {
-                            "match_method": "explicit_source_form_relation",
+                            "match_method": selected_relation.match_method,
                             "normalized_name": normalized_name,
                             "base_normalized_name": relation.base_normalized_name,
                             "qualifier": relation.qualifier,
+                            **(
+                                {"base_unii": selected_relation.base_unii}
+                                if selected_relation.base_unii
+                                else {}
+                            ),
+                            **(
+                                {"review_basis": selected_relation.review_basis}
+                                if selected_relation.review_basis
+                                else {}
+                            ),
+                            **(
+                                {"reviewed_at": selected_relation.reviewed_at}
+                                if selected_relation.reviewed_at
+                                else {}
+                            ),
                         },
                         ensure_ascii=False,
                         separators=(",", ":"),
@@ -445,6 +453,10 @@ def _insert_substance_layer(
             for row in observations
         ],
     )
+    return sum(
+        relation.match_method == "reviewed_source_form_relation"
+        for relation in name_relations.values()
+    )
 
 
 def assemble_substance_database(
@@ -465,6 +477,10 @@ def assemble_substance_database(
         normalize_substance_name,
     )
     reviewed_corpora = load_reviewed_alias_corpora(normalize_substance_name)
+    reviewed_form_relation_corpus = load_approved_form_relation_corpus(
+        APPROVED_FORM_RELATION_CORPUS_PATH,
+        normalize_substance_name,
+    )
     db_path.parent.mkdir(parents=True, exist_ok=True)
     temp = db_path.with_name(db_path.name + ".tmp")
     temp.unlink(missing_ok=True)
@@ -514,7 +530,13 @@ def assemble_substance_database(
                    ) VALUES(?,?,?,?,?)""",
                 unparsed,
             )
-            _insert_substance_layer(con, observations, external, reviewed_aliases)
+            active_reviewed_form_relations = _insert_substance_layer(
+                con,
+                observations,
+                external,
+                reviewed_aliases,
+                reviewed_form_relation_corpus,
+            )
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(
                 "INSERT INTO substance_meta(key,value) VALUES(?,?)",
@@ -528,6 +550,10 @@ def assemble_substance_database(
                         "openfda_preferred_or_gsrs_of_cn_sys_exact_plus_reviewed_aliases_and_explicit_source_structure",
                     ),
                     *reviewed_alias_meta_rows(reviewed_corpora, reviewed_aliases),
+                    *reviewed_form_relation_meta_rows(
+                        reviewed_form_relation_corpus,
+                        active_reviewed_form_relations,
+                    ),
                     (
                         "relation_policy",
                         "explicit_source_form_relations_only_no_chemical_suffix_inference",

@@ -67,6 +67,51 @@ class SubstanceFormRelationTest(unittest.TestCase):
             "dilute_carrier_material",
         )
 
+    def test_reviewed_nested_form_descriptors_resolve_to_the_active_base(self) -> None:
+        cases = (
+            ("Omeprazole Enteric Coated Granules", "Omeprazole", "enteric_coated_granules"),
+            ("Triflusal Enteric Coated Granules", "Triflusal", "enteric_coated_granules"),
+            ("Aspirin Enteric Pellets", "Aspirin", "enteric_pellets"),
+            ("Pancreatin Enteric Coated Pellets", "Pancreatin", "enteric_coated_pellets"),
+            ("Cholecalciferol Concentrate Granules", "Cholecalciferol", "concentrate_granules"),
+            (
+                "Isosorbide Dinitrate Sustained-Release Granules",
+                "Isosorbide Dinitrate",
+                "sustained_release_granules",
+            ),
+            (
+                "Isosorbide Mononitrate Sustained-Release Pellets",
+                "Isosorbide Mononitrate",
+                "sustained_release_pellets",
+            ),
+            (
+                "Isosorbide-5-Mononitrate S.R. Small Granules",
+                "Isosorbide-5-Mononitrate",
+                "sustained_release_small_granules",
+            ),
+            ("Fenofibrate Granules Micronized", "Fenofibrate", "granules_micronized"),
+            (
+                "Fenofibrate Sphere Granules Micronized",
+                "Fenofibrate",
+                "sphere_granules_micronized",
+            ),
+            (
+                "Fenofibrate Mixed Powder Micronized",
+                "Fenofibrate",
+                "mixed_powder_micronized",
+            ),
+            (
+                "Ramipril Granules Coated Hydroxypropyl Methylcellulose",
+                "Ramipril",
+                "hpmc_coated_granules",
+            ),
+            ("Mirtazapine Coated", "Mirtazapine", "coated"),
+            ("Ascorbic Acid Coated", "Ascorbic Acid", "coated"),
+        )
+        for source, base, qualifier in cases:
+            with self.subTest(source=source):
+                self.assertRelation(source, base, "formulation_of", qualifier)
+
     def test_chemical_and_process_annotations_remain_unclassified(self) -> None:
         for source in (
             "Atorvastatin Calcium Hydrate",
