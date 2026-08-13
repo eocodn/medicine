@@ -218,7 +218,7 @@ function scheduleHtml(item) {
         ? `<button class="mini-action" data-instance-cancel="${item.id}" type="button">취소</button>`
         : item.status === "skipped"
           ? `<span class="dose-status skipped">건너뜀</span>`
-          : `<button class="mini-action" data-instance-taken="${item.id}" type="button">먹었어요</button>`}
+          : `<button class="mini-action" data-instance-taken="${item.id}" type="button">사용했어요</button>`}
     </div>`;
 }
 
@@ -254,7 +254,7 @@ function renderMedications() {
   historyRoot.innerHTML = logs.length ? logs.map((log) => `
     <div class="history-row">
       <span class="history-icon">${log.status === "taken" ? "✓" : "–"}</span>
-      <div><strong>${escapeHtml(log.product_name)}</strong><div class="history-time">${escapeHtml(log.status === "taken" ? "복용 완료" : "건너뜀")}</div></div>
+      <div><strong>${escapeHtml(log.product_name)}</strong><div class="history-time">${escapeHtml(log.status === "taken" ? "사용 완료" : "건너뜀")}</div></div>
       <span class="history-time">${escapeHtml(formatTime(log.occurred_at))}</span>
     </div>`).join("") : `<div class="empty-state"><strong>기록이 아직 없어요</strong>약을 복용한 뒤 완료 버튼을 눌러보세요.</div>`;
 
@@ -386,6 +386,7 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
     ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 허가 상태와 실제 보유·유통 여부는 별개일 수 있어요.</div>` : ""}
     <div>${durStatusHtml(durChecks)}</div>
     <div class="coverage-note"><strong>DUR 자동 확인에 포함되지 않는 정보</strong><br>알레르기, 신장·간 기능, 체중·적응증, 등록하지 않은 일반약·건강기능식품은 현재 판정에 반영하지 않습니다.</div>
+    ${!medication && (preview.product.suggested_administration_route || "unknown") === "unknown" ? `<div class="coverage-note limited"><strong>투여 경로를 확인해주세요</strong><br>제품 제형만으로 사용 방법을 확정하지 못했습니다. 처방전의 투여 경로를 확인해 선택해주세요.</div>` : ""}
     <div class="prescription-form">
       <div class="form-grid two">
         <label>1회 복용량<input id="pending-dose-amount" type="number" min="0" step="0.1" placeholder="1"></label>
@@ -409,14 +410,15 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
         </label>
         <label>투여 경로
           <select id="pending-route">
+            <option value="unknown">확인 필요</option>
             <option value="oral">경구</option>
             <option value="topical">외용</option>
             <option value="inhaled">흡입</option>
             <option value="ophthalmic">점안</option>
+            <option value="otic">점이</option>
             <option value="nasal">비강</option>
             <option value="injection">주사</option>
             <option value="other">기타</option>
-            <option value="unknown">미지원·확인 필요</option>
           </select>
         </label>
       </div>
@@ -438,11 +440,12 @@ function renderRiskSheet(preview, medication = null, ocrHints = null) {
     $("#pending-days", root).value = medication.prescription_days ?? "";
     $("#pending-times", root).value = (medication.schedules || []).map((item) => item.time_of_day).join(", ");
     $("#pending-meal", root).value = medication.meal_relation || "unspecified";
-    $("#pending-route", root).value = medication.administration_route || "oral";
+    $("#pending-route", root).value = medication.administration_route || "unknown";
     $("#pending-start-date", root).value = medication.start_date || "";
     $("#pending-prn", root).checked = Boolean(medication.as_needed);
     $("#confirm-edit-med", root).addEventListener("click", confirmEditMedication);
   } else {
+    $("#pending-route", root).value = preview.product.suggested_administration_route || "unknown";
     $("#pending-start-date", root).value = todayInKorea();
     $("#confirm-add-med", root).addEventListener("click", confirmAddMedication);
     MedicineOcr.prefillForm(ocrHints, MedicineOcr.getReview()?.issues);

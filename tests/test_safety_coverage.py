@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from medicine_app.core import ConfirmationRequired, MedicationApp
@@ -21,6 +22,8 @@ def make_canonical_db(path: Path) -> None:
     add_product(con, "MFDS-U", "연결불완전제품", "FutureDrug Salt", dosage_form="정제")
     add_product(con, "MFDS-LU", "수유범위미확정제품", "Osimertinib Mesylate", dosage_form="정제")
     add_product(con, "MFDS-M", "정량비교졸피뎀", "Zolpidem", dosage_form="정제", edi="P-LINK")
+    add_product(con, "MFDS-AGE-T", "세티리진정", "Cetirizine", dosage_form=None)
+    add_product(con, "MFDS-AGE-U", "세티리진제형미상", "Cetirizine", dosage_form=None)
     add_linked_rule(
         con, category="duration_caution", item_seq="MFDS-Z", ingredient="Zolpidem",
         rule_value="28일", details="최대 투여기간 28일", dosage_form="정제",
@@ -32,6 +35,24 @@ def make_canonical_db(path: Path) -> None:
     add_linked_rule(
         con, category="combination_contraindication", item_seq="MFDS-A", ingredient="Alprazolam",
         paired_item_seq="MFDS-I", paired_ingredient="Itraconazole", details="병용금기",
+    )
+    add_linked_rule(
+        con,
+        category="age_contraindication",
+        item_seq="MFDS-AGE-T",
+        ingredient="Cetirizine",
+        rule_value="액제: 2세 미만, 정제, 캡슐제: 6세 미만",
+        product_dosage_form="필름코팅정",
+        criterion_dosage_form="액제, 정제, 캡슐제",
+    )
+    add_linked_rule(
+        con,
+        category="age_contraindication",
+        item_seq="MFDS-AGE-U",
+        ingredient="Cetirizine",
+        rule_value="액제: 2세 미만, 정제, 캡슐제: 6세 미만",
+        product_dosage_form=None,
+        criterion_dosage_form="액제, 정제, 캡슐제",
     )
     add_unlinked_rule(
         con, category="duration_caution", item_seq="MFDS-ZU", ingredient="Zolpidem",
@@ -85,6 +106,32 @@ class SafetyCoverageV2Test(unittest.TestCase):
         preview = self.app.preview_medication(pregnant["id"], {"product_ref": "MFDS-U"})
         pregnancy = next(row for row in preview["dur_checks"] if row["category"] == "pregnancy_contraindication")
         self.assertEqual(pregnancy["status"], "unknown")
+        self.assertTrue(preview["warning_token"])
+
+    def test_multi_form_age_rule_uses_the_threshold_for_the_product_form(self) -> None:
+        child = self.app.create_person(
+            "4세", "2022-01-01", "female", "not_pregnant", lactation_status="not_breastfeeding"
+        )
+
+        preview = self.app.preview_medication(
+            child["id"], {"product_ref": "MFDS-AGE-T"}, as_of=date(2026, 8, 13)
+        )
+
+        age = next(row for row in preview["dur_checks"] if row["category"] == "age_contraindication")
+        self.assertEqual(age["status"], "hit")
+        self.assertIn("6세 미만", age["summary"])
+
+    def test_multi_form_age_rule_without_resolvable_product_form_fails_closed(self) -> None:
+        child = self.app.create_person(
+            "4세-제형미상", "2022-01-01", "female", "not_pregnant", lactation_status="not_breastfeeding"
+        )
+
+        preview = self.app.preview_medication(
+            child["id"], {"product_ref": "MFDS-AGE-U"}, as_of=date(2026, 8, 13)
+        )
+
+        age = next(row for row in preview["dur_checks"] if row["category"] == "age_contraindication")
+        self.assertEqual(age["status"], "unknown")
         self.assertTrue(preview["warning_token"])
 
     def test_unlinked_duration_rule_is_not_silently_not_applicable(self) -> None:

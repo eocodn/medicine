@@ -45,7 +45,7 @@ class MedicationPreviewRequest(BaseModel):
     dose_unit: str | None = None
     frequency_per_day: int | None = None
     meal_relation: str = "unspecified"
-    administration_route: str = "oral"
+    administration_route: str = "unknown"
     as_needed: bool = False
     prescription_days: int | None = None
     schedule_times: list[str] = Field(default_factory=list)
@@ -66,7 +66,7 @@ class MedicationCreate(BaseModel):
     dose_unit: str | None = None
     frequency_per_day: int | None = None
     meal_relation: str = "unspecified"
-    administration_route: str = "oral"
+    administration_route: str = "unknown"
     as_needed: bool = False
     prescription_days: int | None = None
     schedule_times: list[str] = Field(default_factory=list)

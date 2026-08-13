@@ -249,7 +249,7 @@ def assess_current_medication(
         "dose_unit": medication.get("dose_unit"),
         "frequency_per_day": medication.get("frequency_per_day"),
         "meal_relation": medication.get("meal_relation") or "unspecified",
-        "administration_route": medication.get("administration_route") or "oral",
+        "administration_route": medication.get("administration_route") or "unknown",
         "as_needed": bool(medication.get("as_needed")),
         "prescription_days": medication.get("prescription_days"),
         "schedule_times": [

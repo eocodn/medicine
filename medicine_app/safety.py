@@ -13,6 +13,8 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
+from .dosage_forms import dosage_form_tags
+
 APP_TIMEZONE = timezone(timedelta(hours=9), "Asia/Seoul")
 AGE_RULE_RE = re.compile(r"(?P<n>\d+)\s*(?P<unit>세|개월|주|일)\s*(?P<op>미만|이하|이상|초과)")
 
@@ -48,13 +50,7 @@ def age_years(birth_date: str, as_of: date | None = None) -> int:
     return max(years, 0)
 
 
-def age_rule_matches(birth_date: str, rule: str | None, as_of: date | None = None) -> bool:
-    """Evaluate Korean age rules such as ``65세 이상`` or ``6개월 미만``."""
-    if not rule:
-        return False
-    match = AGE_RULE_RE.search(rule)
-    if not match:
-        return False
+def _age_match_applies(birth_date: str, match: re.Match[str], as_of: date | None = None) -> bool:
     birth = _parse_birth_date(birth_date)
     today = as_of or datetime.now(APP_TIMEZONE).date()
     amount = int(match.group("n"))
@@ -81,6 +77,58 @@ def age_rule_matches(birth_date: str, rule: str | None, as_of: date | None = Non
     if operator == "초과":
         return today >= next_threshold
     return False
+
+
+def age_rule_matches(birth_date: str, rule: str | None, as_of: date | None = None) -> bool:
+    """Evaluate one unambiguous Korean age expression."""
+    if not rule:
+        return False
+    matches = list(AGE_RULE_RE.finditer(rule))
+    return len(matches) == 1 and _age_match_applies(birth_date, matches[0], as_of)
+
+
+def age_rule_evaluation(
+    birth_date: str,
+    rule: str | None,
+    product_dosage_form: object,
+    as_of: date | None = None,
+) -> tuple[bool | None, str | None]:
+    """Resolve a product-specific age rule, or return unknown instead of guessing.
+
+    Multi-form MFDS criteria encode each form group immediately before its age
+    expression (for example ``액제: 2세 미만, 정제: 6세 미만``). Every age
+    expression must have an explicit form group, and the product form must map
+    to exactly one group. Any other structure stays non-evaluable.
+    """
+    if not rule:
+        return None, "연령금기 기준값이 없습니다."
+    matches = list(AGE_RULE_RE.finditer(rule))
+    if not matches:
+        return None, "연령금기 기준을 자동으로 해석하지 못했습니다."
+    if len(matches) == 1:
+        return _age_match_applies(birth_date, matches[0], as_of), None
+
+    product_tags = dosage_form_tags(product_dosage_form)
+    if not product_tags:
+        return None, "제품 제형을 확정하지 못해 제형별 연령금기 기준을 자동 판정하지 못했습니다."
+
+    groups: list[tuple[set[str], re.Match[str]]] = []
+    previous_end = 0
+    for match in matches:
+        prefix = rule[previous_end:match.start()]
+        previous_end = match.end()
+        if ":" not in prefix:
+            return None, "제형별 연령금기 조건 구조를 하나로 확정하지 못했습니다."
+        form_text = prefix.rsplit(":", 1)[0]
+        tags = dosage_form_tags(form_text)
+        if not tags:
+            return None, "제형별 연령금기 조건의 제형을 자동으로 해석하지 못했습니다."
+        groups.append((tags, match))
+
+    applicable = [match for tags, match in groups if tags & product_tags]
+    if len(applicable) != 1:
+        return None, "제품 제형에 적용되는 연령금기 조건을 하나로 확정하지 못했습니다."
+    return _age_match_applies(birth_date, applicable[0], as_of), None
 
 
 _UNIT_RE = re.compile(r"(?<![\d.])([+]?(?:\d+(?:\.\d*)?|\.\d+))(?:\s*)(mcg|μg|ug|mg|g|정|캡슐|캡|포)?", re.IGNORECASE)

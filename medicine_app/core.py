@@ -175,7 +175,7 @@ class MedicationApp:
         dose_unit: str | None = None,
         frequency_per_day: int | None = None,
         meal_relation: str = "unspecified",
-        administration_route: str = "oral",
+        administration_route: str = "unknown",
         as_needed: bool = False,
         prescription_days: int | None = None,
         schedule_times: list[str] | None = None,
@@ -289,7 +289,7 @@ class MedicationApp:
         data["active"] = bool(data["active"])
         data["as_needed"] = bool(data.get("as_needed") or 0)
         data["meal_relation"] = data.get("meal_relation") or "unspecified"
-        data["administration_route"] = data.get("administration_route") or "oral"
+        data["administration_route"] = data.get("administration_route") or "unknown"
         data["schedules"] = [dict(item) for item in schedules]
         revision = con.execute(
             "SELECT assessment_json,acknowledged FROM medication_revisions WHERE medication_id=? AND revision=?",

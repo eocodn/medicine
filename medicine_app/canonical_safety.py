@@ -10,7 +10,7 @@ from .canonical_runtime import has_unlinked_product_rule, item_seq, linked_produ
 from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 from .safety import (
     _COUNT_UNITS, _countable_form, _detail_content, _draft_quantity, _frequency, _source_quantity,
-    age_rule_matches, age_years,
+    age_rule_evaluation, age_years,
 )
 
 
@@ -131,7 +131,24 @@ def _person_specific_risks(
         category = str(row["category"])
         rule_value = row.get("criterion_rule_value")
         if category == "age_contraindication":
-            if not age_rule_matches(person["birth_date"], rule_value, as_of):
+            applies, reason = age_rule_evaluation(
+                person["birth_date"], rule_value,
+                row.get("product_dosage_form") or product.get("dosage_form"),
+                as_of,
+            )
+            if applies is None:
+                risks.append({
+                    "type": category,
+                    "severity": "info",
+                    "title": "연령금기 기준 확인 필요",
+                    "details": reason or "연령금기 기준을 자동 판정하지 못했습니다.",
+                    "evaluation_status": "unknown",
+                    "source_scope": "canonical_product",
+                    "dataset_key": row.get("criterion_source_dataset_key"),
+                    "source_row": row.get("criterion_source_row"),
+                })
+                continue
+            if not applies:
                 continue
             title, severity = f"연령금기 · {rule_value}", "danger"
         elif category == "pregnancy_contraindication":

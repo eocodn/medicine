@@ -27,6 +27,8 @@ def make_canonical_db(path: Path) -> None:
             con, item, name, ingredient, manufacturer=f"제약{item[-1]}", dosage_form="정제",
             permit_status=status, cancel_date=cancel_date, cancel_name=cancel_name, edi=edi,
         )
+    add_product(con, "MFDS-J", "주사형제품", "drug-j", dosage_form=None)
+    add_product(con, "MFDS-N", "제형근거없는제품", "drug-n", dosage_form=None)
     add_linked_rule(
         con, category="combination_contraindication", item_seq="MFDS-A", ingredient="drug-a",
         paired_item_seq="MFDS-B", paired_ingredient="drug-b", details="함께 사용하지 않아야 함",
@@ -49,6 +51,10 @@ def make_canonical_db(path: Path) -> None:
     )
     add_linked_rule(
         con, category="elderly_caution", item_seq="MFDS-D", ingredient="drug-d", details="노인에서 주의",
+    )
+    add_linked_rule(
+        con, category="elderly_caution", item_seq="MFDS-J", ingredient="drug-j",
+        product_dosage_form="용액주사제", criterion_dosage_form="주사제", details="노인에서 주의",
     )
     add_linked_rule(
         con, category="duration_caution", item_seq="MFDS-B", ingredient="drug-b",
@@ -75,6 +81,23 @@ class MedicationAppTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def test_product_route_hint_uses_authoritative_forms_and_otherwise_stays_unknown(self) -> None:
+        oral = self.app.get_product("MFDS-A")
+        injection = self.app.get_product("MFDS-J")
+        unknown = self.app.get_product("MFDS-N")
+
+        self.assertEqual(oral["suggested_administration_route"], "oral")
+        self.assertEqual(injection["suggested_administration_route"], "injection")
+        self.assertEqual(unknown["suggested_administration_route"], "unknown")
+        self.assertIn("용액주사제", injection["canonical_dosage_forms"])
+
+    def test_missing_administration_route_defaults_to_unknown_not_oral(self) -> None:
+        person = self.app.create_person("Route", "1990-01-01", "male")
+
+        medication = self.app.add_medication(person["id"], product_ref="MFDS-N")
+
+        self.assertEqual(medication["administration_route"], "unknown")
 
     def test_manages_multiple_people_and_separate_medication_lists(self) -> None:
         alice = self.app.create_person("Alice", "1990-04-03", "female", "not_pregnant")

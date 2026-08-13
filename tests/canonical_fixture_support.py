@@ -83,9 +83,13 @@ def add_linked_rule(
     paired_item_seq: str | None = None,
     paired_ingredient: str | None = None,
     dosage_form: str | None = None,
+    product_dosage_form: str | None = None,
+    criterion_dosage_form: str | None = None,
     effect_name: str | None = None,
     criterion_note: str | None = None,
 ) -> tuple[int, int]:
+    product_dosage_form = dosage_form if product_dosage_form is None else product_dosage_form
+    criterion_dosage_form = dosage_form if criterion_dosage_form is None else criterion_dosage_form
     product_source_row = con.execute("SELECT COUNT(*)+1 FROM product_rules").fetchone()[0]
     ingredient_code = f"D-{item_seq}"
     paired_code = f"D-{paired_item_seq}" if paired_item_seq else None
@@ -97,7 +101,7 @@ def add_linked_rule(
            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (DUR_SOURCE, product_source_row, category, item_seq, ingredient_code,
          ingredient, ingredient, paired_item_seq, paired_code,
-         paired_ingredient, paired_ingredient, effect_name, dosage_form, details),
+         paired_ingredient, paired_ingredient, effect_name, product_dosage_form, details),
     )
     product_rule_id = int(cur.lastrowid)
     criterion_source_row = con.execute("SELECT COUNT(*)+1 FROM ingredient_rules").fetchone()[0]
@@ -107,7 +111,7 @@ def add_linked_rule(
                paired_ingredient_name,rule_value,dosage_form,note,details,sequence_text
            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
         (XLSX_SOURCE, criterion_source_row, category, ingredient, ingredient,
-         paired_ingredient, rule_value or effect_name, dosage_form, criterion_note, details,
+         paired_ingredient, rule_value or effect_name, criterion_dosage_form, criterion_note, details,
          str(criterion_source_row)),
     )
     criterion_rule_id = int(cur.lastrowid)

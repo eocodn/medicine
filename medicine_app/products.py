@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .canonical_runtime import category_resolution_issues, linked_categories, product_flags
+from .dosage_forms import infer_administration_route
 
 
 class ProductRepository:
@@ -41,6 +42,19 @@ class ProductRepository:
     @staticmethod
     def _decorate_product(row: sqlite3.Row, con: sqlite3.Connection) -> dict:
         target_item_seq = str(row["item_seq"])
+        canonical_dosage_forms = {
+            str(value[0]).strip()
+            for value in con.execute(
+                """SELECT dosage_form FROM product_rules WHERE item_seq=? AND dosage_form IS NOT NULL
+                   UNION
+                   SELECT dosage_form FROM product_flags WHERE item_seq=? AND dosage_form IS NOT NULL""",
+                (target_item_seq, target_item_seq),
+            ).fetchall()
+            if value[0] and str(value[0]).strip()
+        }
+        if row["dosage_form"] and str(row["dosage_form"]).strip():
+            canonical_dosage_forms.add(str(row["dosage_form"]).strip())
+        suggested_route = infer_administration_route(canonical_dosage_forms)
         edi_codes = [
             str(value[0]) for value in con.execute(
                 """SELECT value FROM product_identifiers
@@ -74,6 +88,8 @@ class ProductRepository:
             "unmapped_ingredients": [],
             "manufacturer": row["manufacturer"],
             "dosage_form": row["dosage_form"],
+            "canonical_dosage_forms": sorted(canonical_dosage_forms),
+            "suggested_administration_route": suggested_route,
             "permit_date": row["permit_date"],
             "cancel_date": row["cancel_date"],
             "permit_status_name": row["cancel_name"],

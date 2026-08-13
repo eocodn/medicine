@@ -66,7 +66,7 @@ def normalize_draft(values: dict) -> dict:
         if schedule_times and frequency != len(schedule_times):
             raise ValueError("frequency_per_day must match the number of schedule_times")
     meal_relation = values.get("meal_relation", "unspecified")
-    route = values.get("administration_route", "oral")
+    route = values.get("administration_route", "unknown")
     if meal_relation not in MEAL_RELATION_VALUES:
         raise ValueError(f"invalid meal_relation: {meal_relation}")
     if route not in ADMINISTRATION_ROUTE_VALUES:
