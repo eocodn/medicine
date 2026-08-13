@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f6f7f4">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
   <title>약봄</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260812a">
+  <link rel="stylesheet" href="/static/styles.css?v=20260813b">
 </head>
 <body>
   <div class="app-shell">
@@ -91,6 +91,11 @@
     <div id="risk-sheet-content"></div>
   </section>
 
+  <section id="ocr-review-sheet" class="bottom-sheet ocr-review-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="ocr-review-title">
+    <div class="sheet-handle"></div>
+    <div id="ocr-review-content"></div>
+  </section>
+
   <section id="person-sheet" class="bottom-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="person-form-title">
     <div class="sheet-handle"></div>
     <div class="sheet-header">
@@ -134,9 +139,10 @@
   <script src="/static/prescription.js?v=20260811e" defer></script>
   <script src="/static/browser-ocr-parser.js" defer></script>
   <script src="/static/browser-ocr.js?v=20260811k" defer></script>
-  <script src="/static/ocr.js?v=20260811k" defer></script>
+  <script src="/static/ocr.js?v=20260813b" defer></script>
+  <script src="/static/ocr-review.js?v=20260813b" defer></script>
   <script src="/static/people.js?v=20260811k" defer></script>
   <script src="/static/timeline.js?v=20260811b" defer></script>
-  <script src="/static/app.js?v=20260813a" defer></script>
+  <script src="/static/app.js?v=20260813b" defer></script>
 </body>
 </html>

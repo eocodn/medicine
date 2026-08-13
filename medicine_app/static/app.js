@@ -89,8 +89,9 @@ function showScreen(name) {
   if (name === "search") setTimeout(() => $("#drug-query").focus(), 80);
 }
 
-function handleOcrReviewRequired(hints, productQueries, operationId, issues) {
+function handleOcrReviewRequired(hints, productQueries, operationId, issues, rows) {
   showScreen("search");
+  if (rows?.length) { MedicineOcrReview.open(rows, operationId, issues); return; }
   const query = MedicineOcr.renderReview(productQueries, hints?.product_name, issues);
   if (query) runDrugSearch();
 }
@@ -571,7 +572,8 @@ function bindEvents() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
-  MedicineOcr.init({ onReviewRequired: handleOcrReviewRequired, onState: MedicineOcr.renderState });
+  MedicineOcrReview.init({ api, currentPersonId: () => state.currentPersonId, today: todayInKorea, randomId: () => crypto.randomUUID(), renderDur: durStatusHtml, toast, open: () => openSheet("#ocr-review-sheet"), close: closeSheets, onCreated: async () => { MedicineOcr.finish(); closeSheets(); await loadDashboard(); renderAll(); showScreen("meds"); } });
+  MedicineOcr.init({ onReviewRequired: handleOcrReviewRequired, onState: MedicineOcr.renderState, onClear: MedicineOcrReview.reset });
   try {
     await loadHealth();
     await loadPeople();
