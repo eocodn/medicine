@@ -1,0 +1,5 @@
+observed_name	target_name	target_unii	review_basis	reviewed_at
+Buprenorpine	Buprenorphine	40D3SCR4GZ	FDA GSRS exact BUPRENORPHINE; MFDS DUR code D000017 publishes Buprenorpine and Buprenorphine with the same Korean name 부프레노르핀; KIDS/MFDS XLSX uses Buprenorphine	2026-08-13
+Clobasam	Clobazam	2MRO291B4U	FDA GSRS exact CLOBAZAM; MFDS DUR code D000378 publishes Clobasam in pregnancy/elderly rows and Clobazam in therapeutic-duplication rows with the same Korean name 클로바잠; KIDS/MFDS XLSX uses Clobazam	2026-08-13
+Nilotinib Hydrochrloride Monohydrate	Nilotinib Hydrochloride Monohydrate	5JHU0N1R6K	FDA GSRS exact NILOTINIB HYDROCHLORIDE MONOHYDRATE; MFDS DUR D000608 Korean identity is 닐로티닙염산염일수화물; source English contains the isolated misspelling Hydrochrloride	2026-08-13
+Rivastigmine Tartarate	Rivastigmine Tartrate	9IY2357JPE	FDA GSRS exact RIVASTIGMINE TARTRATE; MFDS DUR D000892 Korean identity is 리바스티그민타르타르산염 and the same code also publishes Rivastigmine; source English contains Tartarate	2026-08-13

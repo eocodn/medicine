@@ -33,6 +33,10 @@ def substance_stats(db_path: str | Path) -> dict:
         ).fetchone()[0]
         relations = con.execute("SELECT COUNT(*) FROM substance_relations").fetchone()[0]
         candidates = con.execute("SELECT COUNT(*) FROM substance_match_candidates").fetchone()[0]
+        approved_typo_matches = con.execute(
+            """SELECT COUNT(*) FROM substance_match_candidates
+               WHERE selected=1 AND match_method='approved_typo_alias'"""
+        ).fetchone()[0]
         unsolved_reasons = {
             row[0]: row[1]
             for row in con.execute(
@@ -70,6 +74,10 @@ def substance_stats(db_path: str | Path) -> dict:
         "unparsed_source_expressions": unparsed_source_expressions,
         "source_scopes": source_scopes,
         "match_candidates": candidates,
+        "approved_typo_alias_matches": approved_typo_matches,
+        "approved_typo_corpus_rows": int(meta.get("approved_typo_corpus_rows", "0")),
+        "active_approved_typo_rows": int(meta.get("active_approved_typo_rows", "0")),
+        "approved_typo_corpus_sha256": meta.get("approved_typo_corpus_sha256"),
         "substance_relations": relations,
         "source_families": source_families,
         "size_bytes": path.stat().st_size,

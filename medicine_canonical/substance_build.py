@@ -3,10 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import sqlite3
 import time
-import unicodedata
 from collections import defaultdict
 from contextlib import closing
 from dataclasses import dataclass
@@ -24,6 +22,7 @@ from .substance_external import (
 from .substance_inspection import substance_stats, verify_substance_database
 from .substance_ids import stable_external_substance_id, stable_substance_id
 from .substance_matching import (
+    MATCH_METHOD_PRIORITY,
     MatchEvidence,
     RelationEvidence,
     candidates_for_local_name,
@@ -31,6 +30,18 @@ from .substance_matching import (
 )
 from .substance_schema import SUBSTANCE_SCHEMA, SUBSTANCE_SCHEMA_VERSION
 from .substance_sources import sync_substance_identity_sources
+from .substance_text import (
+    normalize_substance_name,
+    split_top_level as _split_top_level,
+    text_or_none as _text,
+)
+from .substance_typo_corpus import (
+    APPROVED_TYPO_CORPUS_PATH,
+    ApprovedTypoAlias,
+    corpus_sha256,
+    load_approved_typo_corpus,
+    validate_approved_typo_corpus,
+)
 
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
@@ -46,50 +57,6 @@ class SourceIdentity:
     name_ko: str | None
     normalized_name: str
     occurrence_count: int
-
-
-def _text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def normalize_substance_name(value: object) -> str:
-    """Normalize only Unicode, case and whitespace for exact identity matching.
-
-    This deliberately does not strip salts, hydrates, esters, strengths,
-    punctuation or formulation words. Those require an explicit relationship or
-    reviewed identity source and are not part of exact-identity normalization.
-    """
-    text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
-    return re.sub(r"\s+", " ", text)
-
-
-def _split_top_level(value: object, separators: frozenset[str]) -> list[str]:
-    text = unicodedata.normalize("NFKC", str(value or "")).strip()
-    if not text:
-        return []
-    parts: list[str] = []
-    current: list[str] = []
-    stack: list[str] = []
-    closing = {")": "(", "]": "[", "}": "{"}
-    for char in text:
-        if char in "([{":
-            stack.append(char)
-        elif char in closing and stack and stack[-1] == closing[char]:
-            stack.pop()
-        if not stack and char in separators:
-            piece = "".join(current).strip()
-            if piece:
-                parts.append(piece)
-            current = []
-        else:
-            current.append(char)
-    piece = "".join(current).strip()
-    if piece:
-        parts.append(piece)
-    return parts
 
 
 def _canonical_source_fingerprint(con: sqlite3.Connection) -> str:
@@ -291,6 +258,7 @@ def _insert_substance_layer(
     con: sqlite3.Connection,
     observations: list[SourceIdentity],
     external: dict[str, dict[str, ExternalEvidence]],
+    approved_typos: dict[str, ApprovedTypoAlias],
 ) -> None:
     by_name: dict[str, list[SourceIdentity]] = defaultdict(list)
     for observation in observations:
@@ -305,7 +273,12 @@ def _insert_substance_layer(
     # transformations; ambiguous exact names never fall through to those rules.
     for normalized_name in sorted(by_name):
         representative = _representative_name(by_name[normalized_name])
-        evidence_rows = candidates_for_local_name(representative, external, normalize_substance_name)
+        evidence_rows = candidates_for_local_name(
+            representative,
+            external,
+            normalize_substance_name,
+            approved_typos=approved_typos,
+        )
         evidence_by_unii = {row.unii: row for row in evidence_rows}
         name_evidence[normalized_name] = evidence_by_unii
         candidate_uniis = sorted(evidence_by_unii)
@@ -341,14 +314,6 @@ def _insert_substance_layer(
             continue
         name_relations[normalized_name] = relation
 
-    method_priority = {
-        "normalized_name_exact": 0,
-        "source_wrapper_exact": 1,
-        "source_declared_alias": 2,
-        "typography_greek": 3,
-        "typography_apostrophe": 4,
-        "typography_isotope": 5,
-    }
     pending_relations: list[tuple[str, str, str, str, str]] = []
 
     for substance_id in sorted(group_names):
@@ -387,7 +352,11 @@ def _insert_substance_layer(
         if resolved:
             best = sorted(
                 selected_evidence,
-                key=lambda row: (method_priority[row.match_method], row.dataset_key, row.external_name),
+                key=lambda row: (
+                    MATCH_METHOD_PRIORITY[row.match_method],
+                    row.dataset_key,
+                    row.external_name,
+                ),
             )[0]
             con.execute(
                 """INSERT INTO substance_identifiers(
@@ -495,6 +464,8 @@ def assemble_substance_database(
         gsrs_names_data,
         normalize_substance_name,
     )
+    typo_corpus = load_approved_typo_corpus(APPROVED_TYPO_CORPUS_PATH, normalize_substance_name)
+    typo_corpus_hash = corpus_sha256(APPROVED_TYPO_CORPUS_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     temp = db_path.with_name(db_path.name + ".tmp")
     temp.unlink(missing_ok=True)
@@ -532,13 +503,19 @@ def assemble_substance_database(
                 source,
                 set(external),
             )
+            approved_typos = validate_approved_typo_corpus(
+                typo_corpus,
+                external,
+                normalize_substance_name,
+                active_observed_names={row.normalized_name for row in observations},
+            )
             con.executemany(
                 """INSERT INTO source_unparsed_expressions(
                        source_dataset_key,source_scope,source_row,raw_text,reason
                    ) VALUES(?,?,?,?,?)""",
                 unparsed,
             )
-            _insert_substance_layer(con, observations, external)
+            _insert_substance_layer(con, observations, external, approved_typos)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(
                 "INSERT INTO substance_meta(key,value) VALUES(?,?)",
@@ -549,8 +526,11 @@ def assemble_substance_database(
                     ("canonical_source_fingerprint", fingerprint),
                     (
                         "external_identity_policy",
-                        "openfda_preferred_or_gsrs_of_cn_sys_exact_plus_explicit_source_structure",
+                        "openfda_preferred_or_gsrs_of_cn_sys_exact_plus_reviewed_typo_and_explicit_source_structure",
                     ),
+                    ("approved_typo_corpus_rows", str(len(typo_corpus))),
+                    ("active_approved_typo_rows", str(len(approved_typos))),
+                    ("approved_typo_corpus_sha256", typo_corpus_hash),
                     (
                         "relation_policy",
                         "explicit_source_form_relations_only_no_chemical_suffix_inference",

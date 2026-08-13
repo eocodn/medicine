@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .substance_external import ExternalEvidence
+from .substance_typo_corpus import ApprovedTypoAlias
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,16 @@ _ALIAS_EXCLUDED_RE = re.compile(
 )
 _ISOTOPE_RE = re.compile(r"\(\s*(\d{1,3}\s*(?:f|i|tc|mo|lu))\s*\)", re.IGNORECASE)
 _GREEK_WORDS = {"α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta"}
+
+MATCH_METHOD_PRIORITY = {
+    "normalized_name_exact": 0,
+    "approved_typo_alias": 1,
+    "source_wrapper_exact": 2,
+    "source_declared_alias": 3,
+    "typography_greek": 4,
+    "typography_apostrophe": 5,
+    "typography_isotope": 6,
+}
 
 _FORM_RELATION_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r"^(.*?)\s+\(?micronized\)?$", re.IGNORECASE), "physical_form_of", "micronized"),
@@ -172,14 +183,43 @@ def _typography_candidate(
     return []
 
 
+def _approved_typo_candidate(
+    local_name: str,
+    external: dict[str, dict[str, ExternalEvidence]],
+    normalize_name: Callable[[object], str],
+    approved_typos: dict[str, ApprovedTypoAlias],
+) -> list[MatchEvidence]:
+    row = approved_typos.get(normalize_name(local_name))
+    if row is None:
+        return []
+    target = external.get(normalize_name(row.target_name), {})
+    evidence = target.get(row.target_unii)
+    if evidence is None or len(target) != 1:
+        return []
+    return [
+        MatchEvidence(
+            unii=row.target_unii,
+            external_name=sorted(evidence.names, key=lambda value: (value.casefold(), value))[0],
+            dataset_key=evidence.dataset_key,
+            match_method="approved_typo_alias",
+        )
+    ]
+
+
 def candidates_for_local_name(
     local_name: str,
     external: dict[str, dict[str, ExternalEvidence]],
     normalize_name: Callable[[object], str],
+    *,
+    approved_typos: dict[str, ApprovedTypoAlias] | None = None,
 ) -> list[MatchEvidence]:
     exact = _all_exact(local_name, external, normalize_name)
     if exact:
         return exact
+    if approved_typos:
+        candidate = _approved_typo_candidate(local_name, external, normalize_name, approved_typos)
+        if candidate:
+            return candidate
     for resolver in (_wrapper_candidate, _declared_alias_candidate, _typography_candidate):
         candidate = resolver(local_name, external, normalize_name)
         if candidate:
@@ -202,6 +242,7 @@ def relation_for_local_name(
 
 
 __all__ = [
+    "MATCH_METHOD_PRIORITY",
     "MatchEvidence",
     "RelationEvidence",
     "candidates_for_local_name",

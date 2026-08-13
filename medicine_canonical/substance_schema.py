@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SUBSTANCE_SCHEMA_VERSION = "3"
+SUBSTANCE_SCHEMA_VERSION = "4"
 
 
 SUBSTANCE_SCHEMA = r"""
@@ -83,7 +83,7 @@ CREATE TABLE substance_match_candidates (
     system TEXT NOT NULL,
     value TEXT NOT NULL,
     external_name TEXT NOT NULL,
-    match_method TEXT NOT NULL CHECK(match_method IN ('normalized_name_exact','source_wrapper_exact','source_declared_alias','typography_greek','typography_apostrophe','typography_isotope')),
+    match_method TEXT NOT NULL CHECK(match_method IN ('normalized_name_exact','approved_typo_alias','source_wrapper_exact','source_declared_alias','typography_greek','typography_apostrophe','typography_isotope')),
     evidence_source_dataset_key TEXT NOT NULL REFERENCES source_snapshots(dataset_key),
     selected INTEGER NOT NULL CHECK(selected IN (0,1)),
     PRIMARY KEY(normalized_name,system,value)
@@ -95,7 +95,7 @@ CREATE TABLE substance_identifiers (
     system TEXT NOT NULL,
     value TEXT NOT NULL,
     evidence_source_dataset_key TEXT NOT NULL REFERENCES source_snapshots(dataset_key),
-    match_method TEXT NOT NULL CHECK(match_method IN ('normalized_name_exact','source_wrapper_exact','source_declared_alias','typography_greek','typography_apostrophe','typography_isotope')),
+    match_method TEXT NOT NULL CHECK(match_method IN ('normalized_name_exact','approved_typo_alias','source_wrapper_exact','source_declared_alias','typography_greek','typography_apostrophe','typography_isotope')),
     PRIMARY KEY(substance_id,system),
     UNIQUE(system,value)
 ) WITHOUT ROWID;
