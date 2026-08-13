@@ -158,3 +158,48 @@ test("uses table headers to interpret numeric-only dose frequency and day cells"
   assert.equal(document.rows[0].frequency_per_day, 3);
   assert.equal(document.rows[0].prescription_days, 5);
 });
+
+
+test("parses decimal and simple fractional tablet doses without inflating trailing digits", () => {
+  const decimal = parsePrescriptionHints("약명: 테스트정\n0.5정 1일 2회 7일");
+  assert.equal(decimal.dose_quantity, 0.5);
+  assert.equal(decimal.dose_unit, "정");
+
+  const fraction = parsePrescriptionHints("약명: 테스트정\n1/2정 1일 2회 7일");
+  assert.equal(fraction.dose_quantity, 0.5);
+  assert.equal(fraction.dose_unit, "정");
+
+  const malformed = parsePrescriptionHints("약명: 테스트정\n1/0정 1일 2회 7일");
+  assert.equal(malformed.dose_quantity, null);
+});
+
+test("keeps a medication-bag 복용법 line inside that drug block", () => {
+  const document = parsePrescriptionDocument([
+    box("약명: 테스트정", 20, 10, 220, 30),
+    box("복용법: 1회 1정 1일 3회 5일 식후", 20, 40, 430, 65),
+  ]);
+
+  assert.equal(document.rows.length, 1);
+  assert.deepEqual(
+    [document.rows[0].dose_amount, document.rows[0].dose_unit, document.rows[0].frequency_per_day, document.rows[0].prescription_days, document.rows[0].meal_relation],
+    [1, "정", 3, 5, "after_meal"],
+  );
+  assert.equal(document.rows[0].association, "labeled_block");
+});
+
+test("does not leak a common regimen to drugs declared after the shared group", () => {
+  const document = parsePrescriptionDocument([
+    box("약명: A정", 20, 10, 220, 30),
+    box("약명: B정", 20, 40, 220, 60),
+    box("공통 복용법: 1회 1정 1일 3회 5일", 20, 75, 430, 100),
+    box("약명: C정", 20, 140, 220, 160),
+    box("1회 복용량: 2정", 20, 170, 230, 190),
+  ]);
+
+  assert.equal(document.rows.length, 3);
+  assert.deepEqual(document.rows.slice(0, 2).map((row) => [row.frequency_per_day, row.prescription_days]), [[3, 5], [3, 5]]);
+  assert.equal(document.rows[2].dose_amount, 2);
+  assert.equal(document.rows[2].frequency_per_day, null);
+  assert.equal(document.rows[2].prescription_days, null);
+  assert.equal(document.rows[2].association, "labeled_block");
+});

@@ -8,7 +8,7 @@
 
   const PRODUCT_KO = /(?:약명|제품명)\s*[:：]\s*([가-힣][가-힣0-9-]*(?:정|캡슐|시럽)?)/giu;
   const PRODUCT_EN = /(?:product|medicine)\s*[:：]\s*([A-Za-z][A-Za-z0-9-]*)/giu;
-  const DOSE = /(\d+)\s*(정|캡슐|포|tablet|capsule)/iu;
+  const DOSE = /(?:^|[^\d./])(?:(\d+(?:\.\d+)?)|(\d+)\s*\/\s*(\d+))\s*(정|캡슐|포|tablet|capsule)(?![A-Za-z가-힣])/iu;
   const LABELED_FREQUENCY = /(?:1\s*일\s*)?복용\s*횟수\s*[:：]\s*(\d+)\s*회/iu;
   const FREQUENCY = /(?:\d+\s*일\s*)?(\d+)\s*(?:회(?:\s*\/\s*일)?|times?\s*\/\s*day)/iu;
   const LABELED_DURATION = /(?:총\s*)?복용\s*일수\s*[:：]\s*(\d+)\s*일/iu;
@@ -44,15 +44,33 @@
     return distinct(found.filter(Boolean)).sort();
   }
 
+  function parsedDose(value) {
+    const match = String(value || "").match(DOSE);
+    if (!match) return null;
+    let amount = null;
+    if (match[1] !== undefined) amount = Number(match[1]);
+    else {
+      const numerator = Number(match[2]);
+      const denominator = Number(match[3]);
+      if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null;
+      amount = numerator / denominator;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    const unit = match[4]?.toLowerCase();
+    return {
+      amount,
+      unit: unit === "tablet" ? "정" : unit === "capsule" ? "캡슐" : unit || null,
+    };
+  }
+
   function parsePrescriptionHints(value) {
     const ephemeral = typeof value === "string" ? value : "";
     const products = distinct([...matches(PRODUCT_KO, ephemeral), ...matches(PRODUCT_EN, ephemeral)]).slice(0, 12);
-    const doseMatch = ephemeral.match(DOSE);
+    const dose = parsedDose(ephemeral);
     // Medication-bag row headings contain "1일"/"1회" before the actual value.
     // Prefer explicit labels so those structural numbers cannot become dosage hints.
     const frequencyMatch = ephemeral.match(LABELED_FREQUENCY) || ephemeral.match(FREQUENCY);
     const durationMatch = ephemeral.match(LABELED_DURATION) || ephemeral.match(DURATION);
-    const unit = doseMatch?.[2]?.toLowerCase();
     const ambiguityCodes = [];
     const unsupportedCodes = [];
     if (!products.length) ambiguityCodes.push("MISSING_PRODUCT");
@@ -61,8 +79,8 @@
     if (/주사|inject(?:ion)?/iu.test(ephemeral)) unsupportedCodes.push("UNSUPPORTED_ROUTE");
     return {
       product_queries: products,
-      dose_quantity: doseMatch ? Number(doseMatch[1]) : null,
-      dose_unit: unit === "tablet" ? "정" : unit === "capsule" ? "캡슐" : unit || null,
+      dose_quantity: dose?.amount ?? null,
+      dose_unit: dose?.unit ?? null,
       frequency_per_day: frequencyMatch ? Number(frequencyMatch[1]) : null,
       duration_days: durationMatch ? Number(durationMatch[1]) : null,
       times: parsedTimes(ephemeral),
@@ -206,12 +224,18 @@
 
   function tableCellFields(key, value) {
     const fields = regimenFields(value);
-    const numeric = String(value || "").trim().match(/^([0-9]+(?:\.[0-9]+)?)$/u);
-    if (!numeric) return fields;
-    const amount = Number(numeric[1]);
+    const text = String(value || "").trim();
+    const numeric = text.match(/^([0-9]+(?:\.[0-9]+)?)$/u);
+    const fraction = text.match(/^([0-9]+)\s*\/\s*([0-9]+)$/u);
+    let amount = numeric ? Number(numeric[1]) : null;
+    if (fraction) {
+      const denominator = Number(fraction[2]);
+      amount = denominator > 0 ? Number(fraction[1]) / denominator : null;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) return fields;
     if (key === "dose") fields.dose_amount = amount;
-    else if (key === "frequency") fields.frequency_per_day = amount;
-    else if (key === "days") fields.prescription_days = amount;
+    else if (key === "frequency" && Number.isInteger(amount)) fields.frequency_per_day = amount;
+    else if (key === "days" && Number.isInteger(amount)) fields.prescription_days = amount;
     return fields;
   }
 
@@ -255,13 +279,14 @@
   }
 
   function isCommonRegimen(value) {
-    return /^(?:공통\s*)?(?:복용법|용법|복약방법)\s*[:：]/iu.test(String(value || "").trim());
+    return /^공통\s*(?:복용법|용법|복약방법)\s*[:：]/iu.test(String(value || "").trim());
   }
 
   function labeledRows(lines, medianHeight) {
     const productLines = lines.map((line, index) => ({ index, product: labeledProduct(line.text) })).filter((item) => item.product);
     if (!productLines.length) return { rows: [], common: null, unassociatedRegimen: false };
-    const explicitCommon = lines.find((line) => /^(?:공통\s+)(?:복용법|용법|복약방법)\s*[:：]/iu.test(line.text.trim())) || null;
+    const commonLines = lines.map((line, index) => ({ index, line })).filter((item) => isCommonRegimen(item.line.text));
+    const commonIndexes = new Set(commonLines.map((item) => item.index));
     const rows = [];
     const consumed = new Set();
     for (let markerIndex = 0; markerIndex < productLines.length; markerIndex += 1) {
@@ -272,7 +297,7 @@
       let previousCy = lines[marker.index].cy;
       for (let index = marker.index + 1; index < nextProductIndex; index += 1) {
         const line = lines[index];
-        if (explicitCommon === line || isCommonRegimen(line.text)) break;
+        if (commonIndexes.has(index)) break;
         if (line.cy - previousCy > Math.max(55, medianHeight * 2.8)) break;
         previousCy = line.cy;
         const fields = regimenFields(line.text);
@@ -286,24 +311,50 @@
       }
       rows.push(row);
     }
-    let common = null;
-    if (explicitCommon) common = regimenFields(explicitCommon.text.replace(/^[^:：]+[:：]\s*/u, ""));
-    if (common) {
-      for (const row of rows) {
-        if (applyFields(row, common)) row.association = "group_shared";
+
+    // A shared instruction is safe to propagate only to the uninterrupted run of
+    // medication labels immediately above it. Any intervening regimen/text line
+    // or a medication declared after the common line is outside that proven group.
+    let appliedCommon = null;
+    for (const commonItem of commonLines) {
+      const commonFields = regimenFields(commonItem.line.text.replace(/^[^:：]+[:：]\s*/u, ""));
+      const memberIndexes = [];
+      let cursor = commonItem.index - 1;
+      let lowerCy = commonItem.line.cy;
+      while (cursor >= 0) {
+        const line = lines[cursor];
+        if (lowerCy - line.cy > Math.max(55, medianHeight * 2.8)) break;
+        const markerPosition = productLines.findIndex((item) => item.index === cursor);
+        if (markerPosition < 0) break;
+        memberIndexes.unshift(markerPosition);
+        lowerCy = line.cy;
+        cursor -= 1;
+      }
+      if (!memberIndexes.length) continue;
+      let changed = false;
+      for (const rowIndex of memberIndexes) {
+        if (applyFields(rows[rowIndex], commonFields)) {
+          rows[rowIndex].association = "group_shared";
+          changed = true;
+        }
+      }
+      if (changed) {
+        appliedCommon = commonFields;
+        consumed.add(commonItem.index);
       }
     }
+
     let unassociatedRegimen = false;
     if (rows.length > 1) {
       for (let index = 0; index < lines.length; index += 1) {
-        if (consumed.has(index) || lines[index] === explicitCommon || labeledProduct(lines[index].text)) continue;
+        if (consumed.has(index) || labeledProduct(lines[index].text)) continue;
         const fields = regimenFields(lines[index].text);
         if (fields.dose_amount !== null || fields.frequency_per_day !== null || fields.prescription_days !== null || fields.schedule_times.length) {
           unassociatedRegimen = true;
         }
       }
     }
-    return { rows, common, unassociatedRegimen };
+    return { rows, common: appliedCommon, unassociatedRegimen };
   }
 
   function parsePrescriptionDocument(items) {
