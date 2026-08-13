@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import gc
 import json
 import sqlite3
 import tempfile
 import unittest
+import warnings
+from contextlib import closing
 from pathlib import Path
 
 from medicine_app.mobile_api import MobileApi
@@ -37,11 +40,20 @@ class MobileApiTest(unittest.TestCase):
 
         self.api.prepare_for_seal()
 
-        with sqlite3.connect(self.personal_db) as con:
+        with closing(sqlite3.connect(self.personal_db)) as con:
             self.assertEqual(con.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(con.execute("SELECT COUNT(*) FROM people").fetchone()[0], 1)
         wal = Path(str(self.personal_db) + "-wal")
         self.assertTrue(not wal.exists() or wal.stat().st_size == 0)
+
+    def test_prepare_for_seal_closes_checkpoint_connection(self) -> None:
+        gc.collect()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            self.api.prepare_for_seal()
+            gc.collect()
+        leaked = [warning for warning in caught if "unclosed database" in str(warning.message)]
+        self.assertEqual(leaked, [])
 
     def test_people_search_dashboard_and_dose_routes_share_the_core(self) -> None:
         status, health = self.request("GET", "/api/health")

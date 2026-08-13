@@ -1,31 +1,54 @@
-import org.gradle.api.tasks.Sync
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+import javax.inject.Inject
+
+abstract class PrepareMobileAssets : DefaultTask() {
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
+    @get:InputFile
+    abstract val mobileDatabase: RegularFileProperty
+
+    @get:InputFile
+    abstract val mobileManifest: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun prepare() {
+        fileSystemOperations.copy {
+            from(mobileDatabase)
+            from(mobileManifest)
+            into(outputDirectory)
+        }
+    }
+}
 
 plugins {
     id("com.android.application")
     id("com.chaquo.python")
 }
 
-val mobileDatabase = rootProject.file("../data/db/mobile.sqlite")
-val mobileManifest = rootProject.file("../data/db/mobile.manifest.json")
-val generatedMobileAssets = layout.buildDirectory.dir("generated/mobileAssets").get().asFile
+val mobileDatabaseFile = rootProject.file("../data/db/mobile.sqlite")
+val mobileManifestFile = rootProject.file("../data/db/mobile.manifest.json")
 val ocrAssetsDir = providers.environmentVariable("MEDICINE_BROWSER_OCR_ASSETS")
     .orElse("/opt/medicine-browser-ocr")
 
-val prepareMobileAssets = tasks.register<Sync>("prepareMobileAssets") {
+val prepareMobileAssets = tasks.register<PrepareMobileAssets>("prepareMobileAssets") {
+    mobileDatabase.set(layout.file(providers.provider { mobileDatabaseFile }))
+    mobileManifest.set(layout.file(providers.provider { mobileManifestFile }))
+    outputDirectory.set(layout.buildDirectory.dir("generated/mobileAssets"))
     doFirst {
-        check(mobileDatabase.isFile) {
-            "Missing $mobileDatabase. Build the verified mobile snapshot before assembling Android."
-        }
-        check(mobileManifest.isFile) {
-            "Missing $mobileManifest. Build the verified mobile snapshot before assembling Android."
-        }
         check(file(ocrAssetsDir.get()).isDirectory) {
             "Missing browser OCR assets: ${ocrAssetsDir.get()}"
         }
     }
-    from(mobileDatabase)
-    from(mobileManifest)
-    into(generatedMobileAssets)
 }
 
 android {
@@ -53,12 +76,16 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
-    sourceSets.getByName("main") {
-        assets.srcDirs(
-            rootProject.file("../medicine_app/static"),
-            file(ocrAssetsDir.get()),
-            generatedMobileAssets,
-        )
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val assets = checkNotNull(variant.sources.assets) {
+            "Android assets source API is unavailable for ${variant.name}"
+        }
+        assets.addStaticSourceDirectory(rootProject.file("../medicine_app/static").absolutePath)
+        assets.addStaticSourceDirectory(file(ocrAssetsDir.get()).absolutePath)
+        assets.addGeneratedSourceDirectory(prepareMobileAssets, PrepareMobileAssets::outputDirectory)
     }
 }
 
@@ -71,13 +98,6 @@ chaquopy {
         srcDir(rootProject.file(".."))
         include("medicine_app/**/*.py")
     }
-}
-
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(prepareMobileAssets)
-}
-tasks.matching { it.name.contains("Lint", ignoreCase = true) }.configureEach {
-    dependsOn(prepareMobileAssets)
 }
 
 dependencies {

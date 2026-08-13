@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
@@ -116,7 +117,7 @@ class CanonicalRuntimeTest(unittest.TestCase):
         self.assertEqual(product["product_code"], "P-Z")
         self.assertEqual(product["ingredient_name"], "Zolpidem")
         self.assertEqual(product["product_flags"][0]["category"], "split_caution")
-        with sqlite3.connect(self.canonical) as con:
+        with closing(sqlite3.connect(self.canonical)) as con:
             names = {row[0] for row in con.execute("SELECT name FROM sqlite_master")}
         self.assertNotIn("product_catalog", names)
         self.assertNotIn("product_code_bridge", names)
@@ -159,7 +160,7 @@ class CanonicalRuntimeTest(unittest.TestCase):
         )
         con.commit()
         con.close()
-        with sqlite3.connect(self.canonical) as check:
+        with closing(sqlite3.connect(self.canonical)) as check:
             self.assertEqual(canonical_manifest(check)["status"], "not_verified")
 
 

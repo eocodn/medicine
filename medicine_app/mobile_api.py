@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from contextlib import closing
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -113,7 +114,7 @@ class MobileApi:
 
     def prepare_for_seal(self) -> None:
         """Merge committed WAL pages before Android encrypts the closed DB file."""
-        with sqlite3.connect(self.service.personal_db, timeout=10) as con:
+        with closing(sqlite3.connect(self.service.personal_db, timeout=10)) as con:
             con.execute("PRAGMA busy_timeout = 5000")
             row = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
             if row and int(row[0]) != 0:

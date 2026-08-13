@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from medicine_app.ocr import OCRReviewStore, OCRValidationError, inspect_envelope, normalize_hint_envelope
@@ -102,7 +103,7 @@ class OcrContractTest(unittest.TestCase):
                 },
             )
             self.assertEqual(created.status_code, 201)
-            with sqlite3.connect(personal_db) as con:
+            with closing(sqlite3.connect(personal_db)) as con:
                 tables = [row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
                 contents = " ".join(
                     str(value) for table in tables for row in con.execute(f'SELECT * FROM "{table}"') for value in row
