@@ -22,7 +22,13 @@ from .substance_external import (
     load_openfda_unii_snapshot,
 )
 from .substance_inspection import substance_stats, verify_substance_database
-from .substance_matching import MatchEvidence, candidates_for_local_name
+from .substance_ids import stable_external_substance_id, stable_substance_id
+from .substance_matching import (
+    MatchEvidence,
+    RelationEvidence,
+    candidates_for_local_name,
+    relation_for_local_name,
+)
 from .substance_schema import SUBSTANCE_SCHEMA, SUBSTANCE_SCHEMA_VERSION
 from .substance_sources import sync_substance_identity_sources
 
@@ -54,7 +60,7 @@ def normalize_substance_name(value: object) -> str:
 
     This deliberately does not strip salts, hydrates, esters, strengths,
     punctuation or formulation words. Those require an explicit relationship or
-    reviewed identity source and are not part of schema-v1 automatic matching.
+    reviewed identity source and are not part of exact-identity normalization.
     """
     text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
     return re.sub(r"\s+", " ", text)
@@ -84,22 +90,6 @@ def _split_top_level(value: object, separators: frozenset[str]) -> list[str]:
     if piece:
         parts.append(piece)
     return parts
-
-
-def _stable_substance_id(normalized_name: str) -> str:
-    # The opaque local key is anchored to the strict local exact identity, not to
-    # UNII. External identifiers can therefore be added or removed without making
-    # an external coding system our primary key.
-    digest = hashlib.sha256(("local-exact\0" + normalized_name).encode("utf-8")).hexdigest()
-    return "SUB_" + digest[:20].upper()
-
-
-def _stable_external_substance_id(system: str, value: str) -> str:
-    # Keep our own opaque identifier while making exact external convergence
-    # deterministic across rebuilds. The external code remains an attributed
-    # identifier, not the literal primary-key value.
-    digest = hashlib.sha256((f"external-group\0{system}\0{value}").encode("utf-8")).hexdigest()
-    return "SUB_" + digest[:20].upper()
 
 
 def _canonical_source_fingerprint(con: sqlite3.Connection) -> str:
@@ -321,12 +311,35 @@ def _insert_substance_layer(
         candidate_uniis = sorted(evidence_by_unii)
         if len(candidate_uniis) == 1:
             unii = candidate_uniis[0]
-            substance_id = _stable_external_substance_id("UNII", unii)
+            substance_id = stable_external_substance_id("UNII", unii)
             group_unii[substance_id] = unii
         else:
-            substance_id = _stable_substance_id(normalized_name)
+            substance_id = stable_substance_id(normalized_name)
         name_to_substance[normalized_name] = substance_id
         group_names[substance_id].append(normalized_name)
+
+    # Physical/formulation expressions remain separate local nodes. Link them to
+    # a base substance only when that base is itself present locally and has one
+    # direct exact external identity; never assign the base UNII to the form node.
+    name_relations: dict[str, RelationEvidence] = {}
+    for normalized_name in sorted(by_name):
+        if name_evidence[normalized_name]:
+            continue
+        relation = relation_for_local_name(
+            _representative_name(by_name[normalized_name]),
+            normalize_substance_name,
+        )
+        if relation is None or relation.base_normalized_name not in by_name:
+            continue
+        base_candidates = name_evidence[relation.base_normalized_name]
+        if len(base_candidates) != 1:
+            continue
+        base_evidence = next(iter(base_candidates.values()))
+        if base_evidence.match_method != "normalized_name_exact":
+            continue
+        if name_to_substance[normalized_name] == name_to_substance[relation.base_normalized_name]:
+            continue
+        name_relations[normalized_name] = relation
 
     method_priority = {
         "normalized_name_exact": 0,
@@ -336,6 +349,7 @@ def _insert_substance_layer(
         "typography_apostrophe": 4,
         "typography_isotope": 5,
     }
+    pending_relations: list[tuple[str, str, str, str, str]] = []
 
     for substance_id in sorted(group_names):
         normalized_names = sorted(group_names[substance_id])
@@ -350,11 +364,14 @@ def _insert_substance_layer(
                 if selected_unii in name_evidence[name]
             ]
         has_exact = any(row.match_method == "normalized_name_exact" for row in selected_evidence)
+        has_source_relation = any(name in name_relations for name in normalized_names)
         identity_status = (
             "resolved_external_exact"
             if resolved and has_exact
             else "resolved_external_structured"
             if resolved
+            else "resolved_source_relation"
+            if has_source_relation
             else "local_exact_unsolved"
         )
         con.execute(
@@ -395,7 +412,7 @@ def _insert_substance_layer(
                         evidence.match_method, evidence.dataset_key, 1 if selected_unii == unii else 0,
                     ),
                 )
-            if resolved:
+            if resolved or normalized_name in name_relations:
                 continue
             reason = "external_exact_multiple_matches" if candidate_uniis else "external_exact_no_match"
             con.execute(
@@ -409,6 +426,42 @@ def _insert_substance_layer(
                     ),
                 ),
             )
+
+        for normalized_name in normalized_names:
+            relation = name_relations.get(normalized_name)
+            if relation is None:
+                continue
+            source_row = sorted(
+                by_name[normalized_name],
+                key=lambda row: (row.dataset_key, row.scope, row.source_row),
+            )[0]
+            pending_relations.append(
+                (
+                    substance_id,
+                    relation.relation_type,
+                    name_to_substance[relation.base_normalized_name],
+                    source_row.dataset_key,
+                    json.dumps(
+                        {
+                            "match_method": "explicit_source_form_relation",
+                            "normalized_name": normalized_name,
+                            "base_normalized_name": relation.base_normalized_name,
+                            "qualifier": relation.qualifier,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                )
+            )
+
+    con.executemany(
+        """INSERT INTO substance_relations(
+               subject_substance_id,relation_type,object_substance_id,
+               evidence_source_dataset_key,evidence_json
+           ) VALUES(?,?,?,?,?)""",
+        pending_relations,
+    )
 
     con.executemany(
         """INSERT INTO source_identities(
@@ -498,7 +551,10 @@ def assemble_substance_database(
                         "external_identity_policy",
                         "openfda_preferred_or_gsrs_of_cn_sys_exact_plus_explicit_source_structure",
                     ),
-                    ("relation_policy", "no_automatic_relations"),
+                    (
+                        "relation_policy",
+                        "explicit_source_form_relations_only_no_chemical_suffix_inference",
+                    ),
                 ],
             )
             con.commit()

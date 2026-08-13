@@ -21,6 +21,9 @@ def substance_stats(db_path: str | Path) -> dict:
         resolved_structured = con.execute(
             "SELECT COUNT(*) FROM substances WHERE identity_status='resolved_external_structured'"
         ).fetchone()[0]
+        resolved_relation = con.execute(
+            "SELECT COUNT(*) FROM substances WHERE identity_status='resolved_source_relation'"
+        ).fetchone()[0]
         unsolved = con.execute(
             "SELECT COUNT(*) FROM substances WHERE identity_status='local_exact_unsolved'"
         ).fetchone()[0]
@@ -60,6 +63,7 @@ def substance_stats(db_path: str | Path) -> dict:
         "resolved_external_exact": resolved,
         "resolved_external_structured": resolved_structured,
         "resolved_external_total": resolved + resolved_structured,
+        "resolved_source_relation": resolved_relation,
         "unsolved_substances": unsolved,
         "unsolved_reasons": unsolved_reasons,
         "source_identities": source_identities,
@@ -184,6 +188,24 @@ def verify_substance_database(db_path: str | Path) -> dict:
             ).fetchone()[0]
             if missing_resolved_ids:
                 errors.append(f"resolved substances missing UNII: {missing_resolved_ids}")
+            missing_relations = con.execute(
+                """SELECT COUNT(*) FROM substances s
+                   LEFT JOIN substance_relations r ON r.subject_substance_id=s.substance_id
+                   WHERE s.identity_status='resolved_source_relation'
+                     AND r.subject_substance_id IS NULL"""
+            ).fetchone()[0]
+            if missing_relations:
+                errors.append(f"relation-resolved substances missing relation: {missing_relations}")
+            unresolved_relation_targets = con.execute(
+                """SELECT COUNT(*) FROM substance_relations r
+                   JOIN substances target ON target.substance_id=r.object_substance_id
+                   WHERE r.relation_type IN ('physical_form_of','formulation_of')
+                     AND target.identity_status NOT IN ('resolved_external_exact','resolved_external_structured')"""
+            ).fetchone()[0]
+            if unresolved_relation_targets:
+                errors.append(
+                    f"source-form relations target unresolved substances: {unresolved_relation_targets}"
+                )
             invalid_unsolved = con.execute(
                 """SELECT COUNT(*) FROM substances s
                    LEFT JOIN substance_unsolved u ON u.substance_id=s.substance_id

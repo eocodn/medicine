@@ -122,6 +122,7 @@ class CanonicalSubstanceTest(unittest.TestCase):
                     (12, "Gamma (Beta)", "감마베타"),
                     (13, "Florbetaben(18F)", "플로르베타벤"),
                     (14, "St. John’s Wort", "세인트존스워트"),
+                    (15, "Gamma Solid Dispersions", "감마고체분산체"),
                 ],
             )
             con.commit()
@@ -182,15 +183,16 @@ class CanonicalSubstanceTest(unittest.TestCase):
         self._write_unii_snapshot()
         result = assemble_substance_database(self.substance_db, self.canonical_db, self.raw_dir)
 
-        self.assertEqual(result["substances"], 12)
-        self.assertEqual(result["local_exact_names"], 17)
+        self.assertEqual(result["substances"], 13)
+        self.assertEqual(result["local_exact_names"], 18)
         self.assertEqual(result["resolved_external_exact"], 4)
         self.assertEqual(result["resolved_external_structured"], 3)
-        self.assertEqual(result["unsolved_substances"], 5)
+        self.assertEqual(result["resolved_source_relation"], 2)
+        self.assertEqual(result["unsolved_substances"], 4)
         self.assertEqual(result["unparsed_source_expressions"], 1)
         self.assertEqual(
             result["unsolved_reasons"],
-            {"external_exact_multiple_matches": 1, "external_exact_no_match": 4},
+            {"external_exact_multiple_matches": 1, "external_exact_no_match": 3},
         )
 
         with closing(sqlite3.connect(self.substance_db)) as con:
@@ -226,13 +228,26 @@ class CanonicalSubstanceTest(unittest.TestCase):
             self.assertEqual(structured_methods["follitropin δ"], "typography_greek")
             self.assertEqual(structured_methods["florbetaben(18f)"], "typography_isotope")
             self.assertEqual(structured_methods["st. john’s wort"], "typography_apostrophe")
-            for unresolved in ("gamma hydrate", "gamma micronized", "gamma (beta)"):
+            for unresolved in ("gamma hydrate", "gamma (beta)"):
                 self.assertIsNone(
                     con.execute(
                         "SELECT 1 FROM substance_match_candidates WHERE normalized_name=?",
                         (unresolved,),
                     ).fetchone()
                 )
+            relations = {
+                row[0]: row[1:]
+                for row in con.execute(
+                    """SELECT n.normalized_name,r.relation_type,b.normalized_name
+                       FROM substance_relations r
+                       JOIN substance_names n ON n.substance_id=r.subject_substance_id
+                       JOIN substance_names b ON b.substance_id=r.object_substance_id
+                       WHERE n.normalized_name IN ('gamma micronized','gamma solid dispersions')
+                         AND b.normalized_name='gamma'"""
+                )
+            }
+            self.assertEqual(relations["gamma micronized"], ("physical_form_of", "gamma"))
+            self.assertEqual(relations["gamma solid dispersions"], ("formulation_of", "gamma"))
             self.assertIsNone(
                 con.execute(
                     """SELECT value FROM substance_identifiers i
@@ -293,7 +308,7 @@ class CanonicalSubstanceTest(unittest.TestCase):
                 ).fetchone()[0],
                 "UNIIEE0001",
             )
-            self.assertEqual(con.execute("SELECT COUNT(*) FROM substance_relations").fetchone()[0], 0)
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM substance_relations").fetchone()[0], 2)
             self.assertEqual(
                 con.execute(
                     "SELECT COUNT(*) FROM source_snapshots WHERE source_family='fda_gsrs_unii_names'"
@@ -439,7 +454,7 @@ class CanonicalSubstanceTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn('"db_path"', buf.getvalue())
 
-        self.assertEqual(substance_stats(self.substance_db)["substances"], 12)
+        self.assertEqual(substance_stats(self.substance_db)["substances"], 13)
 
 
 if __name__ == "__main__":

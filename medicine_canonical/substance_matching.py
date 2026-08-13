@@ -15,6 +15,13 @@ class MatchEvidence:
     match_method: str
 
 
+@dataclass(frozen=True)
+class RelationEvidence:
+    base_normalized_name: str
+    relation_type: str
+    qualifier: str
+
+
 _FORM_QUALIFIER_RE = re.compile(
     r"\s*\((경구|경구제|주사제|정제|질내삽입링|비경구형|외용제는 제외)\)\s*$",
     re.IGNORECASE,
@@ -28,6 +35,28 @@ _ALIAS_EXCLUDED_RE = re.compile(
 )
 _ISOTOPE_RE = re.compile(r"\(\s*(\d{1,3}\s*(?:f|i|tc|mo|lu))\s*\)", re.IGNORECASE)
 _GREEK_WORDS = {"α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta"}
+
+_FORM_RELATION_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (re.compile(r"^(.*?)\s+\(?micronized\)?$", re.IGNORECASE), "physical_form_of", "micronized"),
+    (re.compile(r"^(.*?)\s+solid dispersions?$", re.IGNORECASE), "formulation_of", "solid_dispersion"),
+    (
+        re.compile(r"^(.*?)\s+coated granules(?:\s*\(?\d+(?:\.\d+)?%\)?)?$", re.IGNORECASE),
+        "formulation_of",
+        "coated_granules",
+    ),
+    (
+        re.compile(
+            r"^(.*?)\s+(?:(?:extended[- ]release|enteric[- ]coated|enteric|sphere)\s+)?granules(?:\s*\(?\d+(?:\.\d+)?%\)?)?$",
+            re.IGNORECASE,
+        ),
+        "formulation_of",
+        "granules",
+    ),
+    (re.compile(r"^(.*?)\s+spray dry powder$", re.IGNORECASE), "formulation_of", "spray_dry_powder"),
+    (re.compile(r"^spray dried\s+(.*?)(?:\s+\d+(?:\.\d+)?%)?$", re.IGNORECASE), "formulation_of", "spray_dried"),
+    (re.compile(r"^microcrystalline\s+(.+)$", re.IGNORECASE), "physical_form_of", "microcrystalline"),
+    (re.compile(r"^microencapsulated\s+(.+)$", re.IGNORECASE), "formulation_of", "microencapsulated"),
+)
 
 
 def _single_exact(
@@ -107,8 +136,7 @@ def _declared_alias_candidate(
         resolved.extend(candidate)
     if len({candidate.unii for candidate in resolved}) != 1:
         return []
-    first = resolved[0]
-    return [first]
+    return [resolved[0]]
 
 
 def _typography_candidate(
@@ -159,4 +187,23 @@ def candidates_for_local_name(
     return []
 
 
-__all__ = ["MatchEvidence", "candidates_for_local_name"]
+def relation_for_local_name(
+    local_name: str,
+    normalize_name: Callable[[object], str],
+) -> RelationEvidence | None:
+    for pattern, relation_type, qualifier in _FORM_RELATION_RULES:
+        match = pattern.match(local_name.strip())
+        if not match:
+            continue
+        base = normalize_name(match.group(1))
+        if base and base != normalize_name(local_name):
+            return RelationEvidence(base, relation_type, qualifier)
+    return None
+
+
+__all__ = [
+    "MatchEvidence",
+    "RelationEvidence",
+    "candidates_for_local_name",
+    "relation_for_local_name",
+]

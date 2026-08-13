@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-SUBSTANCE_SCHEMA_VERSION = "2"
+SUBSTANCE_SCHEMA_VERSION = "3"
 
 
 SUBSTANCE_SCHEMA = r"""
@@ -35,6 +35,7 @@ CREATE TABLE substances (
         identity_status IN (
             'resolved_external_exact',
             'resolved_external_structured',
+            'resolved_source_relation',
             'local_exact_unsolved'
         )
     )
@@ -110,13 +111,17 @@ CREATE TABLE substance_unsolved (
 ) WITHOUT ROWID;
 CREATE INDEX idx_substance_unsolved_reason ON substance_unsolved(reason);
 
--- Relations are intentionally empty in schema v1. Parent/active-moiety, salt,
--- ester, hydrate and equivalence edges are admitted only after an authoritative
--- relationship source is integrated; name suffix stripping never creates edges.
+-- Source-declared physical/formulation relations may be added only when an
+-- exact-resolved local base substance exists. Parent/active-moiety, salt,
+-- ester, hydrate and equivalence edges still require authoritative relationship
+-- evidence; generic suffix stripping never creates those chemical relations.
 CREATE TABLE substance_relations (
     subject_substance_id TEXT NOT NULL REFERENCES substances(substance_id),
     relation_type TEXT NOT NULL CHECK(
-        relation_type IN ('active_moiety_of','salt_of','ester_of','hydrate_of','equivalent_to')
+        relation_type IN (
+            'active_moiety_of','salt_of','ester_of','hydrate_of','equivalent_to',
+            'physical_form_of','formulation_of'
+        )
     ),
     object_substance_id TEXT NOT NULL REFERENCES substances(substance_id),
     evidence_source_dataset_key TEXT NOT NULL REFERENCES source_snapshots(dataset_key),
