@@ -33,6 +33,7 @@ COPY pyproject.toml ./
 COPY medicine_dur ./medicine_dur
 COPY medicine_app ./medicine_app
 COPY medicine_catalog ./medicine_catalog
+COPY medicine_canonical ./medicine_canonical
 COPY --from=browser-ocr /out /opt/medicine-browser-ocr
 
 RUN pip install --no-cache-dir .

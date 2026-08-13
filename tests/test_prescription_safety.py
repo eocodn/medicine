@@ -11,112 +11,36 @@ from threading import Barrier
 from zoneinfo import ZoneInfo
 
 from medicine_app.core import ConfirmationRequired, MedicationApp
-from tests.dur_fixture_support import install_verified_dur_fixture_metadata
 
 
 APP_TZ = ZoneInfo("Asia/Seoul")
 
 
 def make_dur_db(path: Path) -> None:
-    """Create the smallest DUR fixture needed by the prescription contract."""
-    con = sqlite3.connect(path)
-    con.executescript(
-        """
-        CREATE TABLE product_dur (
-            id INTEGER PRIMARY KEY,
-            dataset_key TEXT NOT NULL,
-            source_row INTEGER NOT NULL,
-            category TEXT NOT NULL,
-            ingredient_name TEXT,
-            ingredient_code TEXT,
-            product_name TEXT,
-            product_code TEXT,
-            paired_ingredient_name TEXT,
-            paired_ingredient_code TEXT,
-            paired_product_name TEXT,
-            paired_product_code TEXT,
-            rule_value TEXT,
-            details TEXT,
-            notice_no TEXT,
-            notice_date TEXT
-        );
-        CREATE TABLE product_catalog (
-            product_code TEXT PRIMARY KEY,
-            product_name TEXT NOT NULL,
-            ingredient_code TEXT,
-            ingredient_name TEXT
-        );
-        """
+    from tests.canonical_fixture_support import create_canonical_fixture, add_product, add_linked_rule
+    con = create_canonical_fixture(path)
+    add_product(con, "MFDS-SAFE", "정량비교약", "example", manufacturer="예시제약", dosage_form="정제", edi="P-SAFE")
+    add_product(con, "MFDS-UNKNOWN", "비교불가약", "unknown", manufacturer="예시제약", dosage_form="정제", edi="P-UNKNOWN")
+    add_linked_rule(
+        con, category="duration_caution", item_seq="MFDS-SAFE", ingredient="example",
+        rule_value="28", details="최대 투여기간은 28일입니다.", dosage_form="정제",
     )
-    rows = [
-        (
-            "duration:P-SAFE",
-            1,
-            "duration_caution",
-            "example",
-            "ING-SAFE",
-            "정량비교약",
-            "P-SAFE",
-            "28",
-            "최대 투여기간은 28일입니다.",
-        ),
-        (
-            "dose:P-SAFE",
-            2,
-            "dose_caution",
-            "example",
-            "ING-SAFE",
-            "정량비교약",
-            "P-SAFE",
-            "예시성분 10mg",
-            json.dumps(
-                {
-                    "1일최대 투여기준량": "10",
-                    "점검기준 성분함량 (총함량)": "5",
-                },
-                ensure_ascii=False,
-            ),
-        ),
-        (
-            "duration:P-UNKNOWN",
-            3,
-            "duration_caution",
-            "unknown",
-            "ING-UNKNOWN",
-            "비교불가약",
-            "P-UNKNOWN",
-            "복용기간 확인 필요",
-            "수치화할 수 없는 기준입니다.",
-        ),
-        (
-            "dose:P-UNKNOWN",
-            4,
-            "dose_caution",
-            "unknown",
-            "ING-UNKNOWN",
-            "비교불가약",
-            "P-UNKNOWN",
-            "적합 단위 확인 필요",
-            "수치화할 수 없는 기준입니다.",
-        ),
-    ]
-    con.executemany(
-        """
-        INSERT INTO product_dur(
-            dataset_key,source_row,category,ingredient_name,ingredient_code,
-            product_name,product_code,rule_value,details
-        ) VALUES(?,?,?,?,?,?,?,?,?)
-        """,
-        rows,
+    add_linked_rule(
+        con, category="dose_caution", item_seq="MFDS-SAFE", ingredient="example",
+        rule_value="예시성분 10mg",
+        details=json.dumps({"1일최대 투여기준량": "10", "점검기준 성분함량 (총함량)": "5"}, ensure_ascii=False),
+        dosage_form="정제",
     )
-    con.executemany(
-        "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-        [("P-SAFE", "정량비교약", "ING-SAFE", "example"), ("P-UNKNOWN", "비교불가약", "ING-UNKNOWN", "unknown")],
+    add_linked_rule(
+        con, category="duration_caution", item_seq="MFDS-UNKNOWN", ingredient="unknown",
+        rule_value="복용기간 확인 필요", details="수치화할 수 없는 기준입니다.", dosage_form="정제",
     )
-    install_verified_dur_fixture_metadata(con, ingredients=["example", "unknown"])
+    add_linked_rule(
+        con, category="dose_caution", item_seq="MFDS-UNKNOWN", ingredient="unknown",
+        rule_value="적합 단위 확인 필요", details="수치화할 수 없는 기준입니다.", dosage_form="정제",
+    )
     con.commit()
     con.close()
-
 
 def make_catalog_db(path: Path) -> None:
     con = sqlite3.connect(path)
@@ -163,7 +87,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
         self.catalog_db = root / "catalog.sqlite"
         make_dur_db(self.dur_db)
         make_catalog_db(self.catalog_db)
-        self.app = MedicationApp(self.dur_db, self.personal_db, self.catalog_db)
+        self.app = MedicationApp(self.dur_db, self.personal_db)
         self.person = self.app.create_person("환자", "1990-01-01", "unknown", "unknown")
 
     def tearDown(self) -> None:
@@ -190,7 +114,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
     def test_full_preview_reports_duration_exceeded_and_dose_within(self) -> None:
         con = sqlite3.connect(self.dur_db)
         con.execute(
-            "UPDATE product_dur SET details=NULL WHERE product_code='P-SAFE' AND category='duration_caution'"
+            "UPDATE product_rules SET details=NULL WHERE item_seq='MFDS-SAFE' AND category='duration_caution'"
         )
         con.commit()
         con.close()
@@ -295,7 +219,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
     def test_unsupported_source_unit_is_not_evaluable(self) -> None:
         con = sqlite3.connect(self.dur_db)
         con.execute(
-            "UPDATE product_dur SET rule_value='10 tablets' WHERE product_code='P-SAFE' AND category='dose_caution'"
+            "UPDATE ingredient_rules SET rule_value='10 tablets' WHERE id IN (SELECT criterion_rule_id FROM product_criterion_links l JOIN product_rules r ON r.id=l.product_rule_id WHERE r.item_seq='MFDS-SAFE' AND r.category='dose_caution')"
         )
         con.commit()
         con.close()
@@ -309,11 +233,15 @@ class PrescriptionSafetyTest(unittest.TestCase):
     def test_thousands_separator_in_source_threshold_is_supported(self) -> None:
         con = sqlite3.connect(self.dur_db)
         con.execute(
-            "UPDATE product_dur SET rule_value=?, details=? WHERE product_code='P-SAFE' AND category='dose_caution'",
+            "UPDATE ingredient_rules SET rule_value=?, details=? WHERE id IN (SELECT criterion_rule_id FROM product_criterion_links l JOIN product_rules r ON r.id=l.product_rule_id WHERE r.item_seq='MFDS-SAFE' AND r.category='dose_caution')",
             (
                 "예시성분 4,000mg",
                 json.dumps({"1일최대 투여기준량": "4000", "점검기준 성분함량 (총함량)": "5"}),
             ),
+        )
+        con.execute(
+            "UPDATE product_rules SET details=? WHERE item_seq='MFDS-SAFE' AND category='dose_caution'",
+            (json.dumps({"1일최대 투여기준량": "4000", "점검기준 성분함량 (총함량)": "5"}),),
         )
         con.commit()
         con.close()
@@ -366,7 +294,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
 
         def initialize(_: int) -> MedicationApp:
             barrier.wait()
-            return MedicationApp(self.dur_db, concurrent_db, self.catalog_db)
+            return MedicationApp(self.dur_db, concurrent_db)
 
         with ThreadPoolExecutor(max_workers=12) as executor:
             apps = list(executor.map(initialize, range(12)))

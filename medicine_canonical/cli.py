@@ -8,6 +8,7 @@ from pathlib import Path
 from .build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
 from .inspection import canonical_product_criteria, canonical_product_ingredient_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
+from .mobile import build_mobile_database
 from .sources import sync_canonical_api_sources
 from .substance_build import (
     assemble_substance_database,
@@ -106,6 +107,12 @@ def build_parser() -> argparse.ArgumentParser:
     ingredient_criteria.add_argument("--category")
     ingredient_criteria.add_argument("--limit", type=int, default=100)
     ingredient_criteria.add_argument("--json", action="store_true")
+
+    mobile_build = sub.add_parser("mobile-build", help="Build compact canonical runtime DB for Android")
+    mobile_build.add_argument("--db", type=Path, default=DEFAULT_DB)
+    mobile_build.add_argument("--output", type=Path, default=Path("data/db/mobile.sqlite"))
+    mobile_build.add_argument("--manifest", type=Path)
+    mobile_build.add_argument("--json", action="store_true")
 
     verify = sub.add_parser("verify", help="Verify canonical source policy, schema and SQLite integrity")
     verify.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -224,6 +231,10 @@ def main(argv=None) -> int:
             args.item_seq,
             category=args.category,
             limit=args.limit,
+        )
+    elif args.command == "mobile-build":
+        payload = build_mobile_database(
+            args.db, args.output, manifest_path=args.manifest
         )
     elif args.command == "substance-sync":
         payload = sync_substance_identity_sources(args.raw_dir)

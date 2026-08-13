@@ -26,7 +26,7 @@ class PrescriptionWebApiTest(unittest.TestCase):
         self.catalog_db = root / "catalog.sqlite"
         make_dur_db(self.dur_db)
         make_catalog_db(self.catalog_db)
-        self.client = TestClient(create_web_app(self.dur_db, self.personal_db, self.catalog_db))
+        self.client = TestClient(create_web_app(self.dur_db, self.personal_db))
 
         person_response = self.client.post(
             "/api/people",

@@ -135,106 +135,73 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제�
 
 ### `data/db/catalog.sqlite`
 
-식약처 의약품 제품 허가정보 API에서 동기화한 전체 제품 카탈로그입니다. 식약처 품목기준코드
-(`item_seq`)를 앱 내부 canonical 제품 참조키로 사용합니다. 상세 DUR 제품코드는 식약처 EDI를 먼저
-확인하고, 그 코드가 상세 DUR에 없으면 심평원 약가마스터의 동일 `item_seq` exact 매핑으로 보완합니다.
+식약처 전체 제품 카탈로그를 별도로 보존하는 동기화/감사 DB입니다. 앱 런타임의 제품 식별이나
+DUR 판정에는 더 이상 사용하지 않습니다. 앱 검색과 안전성 판정의 제품 기준키는
+`canonical.sqlite`의 식약처 품목기준코드 `ITEM_SEQ`입니다. EDI는 canonical의
+`product_identifiers`에 검색·표시용 보조 식별자로만 보존하며 안전성 identity fallback으로 사용하지 않습니다.
 
-EDI/DUR 연결이 되지 않은 제품도 검색·복약 등록은 가능하지만, 개인별 DUR 자동 판정 범위가
-제한될 수 있다는 안내를 표시합니다. 이 경우 식약처 성분명이 DUR 성분 기준에 정확히 연결되면
-성분 단위 규칙을 보완적으로 확인하지만 fuzzy matching으로 성분을 추측하지 않습니다. 전체
-카탈로그가 없으면 약 검색은 실패하며 DUR 제품목록으로 대체하지 않습니다.
+`medicine-catalog`의 sync/upgrade/status-source 명령은 원천 데이터 점검용으로 계속 유지합니다.
 
-허가상태는 식약처 원본의 `CANCEL_NAME`을 보존하면서 다음 코드로 정규화합니다.
+### `data/db/canonical.sqlite` (앱 기준 DB)
 
-- `정상` → `active`
-- `유효기간만료` → `expired`
-- `취하` → `withdrawn`
-- `폐업` → `business_closed`
-- `행정(취소)` / `취소` → `canceled`
+앱과 Android가 사용하는 단일 read-only 의약품/DUR 기준 DB입니다. 세 공식 원본 계열을 직접
+보존하고 `ITEM_SEQ`를 제품 중심키로 사용합니다.
 
-현재 로컬 카탈로그 기준:
+- `mfds_permit_api`: 식약처 허가제품 API
+- `mfds_dur_item_api`: 식약처 DUR 품목 API 9개 endpoint
+- `kids_mfds_xlsx`: 최신 성분/기준 XLSX 8종
 
-- 전체 허가 이력: 42,962개
-- 허가상태 정상: 35,228개
-- 유효기간만료: 4,612개
-- 취하: 2,817개
-- 폐업: 257개
-- 취소: 48개
+제품 DUR은 `product_rules -> product_criterion_links -> ingredient_rules`로 연결하며
+`product_rule_criteria` view로 조회합니다. 수유부주의처럼 MFDS ITEM_SEQ 제품규칙 계열이 없는
+성분 기준은 `product_ingredient_criterion_links`에 별도 materialize합니다. 확정할 수 없는 성분 적용범위는
+`product_ingredient_criterion_unresolved`에 남기고 앱에서 `unknown`으로 표시합니다. 염·수화물·용매화물 등
+서로 다른 precise substance를 일반 문자열 규칙으로 합치지 않습니다.
 
-### `data/db/canonical.sqlite` (병렬 실험 DB)
+앱 런타임은 EDI/HIRA/제품명 fallback이나 ingredient alias graph를 사용하지 않습니다. canonical에 존재하는
+제품에 해당 DUR 규칙이 없으면 해당 항목은 clear/not-applicable이고, 공식 제품규칙은 있지만 XLSX 상세기준
+연결이 안 된 경우에만 fail-closed `unknown`으로 남습니다. `product_code` API/개인 DB 호환 필드는 신규 등록에서
+ITEM_SEQ를 저장하며, 기존 개인 DB 재평가는 `catalog_item_seq`를 authoritative reference로 사용합니다.
 
-기존 `dur.sqlite`/`catalog.sqlite` 런타임을 변경하지 않고, 세 공식 원본 계열만으로 다시 만든
-canonical DB입니다. 현재 앱 평가기는 아직 이 DB를 사용하지 않습니다.
+현재 실데이터 빌드 기준(2026-08-13):
 
-- `mfds_permit_api`: 식약처 허가제품 API. `ITEM_SEQ`를 제품 중심키로 사용
-- `mfds_dur_item_api`: 식약처 DUR 품목 API 9개 endpoint. 상세 규칙은 `ITEM_SEQ`, 병용금기는
-  `MIXTURE_ITEM_SEQ`를 직접 보존
-- `kids_mfds_xlsx`: 최신 성분/기준 XLSX 8종. 임부등급, 연령, 용량, 기간, 효능군, 수유부주의 등을 보존
-
-상세 DUR API의 `INGR_CODE`/영문·국문 성분 identity와 병용 상대 성분을 원문 그대로 보존하고,
-동일 카테고리의 XLSX 기준을 연결한 `product_rule_criteria` view를 제공합니다. schema v5의 링크 전처리는
-원본 값을 수정하지 않고 다음 공식 근거만 사용합니다.
-
-- 영문명 직접 일치(`english_exact`)와 MFDS 코드 identity(`mfds_ingredient_code`)
-- 해당 카테고리에서 하나의 공식 코드로만 귀결되는 염·수화물·제형 표기의 active-moiety 정규화
-  (`ingredient_preprocessed`)
-- XLSX가 직접 선언한 괄호 동의어와 `주사제`/`정제`/`경구제` 같은 적용조건 분리
-- 동일 `ITEM_SEQ` 허가 성분구성과 XLSX 복합제 구성의 exact 비교, 중복 성분 collapse
-  (`permit_composition`)
-- DUR 코드가 없는 복합제 성분은 해당 비교 안에서만 exact active-name token으로 유지하며 전역 alias로 만들지 않음
-- 용량주의는 XLSX `rule_value` 속 정확한 국문 성분명(`rule_value_identity`)과 MFDS 제품별 상세 기준
-  (`product_detail_evidence`)을 보조 근거로 사용
-
-현재 확인된 카테고리별 코드 차이 Ketorolac/Naproxen/Piroxicam/Mizolastine 4개만 명시적
-link-time equivalence로 유지하며, 원본 `INGR_CODE`는 변경하지 않습니다. 새로운 이름/코드 ambiguity가
-실제로 현재 제품규칙 연결을 막으면 자동 추정하지 않고 `stats`에 성분명·후보 코드를 노출하고
-`verify`를 실패시킵니다. 반대로 MFDS 제품별 상세 용량기준이 XLSX 기준과 명확히 다르면 이름이 같더라도
-잘못된 기준을 붙이지 않고 미연결로 유지합니다. 임의의 전역 salt stripping이나 legacy alias는 사용하지 않습니다.
-
-API 원본은 `data/canonical/raw/*.jsonl`에 페이지 순서대로 보존하고 SHA-256 metadata를 함께
-저장합니다. DB의 각 행은 `source_dataset_key + source_row`로 원본 행을 추적하며, DB 재조립 시
-원본 JSONL 해시가 metadata와 다르면 실패합니다. 기존 KIDS 제품코드 CSV와 HIRA 제품코드 bridge는
-이 canonical DB의 안전성 원본으로 사용하지 않습니다.
-
-현재 실데이터 빌드 기준(2026-08-12):
-
-- schema version 5
+- schema version 7
 - 허가제품 42,956개 / 정상 35,239개
 - `ITEM_SEQ` 상세 제품규칙 834,286행
 - 품목 플래그 43,295행
 - XLSX 성분/기준 규칙 4,172행
 - 제품 DUR ↔ XLSX 기준 링크 1,080,696행 / 연결된 제품규칙 829,200행 / 미연결 5,086행
-- 링크 방식: 영문명 직접 152,976 / MFDS 코드 164,928 / 전처리 identity 503,323 / 허가 복합성분 259,397 /
-  제품 상세근거 20 / XLSX 기준값 성분근거 52
-- 미해결 blocking identity ambiguity 0건
+- 수유부주의 등 제품↔성분기준 applicability 665행 / 활성 수유부주의 positive 제품 612개
+- 활성 unresolved 성분 applicability 94행
 - source snapshot 18개 = 허가 API 1 + DUR API 9 + XLSX 8
-- 상세/상대/플래그 ITEM_SEQ orphan 0건
-- SQLite 약 664.1MB
+- blocking product-link identity ambiguity 0건
 
-전체 최신 API를 다시 받고 원자적으로 재구축:
-
-```bash
-docker compose run --rm canonical rebuild --json
-```
-
-이미 받은 API snapshot만 사용해 네트워크 없이 DB 재조립:
+API 원본은 `data/canonical/raw/*.jsonl`, substance 원본은 `data/canonical/substances/`에 보존합니다.
+앱용 완전한 DB는 source → substance → DUR bridge → product/applicability 순서를 보장하는 integrated build로
+재생성합니다.
 
 ```bash
-docker compose run --rm canonical build --json
-```
+# 최신 MFDS API를 동기화한 뒤 canonical + substance DB 전체 재구축
+docker compose run --rm canonical integrated-rebuild --json
 
-검증/통계:
+# 이미 보존된 snapshot만 사용해 네트워크 없이 전체 재조립
+docker compose run --rm canonical integrated-build --json
 
-```bash
+# release gate
 docker compose run --rm canonical verify --json
+docker compose run --rm canonical substance-verify --json
 docker compose run --rm canonical stats --json
-```
 
-특정 제품의 결합된 XLSX 기준 조회:
-
-```bash
+# 특정 ITEM_SEQ의 제품 DUR / 성분-only 기준 확인
 docker compose run --rm canonical criteria --item-seq 198600630 --json
+docker compose run --rm canonical ingredient-criteria --item-seq 198600630 --json
+
+# Android용 compact canonical snapshot 생성
+docker compose run --rm canonical mobile-build --json
 ```
+
+`canonical verify`가 실패하거나 runtime manifest에 unresolved product-link ambiguity가 남아 있으면 앱은
+데이터셋을 verified로 취급하지 않습니다. Android 빌드는 `canonical mobile-build`를 먼저 실행해
+`data/db/mobile.sqlite`와 SHA-256 manifest를 만든 뒤 동일한 Python core를 APK에 패키징합니다.
 
 ## 식약처 전체 의약품 카탈로그 동기화
 
@@ -272,48 +239,20 @@ docker compose run --rm catalog status-sources --json
 확인 대상은 건강보험심사평가원 약가기준정보, 식약처 생산·수입·공급중단, 식약처 공급부족
 API입니다. 각 API는 공공데이터포털에서 별도 활용신청이 필요할 수 있습니다.
 
-## DUR 데이터 다시 만들기
+## Legacy DUR/카탈로그 ETL
+
+`medicine-dur`와 `medicine-catalog`의 원천 수집/검증 도구는 과거 데이터 비교와 provenance 감사 용도로
+남겨 둡니다. 이 DB와 HIRA 제품코드 bridge는 앱 런타임 classifier로 사용하지 않습니다.
 
 ```bash
-# 공공데이터포털 키로 DUR 품목정보 + 서방정분할주의 최신 snapshot 동기화
 docker compose run --rm dur sync-product-items --json
-
-# 심평원 공개 약가마스터에서 ITEM_SEQ → 제품코드 exact bridge 동기화
 docker compose run --rm dur sync-product-code-bridge --json
-
-# 기존 DUR CSV/XLSX와 위 snapshot을 하나의 검증 DB로 빌드
 docker compose run --rm dur build --json
 docker compose run --rm dur stats --json
 docker compose run --rm dur verify --json
-docker compose run --rm catalog ingredient-aliases --write --json
-docker compose run --rm dur mobile-build --json
 ```
 
-원본 파일은 `data/raw/`, `data/kids/`에 보존하고 Git에는 넣지 않습니다. DUR 빌드도 임시 DB에서
-전체 import/검증을 끝낸 뒤 최종 DB를 원자 교체합니다. `dur verify`는 배포 전 release gate로
-18개 필수 원본의 존재·헤더·실제 파일 SHA-256 일치, 실제 import 행 수, SQLite 무결성, 성분 고시 기준일과
-제품 스냅샷 생성 시점을 확인하고 결정적인 `dataset_id`를 출력합니다. `sync-product-items`는 식약처
-`DUR품목정보`와 `서방정분할주의` OpenAPI를 checkpoint 가능한 JSONL snapshot으로 저장하고,
-`sync-product-code-bridge`는 심평원 공개 약가마스터 CSV를 정상 공개 다운로드 절차로 원자 갱신합니다. 이 식별자는 처방 안전성
-평가와 변경 이력에 저장됩니다.
-
-`catalog ingredient-aliases --write`는 현재 식약처 카탈로그와 DUR 데이터에서 증명되거나 개별
-검토된 성분명 관계를 `catalog.sqlite`의 alias 테이블에 저장합니다. 정확한 EDI 제품 연결,
-식약처에서 단일성분으로 확인되는 동일 DUR 제품·성분코드 표기, 안전하게 소거 가능한 복합성분
-대응을 자동 근거로 사용합니다. 염·활성형·철자 차이는 일반 규칙으로 제거하지 않고 개별 검토 목록에
-있는 항목도 현재 DUR 제품 규칙·DUR 제품 카탈로그 또는 활성 exact-EDI에서 그 표기가 실제 관찰되고
-목표 DUR 성분이 모두 존재할 때만 materialize합니다. 하나의 제품 성분에 서로 다른 DUR 규칙
-정체성이 함께 필요한 검토 항목은
-`ingredient_multi_aliases`에 여러 target을 보존해 어느 한쪽 규칙을 버리지 않습니다. 검토된 원천
-오류가 현재 데이터와 정확히 일치하면 제품 단위 DUR 연결은 유지하되 성분 단위 판정은 fail-closed
-합니다. 모든 alias에는 현재 DUR `dataset_id`와 provenance를 함께 저장하므로 데이터셋이 바뀐 뒤
-재생성하지 않은 매핑은 런타임에서 사용되지 않습니다.
-
-`dur mobile-build`는 검증된 `dur.sqlite`와 `catalog.sqlite`에서 Android 런타임에 필요한 컬럼과
-인덱스만 보존한 `data/db/mobile.sqlite`와 SHA-256 manifest를 만듭니다. DUR 규칙 행과 원본
-provenance, `ITEM_SEQ` 제품 플래그, 심평원 제품코드 bridge 및 검증된 ingredient alias를 유지하며 `dataset_id`도 원본 DUR DB와 같아야 빌드가
-성공합니다. Android 빌드는 alias 재생성과 mobile DB 생성을 다시 실행하므로 검증에 실패한
-데이터나 오래된 alias는 APK에 패키징되지 않습니다.
+Android/mobile 배포 DB는 위 legacy DB를 합치지 않고 `canonical mobile-build`로만 생성합니다.
 
 ## 앱 제어 CLI
 

@@ -19,7 +19,7 @@ class MobileApiTest(unittest.TestCase):
         self.catalog_db = root / "catalog.sqlite"
         make_dur_db(self.dur_db)
         make_catalog_db(self.catalog_db)
-        self.api = MobileApi(self.dur_db, self.personal_db, self.catalog_db)
+        self.api = MobileApi(self.dur_db, self.personal_db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -127,7 +127,8 @@ class MobileApiTest(unittest.TestCase):
 
         status, blocked = self.request(
             "POST", f"/api/people/{person['id']}/medications", {
-                "product_ref": "MFDS-X",
+                "product_ref": "MFDS-B",
+                "prescription_days": 29,
                 "request_id": "mobile-api-warning",
             },
         )
@@ -137,14 +138,15 @@ class MobileApiTest(unittest.TestCase):
 
         status, created = self.request(
             "POST", f"/api/people/{person['id']}/medications", {
-                "product_ref": "MFDS-X",
+                "product_ref": "MFDS-B",
+                "prescription_days": 29,
                 "request_id": "mobile-api-warning",
                 "acknowledge_warnings": True,
                 "warning_token": blocked["warning_token"],
             },
         )
         self.assertEqual(status, 201)
-        self.assertEqual(created["product_name"], "비급여전체약X")
+        self.assertEqual(created["product_name"], "전체카탈로그약B")
 
         status, history = self.request("GET", f"/api/medications/{created['id']}/history")
         self.assertEqual(status, 200)

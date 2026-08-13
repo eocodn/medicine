@@ -19,7 +19,7 @@ class WebApiTest(unittest.TestCase):
         self.catalog_db = root / "catalog.sqlite"
         make_dur_db(self.dur_db)
         make_catalog_db(self.catalog_db)
-        self.client = TestClient(create_web_app(self.dur_db, self.personal_db, self.catalog_db))
+        self.client = TestClient(create_web_app(self.dur_db, self.personal_db))
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -282,17 +282,10 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(response.json()[0]["permit_status"], "withdrawn")
         self.assertEqual(response.json()[0]["permit_status_name"], "취하")
 
-    def test_product_search_returns_service_unavailable_without_full_catalog(self) -> None:
-        missing_catalog = self.catalog_db.with_name("missing-catalog.sqlite")
-        client = TestClient(create_web_app(self.dur_db, self.personal_db.with_name("other.sqlite"), missing_catalog))
-
-        health = client.get("/api/health")
-        self.assertEqual(health.status_code, 200)
-        self.assertFalse(health.json()["full_catalog"])
-
-        response = client.get("/api/products", params={"q": "약A"})
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("catalog database not available", response.json()["detail"])
+    def test_web_app_requires_canonical_reference_database(self) -> None:
+        missing = self.dur_db.with_name("missing-canonical.sqlite")
+        with self.assertRaisesRegex(FileNotFoundError, "canonical database not found"):
+            create_web_app(missing, self.personal_db.with_name("other.sqlite"))
 
     def test_person_search_preview_add_and_log_flow(self) -> None:
         person_response = self.client.post(
@@ -309,17 +302,17 @@ class WebApiTest(unittest.TestCase):
 
         search = self.client.get("/api/products", params={"q": "약B"})
         self.assertEqual(search.status_code, 200)
-        self.assertEqual(search.json()[0]["product_code"], "P-B")
+        self.assertEqual(search.json()[0]["product_code"], "MFDS-B")
 
         current_warning = self.client.post(
             f"/api/people/{person['id']}/medications",
-            json={"product_code": "P-A", "schedule_times": ["08:00"]},
+            json={"product_code": "MFDS-A", "schedule_times": ["08:00"]},
         )
         self.assertEqual(current_warning.status_code, 409)
         current_added = self.client.post(
             f"/api/people/{person['id']}/medications",
             json={
-                "product_code": "P-A", "schedule_times": ["08:00"],
+                "product_code": "MFDS-A", "schedule_times": ["08:00"],
                 "acknowledge_warnings": True,
                 "warning_token": current_warning.json()["warning_token"],
             },
@@ -327,21 +320,21 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(current_added.status_code, 201)
         preview = self.client.post(
             f"/api/people/{person['id']}/medications/preview",
-            json={"product_code": "P-B"},
+            json={"product_code": "MFDS-B"},
         )
         self.assertEqual(preview.status_code, 200)
         self.assertIn("combination_contraindication", {r["type"] for r in preview.json()["risks"]})
 
         added = self.client.post(
             f"/api/people/{person['id']}/medications",
-            json={"product_code": "P-B", "dosage_text": "1정", "schedule_times": ["20:00"]},
+            json={"product_code": "MFDS-B", "dosage_text": "1정", "schedule_times": ["20:00"]},
         )
         self.assertEqual(added.status_code, 409)
         warning = added.json()
         acknowledged = self.client.post(
             f"/api/people/{person['id']}/medications",
             json={
-                "product_code": "P-B", "dosage_text": "1정", "schedule_times": ["20:00"],
+                "product_code": "MFDS-B", "dosage_text": "1정", "schedule_times": ["20:00"],
                 "acknowledge_warnings": True, "warning_token": warning["warning_token"],
             },
         )

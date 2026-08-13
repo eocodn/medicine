@@ -8,106 +8,54 @@ from pathlib import Path
 
 from medicine_app.core import MedicationApp
 from medicine_app.safety import age_rule_matches
-from tests.dur_fixture_support import install_verified_dur_fixture_metadata
 
 
 def make_dur_db(path: Path) -> None:
-    con = sqlite3.connect(path)
-    con.executescript(
-        """
-        CREATE TABLE product_dur (
-            id INTEGER PRIMARY KEY,
-            dataset_key TEXT NOT NULL,
-            source_row INTEGER NOT NULL,
-            category TEXT NOT NULL,
-            ingredient_name TEXT,
-            ingredient_code TEXT,
-            product_name TEXT,
-            product_code TEXT,
-            paired_ingredient_name TEXT,
-            paired_ingredient_code TEXT,
-            paired_product_name TEXT,
-            paired_product_code TEXT,
-            rule_value TEXT,
-            details TEXT,
-            notice_no TEXT,
-            notice_date TEXT
-        );
-        CREATE TABLE product_catalog (
-            product_code TEXT PRIMARY KEY,
-            product_name TEXT NOT NULL,
-            ingredient_code TEXT,
-            ingredient_name TEXT
-        );
-        """
-    )
-    rows = [
-        (
-            "product:combination_contraindication", 2, "combination_contraindication",
-            "drug-a", "ING-A", "약A", "P-A", "drug-b", "ING-B", "약B", "P-B",
-            None, "함께 사용하지 않아야 함", "고시-1", "2026-01-01",
-        ),
-        (
-            "product:age_contraindication", 2, "age_contraindication",
-            "drug-b", "ING-B", "약B", "P-B", None, None, None, None,
-            "18 세 미만", "18세 미만 안전성 미확립", "공고-1", "2026-01-01",
-        ),
-        (
-            "product:pregnancy_contraindication", 2, "pregnancy_contraindication",
-            "drug-b", "ING-B", "약B", "P-B", None, None, None, None,
-            "2", "임부 사용 시 위해 가능", "공고-2", "2026-01-01",
-        ),
-        (
-            "product:therapeutic_duplication_caution", 2, "therapeutic_duplication_caution",
-            "drug-a", "ING-A", "약A", "P-A", None, None, None, None,
-            "해열진통소염제", None, "공고-3", "2026-01-01",
-        ),
-        (
-            "product:therapeutic_duplication_caution", 3, "therapeutic_duplication_caution",
-            "drug-c", "ING-C", "약C", "P-C", None, None, None, None,
-            "해열진통소염제", None, "공고-3", "2026-01-01",
-        ),
-        (
-            "product:elderly_caution", 2, "elderly_caution",
-            "drug-d", "ING-D", "약D", "P-D", None, None, None, None,
-            None, "노인에서 주의", "공고-4", "2026-01-01",
-        ),
-        (
-            "product:duration_caution", 2, "duration_caution",
-            "drug-b", "ING-B", "약B", "P-B", None, None, None, None,
-            "28", None, "공고-5", "2026-01-01",
-        ),
+    from tests.canonical_fixture_support import create_canonical_fixture, add_product, add_linked_rule
+    con = create_canonical_fixture(path)
+    products = [
+        ("MFDS-A", "약A", "drug-a", "P-A", "active", None, "정상"),
+        ("MFDS-B", "전체카탈로그약B", "drug-b", "P-B", "active", None, "정상"),
+        ("MFDS-C", "약C", "drug-c", "P-C", "active", None, "정상"),
+        ("MFDS-D", "약D", "drug-d", "P-D", "active", None, "정상"),
+        ("MFDS-X", "비급여전체약X", "drug-x", None, "active", None, "정상"),
+        ("MFDS-Y", "비급여전체약Y", "drug-y", None, "active", None, "정상"),
+        ("MFDS-W", "과거취하약", "drug-w", "P-W", "withdrawn", "2025-07-01", "취하"),
     ]
-    con.executemany(
-        """
-        INSERT INTO product_dur (
-            dataset_key, source_row, category, ingredient_name, ingredient_code,
-            product_name, product_code, paired_ingredient_name, paired_ingredient_code,
-            paired_product_name, paired_product_code, rule_value, details, notice_no, notice_date
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        rows,
+    for item, name, ingredient, edi, status, cancel_date, cancel_name in products:
+        add_product(
+            con, item, name, ingredient, manufacturer=f"제약{item[-1]}", dosage_form="정제",
+            permit_status=status, cancel_date=cancel_date, cancel_name=cancel_name, edi=edi,
+        )
+    add_linked_rule(
+        con, category="combination_contraindication", item_seq="MFDS-A", ingredient="drug-a",
+        paired_item_seq="MFDS-B", paired_ingredient="drug-b", details="함께 사용하지 않아야 함",
     )
-    con.execute(
-        """
-        INSERT OR IGNORE INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name)
-        SELECT product_code,product_name,ingredient_code,ingredient_name
-        FROM product_dur WHERE product_code IS NOT NULL
-        """
+    add_linked_rule(
+        con, category="age_contraindication", item_seq="MFDS-B", ingredient="drug-b",
+        rule_value="18 세 미만", details="18세 미만 안전성 미확립",
     )
-    con.execute(
-        """
-        INSERT OR IGNORE INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name)
-        SELECT paired_product_code,paired_product_name,paired_ingredient_code,paired_ingredient_name
-        FROM product_dur WHERE paired_product_code IS NOT NULL
-        """
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-B", ingredient="drug-b",
+        rule_value="2", details="임부 사용 시 위해 가능",
     )
-    install_verified_dur_fixture_metadata(
-        con, ingredients=["drug-a", "drug-b", "drug-c", "drug-d"]
+    add_linked_rule(
+        con, category="therapeutic_duplication_caution", item_seq="MFDS-A", ingredient="drug-a",
+        effect_name="해열진통소염제",
+    )
+    add_linked_rule(
+        con, category="therapeutic_duplication_caution", item_seq="MFDS-C", ingredient="drug-c",
+        effect_name="해열진통소염제",
+    )
+    add_linked_rule(
+        con, category="elderly_caution", item_seq="MFDS-D", ingredient="drug-d", details="노인에서 주의",
+    )
+    add_linked_rule(
+        con, category="duration_caution", item_seq="MFDS-B", ingredient="drug-b",
+        rule_value="28", details="최대 투여기간은 28일입니다.",
     )
     con.commit()
     con.close()
-
 
 def make_catalog_db(path: Path) -> None:
     con = sqlite3.connect(path)
@@ -166,7 +114,7 @@ class MedicationAppTest(unittest.TestCase):
         self.catalog_db = root / "catalog.sqlite"
         make_dur_db(self.dur_db)
         make_catalog_db(self.catalog_db)
-        self.app = MedicationApp(self.dur_db, self.personal_db, self.catalog_db)
+        self.app = MedicationApp(self.dur_db, self.personal_db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -175,7 +123,7 @@ class MedicationAppTest(unittest.TestCase):
         alice = self.app.create_person("Alice", "1990-04-03", "female", "not_pregnant")
         bob = self.app.create_person("Bob", "1988-09-11", "male", "not_applicable")
 
-        self.app.add_medication(alice["id"], product_code="P-A", dosage_text="1정", schedule_times=["08:00"])
+        self.app.add_medication(alice["id"], product_code="MFDS-A", dosage_text="1정", schedule_times=["08:00"])
 
         self.assertEqual([p["name"] for p in self.app.list_people()], ["Alice", "Bob"])
         self.assertEqual(len(self.app.list_medications(alice["id"])), 1)
@@ -199,7 +147,7 @@ class MedicationAppTest(unittest.TestCase):
     def test_delete_person_erases_all_dependent_personal_records(self) -> None:
         person = self.app.create_person("Delete", "1990-01-01", "male")
         medication = self.app.add_medication(
-            person["id"], product_code="P-A", schedule_times=["08:00"], start_date="2026-08-11",
+            person["id"], product_code="MFDS-A", schedule_times=["08:00"], start_date="2026-08-11",
             request_id="delete-person-med"
         )
         plan = self.app.get_daily_plan(person["id"], "2026-08-11")
@@ -224,13 +172,13 @@ class MedicationAppTest(unittest.TestCase):
 
     def test_preview_combines_current_medications_age_and_pregnancy(self) -> None:
         person = self.app.create_person("Teen", "2010-01-10", "female", "pregnant")
-        current_preview = self.app.preview_medication(person["id"], "P-A")
+        current_preview = self.app.preview_medication(person["id"], "MFDS-A")
         self.app.add_medication(
-            person["id"], product_code="P-A", acknowledge_warnings=True,
+            person["id"], product_code="MFDS-A", acknowledge_warnings=True,
             warning_token=current_preview["warning_token"],
         )
 
-        preview = self.app.preview_medication(person["id"], "P-B", as_of=date(2026, 8, 9))
+        preview = self.app.preview_medication(person["id"], "MFDS-B", as_of=date(2026, 8, 9))
         risk_types = {risk["type"] for risk in preview["risks"]}
 
         self.assertIn("combination_contraindication", risk_types)
@@ -245,16 +193,16 @@ class MedicationAppTest(unittest.TestCase):
     def test_interactions_follow_prescription_course_overlap_not_active_flag(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
         self.app.add_medication(
-            person["id"], product_code="P-A", start_date="2026-08-01", prescription_days=7,
+            person["id"], product_code="MFDS-A", start_date="2026-08-01", prescription_days=7,
         )
 
         separated = self.app.preview_medication(
             person["id"],
-            {"product_code": "P-B", "start_date": "2026-08-20", "prescription_days": 3},
+            {"product_code": "MFDS-B", "start_date": "2026-08-20", "prescription_days": 3},
         )
         overlapping = self.app.preview_medication(
             person["id"],
-            {"product_code": "P-B", "start_date": "2026-08-07", "prescription_days": 3},
+            {"product_code": "MFDS-B", "start_date": "2026-08-07", "prescription_days": 3},
         )
 
         self.assertNotIn("combination_contraindication", {r["type"] for r in separated["risks"]})
@@ -263,24 +211,24 @@ class MedicationAppTest(unittest.TestCase):
     def test_product_washout_extends_interaction_after_source_course(self) -> None:
         con = sqlite3.connect(self.dur_db)
         con.execute(
-            """UPDATE product_dur
+            """UPDATE product_rules
                SET details='drug-a 투여 중 및 종료 후 7일 간 해당 성분 투여 금기'
-               WHERE category='combination_contraindication' AND product_code='P-A'"""
+               WHERE category='combination_contraindication' AND item_seq='MFDS-A'"""
         )
         con.commit()
         con.close()
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
         self.app.add_medication(
-            person["id"], product_code="P-A", start_date="2026-08-01", prescription_days=7,
+            person["id"], product_code="MFDS-A", start_date="2026-08-01", prescription_days=7,
         )
 
         within = self.app.preview_medication(
             person["id"],
-            {"product_code": "P-B", "start_date": "2026-08-14", "prescription_days": 2},
+            {"product_code": "MFDS-B", "start_date": "2026-08-14", "prescription_days": 2},
         )
         outside = self.app.preview_medication(
             person["id"],
-            {"product_code": "P-B", "start_date": "2026-08-15", "prescription_days": 2},
+            {"product_code": "MFDS-B", "start_date": "2026-08-15", "prescription_days": 2},
         )
 
         washout = [r for r in within["risks"] if r["type"] == "combination_contraindication"]
@@ -292,21 +240,21 @@ class MedicationAppTest(unittest.TestCase):
     def test_explicitly_stopped_medication_still_contributes_during_washout(self) -> None:
         con = sqlite3.connect(self.dur_db)
         con.execute(
-            """UPDATE product_dur
+            """UPDATE product_rules
                SET details='drug-a 투여 중 및 종료 후 7일 간 해당 성분 투여 금기'
-               WHERE category='combination_contraindication' AND product_code='P-A'"""
+               WHERE category='combination_contraindication' AND item_seq='MFDS-A'"""
         )
         con.commit()
         con.close()
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
-        medication = self.app.add_medication(person["id"], product_code="P-A", start_date="2026-08-01")
+        medication = self.app.add_medication(person["id"], product_code="MFDS-A", start_date="2026-08-01")
         stopped = self.app.stop_medication(medication["id"], expected_revision=medication["revision"])
         stopped_on = date.fromisoformat(stopped["stopped_at"])
 
         within = self.app.preview_medication(
             person["id"],
             {
-                "product_code": "P-B",
+                "product_code": "MFDS-B",
                 "start_date": (stopped_on + timedelta(days=7)).isoformat(),
                 "prescription_days": 1,
             },
@@ -314,7 +262,7 @@ class MedicationAppTest(unittest.TestCase):
         outside = self.app.preview_medication(
             person["id"],
             {
-                "product_code": "P-B",
+                "product_code": "MFDS-B",
                 "start_date": (stopped_on + timedelta(days=8)).isoformat(),
                 "prescription_days": 1,
             },
@@ -323,7 +271,7 @@ class MedicationAppTest(unittest.TestCase):
         self.assertIn("combination_contraindication", {r["type"] for r in within["risks"]})
         self.assertNotIn("combination_contraindication", {r["type"] for r in outside["risks"]})
 
-    def test_stopped_unmapped_medication_overlapping_candidate_keeps_interaction_checks_unknown(self) -> None:
+    def test_stopped_known_non_dur_medication_does_not_create_interaction_unknown(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
         draft = {
             "product_ref": "MFDS-X",
@@ -346,11 +294,9 @@ class MedicationAppTest(unittest.TestCase):
         checks = {item["category"]: item for item in candidate["dur_checks"]}
 
         for category in ("combination_contraindication", "therapeutic_duplication_caution"):
-            self.assertEqual(checks[category]["status"], "unknown")
-            self.assertEqual(checks[category]["summary"], "비급여전체약X 확인 필요")
-            self.assertIn("비급여전체약X의 제품·성분 DUR 연결", checks[category]["details"])
+            self.assertEqual(checks[category]["status"], "clear")
 
-    def test_multiple_unmapped_current_medications_are_named_in_interaction_unknown_details(self) -> None:
+    def test_multiple_known_non_dur_medications_do_not_create_interaction_unknown(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
         for product_ref in ("MFDS-X", "MFDS-Y"):
             preview = self.app.preview_medication(
@@ -373,27 +319,24 @@ class MedicationAppTest(unittest.TestCase):
         checks = {item["category"]: item for item in candidate["dur_checks"]}
 
         for category in ("combination_contraindication", "therapeutic_duplication_caution"):
-            self.assertEqual(checks[category]["status"], "unknown")
-            self.assertEqual(checks[category]["summary"], "현재 복용약 2개 확인 필요")
-            self.assertIn("비급여전체약X (제품·성분)", checks[category]["details"])
-            self.assertIn("비급여전체약Y (제품·성분)", checks[category]["details"])
+            self.assertEqual(checks[category]["status"], "clear")
 
     def test_therapeutic_duplication_also_requires_course_overlap(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
         self.app.add_medication(
-            person["id"], product_code="P-A", start_date="2026-08-01", prescription_days=7,
+            person["id"], product_code="MFDS-A", start_date="2026-08-01", prescription_days=7,
         )
 
         separated = self.app.preview_medication(
             person["id"],
-            {"product_code": "P-C", "start_date": "2026-08-20", "prescription_days": 3},
+            {"product_code": "MFDS-C", "start_date": "2026-08-20", "prescription_days": 3},
         )
 
         self.assertNotIn("therapeutic_duplication_caution", {r["type"] for r in separated["risks"]})
 
     def test_active_medication_is_reassessed_after_profile_change_without_rewriting_history(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant")
-        medication = self.app.add_medication(person["id"], product_code="P-B", prescription_days=7)
+        medication = self.app.add_medication(person["id"], product_code="MFDS-B", prescription_days=7)
         historical = self.app.get_medication(medication["id"])["assessment"]
         self.assertNotIn(
             "pregnancy_contraindication",
@@ -417,11 +360,11 @@ class MedicationAppTest(unittest.TestCase):
 
     def test_acknowledged_dur_findings_remain_flagged_for_all_active_medications(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant")
-        first = self.app.add_medication(person["id"], product_code="P-A")
-        second_preview = self.app.preview_medication(person["id"], "P-B")
+        first = self.app.add_medication(person["id"], product_code="MFDS-A")
+        second_preview = self.app.preview_medication(person["id"], "MFDS-B")
         second = self.app.add_medication(
             person["id"],
-            product_code="P-B",
+            product_code="MFDS-B",
             acknowledge_warnings=True,
             warning_token=second_preview["warning_token"],
         )
@@ -441,11 +384,11 @@ class MedicationAppTest(unittest.TestCase):
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
         preview = self.app.preview_medication(
             person["id"],
-            {"product_code": "P-B", "prescription_days": 29},
+            {"product_code": "MFDS-B", "prescription_days": 29},
         )
         medication = self.app.add_medication(
             person["id"],
-            product_code="P-B",
+            product_code="MFDS-B",
             prescription_days=29,
             acknowledge_warnings=True,
             warning_token=preview["warning_token"],
@@ -459,18 +402,18 @@ class MedicationAppTest(unittest.TestCase):
 
     def test_detects_therapeutic_duplication_and_elderly_caution(self) -> None:
         older = self.app.create_person("Older", "1940-02-01", "female", "not_pregnant")
-        self.app.add_medication(older["id"], product_code="P-A")
+        self.app.add_medication(older["id"], product_code="MFDS-A")
 
-        duplicate = self.app.preview_medication(older["id"], "P-C", as_of=date(2026, 8, 9))
+        duplicate = self.app.preview_medication(older["id"], "MFDS-C", as_of=date(2026, 8, 9))
         self.assertIn("therapeutic_duplication_caution", {r["type"] for r in duplicate["risks"]})
 
-        elderly = self.app.preview_medication(older["id"], "P-D", as_of=date(2026, 8, 9))
+        elderly = self.app.preview_medication(older["id"], "MFDS-D", as_of=date(2026, 8, 9))
         self.assertIn("elderly_caution", {r["type"] for r in elderly["risks"]})
 
     def test_records_dose_history(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
         med = self.app.add_medication(
-            person["id"], product_code="P-A", start_date="2026-08-09",
+            person["id"], product_code="MFDS-A", start_date="2026-08-09",
             schedule_times=["08:00", "20:00"],
         )
 
@@ -486,7 +429,7 @@ class MedicationAppTest(unittest.TestCase):
 
     def test_default_dose_timestamp_uses_korea_timezone(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
-        self.app.add_medication(person["id"], product_code="P-A", schedule_times=["08:00"])
+        self.app.add_medication(person["id"], product_code="MFDS-A", schedule_times=["08:00"])
         plan = self.app.get_daily_plan(person["id"])
 
         self.app.record_dose_instance(plan["doses"][0]["id"], "taken")
@@ -500,36 +443,31 @@ class MedicationAppTest(unittest.TestCase):
     def test_product_search_returns_both_sides_of_combination_rows_without_duplicates(self) -> None:
         results = self.app.search_products("약", limit=10)
         by_code = {row["product_code"] for row in results}
-        self.assertTrue({"P-A", "P-B", "P-C", "P-D"}.issubset(by_code))
+        self.assertTrue({"MFDS-A", "MFDS-B", "MFDS-C", "MFDS-D"}.issubset(by_code))
 
-    def test_product_search_collapses_same_product_code_across_dur_categories(self) -> None:
+    def test_product_search_stays_one_row_when_product_has_multiple_dur_categories(self) -> None:
+        from tests.canonical_fixture_support import add_linked_rule
         con = sqlite3.connect(self.dur_db)
-        con.execute(
-            """
-            INSERT INTO product_dur (
-                dataset_key, source_row, category, ingredient_name, ingredient_code,
-                product_name, product_code, rule_value
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            ("product:pregnancy", 99, "pregnancy_contraindication", "Drug A Alias", "ING-A", "약A", "P-A", "2"),
+        add_linked_rule(
+            con, category="pregnancy_contraindication", item_seq="MFDS-A",
+            ingredient="drug-a", rule_value="2", details="임부금기",
         )
         con.commit()
         con.close()
-
         results = self.app.search_products("약A", limit=10)
+        self.assertEqual([row["product_ref"] for row in results].count("MFDS-A"), 1)
 
-        self.assertEqual([row["product_code"] for row in results].count("P-A"), 1)
-    def test_full_catalog_search_maps_mfds_item_to_dur_code_when_available(self) -> None:
+    def test_canonical_search_returns_item_seq_identity(self) -> None:
         results = self.app.search_products("전체카탈로그약B", limit=10)
         self.assertEqual(results[0]["product_ref"], "MFDS-B")
-        self.assertEqual(results[0]["product_code"], "P-B")
+        self.assertEqual(results[0]["product_code"], "MFDS-B")
         self.assertTrue(results[0]["dur_match"])
-        self.assertEqual(results[0]["catalog_source"], "mfds")
+        self.assertEqual(results[0]["catalog_source"], "canonical")
         self.assertEqual(results[0]["permit_status"], "active")
 
         unmatched = self.app.search_products("비급여전체약X", limit=10)[0]
         self.assertEqual(unmatched["product_ref"], "MFDS-X")
-        self.assertIsNone(unmatched["product_code"])
+        self.assertEqual(unmatched["product_code"], "MFDS-X")
         self.assertFalse(unmatched["dur_match"])
 
     def test_product_search_excludes_inactive_by_default_and_can_include_it(self) -> None:
@@ -543,23 +481,16 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(results[0]["permit_status_name"], "취하")
         self.assertEqual(results[0]["cancel_date"], "2025-07-01")
 
-    def test_search_does_not_fall_back_to_dur_catalog(self) -> None:
-        con = sqlite3.connect(self.dur_db)
-        con.execute(
-            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-            ("P-ONLY-DUR", "DUR에만있는약", "ING-ONLY-DUR", "only-dur"),
-        )
-        con.commit()
-        con.close()
+    def test_edi_is_searchable_but_not_accepted_as_safety_identity(self) -> None:
+        results = self.app.search_products("P-A", limit=10)
+        self.assertEqual(results[0]["product_ref"], "MFDS-A")
+        with self.assertRaises(KeyError):
+            self.app.get_product("P-A")
 
-        self.assertEqual(self.app.search_products("DUR에만있는약", limit=10), [])
-
-    def test_search_requires_full_catalog_database(self) -> None:
+    def test_search_does_not_require_legacy_catalog_database(self) -> None:
         missing = self.catalog_db.with_name("missing-catalog.sqlite")
-        app = MedicationApp(self.dur_db, self.personal_db.with_name("other-personal.sqlite"), missing)
-
-        with self.assertRaisesRegex(FileNotFoundError, "catalog database not available"):
-            app.search_products("약A", limit=10)
+        app = MedicationApp(self.dur_db, self.personal_db.with_name("other-personal.sqlite"))
+        self.assertEqual(app.search_products("약A", limit=10)[0]["product_ref"], "MFDS-A")
 
     def test_adds_structured_prescription_and_computes_end_date(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
@@ -577,7 +508,7 @@ class MedicationAppTest(unittest.TestCase):
         )
 
         self.assertEqual(med["catalog_item_seq"], "MFDS-B")
-        self.assertEqual(med["product_code"], "P-B")
+        self.assertEqual(med["product_code"], "MFDS-B")
         self.assertEqual(med["dose_amount"], 1.0)
         self.assertEqual(med["dose_unit"], "정")
         self.assertEqual(med["frequency_per_day"], 3)
@@ -590,7 +521,7 @@ class MedicationAppTest(unittest.TestCase):
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
         self.app.add_medication(
             person["id"],
-            product_code="P-A",
+            product_code="MFDS-A",
             dose_amount=1,
             dose_unit="정",
             frequency_per_day=2,
@@ -627,15 +558,15 @@ class MedicationAppTest(unittest.TestCase):
     def test_medications_and_daily_doses_are_sorted_by_time_with_course_progress(self) -> None:
         person = self.app.create_person("시간순", "1990-01-01", "female", "not_pregnant")
         late = self.app.add_medication(
-            person["id"], product_code="P-D", start_date="2026-08-10",
+            person["id"], product_code="MFDS-D", start_date="2026-08-10",
             prescription_days=5, schedule_times=["20:00"],
         )
         early = self.app.add_medication(
-            person["id"], product_code="P-A", start_date="2026-08-10",
+            person["id"], product_code="MFDS-A", start_date="2026-08-10",
             prescription_days=5, schedule_times=["08:00"],
         )
         floating = self.app.add_medication(
-            person["id"], product_code="P-D", start_date="2026-08-10",
+            person["id"], product_code="MFDS-D", start_date="2026-08-10",
             frequency_per_day=1,
         )
         con = sqlite3.connect(self.personal_db)
@@ -671,13 +602,13 @@ class MedicationAppTest(unittest.TestCase):
 
     def test_daily_plan_uses_unscheduled_frequency_slots_and_separates_prn(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
-        self.app.add_medication(person["id"], product_code="P-A", frequency_per_day=3, start_date="2026-08-10")
+        self.app.add_medication(person["id"], product_code="MFDS-A", frequency_per_day=3, start_date="2026-08-10")
         prn_preview = self.app.preview_medication(
             person["id"],
-            {"product_code": "P-B", "as_needed": True, "dose_amount": 1, "dose_unit": "정", "start_date": "2026-08-10"},
+            {"product_code": "MFDS-B", "as_needed": True, "dose_amount": 1, "dose_unit": "정", "start_date": "2026-08-10"},
         )
         prn = self.app.add_medication(
-            person["id"], product_code="P-B", as_needed=True, dose_amount=1, dose_unit="정", start_date="2026-08-10",
+            person["id"], product_code="MFDS-B", as_needed=True, dose_amount=1, dose_unit="정", start_date="2026-08-10",
             acknowledge_warnings=True, warning_token=prn_preview["warning_token"],
         )
 
@@ -719,7 +650,7 @@ class MedicationAppTest(unittest.TestCase):
         con.commit()
         con.close()
 
-        migrated = MedicationApp(self.dur_db, legacy, self.catalog_db)
+        migrated = MedicationApp(self.dur_db, legacy)
         med = migrated.get_medication("med-1")
         self.assertEqual(med["product_name"], "약A")
         self.assertIn("frequency_per_day", med)

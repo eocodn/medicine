@@ -68,7 +68,7 @@ class OcrContractTest(unittest.TestCase):
             make_catalog_db(catalog_db)
             from fastapi.testclient import TestClient
 
-            client = TestClient(create_web_app(dur_db, personal_db, catalog_db))
+            client = TestClient(create_web_app(dur_db, personal_db))
             person = client.post(
                 "/api/people",
                 json={"name": "OCR", "birth_date": "1990-01-01"},
@@ -118,7 +118,7 @@ class OcrContractTest(unittest.TestCase):
             make_catalog_db(catalog_db)
             from fastapi.testclient import TestClient
 
-            client = TestClient(create_web_app(dur_db, personal_db, catalog_db))
+            client = TestClient(create_web_app(dur_db, personal_db))
             person = client.post("/api/people", json={"name": "OCR", "birth_date": "1990-01-01"}).json()
             envelope = {
                 "version": 1, "operation_id": "op-2",
@@ -153,7 +153,7 @@ class OcrContractTest(unittest.TestCase):
             make_catalog_db(catalog_db)
             from fastapi.testclient import TestClient
 
-            client = TestClient(create_web_app(dur_db, personal_db, catalog_db))
+            client = TestClient(create_web_app(dur_db, personal_db))
             person = client.post("/api/people", json={"name": "OCR", "birth_date": "1990-01-01"}).json()
             envelope = {
                 "version": 1, "operation_id": "strict-1",

@@ -70,7 +70,6 @@ chaquopy {
     sourceSets.getByName("main") {
         srcDir(rootProject.file(".."))
         include("medicine_app/**/*.py")
-        include("medicine_dur/__init__.py", "medicine_dur/verification.py")
     }
 }
 
