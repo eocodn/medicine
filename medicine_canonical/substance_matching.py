@@ -62,6 +62,64 @@ _FORM_RELATION_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     ),
     (re.compile(r"^dilute\s+(.+)$", re.IGNORECASE), "formulation_of", "dilute"),
     (
+        re.compile(r"^(.+?)\s+enteric[- ]coated\s+granules$", re.IGNORECASE),
+        "formulation_of",
+        "enteric_coated_granules",
+    ),
+    (
+        re.compile(r"^(.+?)\s+enteric\s+pellets$", re.IGNORECASE),
+        "formulation_of",
+        "enteric_pellets",
+    ),
+    (
+        re.compile(r"^(.+?)\s+enteric[- ]coated\s+pellets$", re.IGNORECASE),
+        "formulation_of",
+        "enteric_coated_pellets",
+    ),
+    (
+        re.compile(r"^(.+?)\s+concentrate\s+granules$", re.IGNORECASE),
+        "formulation_of",
+        "concentrate_granules",
+    ),
+    (
+        re.compile(r"^(.+?)\s+sustained[- ]release\s+granules$", re.IGNORECASE),
+        "formulation_of",
+        "sustained_release_granules",
+    ),
+    (
+        re.compile(r"^(.+?)\s+sustained[- ]release\s+pellets$", re.IGNORECASE),
+        "formulation_of",
+        "sustained_release_pellets",
+    ),
+    (
+        re.compile(r"^(.+?)\s+s\.r\.\s+small\s+granules$", re.IGNORECASE),
+        "formulation_of",
+        "sustained_release_small_granules",
+    ),
+    (
+        re.compile(r"^(.+?)\s+sphere\s+granules\s+micronized$", re.IGNORECASE),
+        "formulation_of",
+        "sphere_granules_micronized",
+    ),
+    (
+        re.compile(r"^(.+?)\s+granules\s+micronized$", re.IGNORECASE),
+        "formulation_of",
+        "granules_micronized",
+    ),
+    (
+        re.compile(r"^(.+?)\s+mixed\s+powder\s+micronized$", re.IGNORECASE),
+        "formulation_of",
+        "mixed_powder_micronized",
+    ),
+    (
+        re.compile(
+            r"^(.+?)\s+granules\s+coated\s+hydroxypropyl\s+methylcellulose$",
+            re.IGNORECASE,
+        ),
+        "formulation_of",
+        "hpmc_coated_granules",
+    ),
+    (
         re.compile(r"^(.+?)\s*\(\s*micronized\s*\)$", re.IGNORECASE),
         "physical_form_of",
         "micronized",
@@ -79,6 +137,7 @@ _FORM_RELATION_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
         "solution",
     ),
     (re.compile(r"^(.+?)\s+concentrate$", re.IGNORECASE), "formulation_of", "concentrate"),
+    (re.compile(r"^(.+?)\s+coated$", re.IGNORECASE), "formulation_of", "coated"),
     (re.compile(r"^(.*?)\s+solid dispersions?$", re.IGNORECASE), "formulation_of", "solid_dispersion"),
     (
         re.compile(r"^(.*?)\s+coated granules(?:\s*\(?\d+(?:\.\d+)?%\)?)?$", re.IGNORECASE),

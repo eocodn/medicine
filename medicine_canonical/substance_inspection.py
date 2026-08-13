@@ -41,6 +41,10 @@ def substance_stats(db_path: str | Path) -> dict:
             """SELECT COUNT(*) FROM substance_match_candidates
                WHERE selected=1 AND match_method='approved_nomenclature_alias'"""
         ).fetchone()[0]
+        approved_form_relation_matches = con.execute(
+            """SELECT COUNT(*) FROM substance_relations
+               WHERE json_extract(evidence_json,'$.match_method')='reviewed_source_form_relation'"""
+        ).fetchone()[0]
         unsolved_reasons = {
             row[0]: row[1]
             for row in con.execute(
@@ -91,6 +95,16 @@ def substance_stats(db_path: str | Path) -> dict:
         ),
         "approved_nomenclature_corpus_sha256": meta.get(
             "approved_nomenclature_corpus_sha256"
+        ),
+        "approved_form_relation_matches": approved_form_relation_matches,
+        "approved_form_relation_corpus_rows": int(
+            meta.get("approved_form_relation_corpus_rows", "0")
+        ),
+        "active_approved_form_relation_rows": int(
+            meta.get("active_approved_form_relation_rows", "0")
+        ),
+        "approved_form_relation_corpus_sha256": meta.get(
+            "approved_form_relation_corpus_sha256"
         ),
         "substance_relations": relations,
         "source_families": source_families,
