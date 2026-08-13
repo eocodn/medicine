@@ -180,3 +180,27 @@ test("identifies the row when edited schedule fields are internally inconsistent
   assert.match(toasts.at(-1), /약 1/);
   assert.match(toasts.at(-1), /복용 시간/);
 });
+
+
+test("discards a delayed product-search response after the user edits that row", async () => {
+  let resolveSearch;
+  const delayed = new Promise((resolve) => { resolveSearch = resolve; });
+  review.init({
+    currentPersonId: () => "person-1",
+    today: () => "2026-08-13",
+    randomId: () => "request-race",
+    api: async (path) => {
+      if (path.startsWith("/api/products?")) return delayed;
+      throw new Error("unexpected api call");
+    },
+  });
+  review.open([row({ product_query: "원래약", product_ref: null })], "ocr-race", null);
+  review.updateField("ocr-1", "product_query", "사용자수정약");
+  resolveSearch([{ product_ref: "P1", product_name: "원래약", suggested_administration_route: "oral" }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const current = review.getState().rows[0];
+  assert.equal(current.product_query, "사용자수정약");
+  assert.equal(current.product_ref, null);
+  assert.equal(current.administration_route, "oral");
+});

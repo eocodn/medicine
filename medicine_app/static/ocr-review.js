@@ -15,6 +15,7 @@
     phase: "idle", warningToken: null, ocrReviewToken: null, busy: false,
   };
   let config = {};
+  const searchEpochs = new Map();
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -86,6 +87,7 @@
     state.warningToken = null;
     state.ocrReviewToken = null;
     state.busy = false;
+    searchEpochs.clear();
   }
 
   function init(options = {}) {
@@ -113,6 +115,7 @@
       row.product_ref = null;
       row.selected_name = null;
       row.candidates = [];
+      searchEpochs.set(rowId, (searchEpochs.get(rowId) || 0) + 1);
     }
     invalidateReview();
     return true;
@@ -137,7 +140,10 @@
     const row = rowById(rowId);
     const query = String(row?.product_query || "").trim();
     if (!row || !query || typeof config.api !== "function") return [];
+    const epoch = (searchEpochs.get(rowId) || 0) + 1;
+    searchEpochs.set(rowId, epoch);
     const products = await config.api(`/api/products?q=${encodeURIComponent(query)}&limit=8`);
+    if (rowById(rowId) !== row || searchEpochs.get(rowId) !== epoch || String(row.product_query || "").trim() !== query) return [];
     row.candidates = Array.isArray(products) ? products : [];
     const exact = row.candidates.filter((item) => String(item.product_name || "").trim() === query);
     if (exact.length === 1) selectCandidate(row, exact[0], { rerender: false });
@@ -262,6 +268,7 @@
 
   function open(rows, operationId, issues) {
     const today = typeof config.today === "function" ? config.today() : "";
+    searchEpochs.clear();
     state.rows = normalizeRows(rows, today);
     if (!state.rows.length) state.rows = normalizeRows([{}], today);
     state.operationId = String(operationId || "").trim();
