@@ -59,4 +59,39 @@ class ManifestContractTest {
         assertTrue(bridge.contains("sealAfterUse"))
         assertTrue(vault.contains("AES/GCM/NoPadding"))
     }
+
+    @Test
+    fun pythonBridgeUsesCurrentTwoArgumentContractAndResealsOnInitFailure() {
+        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
+        assertFalse(
+            bridge.contains(
+                "personalDatabase.absolutePath,\n                referenceDatabase.absolutePath"
+            )
+        )
+        assertTrue(bridge.contains("finally"))
+        assertTrue(bridge.contains("vault.sealAfterUse()"))
+    }
+
+    @Test
+    fun applicationDefinesLauncherIcon() {
+        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
+        val icon = java.io.File("src/main/res/drawable/ic_launcher.xml")
+        assertTrue(manifest.contains("android:icon=\"@drawable/ic_launcher\""))
+        assertTrue(icon.isFile)
+    }
+
+    @Test
+    fun healthDataIsExcludedFromCloudBackupAndDeviceTransfer() {
+        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
+        val modernRules = java.io.File("src/main/res/xml/data_extraction_rules.xml")
+        val legacyRules = java.io.File("src/main/res/xml/backup_rules.xml")
+
+        assertTrue(manifest.contains("android:dataExtractionRules=\"@xml/data_extraction_rules\""))
+        assertTrue(manifest.contains("android:fullBackupContent=\"@xml/backup_rules\""))
+        assertTrue(modernRules.isFile)
+        assertTrue(legacyRules.isFile)
+        assertTrue(modernRules.readText().contains("<device-transfer>"))
+        assertTrue(modernRules.readText().contains("<exclude domain=\"file\" path=\".\""))
+        assertTrue(legacyRules.readText().contains("<exclude domain=\"file\" path=\".\""))
+    }
 }

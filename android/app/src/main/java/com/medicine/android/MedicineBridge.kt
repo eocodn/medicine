@@ -17,16 +17,18 @@ class MedicineBridge(
 
     init {
         vault.openForUse()
-        api = Python.getInstance()
-            .getModule("medicine_app.mobile_api")
-            .callAttr(
-                "create_bridge",
-                referenceDatabase.absolutePath,
-                personalDatabase.absolutePath,
-                referenceDatabase.absolutePath,
-            )
-        api.callAttr("prepare_for_seal")
-        vault.sealAfterUse()
+        try {
+            api = Python.getInstance()
+                .getModule("medicine_app.mobile_api")
+                .callAttr(
+                    "create_bridge",
+                    referenceDatabase.absolutePath,
+                    personalDatabase.absolutePath,
+                )
+            api.callAttr("prepare_for_seal")
+        } finally {
+            vault.sealAfterUse()
+        }
     }
 
     @JavascriptInterface
