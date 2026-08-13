@@ -113,6 +113,20 @@ class MedicationBatchTest(unittest.TestCase):
         self.assertEqual([item["id"] for item in retried["medications"]], ids)
         self.assertEqual(len(self.app.list_medications(self.person["id"])), 2)
 
+        real_ids = set(ids)
+        for medication in created["medications"]:
+            history = self.app.list_medication_revisions(medication["id"])
+            combination = next(
+                item for item in history[0]["assessment"]["dur_checks"]
+                if item["category"] == "combination_contraindication"
+            )
+            related = {
+                finding.get("related_medication_id") for finding in combination["findings"]
+                if finding.get("related_medication_id")
+            }
+            self.assertTrue(related)
+            self.assertTrue(related <= real_ids)
+
     def test_changed_row_after_review_is_rejected_without_partial_write(self) -> None:
         rows = self.rows()
         preview = preview_medication_batch(

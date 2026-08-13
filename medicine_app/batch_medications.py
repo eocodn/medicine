@@ -201,9 +201,9 @@ def _insert_row(
     assessment: dict[str, Any],
     request_id: str,
     acknowledged: bool,
+    medication_id: str,
 ) -> dict[str, Any]:
     product, draft = row["product"], row["draft"]
-    medication_id = app._new_id()
     con.execute(
         """
         INSERT INTO medications(
@@ -233,6 +233,20 @@ def _insert_row(
     )
     medication["assessment"] = assessment
     return medication
+
+
+def _replace_peer_ids(value: Any, medication_ids: Mapping[str, str]) -> Any:
+    if isinstance(value, list):
+        return [_replace_peer_ids(item, medication_ids) for item in value]
+    if isinstance(value, dict):
+        result = {key: _replace_peer_ids(item, medication_ids) for key, item in value.items()}
+        related = result.get("related_medication_id")
+        if isinstance(related, str) and related.startswith("batch:"):
+            row_id = related.removeprefix("batch:")
+            if row_id in medication_ids:
+                result["related_medication_id"] = medication_ids[row_id]
+        return result
+    return value
 
 
 def add_medication_batch(
@@ -291,11 +305,14 @@ def add_medication_batch(
                         operation_id=None,
                     ),
                 )
+            medication_ids = {row["row_id"]: app._new_id() for row in assessed}
             created = []
             for row in assessed:
                 derived = _derived_request_id(request_id, row["row_id"])
+                authoritative_assessment = _replace_peer_ids(row["assessment"], medication_ids)
                 created.append(_insert_row(
-                    app, con, person_id, row, row["assessment"], derived, acknowledge_warnings
+                    app, con, person_id, row, authoritative_assessment, derived, acknowledge_warnings,
+                    medication_ids[row["row_id"]],
                 ))
 
     assert created is not None
