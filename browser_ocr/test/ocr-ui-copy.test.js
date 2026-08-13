@@ -65,3 +65,32 @@ test("cancel clears a completed OCR review even when the provider emits no termi
   assert.equal(h.ocr.getReview(), null);
   assert.equal(h.ocr.getState().operation_id, null);
 });
+
+
+test("review state keeps only structured multi-row medication fields", () => {
+  const h = harness();
+  const received = [];
+  h.ocr.init({ onReviewRequired(...args) { received.push(args); } });
+  assert.equal(h.ocr.start(), true);
+  const operationId = h.ocr.getState().operation_id;
+  assert.equal(h.ocr.handleEvent({
+    schema_version: 1,
+    operation_id: operationId,
+    sequence: 0,
+    state: "review_required",
+    rows: [
+      { product_query: "타이레놀정", dose_amount: 1, dose_unit: "정", frequency_per_day: 2,
+        prescription_days: 7, schedule_times: ["08:00"], association: "table_row", raw_text: "SECRET" },
+      { product_query: "이부프로펜정", dose_amount: 2, dose_unit: "정", frequency_per_day: 3,
+        prescription_days: 5, schedule_times: [], association: "table_row" },
+    ],
+    ambiguity_codes: [],
+  }), true);
+
+  const review = h.ocr.getReview();
+  assert.equal(review.rows.length, 2);
+  assert.equal(review.rows[0].product_query, "타이레놀정");
+  assert.equal(JSON.stringify(review).includes("SECRET"), false);
+  assert.equal(received.length, 1);
+  assert.equal(received[0].at(-1).length, 2);
+});

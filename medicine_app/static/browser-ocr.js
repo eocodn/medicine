@@ -9,7 +9,7 @@
   let epoch = 0;
 
   function supported() {
-    return Boolean(input && global.MedicineBrowserOcrParser?.parsePrescriptionHints
+    return Boolean(input && global.MedicineBrowserOcrParser?.parsePrescriptionDocument
       && global.Worker && global.WebAssembly && global.File);
   }
 
@@ -79,18 +79,24 @@
 
   function finishSuccess(target, items) {
     if (active !== target) return;
-    const recognized = items
-      .map((item) => typeof item?.text === "string" ? item.text : "")
-      .filter(Boolean)
-      .join("\n");
-    const hints = global.MedicineBrowserOcrParser.parsePrescriptionHints(recognized);
+    const document = global.MedicineBrowserOcrParser.parsePrescriptionDocument(items);
+    const rows = Array.isArray(document.rows) ? document.rows : [];
+    const hints = rows.length === 1
+      ? { ...rows[0], ambiguity_codes: document.ambiguity_codes || [], unsupported_codes: document.unsupported_codes || [] }
+      : { ambiguity_codes: document.ambiguity_codes || [], unsupported_codes: document.unsupported_codes || [] };
     global.clearTimeout(target.timeoutId);
     stopHeartbeat(target);
     terminateWorker(target);
     clearInput();
     target.progress = 100;
     emit(target, "recognizing", { progress: target.progress });
-    emit(target, "review_required", { hints, product_queries: hints.product_queries });
+    emit(target, "review_required", {
+      hints,
+      rows,
+      product_queries: document.product_queries || [],
+      ambiguity_codes: document.ambiguity_codes || [],
+      unsupported_codes: document.unsupported_codes || [],
+    });
     active = null;
   }
 
