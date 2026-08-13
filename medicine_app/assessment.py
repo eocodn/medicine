@@ -6,118 +6,84 @@ import sqlite3
 from datetime import date
 from typing import Any, Mapping
 
-from medicine_dur.verification import dataset_manifest
-
-from .coverage import coverage_summary
-from .dur_status import build_dur_checks
-from .ingredient_safety import (
-    collect_ingredient_risks,
-    evaluate_ingredient_duration,
-    evaluate_ingredient_rule_applicability,
+from .canonical_coverage import coverage_summary
+from .canonical_runtime import (
+    canonical_manifest, category_resolution_issues, item_seq, lactation_links,
+    lactation_unresolved, linked_categories, unlinked_product_rules,
 )
+from .canonical_safety import collect_qualitative_risks, evaluate_quantitative
+from .dur_status import build_dur_checks
+from .lactation_safety import collect_lactation_risks
 from .product_flags import apply_product_flag_fallbacks, build_product_flag_checks
-from .safety import age_years, collect_qualitative_risks, evaluate_quantitative
+from .safety import age_years
 
 
-EVALUATOR_VERSION = "6"
-
-
-def _coverage_only(reason: str, *, scope: str = "coverage") -> dict[str, Any]:
-    return {"result": "not_evaluable", "reason": reason, "source_scope": scope, "coverage_only": True}
-
-
-def _profile_rule_categories(
-    con: sqlite3.Connection,
-    product: Mapping[str, Any],
-    person: Mapping[str, Any],
-) -> set[str]:
-    categories: set[str] = set()
-    code = product.get("product_code") or product.get("edi_code")
-    if person.get("pregnancy_status") == "unknown":
-        product_match = bool(code and con.execute(
-            "SELECT 1 FROM product_dur WHERE product_code=? AND category='pregnancy_contraindication' LIMIT 1",
-            (code,),
-        ).fetchone())
-        ingredient = evaluate_ingredient_rule_applicability(con, product, "pregnancy_contraindication")
-        ingredient_match = (
-            ingredient.get("result") in {"applicable", "not_evaluable"}
-            and bool(ingredient.get("source_rows"))
-        )
-        if product_match or ingredient_match:
-            categories.add("pregnancy_contraindication")
-    if person.get("lactation_status", "unknown") == "unknown":
-        ingredient = evaluate_ingredient_rule_applicability(con, product, "lactation_caution")
-        if (
-            ingredient.get("result") in {"applicable", "not_evaluable"}
-            and ingredient.get("source_rows")
-        ):
-            categories.add("lactation_caution")
-    return categories
-
-
-def _ingredient_presence_result(applicability: dict[str, Any], category: str) -> dict[str, Any]:
-    if applicability["result"] != "applicable":
-        return applicability
-    rows = applicability.get("source_rows") or []
-    result = {
-        "result": "not_evaluable",
-        "reason": f"ingredient {category} rule is present but has no unambiguous product threshold",
-        "source_scope": "ingredient",
-        "source_rows": rows,
-    }
-    if len(rows) == 1:
-        result["source"] = rows[0]
-    return result
+EVALUATOR_VERSION = "7-canonical"
 
 
 def _fallback_product(medication: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **dict(medication),
         "safety_ingredients": [],
-        "ingredient_mapping_status": "not_evaluable",
-        "ingredient_mapping_reason": "저장된 과거 복용약을 현재 식약처/DUR 제품에 다시 연결하지 못했습니다.",
+        "ingredient_mapping_status": "not_required",
+        "ingredient_mapping_method": "canonical_applicability",
         "product_mapping_status": "not_matched",
+        "product_identity_status": "not_matched",
+        "product_identity_method": None,
         "matched_product_codes": [],
-        "edi_codes": [medication["product_code"]] if medication.get("product_code") else [],
+        "edi_codes": [],
+        "canonical_resolution_issues": {},
     }
 
 
 def _current_products(app: Any, medications: list[dict]) -> list[dict]:
-    result: list[dict] = []
+    result = []
     for medication in medications:
-        ref = medication.get("catalog_item_seq") or medication.get("product_code")
+        ref = medication.get("catalog_item_seq")
         if not ref:
             result.append(_fallback_product(medication))
             continue
         try:
-            product = app.get_product(ref)
+            product = app.get_product(str(ref))
         except (KeyError, FileNotFoundError, sqlite3.DatabaseError):
             result.append(_fallback_product(medication))
         else:
             result.append({**medication, **product, "id": medication["id"]})
     return result
 
+def _profile_rule_categories(
+    con: sqlite3.Connection,
+    product: Mapping[str, Any],
+    person: Mapping[str, Any],
+) -> set[str]:
+    target = item_seq(product)
+    if not target:
+        return set()
+    categories = linked_categories(con, target)
+    categories.update(str(row["category"]) for row in unlinked_product_rules(con, target))
+    categories.update(str(flag.get("category")) for flag in product.get("product_flags") or [])
+    relevant: set[str] = set()
+    if person.get("pregnancy_status") == "unknown" and "pregnancy_contraindication" in categories:
+        relevant.add("pregnancy_contraindication")
+    if person.get("lactation_status", "unknown") == "unknown" and (
+        lactation_links(con, target) or lactation_unresolved(con, target)
+    ):
+        relevant.add("lactation_caution")
+    return relevant
 
-def _dedupe_risks(product_risks: list[dict], ingredient_risks: list[dict]) -> list[dict]:
-    risks: list[dict] = []
-    seen: set[tuple[Any, ...]] = set()
-    product_scopes: set[tuple[Any, ...]] = set()
-    for item in product_risks:
-        enriched = {**item, "source_scope": item.get("source_scope") or "product"}
-        key = (enriched.get("type"), enriched.get("related_medication_id"), enriched.get("title"))
-        seen.add(key)
-        product_scopes.add((enriched.get("type"), enriched.get("related_medication_id")))
-        risks.append(enriched)
-    for item in ingredient_risks:
-        if (item.get("type"), item.get("related_medication_id")) in product_scopes:
-            continue
-        key = (item.get("type"), item.get("related_medication_id"), item.get("title"))
-        if key not in seen:
+
+def _dedupe_risks(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = set()
+    result = []
+    for group in groups:
+        for item in group:
+            key = (item.get("type"), item.get("related_medication_id"), item.get("title"), item.get("source_row"))
+            if key in seen:
+                continue
             seen.add(key)
-            risks.append(item)
+            result.append(item)
     order = {"danger": 0, "warning": 1, "info": 2}
-    return sorted(risks, key=lambda item: (order.get(item.get("severity"), 9), item.get("title") or ""))
-
+    return sorted(result, key=lambda item: (order.get(item.get("severity"), 9), item.get("title") or ""))
 
 def assess_medication(
     app: Any,
@@ -134,93 +100,42 @@ def assess_medication(
         personal_con, person["id"], active_only=False, exclude_id=exclude_medication_id
     )
     current = _current_products(app, current)
-    product_risks: list[dict] = []
-    ingredient_risks: list[dict] = []
-    ingredient_not_evaluable: list[dict] = []
-    quantitative = {
-        "duration": _coverage_only("DUR product code is not linked", scope="product"),
-        "dose": _coverage_only("DUR product code is not linked", scope="product"),
-    }
-    relevant_profile_categories: set[str] = set()
-    detailed_product_categories: set[str] = set()
-    with app._dur() as dur_con:
-        dataset = dataset_manifest(dur_con)
-        if product.get("dur_match"):
-            product_risks = collect_qualitative_risks(
-                dur_con, product, person, current, as_of, candidate_course=draft
-            )
-            quantitative = evaluate_quantitative(dur_con, product, draft)
-            for dimension in quantitative.values():
-                dimension.setdefault("source_scope", "product")
-        ingredient_status = product.get("ingredient_mapping_status")
-        if ingredient_status in {"matched", "partial"}:
-            ingredient_risks, ingredient_not_evaluable = collect_ingredient_risks(
-                dur_con, product, person, current, as_of, candidate_course=draft
-            )
-            product_duration_result = quantitative["duration"].get("result")
-            if product_duration_result in {"not_evaluable", "not_applicable"}:
-                ingredient_duration = evaluate_ingredient_duration(dur_con, product, draft)
-                ingredient_result = ingredient_duration.get("result")
-                if ingredient_status == "matched" and (
-                    not product.get("dur_match") or product_duration_result == "not_applicable"
-                ):
-                    quantitative["duration"] = ingredient_duration
-                elif ingredient_result == "exceeded":
-                    quantitative["duration"] = ingredient_duration
-                elif ingredient_result == "within" and product.get("dur_match"):
-                    quantitative["duration"] = ingredient_duration
-
-            product_dose_result = quantitative["dose"].get("result")
-            if not product.get("dur_match") or product_dose_result == "not_applicable":
-                ingredient_dose = evaluate_ingredient_rule_applicability(dur_con, product, "dose_caution")
-                if ingredient_status == "matched":
-                    quantitative["dose"] = _ingredient_presence_result(ingredient_dose, "dose_caution")
-                elif ingredient_dose.get("result") == "applicable":
-                    quantitative["dose"] = _ingredient_presence_result(ingredient_dose, "dose_caution")
-
-        for name in ("duration", "dose"):
-            if quantitative[name].get("result") == "not_applicable" and ingredient_status != "matched":
-                quantitative[name] = _coverage_only(
-                    "authoritative ingredient mapping is unavailable", scope="ingredient"
-                )
-
+    with app._canonical() as canonical_con:
+        dataset = canonical_manifest(canonical_con)
+        product_risks = collect_qualitative_risks(
+            canonical_con, product, person, current, as_of, candidate_course=draft
+        )
+        lactation_risks, lactation_not_evaluable = collect_lactation_risks(
+            canonical_con, product, person
+        )
+        quantitative = evaluate_quantitative(canonical_con, product, draft)
         pediatric = age_years(person["birth_date"], as_of) < 19
         if pediatric and quantitative["dose"].get("result") in {"within", "not_applicable"}:
             quantitative["dose"] = {
                 "result": "not_evaluable",
                 "reason": "adult dose-caution threshold is not a pediatric dose criterion",
-                "source_scope": "profile",
-                "pediatric_review": True,
+                "source_scope": "profile", "pediatric_review": True,
             }
         elif pediatric:
             quantitative["dose"]["pediatric_review"] = True
-        relevant_profile_categories = _profile_rule_categories(dur_con, product, person)
-        product_code = product.get("product_code")
-        if product_code:
-            detailed_product_categories = {
-                str(row[0])
-                for row in dur_con.execute(
-                    "SELECT DISTINCT category FROM product_dur WHERE product_code=?",
-                    (product_code,),
-                ).fetchall()
-                if row[0]
-            }
 
-        if dataset.get("status") != "verified":
-            for name in ("duration", "dose"):
-                if quantitative[name].get("result") == "not_applicable":
-                    quantitative[name] = _coverage_only(
-                        "DUR dataset is not verified", scope="dataset"
-                    )
+        target = item_seq(product)
+        issues = category_resolution_issues(canonical_con, target) if target else {}
+        relevant_profile_categories = _profile_rule_categories(canonical_con, product, person)
+        coverage = coverage_summary(
+            product, dataset, person,
+            relevant_profile_categories=relevant_profile_categories,
+            category_issues=issues,
+        )
+        for issue in lactation_not_evaluable:
+            if not any(
+                existing.get("category") == issue.get("category")
+                for existing in coverage["not_evaluable_checks"]
+            ):
+                coverage["not_evaluable_checks"].append(issue)
+        detailed_product_categories = linked_categories(canonical_con, target) if target else set()
 
-    coverage = coverage_summary(
-        product,
-        dataset,
-        person,
-        relevant_profile_categories=relevant_profile_categories,
-    )
-    coverage["not_evaluable_checks"].extend(ingredient_not_evaluable)
-    risks = _dedupe_risks(product_risks, ingredient_risks)
+    risks = _dedupe_risks(product_risks, lactation_risks)
     dur_checks = build_dur_checks(
         person=person,
         current=current,
@@ -240,13 +155,7 @@ def assess_medication(
         as_of=as_of,
     )
     dur_checks.extend(build_product_flag_checks(product))
-    # Core DUR categories plus authoritative product-only flags are used for
-    # acknowledgement. A definite hit and an unresolved check both require one
-    # explicit review; clear and not_applicable are non-blocking.
-    requires_review = any(
-        item.get("status") in {"hit", "unknown"}
-        for item in dur_checks
-    )
+    requires_review = any(item.get("status") in {"hit", "unknown"} for item in dur_checks)
     return {
         "evaluator_version": EVALUATOR_VERSION,
         "dataset": dataset,
@@ -326,7 +235,7 @@ def assess_current_medication(
     as_of: date | None = None,
 ) -> dict[str, Any]:
     """Re-evaluate a stored medication without mutating its revision history."""
-    ref = medication.get("catalog_item_seq") or medication.get("product_code")
+    ref = medication.get("catalog_item_seq")
     if ref:
         try:
             product = app.get_product(str(ref))

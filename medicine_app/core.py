@@ -71,19 +71,13 @@ def _schema_lock(db_path: Path) -> Iterator[None]:
 
 
 class MedicationApp:
-    def __init__(
-        self,
-        dur_db: Path | str,
-        personal_db: Path | str,
-        catalog_db: Path | str | None = None,
-    ):
-        self.dur_db = Path(dur_db)
+    def __init__(self, canonical_db: Path | str, personal_db: Path | str):
+        self.canonical_db = Path(canonical_db)
         self.personal_db = Path(personal_db)
-        self.catalog_db = Path(catalog_db) if catalog_db else None
-        if not self.dur_db.exists():
-            raise FileNotFoundError(f"DUR database not found: {self.dur_db}")
+        if not self.canonical_db.exists():
+            raise FileNotFoundError(f"canonical database not found: {self.canonical_db}")
         self.personal_db.parent.mkdir(parents=True, exist_ok=True)
-        self.products = ProductRepository(self.dur_db, self.catalog_db)
+        self.products = ProductRepository(self.canonical_db)
         self.ocr_reviews = OCRReviewStore()
         with _schema_lock(self.personal_db):
             with self._personal() as con:
@@ -107,8 +101,8 @@ class MedicationApp:
             con.close()
 
     @contextmanager
-    def _dur(self) -> Iterator[sqlite3.Connection]:
-        uri = f"file:{self.dur_db.resolve()}?mode=ro"
+    def _canonical(self) -> Iterator[sqlite3.Connection]:
+        uri = f"file:{self.canonical_db.resolve()}?mode=ro"
         con = sqlite3.connect(uri, uri=True, timeout=10)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA query_only = ON")

@@ -81,13 +81,8 @@ class MobileApi:
     external or loopback web server.
     """
 
-    def __init__(
-        self,
-        dur_db: str | Path,
-        personal_db: str | Path,
-        catalog_db: str | Path | None = None,
-    ) -> None:
-        self.service = MedicationApp(dur_db, personal_db, catalog_db)
+    def __init__(self, canonical_db: str | Path, personal_db: str | Path) -> None:
+        self.service = MedicationApp(canonical_db, personal_db)
 
     def request(self, method: str, path: str, body_json: str | None = None) -> str:
         try:
@@ -239,8 +234,8 @@ class MobileApi:
         return 404, {"detail": "route not found"}
 
 
-def create_bridge(dur_db: str, personal_db: str, catalog_db: str | None = None) -> MobileApi:
-    return MobileApi(dur_db, personal_db, catalog_db)
+def create_bridge(canonical_db: str, personal_db: str) -> MobileApi:
+    return MobileApi(canonical_db, personal_db)
 
 
 __all__ = ["MobileApi", "create_bridge"]

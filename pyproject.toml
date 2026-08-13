@@ -21,7 +21,7 @@ medicine-catalog = "medicine_catalog.cli:main"
 medicine-canonical = "medicine_canonical.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["medicine_dur*", "medicine_app*", "medicine_catalog*"]
+include = ["medicine_dur*", "medicine_app*", "medicine_catalog*", "medicine_canonical*"]
 
 [tool.setuptools.package-data]
 medicine_app = ["static/*.html", "static/*.css", "static/*.js"]

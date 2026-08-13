@@ -74,24 +74,17 @@ def _profile_not_applicable(
 
 def _mapping_complete(category: str, coverage: Mapping[str, Any]) -> bool:
     product_status = (coverage.get("product") or {}).get("status")
-    ingredient_status = (coverage.get("ingredient") or {}).get("status")
-    if category == "lactation_caution":
-        return ingredient_status == "matched"
-    if category in _PRODUCT_AND_INGREDIENT_CATEGORIES:
-        return product_status == "matched" and ingredient_status == "matched"
-    return False
+    unresolved = coverage.get("category_resolution") or {}
+    return product_status == "matched" and unresolved.get(category) != "unresolved"
 
 
 def _mapping_reason(category: str, coverage: Mapping[str, Any]) -> str:
-    product_status = (coverage.get("product") or {}).get("status")
-    ingredient_status = (coverage.get("ingredient") or {}).get("status")
-    if category == "lactation_caution":
-        return "성분 단위 DUR 규칙 연결을 확인하지 못했습니다."
-    if product_status != "matched" and ingredient_status != "matched":
-        return "제품·성분 DUR 규칙 연결을 완전히 확인하지 못했습니다."
-    if product_status != "matched":
-        return "제품 단위 DUR 규칙 연결을 확인하지 못했습니다."
-    return "성분 단위 DUR 규칙 연결을 확인하지 못했습니다."
+    unresolved = coverage.get("category_resolution") or {}
+    if unresolved.get(category) == "unresolved":
+        return "canonical DUR 상세 기준 연결을 확정하지 못했습니다."
+    if (coverage.get("product") or {}).get("status") != "matched":
+        return "MFDS ITEM_SEQ 제품을 canonical 데이터에 연결하지 못했습니다."
+    return "canonical DUR 판정 범위를 완전히 확인하지 못했습니다."
 
 
 def _current_mapping_issues(
@@ -101,21 +94,12 @@ def _current_mapping_issues(
     issues: list[dict[str, str]] = []
     for medication in current:
         product_matched = medication.get("product_mapping_status") == "matched"
-        ingredient_matched = medication.get("ingredient_mapping_status") == "matched"
-        if product_matched and ingredient_matched:
+        canonical_issues = medication.get("canonical_resolution_issues") or {}
+        if product_matched and not canonical_issues:
             continue
-        # Inactive history matters only when its recorded course can overlap the
-        # candidate (or overlap itself cannot be resolved). This avoids turning
-        # an old, clearly non-overlapping unmapped medicine into a permanent
-        # interaction-coverage warning.
         if not medication.get("active") and courses_overlap(medication, candidate_course) is False:
             continue
-        if not product_matched and not ingredient_matched:
-            scope = "제품·성분"
-        elif not product_matched:
-            scope = "제품"
-        else:
-            scope = "성분"
+        scope = "canonical DUR 상세 기준" if product_matched else "MFDS ITEM_SEQ"
         issues.append({
             "name": str(medication.get("product_name") or "이름을 확인할 수 없는 복용약"),
             "scope": scope,

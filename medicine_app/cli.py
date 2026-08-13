@@ -15,9 +15,8 @@ from .core import ConfirmationRequired, MedicationApp
 from .ocr import OCRValidationError, inspect_envelope
 
 
-DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
+DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")
 DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
-DEFAULT_CATALOG_DB = Path("data/db/catalog.sqlite")
 
 
 def emit(payload, as_json: bool) -> None:
@@ -31,9 +30,8 @@ def emit(payload, as_json: bool) -> None:
 
 
 def capture_screenshot(
-    dur_db: Path,
+    canonical_db: Path,
     personal_db: Path,
-    catalog_db: Path,
     output: Path,
     width: int,
     height: int,
@@ -50,9 +48,8 @@ def capture_screenshot(
         port = sock.getsockname()[1]
 
     env = os.environ.copy()
-    env["MEDICINE_DUR_DB"] = str(dur_db.resolve())
+    env["MEDICINE_CANONICAL_DB"] = str(canonical_db.resolve())
     env["MEDICINE_PERSONAL_DB"] = str(personal_db.resolve())
-    env["MEDICINE_CATALOG_DB"] = str(catalog_db.resolve())
     server = subprocess.Popen(
         [
             sys.executable,
@@ -115,9 +112,8 @@ def capture_screenshot(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="medicine-app", description="Headless control CLI for the medication app")
-    parser.add_argument("--dur-db", type=Path, default=DEFAULT_DUR_DB)
+    parser.add_argument("--canonical-db", type=Path, default=DEFAULT_CANONICAL_DB)
     parser.add_argument("--personal-db", type=Path, default=DEFAULT_PERSONAL_DB)
-    parser.add_argument("--catalog-db", type=Path, default=DEFAULT_CATALOG_DB)
     sub = parser.add_subparsers(dest="command", required=True)
 
     people = sub.add_parser("people")
@@ -322,7 +318,7 @@ def _dispatch(args, app: MedicationApp):
         if args.width < 320 or args.height < 480:
             raise SystemExit("screenshot dimensions are too small")
         payload = capture_screenshot(
-            args.dur_db, args.personal_db, args.catalog_db, args.output,
+            args.canonical_db, args.personal_db, args.output,
             args.width, args.height, args.screen,
         )
     else:
@@ -346,7 +342,7 @@ def main(argv=None) -> int:
             return 2
         emit(payload, args.json)
         return 0
-    app = MedicationApp(args.dur_db, args.personal_db, args.catalog_db)
+    app = MedicationApp(args.canonical_db, args.personal_db)
     try:
         payload = _dispatch(args, app)
     except ConfirmationRequired as exc:

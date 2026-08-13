@@ -13,9 +13,8 @@ from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, Revi
 from .ocr import split_ocr_request
 
 
-DEFAULT_DUR_DB = Path("data/db/dur.sqlite")
+DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")
 DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
-DEFAULT_CATALOG_DB = Path("data/db/catalog.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
 BROWSER_OCR_DIR = Path(os.environ.get("MEDICINE_BROWSER_OCR_ASSETS", "/opt/medicine-browser-ocr"))
 # The direct ONNX worker only loads same-origin models. This response policy is the final
@@ -129,11 +128,10 @@ def _confirmation_response(exc: ConfirmationRequired) -> JSONResponse:
 
 
 def create_web_app(
-    dur_db: Path | str = DEFAULT_DUR_DB,
+    canonical_db: Path | str = DEFAULT_CANONICAL_DB,
     personal_db: Path | str = DEFAULT_PERSONAL_DB,
-    catalog_db: Path | str | None = DEFAULT_CATALOG_DB,
 ) -> FastAPI:
-    service = MedicationApp(dur_db, personal_db, catalog_db)
+    service = MedicationApp(canonical_db, personal_db)
     app = FastAPI(title="Medicine", version="0.1.0")
     app.state.service = service
 
@@ -293,7 +291,6 @@ def create_web_app(
 
 
 app = create_web_app(
-    os.environ.get("MEDICINE_DUR_DB", str(DEFAULT_DUR_DB)),
+    os.environ.get("MEDICINE_CANONICAL_DB", str(DEFAULT_CANONICAL_DB)),
     os.environ.get("MEDICINE_PERSONAL_DB", str(DEFAULT_PERSONAL_DB)),
-    os.environ.get("MEDICINE_CATALOG_DB", str(DEFAULT_CATALOG_DB)),
 )

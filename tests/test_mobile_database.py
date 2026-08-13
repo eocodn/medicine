@@ -7,145 +7,38 @@ import unittest
 from pathlib import Path
 
 from medicine_app.core import MedicationApp
-from medicine_app.ingredient_aliases import materialize_validated_ingredient_aliases
-from medicine_dur.mobile import build_mobile_database
-from medicine_dur.verification import dataset_manifest
-from tests.test_safety_coverage import make_catalog_db, make_dur_db
+from medicine_canonical.mobile import build_mobile_database
+from medicine_canonical.cli import main as canonical_main
+from tests.test_safety_coverage import make_dur_db
 
 
 class MobileDatabaseTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.dur_db = root / "dur.sqlite"
-        self.catalog_db = root / "catalog.sqlite"
+        self.canonical_db = root / "canonical.sqlite"
         self.mobile_db = root / "mobile.sqlite"
         self.manifest = root / "mobile.manifest.json"
         self.personal_db = root / "personal.sqlite"
-        make_dur_db(self.dur_db)
-        make_catalog_db(self.catalog_db)
+        make_dur_db(self.canonical_db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_compact_snapshot_preserves_dataset_identity_and_runtime_behavior(self) -> None:
-        dur = sqlite3.connect(self.dur_db)
-        dur.execute(
-            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-            ("P-NAME", "이름연결약_(1정/1정)", "ING-NAME", "Zolpidem"),
-        )
-        dur.executescript(
-            """
-            CREATE TABLE product_code_bridge(
-                dataset_key TEXT NOT NULL, item_seq TEXT NOT NULL, product_code TEXT NOT NULL,
-                product_name TEXT, PRIMARY KEY(item_seq,product_code)
-            );
-            CREATE INDEX idx_product_code_bridge_code ON product_code_bridge(product_code);
-            """
-        )
-        dur.execute(
-            "INSERT INTO product_code_bridge VALUES(?,?,?,?)",
-            ("product_bridge:hira_standard_code", "MFDS-NAME", "P-NAME", "이름연결약"),
-        )
-        dur.commit()
-        dur.close()
-        catalog = sqlite3.connect(self.catalog_db)
-        catalog.execute(
-            """INSERT INTO products(
-                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
-                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            ("MFDS-NAME", "이름연결약", "제약", "Zolpidem", "정제", None, "2026-01-01", None, "정상", "active", "fixture", "{}"),
-        )
-        catalog.execute(
-            """INSERT INTO products(
-                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
-                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                "MFDS-ALIAS-EVIDENCE", "졸피뎀별칭근거약", "제약", "Zolpidem Tartrate", "정제",
-                "P-ALIAS-EVIDENCE", "2026-01-01", None, "정상", "active", "fixture", "{}",
-            ),
-        )
-        catalog.execute(
-            """INSERT INTO products(
-                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
-                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                "MFDS-ALIAS-NO-EDI", "졸피뎀별칭약", "제약", "Zolpidem Tartrate", "정제",
-                None, "2026-01-01", None, "정상", "active", "fixture", "{}",
-            ),
-        )
-        catalog.execute(
-            """INSERT INTO products(
-                item_seq,product_name,manufacturer,ingredient_name,dosage_form,edi_code,
-                permit_date,cancel_date,cancel_name,permit_status,source,raw_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                "MFDS-MENO-HP", "메노트로핀에이치피주", "제약", "Menotrophin HP", "주사제",
-                "P-MENO-HP", "2026-01-01", None, "정상", "active", "fixture", "{}",
-            ),
-        )
-        catalog.commit()
-        catalog.close()
-        dur = sqlite3.connect(self.dur_db)
-        dur.execute(
-            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-            ("P-ALIAS-EVIDENCE", "졸피뎀별칭근거약", "ING-ZA", "zolpidem"),
-        )
-        dur.executemany(
-            """INSERT INTO ingredient_dur(
-                dataset_key,source_row,category,ingredient_name
-            ) VALUES(?,?,?,?)""",
-            [
-                ("ingredient:pregnancy_contraindication", 9001, "pregnancy_contraindication", "Menotrophin"),
-                ("ingredient:duration_caution", 9002, "duration_caution", "Menotrophin HP"),
-            ],
-        )
-        dur.execute(
-            "INSERT INTO product_catalog(product_code,product_name,ingredient_code,ingredient_name) VALUES(?,?,?,?)",
-            ("P-MENO-HP", "메노트로핀에이치피주", "ING-MENO", "Menotrophin"),
-        )
-        dur.commit()
-        dur.close()
-        alias_result = materialize_validated_ingredient_aliases(self.dur_db, self.catalog_db)
-        self.assertGreaterEqual(alias_result["validated_aliases"], 1)
-        self.assertGreaterEqual(alias_result["validated_multi_aliases"], 1)
-
+    def test_compact_snapshot_preserves_canonical_runtime_behavior_without_legacy_tables(self) -> None:
         result = build_mobile_database(
-            self.dur_db,
-            self.catalog_db,
-            self.mobile_db,
-            manifest_path=self.manifest,
-            require_verified_source=False,
+            self.canonical_db, self.mobile_db, manifest_path=self.manifest
         )
-
-        source = sqlite3.connect(self.dur_db)
         mobile = sqlite3.connect(self.mobile_db)
         try:
-            self.assertEqual(dataset_manifest(source)["dataset_id"], dataset_manifest(mobile)["dataset_id"])
-            product_columns = {row[1] for row in mobile.execute("PRAGMA table_info(product_dur)")}
-            product_catalog_columns = {row[1] for row in mobile.execute("PRAGMA table_info(product_catalog)")}
-            catalog_columns = {row[1] for row in mobile.execute("PRAGMA table_info(products)")}
-            self.assertNotIn("ingredient_code", product_columns)
-            self.assertNotIn("paired_ingredient_name", product_columns)
-            self.assertIn("product_name", product_catalog_columns)
-            self.assertNotIn("raw_json", catalog_columns)
-            self.assertEqual(
-                mobile.execute("SELECT COUNT(*) FROM product_code_bridge").fetchone()[0], 1
-            )
-            self.assertEqual(
-                mobile.execute("SELECT COUNT(*) FROM ingredient_aliases").fetchone()[0],
-                alias_result["validated_aliases"],
-            )
-            self.assertEqual(
-                mobile.execute("SELECT COUNT(*) FROM ingredient_multi_aliases").fetchone()[0],
-                2,
-            )
+            tables = {row[0] for row in mobile.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            self.assertIn("products", tables)
+            self.assertIn("product_rules", tables)
+            self.assertIn("product_ingredient_criterion_links", tables)
+            for legacy in ("product_dur", "ingredient_dur", "product_catalog", "product_code_bridge", "ingredient_aliases"):
+                self.assertNotIn(legacy, tables)
             self.assertEqual(mobile.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         finally:
-            source.close()
             mobile.close()
 
         manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
@@ -153,24 +46,26 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertEqual(manifest["sha256"], result["sha256"])
         self.assertEqual(manifest["size_bytes"], self.mobile_db.stat().st_size)
 
-        app = MedicationApp(self.mobile_db, self.personal_db, self.mobile_db)
-        person = app.create_person("온디바이스", "1990-01-01", "male", "not_applicable")
+        app = MedicationApp(self.mobile_db, self.personal_db)
+        person = app.create_person("온디바이스", "1990-01-01", "female", "not_pregnant", "breastfeeding")
         preview = app.preview_medication(
-            person["id"],
-            {"product_ref": "MFDS-Z", "prescription_days": 35, "start_date": "2026-08-11"},
+            person["id"], {"product_ref": "MFDS-Z", "prescription_days": 35}
         )
-        self.assertEqual(preview["product"]["product_name"], "졸피뎀제품")
+        self.assertEqual(preview["product"]["product_mapping_method"], "item_seq_exact")
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "exceeded")
-        linked = app.get_product("MFDS-NAME")
-        self.assertEqual(linked["product_code"], "P-NAME")
-        self.assertEqual(linked["product_mapping_method"], "item_seq_hira_exact")
-        aliased = app.get_product("MFDS-ALIAS-NO-EDI")
-        self.assertEqual(aliased["ingredient_mapping_status"], "matched")
-        self.assertEqual(aliased["ingredient_mapping_method"], "validated_alias")
-        self.assertEqual(aliased["safety_ingredients"], ["zolpidem"])
-        multi = app.get_product("MFDS-MENO-HP")
-        self.assertEqual(multi["ingredient_mapping_status"], "matched")
-        self.assertEqual(multi["safety_ingredients"], ["menotrophin", "menotrophin hp"])
+        lactation = next(row for row in preview["dur_checks"] if row["category"] == "lactation_caution")
+        self.assertEqual(lactation["status"], "hit")
+
+    def test_canonical_cli_builds_mobile_snapshot(self) -> None:
+        other = self.mobile_db.with_name("mobile-cli.sqlite")
+        manifest = self.manifest.with_name("mobile-cli.manifest.json")
+        code = canonical_main([
+            "mobile-build", "--db", str(self.canonical_db), "--output", str(other),
+            "--manifest", str(manifest), "--json",
+        ])
+        self.assertEqual(code, 0)
+        self.assertTrue(other.is_file())
+        self.assertTrue(manifest.is_file())
 
 
 if __name__ == "__main__":

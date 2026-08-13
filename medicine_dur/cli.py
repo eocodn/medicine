@@ -6,15 +6,12 @@ import os
 from pathlib import Path
 
 from .db import build_database, database_stats, search_records
-from .mobile import build_mobile_database
 from .product_code_bridge import sync_product_code_bridge
 from .product_items import sync_product_item_sources
 from .verification import verify_database
 
 
 DEFAULT_DB = Path("data/db/dur.sqlite")
-DEFAULT_CATALOG_DB = Path("data/db/catalog.sqlite")
-DEFAULT_MOBILE_DB = Path("data/db/mobile.sqlite")
 DEFAULT_RAW = Path("data/raw")
 DEFAULT_KIDS = Path("data/kids")
 
@@ -83,12 +80,6 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--max-snapshot-age-days", type=int, default=90)
     verify.add_argument("--json", action="store_true")
 
-    mobile = sub.add_parser("mobile-build", help="Build verified compact Android reference DB")
-    mobile.add_argument("--dur-db", type=Path, default=DEFAULT_DB)
-    mobile.add_argument("--catalog-db", type=Path, default=DEFAULT_CATALOG_DB)
-    mobile.add_argument("--output", type=Path, default=DEFAULT_MOBILE_DB)
-    mobile.add_argument("--manifest", type=Path)
-    mobile.add_argument("--json", action="store_true")
 
     return parser
 
@@ -126,14 +117,7 @@ def main(argv=None) -> int:
         )
         _emit(result, args.json)
         return 0 if result["status"] == "verified" else 2
-    elif args.command == "mobile-build":
-        result = build_mobile_database(
-            args.dur_db,
-            args.catalog_db,
-            args.output,
-            manifest_path=args.manifest,
-        )
-        _emit(result, args.json)
+
 
     return 0
 
