@@ -74,6 +74,46 @@ class PrescriptionSafetyTest(unittest.TestCase):
     def _dimension(preview: dict, name: str) -> dict:
         return preview["quantitative_checks"][name]
 
+    def _set_duration_rule(self, rule_value: str) -> None:
+        con = sqlite3.connect(self.canonical_db)
+        con.execute(
+            """UPDATE ingredient_rules SET rule_value=?
+               WHERE id IN (
+                   SELECT criterion_rule_id FROM product_criterion_links l
+                   JOIN product_rules r ON r.id=l.product_rule_id
+                   WHERE r.item_seq='MFDS-SAFE' AND r.category='duration_caution'
+               )""",
+            (rule_value,),
+        )
+        con.commit()
+        con.close()
+
+    def test_duration_week_rule_is_converted_to_days(self) -> None:
+        self._set_duration_rule("1주")
+
+        within = self.app.preview_medication(
+            self.person["id"], self._draft(prescription_days=7)
+        )
+        exceeded = self.app.preview_medication(
+            self.person["id"], self._draft(prescription_days=8)
+        )
+
+        self.assertEqual(self._dimension(within, "duration")["result"], "within")
+        self.assertEqual(self._dimension(within, "duration")["maximum_days"], 7)
+        self.assertEqual(self._dimension(exceeded, "duration")["result"], "exceeded")
+
+    def test_duration_month_rule_fails_closed_instead_of_treating_months_as_days(self) -> None:
+        self._set_duration_rule("6개월")
+
+        preview = self.app.preview_medication(
+            self.person["id"], self._draft(prescription_days=180)
+        )
+
+        duration = self._dimension(preview, "duration")
+        self.assertEqual(duration["result"], "not_evaluable")
+        self.assertIn("month", duration["reason"])
+        self.assertNotIn("maximum_days", duration)
+
     def test_full_preview_reports_duration_exceeded_and_dose_within(self) -> None:
         con = sqlite3.connect(self.canonical_db)
         con.execute(

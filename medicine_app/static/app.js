@@ -77,6 +77,7 @@ function openSheet(selector) {
 }
 
 function closeSheets() {
+  if (MedicineOcr.getReview()) MedicineOcr.cancel();
   $("#sheet-backdrop").classList.add("hidden");
   $$(".bottom-sheet").forEach((node) => node.classList.add("hidden"));
 }
@@ -176,8 +177,9 @@ function renderHome() {
   }
 
   const meds = state.dashboard?.medications || [];
-  const plan = state.dashboard?.daily_plan || { doses: [], prn_medications: [], summary: {} };
+  const plan = state.dashboard?.daily_plan || { doses: [], prn_medications: [], unscheduled_medications: [], summary: {} };
   const doses = plan.doses || [];
+  const unscheduled = plan.unscheduled_medications || [];
 
   root.innerHTML = `
     <div class="hero-card">
@@ -188,8 +190,13 @@ function renderHome() {
     <div class="card today-card">
       <div class="today-header"><h3>오늘 복용 일정</h3><span class="count-pill">${doses.length}</span></div>
       <div class="schedule-list">
-        ${doses.length ? doses.map(scheduleHtml).join("") : `<div class="empty-state"><strong>오늘 예정된 복용이 없어요</strong>처방 정보에 횟수나 시간을 입력하면 오늘 일정이 자동으로 만들어져요.</div>`}
+        ${doses.length
+          ? doses.map(scheduleHtml).join("")
+          : unscheduled.length
+            ? `<div class="empty-state"><strong>시간이 정해진 복용 일정이 없어요</strong>횟수나 시간을 입력하지 않은 복용약은 아래에서 확인해주세요.</div>`
+            : `<div class="empty-state"><strong>오늘 예정된 복용이 없어요</strong>처방 정보에 횟수나 시간을 입력하면 오늘 일정이 자동으로 만들어져요.</div>`}
       </div>
+      ${unscheduled.length ? `<div class="prn-note"><strong>일정 정보 미입력</strong>${unscheduled.map((med) => escapeHtml(med.product_name)).join(" · ")}</div>` : ""}
       ${(plan.prn_medications || []).length ? `<div class="prn-note"><strong>필요시 복용</strong>${plan.prn_medications.map((med) => escapeHtml(med.product_name)).join(" · ")}</div>` : ""}
     </div>`;
 

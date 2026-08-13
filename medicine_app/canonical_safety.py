@@ -9,7 +9,7 @@ from typing import Any, Mapping
 from .canonical_runtime import has_unlinked_product_rule, item_seq, linked_product_rows
 from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 from .safety import (
-    _AMBIGUOUS_MARKERS, _COUNT_UNITS, _countable_form, _detail_content, _draft_quantity, _frequency, _source_quantity,
+    _COUNT_UNITS, _countable_form, _detail_content, _draft_quantity, _frequency, _source_quantity,
     age_rule_matches, age_years,
 )
 
@@ -45,6 +45,25 @@ def _canonical_ingredient(row: Mapping[str, Any]) -> str | None:
 
 def _canonical_paired_ingredient(row: Mapping[str, Any]) -> str | None:
     return row.get("criterion_paired_ingredient_name") or row.get("paired_ingredient_name")
+
+
+_DURATION_LIMIT_RE = re.compile(r"^\s*(?P<amount>\d+)\s*(?P<unit>일|주|개월)?\s*$")
+
+
+def _duration_limit_days(value: Any) -> tuple[int | None, str | None]:
+    text = str(value or "").strip()
+    match = _DURATION_LIMIT_RE.fullmatch(text)
+    if not match:
+        return None, "duration rule is missing, malformed, or ambiguous"
+    amount = int(match.group("amount"))
+    if amount <= 0:
+        return None, "duration rule is missing, malformed, or ambiguous"
+    unit = match.group("unit") or "일"
+    if unit == "일":
+        return amount, None
+    if unit == "주":
+        return amount * 7, None
+    return None, "month-based duration rule requires calendar-aware evaluation"
 
 def _combination_risks(
     con: sqlite3.Connection,
@@ -208,14 +227,13 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
         except (InvalidOperation, AttributeError, ValueError):
             pass
     distinct_days: set[int] = set()
-    malformed = False
+    duration_parse_reasons: set[str] = set()
     for row in duration_rows:
-        text = str(row.get("rule_value") or "").strip()
-        matches = re.findall(r"(?<!\d)\d+(?!\d)", text)
-        if len(matches) != 1 or int(matches[0]) <= 0 or any(marker in text for marker in _AMBIGUOUS_MARKERS):
-            malformed = True
-        else:
-            distinct_days.add(int(matches[0]))
+        maximum_days, reason = _duration_limit_days(row.get("rule_value"))
+        if reason:
+            duration_parse_reasons.add(reason)
+        elif maximum_days is not None:
+            distinct_days.add(maximum_days)
     if not duration_rows:
         if target and has_unlinked_product_rule(con, target, "duration_caution"):
             duration["reason"] = "canonical duration product rule is not linked to one criterion"
@@ -223,8 +241,12 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
             duration["result"] = "not_applicable"
     elif prescription_days is None:
         duration["reason"] = "prescription duration is missing or invalid"
-    elif malformed or len(distinct_days) != 1:
-        duration["reason"] = "duration rule is missing, malformed, or ambiguous"
+    elif duration_parse_reasons or len(distinct_days) != 1:
+        duration["reason"] = (
+            next(iter(duration_parse_reasons))
+            if len(duration_parse_reasons) == 1 and not distinct_days
+            else "duration rule is missing, malformed, or ambiguous"
+        )
     else:
         maximum = next(iter(distinct_days))
         duration.update({

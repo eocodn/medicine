@@ -194,9 +194,10 @@
   function cancel() {
     if (!state.active) return false;
     const operationId = state.active.operationId;
-    clearReviewMemory();
     if (!post("cancel_scan", operationId)) return false;
-    notify("scanning");
+    clearReviewMemory();
+    state.active = null;
+    notify("cancelled", { operation_id: operationId });
     return true;
   }
 

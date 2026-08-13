@@ -43,3 +43,25 @@ test("keeps privacy guidance visible and surfaces only actionable OCR failures",
   assert.equal(h.status.textContent, PRIVACY_COPY);
   assert.deepEqual(h.toasts, ["사진을 인식하지 못했어요. 다른 사진으로 다시 시도해주세요."]);
 });
+
+
+test("cancel clears a completed OCR review even when the provider emits no terminal event", () => {
+  const h = harness();
+  assert.equal(h.ocr.start(), true);
+  const operationId = h.ocr.getState().operation_id;
+  assert.ok(operationId);
+  assert.equal(h.ocr.handleEvent({
+    schema_version: 1,
+    operation_id: operationId,
+    sequence: 0,
+    state: "review_required",
+    hints: { dose_amount: 1, dose_unit: "정" },
+    product_queries: ["타이레놀정"],
+  }), true);
+  assert.ok(h.ocr.getReview());
+
+  assert.equal(h.ocr.cancel(), true);
+
+  assert.equal(h.ocr.getReview(), null);
+  assert.equal(h.ocr.getState().operation_id, null);
+});

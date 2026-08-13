@@ -188,6 +188,7 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("MedicineOcr", app.text)
         self.assertIn("MedicineOcr.getReview", app.text)
         self.assertIn("MedicineOcr.clearReviewToken", app.text)
+        self.assertIn("MedicineOcr.cancel()", app.text)
         self.assertIn("사진에서 불러온 처방 확인 시간이 지났어요", app.text)
         self.assertIn("ocr-preview", app.text)
         self.assertIn("ocr_review_token", app.text)
