@@ -110,6 +110,48 @@ class OcrContractTest(unittest.TestCase):
                 )
             self.assertNotIn("SECRET", contents)
 
+    def test_web_api_exposes_atomic_multi_row_ocr_batch_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            canonical_db, personal_db = root / "canonical.sqlite", root / "personal.sqlite"
+            make_canonical_db(canonical_db)
+            from fastapi.testclient import TestClient
+
+            client = TestClient(create_web_app(canonical_db, personal_db))
+            person = client.post(
+                "/api/people",
+                json={"name": "다약제", "birth_date": "1990-01-01", "sex": "male",
+                      "pregnancy_status": "not_applicable", "lactation_status": "not_applicable"},
+            ).json()
+            rows = [
+                {"row_id": "row-a", "product_ref": "MFDS-A", "dose_amount": 1, "dose_unit": "정",
+                 "frequency_per_day": 1, "prescription_days": 5, "schedule_times": ["08:00"],
+                 "start_date": "2026-08-13", "administration_route": "oral"},
+                {"row_id": "row-b", "product_ref": "MFDS-B", "dose_amount": 1, "dose_unit": "정",
+                 "frequency_per_day": 1, "prescription_days": 5, "schedule_times": ["20:00"],
+                 "start_date": "2026-08-13", "administration_route": "oral"},
+            ]
+            preview = client.post(
+                f"/api/people/{person['id']}/medications/batch-preview",
+                json={"operation_id": "web-batch-1", "rows": rows},
+            )
+            self.assertEqual(preview.status_code, 200)
+            reviewed = preview.json()
+            blocked = client.post(
+                f"/api/people/{person['id']}/medications/batch",
+                json={"request_id": "web-batch-create", "rows": rows,
+                      "ocr_review_token": reviewed["ocr_review_token"]},
+            )
+            self.assertEqual(blocked.status_code, 409)
+            created = client.post(
+                f"/api/people/{person['id']}/medications/batch",
+                json={"request_id": "web-batch-create", "rows": rows,
+                      "ocr_review_token": reviewed["ocr_review_token"],
+                      "acknowledge_warnings": True, "warning_token": reviewed["warning_token"]},
+            )
+            self.assertEqual(created.status_code, 201)
+            self.assertEqual(len(created.json()["medications"]), 2)
+
     def test_changed_draft_invalidates_token_and_retries_are_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

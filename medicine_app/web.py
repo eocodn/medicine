@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, RevisionConflict
+from .batch_medications import add_medication_batch, preview_medication_batch
 from .ocr import split_ocr_request
 
 
@@ -78,6 +79,38 @@ class MedicationCreate(BaseModel):
     source: str | None = None
     ocr_review_token: str | None = None
     ocr_origin: bool = False
+
+
+class MedicationBatchRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    row_id: str
+    product_ref: str
+    dosage_text: str | None = None
+    dose_amount: float | None = None
+    dose_unit: str | None = None
+    frequency_per_day: int | None = None
+    meal_relation: str = "unspecified"
+    administration_route: str = "unknown"
+    as_needed: bool = False
+    prescription_days: int | None = None
+    schedule_times: list[str] = Field(default_factory=list)
+    start_date: str | None = None
+    end_date: str | None = None
+
+
+class MedicationBatchPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation_id: str
+    rows: list[MedicationBatchRow]
+
+
+class MedicationBatchCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str
+    rows: list[MedicationBatchRow]
+    ocr_review_token: str
+    acknowledge_warnings: bool = False
+    warning_token: str | None = None
 
 
 class MedicationUpdate(BaseModel):
@@ -226,6 +259,32 @@ def create_web_app(
         try:
             envelope, product_ref = split_ocr_request(payload)
             return service.preview_ocr(person_id, envelope, product_ref)
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @app.post("/api/people/{person_id}/medications/batch-preview")
+    def preview_medication_batch_route(person_id: str, payload: MedicationBatchPreviewRequest) -> dict:
+        try:
+            return preview_medication_batch(
+                service, person_id, [row.model_dump() for row in payload.rows], operation_id=payload.operation_id
+            )
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @app.post("/api/people/{person_id}/medications/batch", status_code=201)
+    def add_medication_batch_route(person_id: str, payload: MedicationBatchCreateRequest) -> dict:
+        try:
+            return add_medication_batch(
+                service,
+                person_id,
+                [row.model_dump() for row in payload.rows],
+                request_id=payload.request_id,
+                ocr_review_token=payload.ocr_review_token,
+                acknowledge_warnings=payload.acknowledge_warnings,
+                warning_token=payload.warning_token,
+            )
+        except ConfirmationRequired as exc:
+            return _confirmation_response(exc)
         except Exception as exc:
             raise _translate_error(exc) from exc
 

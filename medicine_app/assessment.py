@@ -95,11 +95,14 @@ def assess_medication(
     *,
     exclude_medication_id: str | None = None,
     as_of: date | None = None,
+    additional_current: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     current = app._list_medications_from_connection(
         personal_con, person["id"], active_only=False, exclude_id=exclude_medication_id
     )
     current = _current_products(app, current)
+    if additional_current:
+        current.extend(dict(item) for item in additional_current)
     with app._canonical() as canonical_con:
         dataset = canonical_manifest(canonical_con)
         product_risks = collect_qualitative_risks(
