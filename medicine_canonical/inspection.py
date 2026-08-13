@@ -21,6 +21,21 @@ def canonical_stats(db_path: str | Path) -> dict:
         product_rules = con.execute("SELECT COUNT(*) FROM product_rules").fetchone()[0]
         product_flags = con.execute("SELECT COUNT(*) FROM product_flags").fetchone()[0]
         ingredient_rules = con.execute("SELECT COUNT(*) FROM ingredient_rules").fetchone()[0]
+        dur_ingredient_concepts = con.execute(
+            "SELECT COUNT(*) FROM dur_ingredient_concepts"
+        ).fetchone()[0]
+        dur_concept_substances = con.execute(
+            "SELECT COUNT(*) FROM dur_concept_substances"
+        ).fetchone()[0]
+        dur_product_signatures = con.execute(
+            "SELECT COUNT(*) FROM dur_product_item_signatures"
+        ).fetchone()[0]
+        dur_criterion_signatures = con.execute(
+            "SELECT COUNT(*) FROM dur_criterion_signatures"
+        ).fetchone()[0]
+        dur_criterion_pair_signatures = con.execute(
+            "SELECT COUNT(*) FROM dur_criterion_pair_signatures"
+        ).fetchone()[0]
         product_criterion_links = con.execute("SELECT COUNT(*) FROM product_criterion_links").fetchone()[0]
         linked_product_rules = con.execute(
             "SELECT COUNT(DISTINCT product_rule_id) FROM product_criterion_links"
@@ -100,6 +115,11 @@ def canonical_stats(db_path: str | Path) -> dict:
         "product_rules": product_rules,
         "product_flags": product_flags,
         "ingredient_rules": ingredient_rules,
+        "dur_ingredient_concepts": dur_ingredient_concepts,
+        "dur_concept_substances": dur_concept_substances,
+        "dur_product_signatures": dur_product_signatures,
+        "dur_criterion_signatures": dur_criterion_signatures,
+        "dur_criterion_pair_signatures": dur_criterion_pair_signatures,
         "product_criterion_links": product_criterion_links,
         "linked_product_rules": linked_product_rules,
         "unlinked_product_rules": product_rules - linked_product_rules,
@@ -213,6 +233,15 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 errors.append("no product rules imported")
             if stats["ingredient_rules"] == 0:
                 errors.append("no ingredient rules imported")
+            if stats["dur_ingredient_concepts"] == 0:
+                errors.append("no DUR ingredient concepts materialized")
+            if stats["dur_product_signatures"] == 0:
+                errors.append("no DUR product-side bridge signatures materialized")
+            if (
+                stats["dur_criterion_signatures"] == 0
+                and stats["dur_criterion_pair_signatures"] == 0
+            ):
+                errors.append("no DUR criterion bridge signatures materialized")
             if stats["product_criterion_links"] == 0:
                 errors.append("no product/XLSX criterion links materialized")
             foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()

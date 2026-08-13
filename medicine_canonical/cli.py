@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
 from .inspection import canonical_product_criteria
+from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .sources import sync_canonical_api_sources
 from .substance_build import (
     assemble_substance_database,
@@ -63,6 +64,27 @@ def build_parser() -> argparse.ArgumentParser:
     rebuild = sub.add_parser("rebuild", parents=[common_api], help="Sync the APIs and atomically rebuild the canonical DB")
     rebuild.add_argument("--db", type=Path, default=DEFAULT_DB)
     rebuild.add_argument("--kids-dir", type=Path, default=DEFAULT_KIDS)
+
+    integrated_build = sub.add_parser(
+        "integrated-build",
+        help="Build source → substances → DUR bridge → product links from preserved snapshots",
+    )
+    integrated_build.add_argument("--db", type=Path, default=DEFAULT_DB)
+    integrated_build.add_argument("--substance-db", type=Path, default=DEFAULT_SUBSTANCE_DB)
+    integrated_build.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW)
+    integrated_build.add_argument("--substance-raw-dir", type=Path, default=DEFAULT_SUBSTANCE_RAW)
+    integrated_build.add_argument("--kids-dir", type=Path, default=DEFAULT_KIDS)
+    integrated_build.add_argument("--json", action="store_true")
+
+    integrated_rebuild = sub.add_parser(
+        "integrated-rebuild",
+        parents=[common_api],
+        help="Sync MFDS APIs then rebuild source → substances → DUR bridge → product links",
+    )
+    integrated_rebuild.add_argument("--db", type=Path, default=DEFAULT_DB)
+    integrated_rebuild.add_argument("--substance-db", type=Path, default=DEFAULT_SUBSTANCE_DB)
+    integrated_rebuild.add_argument("--substance-raw-dir", type=Path, default=DEFAULT_SUBSTANCE_RAW)
+    integrated_rebuild.add_argument("--kids-dir", type=Path, default=DEFAULT_KIDS)
 
     stats = sub.add_parser("stats", help="Show canonical DB coverage and source counts")
     stats.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -151,6 +173,27 @@ def main(argv=None) -> int:
             args.kids_dir,
             raw_dir=args.raw_dir,
             service_key=_require_key(args.service_key),
+            permit_page_size=args.permit_page_size,
+            dur_page_size=args.dur_page_size,
+            api_workers=args.workers,
+            progress=not args.quiet,
+        )
+    elif args.command == "integrated-build":
+        payload = assemble_integrated_databases(
+            args.db,
+            args.substance_db,
+            args.kids_dir,
+            args.raw_dir,
+            args.substance_raw_dir,
+        )
+    elif args.command == "integrated-rebuild":
+        payload = build_integrated_databases(
+            args.db,
+            args.substance_db,
+            args.kids_dir,
+            service_key=_require_key(args.service_key),
+            canonical_raw_dir=args.raw_dir,
+            substance_raw_dir=args.substance_raw_dir,
             permit_page_size=args.permit_page_size,
             dur_page_size=args.dur_page_size,
             api_workers=args.workers,
