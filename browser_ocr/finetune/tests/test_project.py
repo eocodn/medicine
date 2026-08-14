@@ -30,7 +30,14 @@ class FineTuneProjectContractTest(unittest.TestCase):
         self.assertRegex(upstream["paddleocr"]["dictionary_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(upstream["pretrained_model_bytes"], 110996478)
         self.assertEqual(upstream["pretrained_model_sha256"], "8975dede5e0c2f47e0a7712b3d79ffdc766972f872fd0441ebcccd9d77cd52a3")
-        self.assertEqual(upstream["pin_status"], "source-and-weights-pinned")
+        self.assertEqual(upstream["pin_status"], "training-smoke-verified")
+        self.assertTrue(upstream["training_enabled"])
+        runtime = upstream["training_runtime"]
+        self.assertEqual(runtime["paddlepaddle"], "3.2.0")
+        self.assertEqual(runtime["cuda_runtime"], "12.6")
+        self.assertEqual(runtime["cudnn"], "9.5.1.17")
+        self.assertEqual(runtime["verified_gpu"]["name"], "NVIDIA GeForce RTX 4080")
+        self.assertEqual(runtime["verified_gpu"]["vram_mib"], 16376)
 
     def test_dataset_schema_forbids_patient_data(self) -> None:
         schema = json.loads((FINETUNE / "dataset.schema.json").read_text(encoding="utf-8"))

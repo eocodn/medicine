@@ -58,16 +58,32 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning docker compose run --rm ocr-finetun
 
 The Paddle export contains `train.txt`, `val.txt`, `test.txt`, `split.json`, `export.json`, and `observed-characters.txt`. `data_dir` remains the original dataset root; images are not duplicated.
 
-## Training gate
+## Training runtime
 
-`upstream.json` intentionally has `training_enabled=false`. The official pretrained model URL is recorded, but a partial download is never treated as a pin. Before the first actual training run we must:
+`upstream.json` now records a complete source/model/runtime pin and has `training_enabled=true`. Training is still research-only and does not change the product OCR boundary. The pinned training image uses PaddleOCR v3.7.0, PaddlePaddle GPU 3.2.0 with CUDA 12.6, exact OCR/runtime dependency locks, and the upstream Korean dictionary.
 
-1. download the complete pretrained weights with resumable/checkpointed tooling and record SHA-256;
-2. pin the PaddleOCR training source/revision and config;
-3. select the actual training hardware profile (CUDA/Paddle build, GPU memory, batch-size envelope);
-4. compare the upstream model and each learning-curve checkpoint on the exact same holdouts.
+Before any training command, validate that the current container runtime actually exposes a working CUDA device. This is intentionally a runtime check: NVIDIA driver libraries are injected when the Compose service starts and are not available while the Docker image is being built.
 
-Do not generate a dictionary from only the training labels and silently replace the model dictionary. `observed-characters.txt` is an audit artifact; dictionary compatibility with the upstream Korean model must be checked explicitly before training.
+```bash
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
+  docker compose run --rm ocr-finetune-train probe --json
+```
+
+The bounded smoke profile uses 128 training samples, 64 validation samples, batch size 16, one epoch, and the `drug_family` holdout export. It verifies the exact config/dictionary/weight SHA-256 values, dataset fingerprint and model text contract before invoking PaddleOCR. The run streams Paddle progress, writes a state file and log, and treats a persisted checkpoint as success only after verifying its SHA-256.
+
+```bash
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
+  docker compose run --rm ocr-finetune-train smoke \
+  --pretrained-model /workspace/browser_ocr/finetune/work/upstream/korean_PP-OCRv5_mobile_rec_pretrained.pdparams \
+  --manifest /workspace/browser_ocr/finetune/work/synth-5k/manifest.json \
+  --export-dir /workspace/browser_ocr/finetune/work/synth-5k/paddle-drug \
+  --run-dir /workspace/browser_ocr/finetune/work/training/smoke \
+  --train-samples 128 --val-samples 64 --batch-size 16 --json
+```
+
+Generated datasets, downloaded weights, training logs, and checkpoints stay under the ignored `browser_ocr/finetune/work/` tree. Do not generate a dictionary from only the training labels and silently replace the model dictionary; `audit-model` must remain green against the pinned upstream Korean dictionary before training.
 
 ## Deterministic synthetic recognition crops
 

@@ -79,6 +79,21 @@ services:
       - .:/workspace:ro
     command: ["python", "-m", "unittest", "discover", "-s", "browser_ocr/finetune/tests", "-v"]
 
+  ocr-finetune-train:
+    build:
+      context: .
+      dockerfile: browser_ocr/finetune/Dockerfile.train
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      CUDA_VISIBLE_DEVICES: "${OCR_FINETUNE_GPU:-0}"
+    volumes:
+      - .:/workspace
+    gpus: all
+    shm_size: "4gb"
+    entrypoint: ["python", "-m", "browser_ocr.finetune.train_cli"]
+
   android:
     build:
       context: .

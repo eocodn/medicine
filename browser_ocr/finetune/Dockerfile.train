@@ -1,0 +1,37 @@
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6
+
+ARG PADDLEOCR_COMMIT=b03f46425e8ff4442b268ce449e3eef758146cd4
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       git libgl1 libglib2.0-0 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git init /opt/PaddleOCR \
+    && cd /opt/PaddleOCR \
+    && git remote add origin https://github.com/PaddlePaddle/PaddleOCR.git \
+    && git fetch --depth 1 origin "${PADDLEOCR_COMMIT}" \
+    && git checkout --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "${PADDLEOCR_COMMIT}" \
+    && printf '%s  %s\n' c7aaf8d53df433865a76d7f8af417a0416c2902fbc073f51d98b45629fcd64ea configs/rec/PP-OCRv5/multi_language/korean_PP-OCRv5_mobile_rec.yml | sha256sum -c - \
+    && printf '%s  %s\n' a88071c68c01707489baa79ebe0405b7beb5cca229f4fc94cc3ef992328802d7 ppocr/utils/dict/ppocrv5_korean_dict.txt | sha256sum -c - \
+    && rm -rf .git
+
+COPY browser_ocr/finetune/requirements-train.lock /tmp/requirements-train.lock
+RUN python -m pip install --disable-pip-version-check --no-cache-dir \
+      paddlepaddle-gpu==3.2.0 \
+      -i https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
+    && python -m pip install --disable-pip-version-check --no-cache-dir \
+      -r /tmp/requirements-train.lock \
+    && rm /tmp/requirements-train.lock
+
+# GPU driver libraries are injected only when the container runs, so build-time
+# validation stops at dependency consistency. `ocr-finetune-train probe` owns
+# CUDA import/device/compute validation under the NVIDIA container runtime.
+COPY browser_ocr/finetune/requirements-paddle-runtime.lock /tmp/requirements-paddle-runtime.lock
+RUN python -m pip install --disable-pip-version-check --no-cache-dir \
+      -r /tmp/requirements-paddle-runtime.lock \
+    && rm /tmp/requirements-paddle-runtime.lock \
+    && python -m pip check
+
+WORKDIR /workspace
