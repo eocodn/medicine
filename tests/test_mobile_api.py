@@ -162,6 +162,50 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(history[-1]["action"], "create")
 
+    def test_ocr_batch_preview_and_create_routes_are_atomic(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "다약제 OCR",
+            "birth_date": "1990-01-01",
+            "sex": "male",
+            "pregnancy_status": "not_applicable",
+            "lactation_status": "not_applicable",
+        })
+        rows = [
+            {"row_id": "row-a", "product_ref": "MFDS-A", "dose_amount": 1, "dose_unit": "정",
+             "frequency_per_day": 1, "prescription_days": 5, "schedule_times": ["08:00"],
+             "start_date": "2026-08-13", "administration_route": "oral"},
+            {"row_id": "row-b", "product_ref": "MFDS-B", "dose_amount": 1, "dose_unit": "정",
+             "frequency_per_day": 1, "prescription_days": 5, "schedule_times": ["20:00"],
+             "start_date": "2026-08-13", "administration_route": "oral"},
+        ]
+
+        status, preview = self.request(
+            "POST", f"/api/people/{person['id']}/medications/batch-preview",
+            {"operation_id": "mobile-batch-1", "rows": rows},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(preview["ocr_review_token"])
+        self.assertTrue(preview["warning_token"])
+
+        status, blocked = self.request(
+            "POST", f"/api/people/{person['id']}/medications/batch",
+            {"request_id": "mobile-batch-create", "rows": rows,
+             "ocr_review_token": preview["ocr_review_token"]},
+        )
+        self.assertEqual(status, 409)
+        self.assertTrue(blocked["confirmation_required"])
+        _, dashboard = self.request("GET", f"/api/people/{person['id']}/dashboard")
+        self.assertEqual(dashboard["medications"], [])
+
+        status, created = self.request(
+            "POST", f"/api/people/{person['id']}/medications/batch",
+            {"request_id": "mobile-batch-create", "rows": rows,
+             "ocr_review_token": preview["ocr_review_token"],
+             "acknowledge_warnings": True, "warning_token": preview["warning_token"]},
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(len(created["medications"]), 2)
+
     def test_person_profile_update_and_delete_routes(self) -> None:
         status, person = self.request("POST", "/api/people", {
             "name": "프로필",

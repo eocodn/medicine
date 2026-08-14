@@ -162,6 +162,10 @@ class MedicationApp:
     def get_product(self, product_ref: str) -> dict:
         return self.products.get(product_ref)
 
+    @staticmethod
+    def _new_id() -> str:
+        return _uuid()
+
     def add_medication(
         self,
         person_id: str,

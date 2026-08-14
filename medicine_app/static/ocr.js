@@ -16,6 +16,11 @@
     "times", "dose_quantity", "duration_days",
   ]);
   const ISSUE_KEYS = new Set(["ambiguity_codes", "unsupported_codes"]);
+  const ROW_KEYS = new Set([
+    "product_query", "product_ref", "dose_amount", "dose_unit", "frequency_per_day",
+    "prescription_days", "schedule_times", "meal_relation", "administration_route",
+    "as_needed", "start_date", "end_date", "association",
+  ]);
 
   const state = {
     active: null,
@@ -53,6 +58,7 @@
     if (state.active) {
       state.active.hints = null;
       state.active.productQueries = [];
+      state.active.rows = [];
       state.active.issues = null;
       state.active.reviewToken = null;
     }
@@ -82,6 +88,25 @@
     return result;
   }
 
+  function structuredRows(value) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, 24).map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+      const result = {};
+      Object.entries(row).forEach(([key, item]) => {
+        if (!ROW_KEYS.has(key)) return;
+        if (key === "schedule_times") {
+          if (Array.isArray(item)) result.schedule_times = item.filter((entry) => typeof entry === "string").slice(0, 24);
+          return;
+        }
+        const safe = scalar(item);
+        if (safe !== null) result[key] = safe;
+      });
+      if (!Array.isArray(result.schedule_times)) result.schedule_times = [];
+      return result;
+    }).filter((row) => row && (row.product_query || row.product_ref));
+  }
+
   function structuredIssues(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return { ambiguity_codes: [], unsupported_codes: [], messages: [] };
     const codes = (key) => ISSUE_KEYS.has(key) && Array.isArray(value[key])
@@ -90,7 +115,12 @@
     const ambiguity = codes("ambiguity_codes");
     const unsupported = codes("unsupported_codes");
     const messages = [];
-    if (ambiguity.length) messages.push("여러 약명 인식 결과가 있어 품목별 확인이 필요합니다.");
+    ambiguity.forEach((code) => {
+      if (code === "UNRESOLVED_REGIMEN_ASSOCIATION") messages.push("약과 복용법 연결을 확정하지 못한 항목이 있어 직접 확인해야 합니다.");
+      else if (code === "MISSING_PRODUCT") messages.push("약명을 인식하지 못한 항목이 있어 직접 확인해야 합니다.");
+      else if (code === "LOW_CONFIDENCE_OCR") messages.push("OCR 인식 신뢰도가 매우 낮은 항목은 자동 입력하지 않았습니다. 직접 확인해주세요.");
+      else messages.push("여러 약명 인식 결과가 있어 품목별 확인이 필요합니다.");
+    });
     unsupported.forEach((code) => {
       if (["UNSUPPORTED_ROUTE", "UNSUPPORTED_ADMINISTRATION_ROUTE"].includes(code)) messages.push("투여 경로를 인식하지 못해 ‘확인 필요’로 표시했습니다.");
       else if (["UNSUPPORTED_PRN", "UNSUPPORTED_AS_NEEDED", "PRN_UNSUPPORTED"].includes(code)) messages.push("필요시(PRN) 복용 여부를 인식하지 못해 직접 확인해야 합니다.");
@@ -146,9 +176,14 @@
     if (eventState === "review_required") {
       active.hints = structuredHints(event.hints || event.structured_hints);
       active.productQueries = productQueries(event.product_queries || event.hints?.product_queries);
-      active.issues = structuredIssues(event.hints || event.structured_hints);
+      active.rows = structuredRows(event.rows);
+      active.issues = structuredIssues({
+        ...(event.hints || event.structured_hints || {}),
+        ambiguity_codes: event.ambiguity_codes || event.hints?.ambiguity_codes || [],
+        unsupported_codes: event.unsupported_codes || event.hints?.unsupported_codes || [],
+      });
       if (typeof state.onReviewRequired === "function") {
-        state.onReviewRequired(active.hints, active.productQueries, active.operationId, active.issues);
+        state.onReviewRequired(active.hints, active.productQueries, active.operationId, active.issues, active.rows);
       }
     }
     if (TERMINAL_STATES.has(eventState)) {
@@ -180,6 +215,7 @@
       phase: "accepted",
       hints: null,
       productQueries: [],
+      rows: [],
       issues: null,
       reviewToken: null,
     };
@@ -300,6 +336,7 @@
     return {
       operation_id: state.active.operationId,
       hints: state.active.hints || {},
+      rows: state.active.rows || [],
       issues: state.active.issues,
       review_token: state.active.reviewToken,
     };

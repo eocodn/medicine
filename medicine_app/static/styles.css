@@ -474,3 +474,31 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .checkbox-row input { width: 22px !important; min-height: 22px !important; margin-top: 2px; }
 .checkbox-row span { display: grid; gap: 3px; }
 .checkbox-row small { color: var(--muted); font-weight: 500; line-height: 1.45; }
+
+/* Multi-medication OCR correction sheet */
+.ocr-review-sheet { max-height: 94vh; }
+.ocr-review-header { position: sticky; top: -9px; z-index: 3; padding-top: 9px; background: var(--surface); }
+.ocr-review-intro { margin: -5px 0 14px; line-height: 1.55; }
+.ocr-review-list { display: grid; gap: 12px; margin: 12px 0; }
+.ocr-review-row { padding: 15px; border: 1px solid var(--line); border-radius: 19px; background: #fbfcfb; }
+.ocr-row-heading { display: flex; justify-content: space-between; align-items: start; gap: 10px; margin-bottom: 13px; }
+.ocr-row-heading > div { display: grid; gap: 3px; }
+.ocr-row-heading span { font-weight: 900; color: var(--text); }
+.ocr-row-heading small { color: var(--muted); line-height: 1.4; }
+.ocr-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.ocr-review-row label { display: grid; gap: 6px; margin-top: 10px; font-size: 12px; font-weight: 800; color: #536059; }
+.ocr-review-row input, .ocr-review-row select { width: 100%; min-height: 46px; border: 1px solid var(--line); border-radius: 13px; padding: 0 11px; background: white; color: var(--text); }
+.ocr-product-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.ocr-product-search button { min-width: 58px; border: 0; border-radius: 12px; background: var(--brand); color: white; font-weight: 800; }
+.ocr-selected-product, .ocr-product-help { margin-top: 7px; padding: 8px 10px; border-radius: 11px; font-size: 11px; line-height: 1.45; }
+.ocr-selected-product { background: var(--brand-soft); color: var(--brand); font-weight: 800; }
+.ocr-product-help { background: var(--warning-soft); color: #69440e; }
+.ocr-product-candidates { display: grid; gap: 6px; margin-top: 7px; }
+.ocr-product-candidates button { display: grid; gap: 2px; width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 11px; background: white; text-align: left; color: var(--text); }
+.ocr-product-candidates span { color: var(--muted); font-size: 11px; }
+.ocr-prn { grid-template-columns: 22px 1fr !important; align-items: center; }
+.ocr-prn input { width: 20px !important; min-height: 20px !important; }
+.ocr-row-assessment { margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ocr-row-assessment > strong { display: block; margin-bottom: 8px; font-size: 12px; }
+.ocr-batch-actions { position: sticky; bottom: calc(-22px - env(safe-area-inset-bottom)); z-index: 3; margin: 12px -18px calc(-22px - env(safe-area-inset-bottom)); padding: 12px 18px calc(22px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgba(252, 253, 251, .97); backdrop-filter: blur(12px); }
+@media (max-width: 380px) { .ocr-field-grid { grid-template-columns: 1fr; } }

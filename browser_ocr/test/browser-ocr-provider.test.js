@@ -7,6 +7,11 @@ const parser = require("../../medicine_app/static/browser-ocr-parser.js");
 
 const providerPath = path.resolve(__dirname, "../../medicine_app/static/browser-ocr.js");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+const box = (text, y1, y2, score = 0.99) => ({
+  text,
+  score,
+  poly: [[20, y1], [320, y1], [320, y2], [20, y2]],
+});
 
 function harness() {
   const listeners = {};
@@ -88,10 +93,38 @@ test("uses one local direct ONNX worker and emits structured review data", async
 
   const review = h.events.find((event) => event.state === "review_required");
   assert.deepEqual(review.product_queries, ["타이레놀정"]);
+  assert.equal(review.rows.length, 1);
+  assert.equal(review.rows[0].product_query, "타이레놀정");
+  assert.equal(review.rows[0].dose_amount, 1);
+  assert.equal(review.rows[0].frequency_per_day, 2);
+  assert.equal(review.rows[0].prescription_days, 7);
   assert.equal(JSON.stringify(review).includes("1정 1일"), false);
   assert.ok(h.events.some((event) => event.state === "recognizing" && event.progress === 55));
   assert.equal(worker.terminated, true);
   assert.equal(h.input.value, "");
+});
+
+test("surfaces low-confidence OCR uncertainty without prefilling structured regimen fields", async () => {
+  const h = harness();
+  command(h.provider, "start_scan", "browser-low-confidence");
+  h.input.files = [{ name: "low-confidence.png" }];
+  h.listeners.change();
+  await tick();
+
+  h.workers[0].emit({ type: "result", items: [
+    box("Product: Testmed", 10, 30, 0.99),
+    box("5 tablets 2 times/day for 7 days", 40, 60, 0.01),
+  ] });
+  await tick();
+
+  const review = h.events.find((event) => event.state === "review_required");
+  assert.equal(review.rows.length, 1);
+  assert.equal(review.rows[0].product_query, "Testmed");
+  assert.equal(review.rows[0].dose_amount, null);
+  assert.equal(review.rows[0].frequency_per_day, null);
+  assert.equal(review.rows[0].prescription_days, null);
+  assert.ok(review.ambiguity_codes.includes("LOW_CONFIDENCE_OCR"));
+  assert.ok(review.hints.ambiguity_codes.includes("LOW_CONFIDENCE_OCR"));
 });
 
 test("cancel immediately terminates the worker and rejects stale output", async () => {
@@ -152,4 +185,30 @@ test("worker failure is explicit and does not fall back", async () => {
   assert.ok(h.events.some((event) => event.state === "failed"));
   assert.equal(h.events.some((event) => event.state === "review_required"), false);
   assert.equal(h.workers[0].terminated, true);
+});
+
+
+test("preserves row geometry long enough to emit separate structured medication rows", async () => {
+  const h = harness();
+  command(h.provider, "start_scan", "browser-multi");
+  h.input.files = [{ name: "multi.png" }];
+  h.listeners.change();
+  await tick();
+  const box = (text, x1, y1, x2, y2) => ({ text, score: 0.99, poly: [[x1,y1],[x2,y1],[x2,y2],[x1,y2]] });
+  h.workers[0].emit({ type: "result", items: [
+    box("약품명", 10, 10, 140, 30), box("1회 투약량", 180, 10, 270, 30),
+    box("1일 투여횟수", 300, 10, 410, 30), box("총투약일수", 450, 10, 550, 30),
+    box("타이레놀정", 10, 50, 150, 70), box("1정", 190, 50, 240, 70),
+    box("2회", 330, 50, 380, 70), box("7일", 470, 50, 520, 70),
+    box("이부프로펜정", 10, 85, 160, 105), box("2정", 190, 85, 240, 105),
+    box("3회", 330, 85, 380, 105), box("5일", 470, 85, 520, 105),
+  ] });
+  await tick();
+
+  const review = h.events.find((event) => event.state === "review_required");
+  assert.deepEqual(review.product_queries, ["타이레놀정", "이부프로펜정"]);
+  assert.deepEqual(review.rows.map((row) => [row.product_query, row.dose_amount, row.frequency_per_day, row.prescription_days]), [
+    ["타이레놀정", 1, 2, 7], ["이부프로펜정", 2, 3, 5],
+  ]);
+  assert.equal(JSON.stringify(review).includes("poly"), false);
 });

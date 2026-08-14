@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 
 from .core import ConfirmationRequired, MedicationApp
+from .batch_medications import add_medication_batch, preview_medication_batch
 from .ocr import OCRValidationError, inspect_envelope
 
 
@@ -110,6 +111,19 @@ def capture_screenshot(
     return {"path": str(output), "width": width, "height": height, "screen": screen, "size_bytes": output.stat().st_size}
 
 
+def _read_json_input(path: Path) -> object:
+    raw = sys.stdin.read() if str(path) == "-" else path.read_text(encoding="utf-8")
+    return json.loads(raw)
+
+
+def _batch_rows(path: Path) -> list[dict]:
+    payload = _read_json_input(path)
+    rows = payload.get("rows") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        raise ValueError("batch input must be a JSON array or an object with a rows array")
+    return rows
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="medicine-app", description="Headless control CLI for the medication app")
     parser.add_argument("--canonical-db", type=Path, default=DEFAULT_CANONICAL_DB)
@@ -184,6 +198,19 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--acknowledge-warnings", action="store_true")
     add.add_argument("--warning-token")
     add.add_argument("--json", action="store_true")
+
+    batch_preview = sub.add_parser("med-batch-preview")
+    batch_preview.add_argument("--person", required=True)
+    batch_preview.add_argument("--input", required=True, metavar="FILE|-", type=Path)
+    batch_preview.add_argument("--operation-id", required=True)
+    batch_preview.add_argument("--json", action="store_true")
+
+    batch_add = sub.add_parser("med-batch-add")
+    batch_add.add_argument("--person", required=True)
+    batch_add.add_argument("--input", required=True, metavar="FILE|-", type=Path)
+    batch_add.add_argument("--request-id", required=True)
+    batch_add.add_argument("--acknowledge-warnings", action="store_true")
+    batch_add.add_argument("--json", action="store_true")
 
     update = sub.add_parser("med-update")
     update.add_argument("--medication", required=True)
@@ -289,6 +316,23 @@ def _dispatch(args, app: MedicationApp):
             request_id=args.request_id,
             acknowledge_warnings=args.acknowledge_warnings,
             warning_token=args.warning_token,
+        )
+    elif args.command == "med-batch-preview":
+        payload = preview_medication_batch(
+            app, args.person, _batch_rows(args.input), operation_id=args.operation_id
+        )
+    elif args.command == "med-batch-add":
+        rows = _batch_rows(args.input)
+        reviewed = preview_medication_batch(
+            app, args.person, rows, operation_id=f"cli:{args.request_id}"
+        )
+        if reviewed["requires_review"] and not args.acknowledge_warnings:
+            raise ConfirmationRequired(args.request_id, reviewed)
+        payload = add_medication_batch(
+            app, args.person, rows, request_id=args.request_id,
+            ocr_review_token=reviewed["ocr_review_token"],
+            acknowledge_warnings=bool(reviewed["requires_review"]),
+            warning_token=reviewed["warning_token"],
         )
     elif args.command == "med-update":
         mapping = {
