@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "framework": "PaddleOCR",
+  "recognizer": "korean_PP-OCRv5_mobile_rec",
+  "pretrained_model_url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_pretrained_model/korean_PP-OCRv5_mobile_rec_pretrained.pdparams",
+  "pretrained_model_sha256": null,
+  "pin_status": "pending-complete-download",
+  "training_enabled": false,
+  "reason": "Training stays disabled until the complete upstream weight is downloaded, SHA-256 pinned, and a training hardware profile is selected."
+}

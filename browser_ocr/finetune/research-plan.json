@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "chronicle": 112,
+  "baseline": {
+    "recognizer": "korean_PP-OCRv5_mobile_rec",
+    "production_integration": false,
+    "detector_policy": "keep-current-detector-until-recognition-learning-curve-is-measured"
+  },
+  "initial_scale_targets": {
+    "synthetic_full_pages": 20000,
+    "recognition_crops": 200000,
+    "real_deidentified_holdout_documents": 300
+  },
+  "learning_curve_crop_counts": [5000, 20000, 50000, 200000],
+  "holdout_experiments": [
+    {"id": "unseen-layout", "group_by": "layout_family"},
+    {"id": "unseen-source", "group_by": "source_family"},
+    {"id": "unseen-drug", "group_by": "drug_family"}
+  ],
+  "required_document_types": ["prescription", "medication_bag"],
+  "required_semantic_strata": [
+    "product", "strength", "dose", "frequency", "duration", "schedule",
+    "clinic_hours", "phone", "date", "identifier"
+  ],
+  "required_risk_strata": [
+    "mixed_script", "exact_numeric", "decimal", "fraction", "ambiguous_range",
+    "hard_negative", "small_print", "low_contrast", "rotation", "plastic_reflection"
+  ],
+  "real_data_policy": {
+    "patient_data": "forbidden",
+    "phase_1_use": "holdout-only",
+    "train_on_real_data": false
+  },
+  "primary_release_metric": "false_exact_structured_medication_value_rate",
+  "secondary_metrics": [
+    "character_error_rate", "numeric_token_recall", "critical_token_recall",
+    "layout_line_recall", "layout_order_accuracy"
+  ]
+}

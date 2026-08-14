@@ -14,3 +14,8 @@ data/canonical/
 android/.gradle/
 android/build/
 android/app/build/
+
+# OCR fine-tuning private corpora, exports, and checkpoints.
+browser_ocr/finetune/work/
+browser_ocr/finetune/private/
+browser_ocr/finetune/checkpoints/
