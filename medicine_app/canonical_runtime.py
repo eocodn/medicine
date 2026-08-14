@@ -7,7 +7,7 @@ import sqlite3
 from typing import Any, Mapping
 
 
-_CANONICAL_SCHEMA_VERSION = "7"
+_CANONICAL_SCHEMA_VERSION = "8"
 _REQUIRED_FAMILIES = {"mfds_permit_api", "mfds_dur_item_api", "kids_mfds_xlsx"}
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -95,6 +95,11 @@ def linked_product_rows(
             "paired_ingredient_name": row.get("criterion_paired_ingredient_name") or row.get("paired_ingredient_name"),
             "rule_value": row.get("criterion_rule_value"),
             "dosage_form": row.get("criterion_dosage_form"),
+            "product_dosage_form": row.get("product_dosage_form"),
+            "maximum_daily_amount": row.get("criterion_maximum_daily_amount"),
+            "maximum_daily_unit": row.get("criterion_maximum_daily_unit"),
+            "dose_parse_status": row.get("criterion_dose_parse_status"),
+            "dose_parse_reason": row.get("criterion_dose_parse_reason"),
             "note": row.get("criterion_note"),
             # MFDS product detail retains product-specific timing/quantity evidence.
             "details": row.get("product_details") or row.get("criterion_details"),

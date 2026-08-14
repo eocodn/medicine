@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
+from medicine_canonical.dose_criteria import parse_daily_dose_threshold
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
 
 
@@ -115,6 +116,14 @@ def add_linked_rule(
          str(criterion_source_row)),
     )
     criterion_rule_id = int(cur.lastrowid)
+    if category == "dose_caution":
+        amount, unit, status, reason = parse_daily_dose_threshold(rule_value or effect_name)
+        con.execute(
+            """INSERT INTO dose_criteria(
+                   criterion_rule_id,maximum_daily_amount,maximum_daily_unit,parse_status,parse_reason
+               ) VALUES(?,?,?,?,?)""",
+            (criterion_rule_id, amount, unit, status, reason),
+        )
     con.execute(
         """INSERT INTO product_criterion_links(
                product_rule_id,criterion_rule_id,match_method,pair_orientation

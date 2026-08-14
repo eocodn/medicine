@@ -152,6 +152,11 @@ class CanonicalDatabaseTest(unittest.TestCase):
             )
             dose = con.execute("SELECT rule_value,dosage_form FROM ingredient_rules WHERE category='dose_caution'").fetchone()
             self.assertEqual(dose, ("알파 240mg", "정제"))
+            structured_dose = con.execute(
+                """SELECT maximum_daily_amount,maximum_daily_unit,parse_status,parse_reason
+                   FROM dose_criteria"""
+            ).fetchone()
+            self.assertEqual(structured_dose, ("240", "mg", "parsed", None))
             lactation = con.execute("SELECT ingredient_name,ingredient_name_ko,note FROM ingredient_rules WHERE category='lactation_caution'").fetchone()
             self.assertEqual(lactation, ("Alpha", "알파", "수유 주의"))
             identifiers = set(con.execute("SELECT system,value FROM product_identifiers WHERE item_seq='P1'").fetchall())
@@ -161,10 +166,14 @@ class CanonicalDatabaseTest(unittest.TestCase):
             ).fetchone()
             self.assertEqual(dose_product, ("D-ALPHA", "Alpha Hydrochloride"))
             dose_link = con.execute(
-                """SELECT item_seq,criterion_rule_value,match_method
+                """SELECT item_seq,criterion_rule_value,criterion_maximum_daily_amount,
+                          criterion_maximum_daily_unit,criterion_dose_parse_status,match_method
                    FROM product_rule_criteria WHERE category='dose_caution'"""
             ).fetchone()
-            self.assertEqual(dose_link, ("P1", "알파 240mg", "ingredient_preprocessed"))
+            self.assertEqual(
+                dose_link,
+                ("P1", "알파 240mg", "240", "mg", "parsed", "ingredient_preprocessed"),
+            )
             combination_link = con.execute(
                 """SELECT item_seq,paired_item_seq,match_method,pair_orientation
                    FROM product_rule_criteria WHERE category='combination_contraindication'"""
@@ -175,6 +184,22 @@ class CanonicalDatabaseTest(unittest.TestCase):
                    FROM product_ingredient_criteria WHERE category='lactation_caution'"""
             ).fetchone()
             self.assertEqual(lactation_link, ("P1", "Alpha", "dur_scope_signature"))
+
+    def test_verify_rejects_zero_quantitative_dose_coverage(self) -> None:
+        self._build()
+        with closing(sqlite3.connect(self.db)) as con:
+            con.execute(
+                """UPDATE dose_criteria
+                   SET maximum_daily_amount=NULL,maximum_daily_unit=NULL,
+                       parse_status='not_evaluable',parse_reason='forced test gap'"""
+            )
+            con.commit()
+
+        verification = verify_canonical_database(self.db)
+        self.assertEqual(verification["status"], "invalid")
+        self.assertIn("no quantitative dose criteria are parsable", verification["errors"])
+        self.assertIn("linked dose-caution products have zero quantitative evaluability", verification["errors"])
+        self.assertIn("active linked dose-caution products have zero quantitative evaluability", verification["errors"])
 
     def test_reassemble_rejects_tampered_api_snapshot(self) -> None:
         self._build()

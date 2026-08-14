@@ -7,7 +7,6 @@ reference-database lookup or product identity logic.
 from __future__ import annotations
 
 import calendar
-import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -138,8 +137,6 @@ _AMBIGUOUS_MARKERS = (
     ",", "，", "/", "~", "또는", "or", "상이", "조건", "환자별", "필요시", "범위",
     "성인", "소아", "신장", "간장애", "체중", "경우", "일때", "일 때", "이상", "이하", "미만", "초과",
 )
-_MAX_DETAIL_KEYS = ("1일최대투여기준량", "1일최대용량", "일일최대용량", "dailymax", "maximumdaily")
-_CONTENT_DETAIL_KEYS = ("점검기준성분함량총함량", "성분함량총함량", "ingredientcontent")
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -185,69 +182,28 @@ def _quantity(value: Any, inherited_unit: str | None = None) -> tuple[Decimal, s
     return (amount, None) if not unit else None
 
 
-def _details_object(value: Any) -> dict[str, Any] | None:
-    if isinstance(value, dict):
-        return value
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = json.loads(value)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _detail_maximum(details: Any) -> tuple[Decimal, str | None] | None:
-    parsed = _details_object(details)
-    if parsed is None:
-        return None
-    candidates: list[Any] = []
-    for key, value in parsed.items():
-        normalized = re.sub(r"[^0-9a-z가-힣]", "", str(key).lower())
-        if normalized in _MAX_DETAIL_KEYS or ("최대" in normalized and ("투여" in normalized or "용량" in normalized)):
-            candidates.append(value)
-    if len(candidates) != 1:
-        return None
-    return _quantity(candidates[0])
-
-
-def _detail_content(details: Any) -> Decimal | None:
-    parsed = _details_object(details)
-    if parsed is None:
-        return None
-    candidates = []
-    for key, value in parsed.items():
-        normalized = re.sub(r"[^0-9a-z가-힣]", "", str(key).lower())
-        if normalized in _CONTENT_DETAIL_KEYS or ("성분함량" in normalized and "총함량" in normalized):
-            candidates.append(value)
-    if len(candidates) != 1:
-        return None
-    quantity = _quantity(candidates[0], inherited_unit="mg")
-    return quantity[0] if quantity and quantity[1] == "mg" else None
-
-
-def _source_quantity(rows: list[dict[str, Any]]) -> tuple[tuple[Decimal, str | None] | None, str | None]:
+def _source_quantity(rows: list[dict[str, Any]]) -> tuple[tuple[Decimal, str] | None, str | None]:
     if not rows:
         return None, "dose rule is missing"
-    if len(rows) != 1:
-        return None, "dose rule has multiple rows"
-    row = rows[0]
-    original = _quantity(row.get("rule_value"))
-    structured = _detail_maximum(row.get("details"))
-    if original is None or structured is None:
-        return None, "dose rule value or structured details are not a single numeric threshold"
-    original_amount, original_unit = original
-    structured_amount, structured_unit = structured
-    unit = original_unit or structured_unit
-    if original_unit and structured_unit and original_unit != structured_unit:
-        return None, "dose rule has no unambiguous unit"
-    if original_unit is None:
-        original_amount = (original_amount * _MASS_TO_MG[unit]) if unit in _MASS_TO_MG else original_amount
-    if structured_unit is None:
-        structured_amount = (structured_amount * _MASS_TO_MG[unit]) if unit in _MASS_TO_MG else structured_amount
-    if original_amount != structured_amount:
-        return None, "dose rule and structured details conflict"
-    return (original_amount, unit), None
+    quantities: set[tuple[Decimal, str]] = set()
+    reasons: set[str] = set()
+    for row in rows:
+        if row.get("dose_parse_status") != "parsed":
+            reasons.add(str(row.get("dose_parse_reason") or "canonical dose criterion is not quantitatively evaluable"))
+            continue
+        amount = _decimal(row.get("maximum_daily_amount"))
+        unit = str(row.get("maximum_daily_unit") or "").strip().lower()
+        if amount is None or unit not in _MASS_TO_MG and unit not in _COUNT_UNITS:
+            reasons.add("canonical dose criterion has an invalid structured threshold")
+            continue
+        quantities.add((amount, "캡슐" if unit == "캡" else unit))
+    if reasons:
+        if not quantities and len(reasons) == 1:
+            return None, next(iter(reasons))
+        return None, "dose criteria do not resolve to one unambiguous daily threshold"
+    if len(quantities) != 1:
+        return None, "dose criteria do not resolve to one unambiguous daily threshold"
+    return next(iter(quantities)), None
 
 
 def _countable_form(unit: str, dosage_form: Any) -> bool:
@@ -261,7 +217,12 @@ def _countable_form(unit: str, dosage_form: Any) -> bool:
     return False
 
 
-def _draft_quantity(draft: Mapping[str, Any], product: Mapping[str, Any]) -> tuple[tuple[Decimal, str] | None, str | None]:
+def _draft_quantity(
+    draft: Mapping[str, Any],
+    product: Mapping[str, Any],
+    *,
+    product_dosage_form: Any = None,
+) -> tuple[tuple[Decimal, str] | None, str | None]:
     amount = draft.get("dose_amount")
     unit = str(draft.get("dose_unit") or "").strip().lower()
     if amount is None and draft.get("dosage_text"):
@@ -272,9 +233,10 @@ def _draft_quantity(draft: Mapping[str, Any], product: Mapping[str, Any]) -> tup
     if amount_decimal is None or unit not in _MASS_TO_MG and unit not in _COUNT_UNITS:
         return None, "dose input is missing or has an unsupported unit"
     if unit in _COUNT_UNITS:
-        if not _countable_form(unit, product.get("dosage_form")):
+        dosage_form = product_dosage_form if product_dosage_form is not None else product.get("dosage_form")
+        if not _countable_form(unit, dosage_form):
             return None, "count dose requires a corresponding countable dosage form"
-        return (amount_decimal, unit), None
+        return (amount_decimal, "캡슐" if unit == "캡" else unit), None
     return (amount_decimal * _MASS_TO_MG[unit], "mg"), None
 
 

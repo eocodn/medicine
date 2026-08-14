@@ -9,7 +9,7 @@ from typing import Any, Mapping
 from .canonical_runtime import has_unlinked_product_rule, item_seq, linked_product_rows
 from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 from .safety import (
-    _COUNT_UNITS, _countable_form, _detail_content, _draft_quantity, _frequency, _source_quantity,
+    _COUNT_UNITS, _draft_quantity, _frequency, _source_quantity,
     age_rule_evaluation, age_years,
 )
 
@@ -275,7 +275,15 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
     dose_rows = linked_product_rows(con, target, "dose_caution") if target else []
     dose: dict[str, Any] = {"result": "not_evaluable", "source_scope": "canonical_product"}
     source, source_reason = _source_quantity(dose_rows) if dose_rows else (None, None)
-    entered, entered_reason = _draft_quantity(draft, product)
+    product_dose_forms = sorted({
+        str(row.get("product_dosage_form")).strip()
+        for row in dose_rows
+        if row.get("product_dosage_form") and str(row.get("product_dosage_form")).strip()
+    })
+    entered, entered_reason = _draft_quantity(
+        draft, product,
+        product_dosage_form=", ".join(product_dose_forms) if product_dose_forms else None,
+    )
     frequency, frequency_reason = _frequency(draft)
     if not dose_rows:
         if target and has_unlinked_product_rule(con, target, "dose_caution"):
@@ -292,17 +300,10 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
         threshold_amount, threshold_unit = source
         entered_amount, entered_unit = entered
         daily_amount = None
-        if threshold_unit is None and entered_unit in _COUNT_UNITS and _countable_form(entered_unit, product.get("dosage_form")):
-            threshold_unit = entered_unit
         if threshold_unit == "mg" and entered_unit == "mg":
             daily_amount = entered_amount * frequency
         elif threshold_unit == "mg" and entered_unit in _COUNT_UNITS:
-            content = _detail_content(dose_rows[0].get("details")) if len(dose_rows) == 1 else None
-            if content is None:
-                dose["reason"] = "count dose requires an unambiguous per-unit ingredient content"
-            else:
-                daily_amount = entered_amount * frequency * content
-                dose["per_unit_ingredient_amount"] = float(content)
+            dose["reason"] = "count dose requires an authoritative per-unit ingredient content"
         elif threshold_unit in _COUNT_UNITS and entered_unit == threshold_unit:
             daily_amount = entered_amount * frequency
         else:

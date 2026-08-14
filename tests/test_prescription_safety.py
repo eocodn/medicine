@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 import tempfile
 import unittest
@@ -28,7 +27,7 @@ def make_canonical_db(path: Path) -> None:
     add_linked_rule(
         con, category="dose_caution", item_seq="MFDS-SAFE", ingredient="example",
         rule_value="예시성분 10mg",
-        details=json.dumps({"1일최대 투여기준량": "10", "점검기준 성분함량 (총함량)": "5"}, ensure_ascii=False),
+        details=None,
         dosage_form="정제",
     )
     add_linked_rule(
@@ -156,6 +155,41 @@ class PrescriptionSafetyTest(unittest.TestCase):
             "입력한 1일 용량 11.0mg · DUR 기준 10.0mg",
         )
 
+    def test_duplicate_links_with_same_materialized_threshold_remain_evaluable(self) -> None:
+        from tests.canonical_fixture_support import add_linked_rule
+
+        con = sqlite3.connect(self.canonical_db)
+        add_linked_rule(
+            con, category="dose_caution", item_seq="MFDS-SAFE", ingredient="example-duplicate",
+            rule_value="같은기준 10mg", dosage_form="정제",
+        )
+        con.commit()
+        con.close()
+
+        preview = self.app.preview_medication(
+            self.person["id"], self._draft(dose_amount=5, frequency_per_day=1)
+        )
+        self.assertEqual(self._dimension(preview, "dose")["result"], "within")
+        self.assertEqual(self._dimension(preview, "dose")["maximum_daily_amount"], 10.0)
+
+    def test_duplicate_links_with_conflicting_materialized_thresholds_fail_closed(self) -> None:
+        from tests.canonical_fixture_support import add_linked_rule
+
+        con = sqlite3.connect(self.canonical_db)
+        add_linked_rule(
+            con, category="dose_caution", item_seq="MFDS-SAFE", ingredient="example-conflict",
+            rule_value="다른기준 20mg", dosage_form="정제",
+        )
+        con.commit()
+        con.close()
+
+        preview = self.app.preview_medication(
+            self.person["id"], self._draft(dose_amount=5, frequency_per_day=1)
+        )
+        dose = self._dimension(preview, "dose")
+        self.assertEqual(dose["result"], "not_evaluable")
+        self.assertIn("one unambiguous daily threshold", dose["reason"])
+
     def test_rules_within_threshold_do_not_require_a_second_registration_click(self) -> None:
         draft = self._draft(prescription_days=7, dose_amount=5)
 
@@ -167,16 +201,21 @@ class PrescriptionSafetyTest(unittest.TestCase):
         self.assertIsNone(preview["warning_token"])
         self.assertFalse(medication["assessment"]["acknowledged"])
 
-    def test_countable_dose_uses_product_ingredient_content(self) -> None:
+    def test_countable_dose_uses_product_rule_form_but_requires_authoritative_content(self) -> None:
+        con = sqlite3.connect(self.canonical_db)
+        con.execute("UPDATE products SET dosage_form=NULL WHERE item_seq='MFDS-SAFE'")
+        con.commit()
+        con.close()
+
         preview = self.app.preview_medication(
             self.person["id"],
             self._draft(dose_amount=1, dose_unit="정", frequency_per_day=3, schedule_times=[]),
         )
 
         dose = self._dimension(preview, "dose")
-        self.assertEqual(dose["result"], "exceeded")
-        self.assertEqual(dose["daily_amount"], 15.0)
-        self.assertEqual(dose["maximum_daily_amount"], 10.0)
+        self.assertEqual(dose["result"], "not_evaluable")
+        self.assertIn("per-unit ingredient content", dose["reason"])
+        self.assertNotIn("dosage form", dose["reason"])
 
     def test_full_preview_marks_each_dimension_not_evaluable_with_reason(self) -> None:
         preview = self.app.preview_medication(
@@ -219,32 +258,47 @@ class PrescriptionSafetyTest(unittest.TestCase):
                 request_id="canonical-time-duplicate",
             )
 
-    def test_unsupported_source_unit_is_not_evaluable(self) -> None:
+    def test_materialized_unparseable_source_threshold_is_not_evaluable(self) -> None:
         con = sqlite3.connect(self.canonical_db)
+        criterion_id = con.execute(
+            """SELECT criterion_rule_id FROM product_criterion_links l
+               JOIN product_rules r ON r.id=l.product_rule_id
+               WHERE r.item_seq='MFDS-SAFE' AND r.category='dose_caution'"""
+        ).fetchone()[0]
         con.execute(
-            "UPDATE ingredient_rules SET rule_value='10 tablets' WHERE id IN (SELECT criterion_rule_id FROM product_criterion_links l JOIN product_rules r ON r.id=l.product_rule_id WHERE r.item_seq='MFDS-SAFE' AND r.category='dose_caution')"
+            """UPDATE dose_criteria
+               SET maximum_daily_amount=NULL,maximum_daily_unit=NULL,
+                   parse_status='not_evaluable',parse_reason='unsupported source unit'
+               WHERE criterion_rule_id=?""",
+            (criterion_id,),
         )
         con.commit()
         con.close()
 
         preview = self.app.preview_medication(
-            self.person["id"], self._draft(dose_amount=5, dose_unit="정")
+            self.person["id"], self._draft(dose_amount=5, dose_unit="mg")
         )
 
-        self.assertEqual(self._dimension(preview, "dose")["result"], "not_evaluable")
+        dose = self._dimension(preview, "dose")
+        self.assertEqual(dose["result"], "not_evaluable")
+        self.assertEqual(dose["reason"], "unsupported source unit")
 
-    def test_thousands_separator_in_source_threshold_is_supported(self) -> None:
+    def test_runtime_uses_materialized_canonical_threshold_not_legacy_details(self) -> None:
         con = sqlite3.connect(self.canonical_db)
+        criterion_id = con.execute(
+            """SELECT criterion_rule_id FROM product_criterion_links l
+               JOIN product_rules r ON r.id=l.product_rule_id
+               WHERE r.item_seq='MFDS-SAFE' AND r.category='dose_caution'"""
+        ).fetchone()[0]
         con.execute(
-            "UPDATE ingredient_rules SET rule_value=?, details=? WHERE id IN (SELECT criterion_rule_id FROM product_criterion_links l JOIN product_rules r ON r.id=l.product_rule_id WHERE r.item_seq='MFDS-SAFE' AND r.category='dose_caution')",
-            (
-                "예시성분 4,000mg",
-                json.dumps({"1일최대 투여기준량": "4000", "점검기준 성분함량 (총함량)": "5"}),
-            ),
+            """UPDATE dose_criteria
+               SET maximum_daily_amount='4000',maximum_daily_unit='mg',parse_status='parsed',parse_reason=NULL
+               WHERE criterion_rule_id=?""",
+            (criterion_id,),
         )
         con.execute(
-            "UPDATE product_rules SET details=? WHERE item_seq='MFDS-SAFE' AND category='dose_caution'",
-            (json.dumps({"1일최대 투여기준량": "4000", "점검기준 성분함량 (총함량)": "5"}),),
+            "UPDATE ingredient_rules SET rule_value='this source text is deliberately unparsable' WHERE id=?",
+            (criterion_id,),
         )
         con.commit()
         con.close()

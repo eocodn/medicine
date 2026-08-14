@@ -9,7 +9,7 @@ from pathlib import Path
 
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
-    "product_rules", "product_flags", "ingredient_rules", "product_criterion_links",
+    "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
     "product_ingredient_criterion_links", "product_ingredient_criterion_unresolved",
 )
 RUNTIME_VIEWS = ("product_rule_criteria", "product_ingredient_criteria")
@@ -59,8 +59,8 @@ def build_mobile_database(
         build_stage = src.execute(
             "SELECT value FROM canonical_meta WHERE key='build_stage'"
         ).fetchone()
-        if not schema_version or schema_version[0] != "7" or not build_stage or build_stage[0] != "complete":
-            raise ValueError("canonical runtime requires complete schema v7 database")
+        if not schema_version or schema_version[0] != "8" or not build_stage or build_stage[0] != "complete":
+            raise ValueError("canonical runtime requires complete schema v8 database")
         dataset_id = _dataset_id(src)
         objects = {
             (kind, name): sql
@@ -117,7 +117,7 @@ def build_mobile_database(
 
     payload = {
         "dataset_id": dataset_id,
-        "schema_version": "7",
+        "schema_version": "8",
         "sha256": _sha256(output),
         "size_bytes": output.stat().st_size,
     }
