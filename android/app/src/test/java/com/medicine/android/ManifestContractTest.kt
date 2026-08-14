@@ -25,16 +25,19 @@ class ManifestContractTest {
         assertTrue(activity.contains("WebViewAssetLoader"))
         assertTrue(activity.contains("MedicineNative"))
         assertTrue(activity.contains("addJavascriptInterface"))
-        assertTrue(activity.contains("onShowFileChooser"))
+        assertFalse(activity.contains("onShowFileChooser"))
     }
 
     @Test
-    fun browserOcrStillRunsInTheWebWorkerNotThroughTheNativeBridge() {
-        val browserOcr = java.io.File("../../medicine_app/static/browser-ocr.js").readText()
-        val ocr = java.io.File("../../medicine_app/static/ocr.js").readText()
-        assertFalse(browserOcr.contains("MedicineNative"))
-        assertFalse(ocr.contains("MedicineNative"))
-        assertTrue(browserOcr.contains("/ocr-assets/direct/ocr-worker.js"))
+    fun productShellDoesNotPackageOrRouteOcrAssets() {
+        val build = java.io.File("build.gradle.kts").readText()
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val index = java.io.File("../../medicine_app/static/index.html").readText()
+        assertFalse(build.contains("PrepareOcrAssets"))
+        assertFalse(build.contains("MEDICINE_BROWSER_OCR"))
+        assertFalse(activity.contains("/ocr-assets/"))
+        assertFalse(index.contains("ocr-scan-button"))
+        assertFalse(index.contains("browser-ocr.js"))
     }
 
     @Test

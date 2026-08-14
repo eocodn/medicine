@@ -10,20 +10,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, RevisionConflict
-from .batch_medications import add_medication_batch, preview_medication_batch
-from .ocr import split_ocr_request
 
 
 DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")
 DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
-BROWSER_OCR_DIR = Path(os.environ.get("MEDICINE_BROWSER_OCR_ASSETS", "/opt/medicine-browser-ocr"))
-# The direct ONNX worker only loads same-origin models. This response policy is the final
-# invariant that prevents a configuration regression from sending images or models outside
-# the local app origin.
+# Development web remains local-only; keep browser capabilities restricted to the app origin.
 BROWSER_CSP = (
-    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
-    "img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
     "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 )
 
@@ -52,8 +46,6 @@ class MedicationPreviewRequest(BaseModel):
     schedule_times: list[str] = Field(default_factory=list)
     start_date: str | None = None
     end_date: str | None = None
-    envelope: dict | None = None
-    ocr_envelope: dict | None = None
 
 
 class MedicationCreate(BaseModel):
@@ -74,41 +66,6 @@ class MedicationCreate(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     request_id: str | None = None
-    acknowledge_warnings: bool = False
-    warning_token: str | None = None
-    source: str | None = None
-    ocr_review_token: str | None = None
-    ocr_origin: bool = False
-
-
-class MedicationBatchRow(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    row_id: str
-    product_ref: str
-    dosage_text: str | None = None
-    dose_amount: float | None = None
-    dose_unit: str | None = None
-    frequency_per_day: int | None = None
-    meal_relation: str = "unspecified"
-    administration_route: str = "unknown"
-    as_needed: bool = False
-    prescription_days: int | None = None
-    schedule_times: list[str] = Field(default_factory=list)
-    start_date: str | None = None
-    end_date: str | None = None
-
-
-class MedicationBatchPreviewRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    operation_id: str
-    rows: list[MedicationBatchRow]
-
-
-class MedicationBatchCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    request_id: str
-    rows: list[MedicationBatchRow]
-    ocr_review_token: str
     acknowledge_warnings: bool = False
     warning_token: str | None = None
 
@@ -176,8 +133,6 @@ def create_web_app(
         return response
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-    if BROWSER_OCR_DIR.is_dir():
-        app.mount("/ocr-assets", StaticFiles(directory=BROWSER_OCR_DIR), name="ocr-assets")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -245,46 +200,9 @@ def create_web_app(
     @app.post("/api/people/{person_id}/medications/preview")
     def preview_medication(person_id: str, payload: MedicationPreviewRequest) -> dict:
         try:
-            envelope = payload.ocr_envelope or payload.envelope
-            if envelope is not None:
-                return service.preview_ocr(person_id, envelope, envelope.get("product_ref"))
             if not (payload.product_ref or payload.product_code):
                 raise ValueError("product_ref or product_code is required")
             return service.preview_medication(person_id, payload.model_dump())
-        except Exception as exc:
-            raise _translate_error(exc) from exc
-
-    @app.post("/api/people/{person_id}/medications/ocr-preview")
-    def preview_ocr_medication(person_id: str, payload: dict) -> dict:
-        try:
-            envelope, product_ref = split_ocr_request(payload)
-            return service.preview_ocr(person_id, envelope, product_ref)
-        except Exception as exc:
-            raise _translate_error(exc) from exc
-
-    @app.post("/api/people/{person_id}/medications/batch-preview")
-    def preview_medication_batch_route(person_id: str, payload: MedicationBatchPreviewRequest) -> dict:
-        try:
-            return preview_medication_batch(
-                service, person_id, [row.model_dump() for row in payload.rows], operation_id=payload.operation_id
-            )
-        except Exception as exc:
-            raise _translate_error(exc) from exc
-
-    @app.post("/api/people/{person_id}/medications/batch", status_code=201)
-    def add_medication_batch_route(person_id: str, payload: MedicationBatchCreateRequest) -> dict:
-        try:
-            return add_medication_batch(
-                service,
-                person_id,
-                [row.model_dump() for row in payload.rows],
-                request_id=payload.request_id,
-                ocr_review_token=payload.ocr_review_token,
-                acknowledge_warnings=payload.acknowledge_warnings,
-                warning_token=payload.warning_token,
-            )
-        except ConfirmationRequired as exc:
-            return _confirmation_response(exc)
         except Exception as exc:
             raise _translate_error(exc) from exc
 

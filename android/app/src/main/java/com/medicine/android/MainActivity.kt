@@ -1,14 +1,11 @@
 package com.medicine.android
 
-import android.content.Intent
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
-import android.webkit.ValueCallback
-import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -18,8 +15,6 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -31,23 +26,10 @@ import javax.crypto.SecretKey
 
 class MainActivity : ComponentActivity() {
     private var webView: WebView? = null
-    private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
-    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        fileChooserLauncher = registerForActivityResult(
-            ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-            val selected = WebChromeClient.FileChooserParams.parseResult(
-                result.resultCode,
-                result.data
-            )
-            fileChooserCallback?.onReceiveValue(selected)
-            fileChooserCallback = null
-        }
-
         showStartupView("안전 데이터 준비 중…")
         startupExecutor.execute {
             runCatching {
@@ -95,7 +77,6 @@ class MainActivity : ComponentActivity() {
         val assetLoader = WebViewAssetLoader.Builder()
             .setDomain(APP_ASSET_DOMAIN)
             .addPathHandler("/static/", WebViewAssetLoader.AssetsPathHandler(this))
-            .addPathHandler("/ocr-assets/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
 
         val view = WebView(this).apply {
@@ -138,24 +119,6 @@ class MainActivity : ComponentActivity() {
                 override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
                     !isAllowedOrigin(Uri.parse(url))
             }
-            webChromeClient = object : WebChromeClient() {
-                override fun onShowFileChooser(
-                    webView: WebView,
-                    filePathCallback: ValueCallback<Array<Uri>>,
-                    fileChooserParams: FileChooserParams,
-                ): Boolean {
-                    fileChooserCallback?.onReceiveValue(null)
-                    fileChooserCallback = filePathCallback
-                    return runCatching {
-                        fileChooserLauncher.launch(fileChooserParams.createIntent())
-                        true
-                    }.getOrElse {
-                        fileChooserCallback = null
-                        filePathCallback.onReceiveValue(null)
-                        false
-                    }
-                }
-            }
             loadUrl(APP_URL)
         }
         webView = view
@@ -186,8 +149,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        fileChooserCallback?.onReceiveValue(null)
-        fileChooserCallback = null
         startupExecutor.shutdownNow()
         webView?.let { view ->
             view.stopLoading()

@@ -11,32 +11,20 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs, urlsplit
 
 from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, RevisionConflict
-from .batch_medications import add_medication_batch, preview_medication_batch
-from .ocr import OCRValidationError, split_ocr_request
 
 
 _PERSON_FIELDS = {"name", "birth_date", "sex", "pregnancy_status", "lactation_status", "notes"}
 _PREVIEW_FIELDS = {
     "product_ref", "product_code", "dosage_text", "dose_amount", "dose_unit",
     "frequency_per_day", "meal_relation", "administration_route", "as_needed",
-    "prescription_days", "schedule_times", "start_date", "end_date", "envelope", "ocr_envelope",
+    "prescription_days", "schedule_times", "start_date", "end_date",
 }
 _CREATE_FIELDS = {
     "product_ref", "product_code", "manual_name", "ingredient_name", "dosage_text", "dose_amount",
     "dose_unit", "frequency_per_day", "meal_relation", "administration_route", "as_needed",
     "prescription_days", "schedule_times", "start_date", "end_date", "request_id",
-    "acknowledge_warnings", "warning_token", "source", "ocr_review_token", "ocr_origin",
+    "acknowledge_warnings", "warning_token",
 }
-_BATCH_ROW_FIELDS = {
-    "row_id", "product_ref", "dosage_text", "dose_amount", "dose_unit",
-    "frequency_per_day", "meal_relation", "administration_route", "as_needed",
-    "prescription_days", "schedule_times", "start_date", "end_date",
-}
-_BATCH_PREVIEW_FIELDS = {"operation_id", "rows"}
-_BATCH_CREATE_FIELDS = {
-    "request_id", "rows", "ocr_review_token", "acknowledge_warnings", "warning_token",
-}
-
 _UPDATE_FIELDS = {
     "expected_revision", "dosage_text", "dose_amount", "dose_unit", "frequency_per_day",
     "meal_relation", "administration_route", "as_needed", "prescription_days", "schedule_times",
@@ -70,17 +58,6 @@ def _validated_fields(payload: Mapping[str, Any], allowed: set[str]) -> dict[str
     if unknown:
         raise ValueError(f"unknown fields: {', '.join(unknown)}")
     return dict(payload)
-
-
-def _validated_batch_rows(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        raise ValueError("rows must be a list")
-    result = []
-    for row in value:
-        if not isinstance(row, Mapping):
-            raise ValueError("each batch row must be an object")
-        result.append(_validated_fields(row, _BATCH_ROW_FIELDS))
-    return result
 
 
 def _bool_query(values: dict[str, list[str]], key: str, default: bool = False) -> bool:
@@ -123,7 +100,7 @@ class MobileApi:
             status, body = 503, {"detail": str(exc)}
         except KeyError as exc:
             status, body = 404, {"detail": str(exc).strip("'")}
-        except (ValueError, OCRValidationError) as exc:
+        except ValueError as exc:
             status, body = 400, {"detail": str(exc)}
         except Exception:
             status, body = 500, {"detail": "unexpected server error"}
@@ -193,45 +170,9 @@ class MobileApi:
         match = re.fullmatch(r"/api/people/([^/]+)/medications/preview", path)
         if method == "POST" and match:
             payload = _validated_fields(_body_object(body_json), _PREVIEW_FIELDS)
-            envelope = payload.get("ocr_envelope") or payload.get("envelope")
-            if envelope is not None:
-                if not isinstance(envelope, dict):
-                    raise ValueError("OCR envelope must be an object")
-                return 200, service.preview_ocr(match.group(1), envelope, envelope.get("product_ref"))
             if not (payload.get("product_ref") or payload.get("product_code")):
                 raise ValueError("product_ref or product_code is required")
             return 200, service.preview_medication(match.group(1), payload)
-
-        match = re.fullmatch(r"/api/people/([^/]+)/medications/ocr-preview", path)
-        if method == "POST" and match:
-            envelope, product_ref = split_ocr_request(_body_object(body_json))
-            return 200, service.preview_ocr(match.group(1), dict(envelope), product_ref)
-
-        match = re.fullmatch(r"/api/people/([^/]+)/medications/batch-preview", path)
-        if method == "POST" and match:
-            payload = _validated_fields(_body_object(body_json), _BATCH_PREVIEW_FIELDS)
-            if "operation_id" not in payload:
-                raise ValueError("operation_id is required")
-            rows = _validated_batch_rows(payload.get("rows"))
-            return 200, preview_medication_batch(
-                service, match.group(1), rows, operation_id=payload["operation_id"]
-            )
-
-        match = re.fullmatch(r"/api/people/([^/]+)/medications/batch", path)
-        if method == "POST" and match:
-            payload = _validated_fields(_body_object(body_json), _BATCH_CREATE_FIELDS)
-            rows = _validated_batch_rows(payload.get("rows"))
-            if not payload.get("request_id"):
-                raise ValueError("request_id is required")
-            return 201, add_medication_batch(
-                service,
-                match.group(1),
-                rows,
-                request_id=payload["request_id"],
-                ocr_review_token=payload.get("ocr_review_token"),
-                acknowledge_warnings=bool(payload.get("acknowledge_warnings", False)),
-                warning_token=payload.get("warning_token"),
-            )
 
         match = re.fullmatch(r"/api/people/([^/]+)/medications", path)
         if method == "POST" and match:

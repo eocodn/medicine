@@ -19,7 +19,6 @@ from .planning import (
 )
 from .prescriptions import draft_hash, normalize_draft
 from .products import ProductRepository
-from .ocr import OCRReviewStore, preview_ocr, validate_ocr_create
 from .assessment import (
     assess_current_medication,
     assess_medication,
@@ -78,7 +77,6 @@ class MedicationApp:
             raise FileNotFoundError(f"canonical database not found: {self.canonical_db}")
         self.personal_db.parent.mkdir(parents=True, exist_ok=True)
         self.products = ProductRepository(self.canonical_db)
-        self.ocr_reviews = OCRReviewStore()
         with _schema_lock(self.personal_db):
             with self._personal() as con:
                 ensure_personal_schema(con)
@@ -185,14 +183,11 @@ class MedicationApp:
         schedule_times: list[str] | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
-        source: str | None = None,
         request_id: str | None = None,
         acknowledge_warnings: bool = False,
         warning_token: str | None = None,
-        ocr_review_token: str | None = None,
-        ocr_origin: bool = False,
     ) -> dict:
-        product = self._resolve_product(product_ref or product_code, manual_name, ingredient_name, source)
+        product = self._resolve_product(product_ref or product_code, manual_name, ingredient_name)
         draft = normalize_draft(dict(
             dosage_text=dosage_text, dose_amount=dose_amount, dose_unit=dose_unit,
             frequency_per_day=frequency_per_day, meal_relation=meal_relation,
@@ -211,7 +206,6 @@ class MedicationApp:
                 if existing["person_id"] != person_id or existing["payload_hash"] != payload_hash:
                     raise IdempotencyConflict("request_id was already used with a different prescription payload")
                 return self._get_medication_from_connection(con, existing["medication_id"])
-            validate_ocr_create(self, ocr_review_token, ocr_origin or source == "ocr", person_id, product, draft, request_id)
             person = self._get_person_from_connection(con, person_id)
             assessment = assess_medication(self, con, person, product, draft, acknowledge_warnings)
             expected_warning_token = bind_warning_token(assessment, payload_hash)
@@ -249,21 +243,14 @@ class MedicationApp:
                     (request_id, person_id, payload_hash, medication_id),
                 )
             medication["assessment"] = assessment
-            if ocr_review_token:
-                self.ocr_reviews.invalidate(ocr_review_token)
             return medication
 
-    def preview_ocr(self, person_id: str, envelope: dict, product_ref: str | None = None) -> dict:
-        return preview_ocr(self, person_id, envelope, product_ref)
-
-    ocr_preview = preview_ocr
-
     def _resolve_product(
-        self, resolved_ref: str | None, manual_name: str | None, ingredient_name: str | None, source: str | None
+        self, resolved_ref: str | None, manual_name: str | None, ingredient_name: str | None
     ) -> dict:
         if resolved_ref:
             product = self.get_product(resolved_ref)
-            return {**product, "med_source": source or "catalog_search"}
+            return {**product, "med_source": "catalog_search"}
         name = (manual_name or "").strip()
         if not name:
             raise ValueError("product_ref, product_code or manual_name is required")
@@ -271,7 +258,7 @@ class MedicationApp:
             "product_ref": None, "catalog_item_seq": None, "product_code": None,
             "product_name": name, "ingredient_code": None, "ingredient_name": ingredient_name,
             "manufacturer": None, "dosage_form": None, "catalog_source": "manual",
-            "dur_match": False, "med_source": source or "manual",
+            "dur_match": False, "med_source": "manual",
         }
 
 
@@ -411,7 +398,7 @@ class MedicationApp:
         product = self._resolve_product(
             before.get("catalog_item_seq") or before.get("product_code"),
             before["product_name"] if before.get("catalog_source") == "manual" else None,
-            before.get("ingredient_name"), before.get("source"),
+            before.get("ingredient_name"),
         )
         allowed = {
             "dosage_text", "dose_amount", "dose_unit", "frequency_per_day", "meal_relation",
@@ -529,7 +516,7 @@ class MedicationApp:
     def preview_medication(self, person_id: str, draft_or_ref, as_of: date | None = None) -> dict:
         raw = dict(draft_or_ref) if isinstance(draft_or_ref, dict) else {"product_ref": draft_or_ref}
         product_ref = raw.pop("product_ref", None) or raw.pop("product_code", None)
-        product = self._resolve_product(product_ref, raw.pop("manual_name", None), raw.pop("ingredient_name", None), None)
+        product = self._resolve_product(product_ref, raw.pop("manual_name", None), raw.pop("ingredient_name", None))
         draft = normalize_draft(raw)
         with self._personal() as con:
             person = self._get_person_from_connection(con, person_id)
