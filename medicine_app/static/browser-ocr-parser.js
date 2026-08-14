@@ -8,13 +8,14 @@
 
   const PRODUCT_KO = /(?:약명|제품명)\s*[:：]\s*([가-힣][가-힣0-9-]*(?:정|캡슐|시럽)?)/giu;
   const PRODUCT_EN = /(?:product|medicine)\s*[:：]\s*([A-Za-z][A-Za-z0-9-]*)/giu;
-  const DOSE = /(?:^|[^\d./])(?:(\d+(?:\.\d+)?)|(\d+)\s*\/\s*(\d+))\s*(정|캡슐|포|tablet|capsule)(?![A-Za-z가-힣])/iu;
+  const DOSE = /(?:(\d+(?:\.\d+)?)|(\d+)\s*\/\s*(\d+))\s*(정|캡슐|포|tablet|capsule|mL|㎖)/giu;
   const LABELED_FREQUENCY = /(?:1\s*일\s*)?복용\s*횟수\s*[:：]\s*(\d+)\s*회/iu;
   const FREQUENCY = /(?:\d+\s*일\s*)?(\d+)\s*(?:회(?:\s*\/\s*일)?|times?\s*\/\s*day)/iu;
   const LABELED_DURATION = /(?:총\s*)?복용\s*일수\s*[:：]\s*(\d+)\s*일/iu;
   const DURATION = /(?:for\s*)?(\d+)\s*(?:일(?!\s*\d*\s*회)|days?)/iu;
   const TIME_KO = /(오전|오후)\s*(\d{1,2})(?:\s*시)?(?:\s*[:：]\s*(\d{2}))?/giu;
   const TIME_EN = /\b(AM|PM)\s*(\d{1,2})(?:\s*[:：]\s*(\d{2}))?\b/giu;
+  const TIME_24 = /(?:^|[^0-9])([01]?[0-9]|2[0-3])\s*[:：]\s*([0-5][0-9])(?![0-9])/gu;
   // This is a catastrophic-confidence safety floor, not a calibrated OCR quality threshold.
   // Broader confidence calibration belongs to the independent model evaluation pipeline.
   const STRUCTURED_SCORE_FLOOR = 0.05;
@@ -44,36 +45,58 @@
     for (const match of value.matchAll(TIME_KO)) found.push(normalizedTime(match[1], match[2], match[3]));
     TIME_EN.lastIndex = 0;
     for (const match of value.matchAll(TIME_EN)) found.push(normalizedTime(match[1], match[2], match[3]));
+    for (const line of String(value || "").split(/\r?\n/u)) {
+      if (!/(?:복용|투약|투여|복약)\s*시간|schedule\s*times?/iu.test(line)) continue;
+      TIME_24.lastIndex = 0;
+      for (const match of line.matchAll(TIME_24)) {
+        found.push(`${String(Number(match[1])).padStart(2, "0")}:${match[2]}`);
+      }
+    }
     return distinct(found.filter(Boolean)).sort();
   }
 
   function parsedDose(value) {
-    const match = String(value || "").match(DOSE);
-    if (!match) return null;
-    let amount = null;
-    if (match[1] !== undefined) amount = Number(match[1]);
-    else {
-      const numerator = Number(match[2]);
-      const denominator = Number(match[3]);
-      if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null;
-      amount = numerator / denominator;
+    const text = String(value || "");
+    DOSE.lastIndex = 0;
+    for (const match of text.matchAll(DOSE)) {
+      const start = match.index || 0;
+      const before = text.slice(0, start);
+      const after = text.slice(start + match[0].length);
+      if (/[0-9][ ,.~～–—-]$/u.test(before) || /[~～–—-]\s*[0-9]/u.test(after)) continue;
+      const rawUnit = match[4] || "";
+      if (/^(?:ml|㎖)$/iu.test(rawUnit) && /(?:mg|mcg|µg|μg|g)\s*\/\s*$/iu.test(before)) continue;
+      let amount = null;
+      if (match[1] !== undefined) amount = Number(match[1]);
+      else {
+        const numerator = Number(match[2]);
+        const denominator = Number(match[3]);
+        if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) continue;
+        amount = numerator / denominator;
+      }
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      const unit = rawUnit.toLowerCase();
+      return {
+        amount,
+        unit: unit === "tablet" ? "정" : unit === "capsule" ? "캡슐" : /^(?:ml|㎖)$/u.test(unit) ? "mL" : unit || null,
+      };
     }
-    if (!Number.isFinite(amount) || amount <= 0) return null;
-    const unit = match[4]?.toLowerCase();
-    return {
-      amount,
-      unit: unit === "tablet" ? "정" : unit === "capsule" ? "캡슐" : unit || null,
-    };
+    return null;
   }
 
   function parsePrescriptionHints(value) {
     const ephemeral = typeof value === "string" ? value : "";
     const products = distinct([...matches(PRODUCT_KO, ephemeral), ...matches(PRODUCT_EN, ephemeral)]).slice(0, 12);
     const dose = parsedDose(ephemeral);
+    const scalarText = ephemeral
+      .replace(/1\s*회\s*(?:(?:복용|투여|투약)\s*)?(?:량|용량)/giu, " ")
+      .replace(/1\s*일\s*(?:(?:복용|투여|투약)\s*)?(?:횟수|회수|량|용량)/giu, " ");
+    const frequencyRange = /(?:1\s*일|하루)?\s*\d+\s*[~～–—-]\s*\d+\s*회/iu.test(scalarText);
+    const durationRange = /\d+\s*[~～–—-]\s*\d+\s*(?:일|days?)/iu.test(scalarText);
+    const durationText = scalarText.replace(/(?:1\s*일|하루)\s*\d+(?:\s*[~～–—-]\s*\d+)?\s*회/giu, " ");
     // Medication-bag row headings contain "1일"/"1회" before the actual value.
     // Prefer explicit labels so those structural numbers cannot become dosage hints.
-    const frequencyMatch = ephemeral.match(LABELED_FREQUENCY) || ephemeral.match(FREQUENCY);
-    const durationMatch = ephemeral.match(LABELED_DURATION) || ephemeral.match(DURATION);
+    const frequencyMatch = frequencyRange ? null : (ephemeral.match(LABELED_FREQUENCY) || scalarText.match(FREQUENCY));
+    const durationMatch = durationRange ? null : (ephemeral.match(LABELED_DURATION) || durationText.match(DURATION));
     const ambiguityCodes = [];
     const unsupportedCodes = [];
     if (!products.length) ambiguityCodes.push("MISSING_PRODUCT");
@@ -91,8 +114,6 @@
       unsupported_codes: unsupportedCodes,
     };
   }
-
-
 
   function rowTemplate(productQuery, association) {
     return {
@@ -173,20 +194,45 @@
 
   function geometry(item) {
     if (!item || typeof item.text !== "string" || !Array.isArray(item.poly) || item.poly.length < 4) return null;
-    const xs = item.poly.map((point) => Number(point?.[0])).filter(Number.isFinite);
-    const ys = item.poly.map((point) => Number(point?.[1])).filter(Number.isFinite);
-    if (xs.length < 4 || ys.length < 4) return null;
+    const points = item.poly.slice(0, 4).map((point) => [Number(point?.[0]), Number(point?.[1])]);
+    if (points.some((point) => !Number.isFinite(point[0]) || !Number.isFinite(point[1]))) return null;
+    const xs = points.map((point) => point[0]);
+    const ys = points.map((point) => point[1]);
     const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
     if (!(x2 > x1) || !(y2 > y1)) return null;
     const rawScore = Number(item.score);
     const score = Number.isFinite(rawScore) ? Math.max(0, Math.min(1, rawScore)) : null;
-    return { text: item.text.trim(), score, x1, x2, y1, y2, cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, h: y2 - y1 };
+    return { text: item.text.trim(), score, points, x1, x2, y1, y2, cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, h: y2 - y1 };
+  }
+
+  function estimatedPageSlope(tokens) {
+    const slopes = [];
+    for (const token of tokens) {
+      for (const [leftIndex, rightIndex] of [[0, 1], [3, 2]]) {
+        const left = token.points[leftIndex];
+        const right = token.points[rightIndex];
+        const dx = right[0] - left[0];
+        if (Math.abs(dx) < 1) continue;
+        const slope = (right[1] - left[1]) / dx;
+        if (Number.isFinite(slope) && Math.abs(slope) <= 0.35) slopes.push(slope);
+      }
+    }
+    if (slopes.length < 2) return 0;
+    slopes.sort((a, b) => a - b);
+    return slopes[Math.floor(slopes.length / 2)];
   }
 
   function documentLines(items) {
     const allTokens = (Array.isArray(items) ? items : []).map(geometry).filter((item) => item?.text);
     const lowConfidence = allTokens.some((token) => token.score !== null && token.score < STRUCTURED_SCORE_FLOOR);
-    const tokens = allTokens.filter((token) => token.score === null || token.score >= STRUCTURED_SCORE_FLOOR);
+    const rawTokens = allTokens.filter((token) => token.score === null || token.score >= STRUCTURED_SCORE_FLOOR);
+    const pageSlope = estimatedPageSlope(rawTokens);
+    const tokens = rawTokens.map((token) => {
+      const deskewedYs = token.points.map((point) => point[1] - pageSlope * point[0]);
+      const y1 = Math.min(...deskewedYs);
+      const y2 = Math.max(...deskewedYs);
+      return { ...token, y1, y2, cy: (y1 + y2) / 2, h: y2 - y1 };
+    });
     tokens.sort((a, b) => a.cy - b.cy || a.x1 - b.x1);
     const heights = tokens.map((item) => item.h).sort((a, b) => a - b);
     const medianHeight = heights.length ? heights[Math.floor(heights.length / 2)] : 20;
@@ -222,6 +268,26 @@
     return null;
   }
 
+  function headerAnchors(line) {
+    const items = line.items || [];
+    const anchors = [];
+    for (let index = 0; index < items.length;) {
+      let best = null;
+      for (let width = 1; width <= 3 && index + width <= items.length; width += 1) {
+        const group = items.slice(index, index + width);
+        const key = headerKey(group.map((item) => item.text).join(""));
+        if (key && !best) best = { key, x: (group[0].x1 + group[group.length - 1].x2) / 2, width };
+      }
+      if (best) {
+        anchors.push({ key: best.key, x: best.x });
+        index += best.width;
+      } else {
+        index += 1;
+      }
+    }
+    return anchors;
+  }
+
   function cleanProduct(value) {
     return String(value || "")
       .replace(/^(?:약명|제품명|약품명|의약품명)\s*[:：]\s*/iu, "")
@@ -249,7 +315,7 @@
   function tableRows(lines) {
     for (let headerIndex = 0; headerIndex < lines.length; headerIndex += 1) {
       const header = lines[headerIndex];
-      const anchors = header.items.map((item) => ({ key: headerKey(item.text), x: item.cx })).filter((item) => item.key);
+      const anchors = headerAnchors(header);
       if (!anchors.some((item) => item.key === "product") || new Set(anchors.map((item) => item.key)).size < 3) continue;
       anchors.sort((a, b) => a.x - b.x);
       const boundaries = anchors.slice(0, -1).map((item, index) => (item.x + anchors[index + 1].x) / 2);
@@ -318,7 +384,6 @@
       }
       rows.push(row);
     }
-
     // A shared instruction is safe to propagate only to the uninterrupted run of
     // medication labels immediately above it. Any intervening regimen/text line
     // or a medication declared after the common line is outside that proven group.
@@ -350,7 +415,6 @@
         consumed.add(commonItem.index);
       }
     }
-
     let unassociatedRegimen = false;
     if (rows.length > 1) {
       for (let index = 0; index < lines.length; index += 1) {

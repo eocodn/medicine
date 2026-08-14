@@ -8,6 +8,16 @@ function box(text, x1, y1, x2, y2, score = 0.99) {
   return { text, score, poly: [[x1, y1], [x2, y1], [x2, y2], [x1, y2]] };
 }
 
+function skewedBox(text, x1, y1, x2, y2, slope = 0.08) {
+  const leftRise = x1 * slope;
+  const rightRise = x2 * slope;
+  return {
+    text,
+    score: 0.99,
+    poly: [[x1, y1 + leftRise], [x2, y1 + rightRise], [x2, y2 + rightRise], [x1, y2 + leftRise]],
+  };
+}
+
 test("normalizes Korean prescription into structured hints", () => {
   const hints = parsePrescriptionHints("약명: 타이레놀정\n1정 1일 2회 7일\n오전 8시 오후 2시");
   assert.deepEqual(hints.product_queries, ["타이레놀정"]);
@@ -215,4 +225,138 @@ test("fails catastrophically low-confidence OCR fields closed", () => {
   assert.equal(document.rows[0].frequency_per_day, null);
   assert.equal(document.rows[0].prescription_days, null);
   assert.ok(document.ambiguity_codes.includes("LOW_CONFIDENCE_OCR"));
+});
+
+test("fails closed on compound or ranged tablet dose notation", () => {
+  for (const value of ["0,5정", "1,5정", "1 1/2정", "1-1/2정", "1~2정", "1-2정", "0.5~1정"]) {
+    assert.equal(parsePrescriptionHints(`약명: 테스트정\n${value}`).dose_quantity, null, value);
+  }
+});
+
+test("structural 1회 and 1일 labels cannot overwrite explicit regimen values", () => {
+  const document = parsePrescriptionDocument([
+    box("약명: 테스트정", 20, 10, 220, 30),
+    box("1회량: 2정", 20, 40, 220, 60),
+    box("1일 복용횟수: 3회", 20, 70, 250, 90),
+    box("총 복용일수: 5일", 20, 100, 240, 120),
+  ]);
+  assert.deepEqual(
+    [document.rows[0].dose_amount, document.rows[0].frequency_per_day, document.rows[0].prescription_days],
+    [2, 3, 5],
+  );
+
+  const dailyDose = parsePrescriptionDocument([
+    box("약명: 테스트정", 20, 10, 220, 30),
+    box("1일 복용량: 3정", 20, 40, 220, 60),
+    box("총 복용일수: 7일", 20, 70, 240, 90),
+  ]);
+  assert.equal(dailyDose.rows[0].frequency_per_day, null);
+  assert.equal(dailyDose.rows[0].prescription_days, 7);
+});
+
+test("composes split table headers before assigning medication columns", () => {
+  const document = parsePrescriptionDocument([
+    box("약품명", 10, 10, 130, 30),
+    box("1회", 170, 10, 205, 30),
+    box("투약량", 210, 10, 275, 30),
+    box("1일", 300, 10, 335, 30),
+    box("투여횟수", 340, 10, 420, 30),
+    box("총", 450, 10, 475, 30),
+    box("투약일수", 480, 10, 555, 30),
+    box("타이레놀정", 10, 55, 140, 75),
+    box("1정", 200, 55, 240, 75),
+    box("2회", 350, 55, 390, 75),
+    box("7일", 490, 55, 530, 75),
+  ]);
+
+  assert.equal(document.rows.length, 1);
+  assert.deepEqual(
+    [document.rows[0].product_query, document.rows[0].dose_amount, document.rows[0].frequency_per_day, document.rows[0].prescription_days],
+    ["타이레놀정", 1, 2, 7],
+  );
+});
+
+test("parses tablet count suffixes", () => {
+  const row = parsePrescriptionDocument([
+    box("약명: 테스트정", 20, 10, 220, 30),
+    box("복용법: 1정씩 1일 3회 5일 식후", 20, 40, 430, 65),
+  ]).rows[0];
+  assert.deepEqual([row.dose_amount, row.dose_unit], [1, "정"]);
+});
+
+test("parses administered liquid volume doses without treating concentrations as doses", () => {
+  const liquid = parsePrescriptionDocument([
+    box("약명: 테스트시럽", 20, 10, 220, 30),
+    box("복용법: 1회 5mL 1일 3회 5일 식후", 20, 40, 430, 65),
+  ]).rows[0];
+  assert.deepEqual([liquid.dose_amount, liquid.dose_unit], [5, "mL"]);
+
+  const decimalLiquid = parsePrescriptionDocument([
+    box("약명: 테스트시럽", 20, 10, 220, 30),
+    box("1회 복용량: 2.5㎖", 20, 40, 300, 65),
+  ]).rows[0];
+  assert.deepEqual([decimalLiquid.dose_amount, decimalLiquid.dose_unit], [2.5, "mL"]);
+
+  const concentration = parsePrescriptionHints("약명: 테스트시럽\n100mg/5mL\n1일 3회 5일");
+  assert.equal(concentration.dose_quantity, null);
+});
+
+test("extracts 24-hour times only from medication schedule context", () => {
+  const hints = parsePrescriptionHints("약명: 테스트정\n복용시간: 08:00, 20:00\n1정 1일 2회 5일");
+  assert.deepEqual(hints.times, ["08:00", "20:00"]);
+
+  const unrelated = parsePrescriptionHints("약명: 테스트정\n진료시간: 08:00\n1정 1일 2회 5일");
+  assert.deepEqual(unrelated.times, []);
+});
+
+test("does not collapse ranged daily frequency to one endpoint", () => {
+  const hints = parsePrescriptionHints("약명: 테스트정\n1정 1일 2~3회 5일");
+  assert.equal(hints.frequency_per_day, null);
+  assert.equal(hints.duration_days, 5);
+
+  const hyphen = parsePrescriptionHints("약명: 테스트정\n하루 2-3회 5일");
+  assert.equal(hyphen.frequency_per_day, null);
+  assert.equal(hyphen.duration_days, 5);
+});
+
+test("does not collapse ranged prescription days to one endpoint", () => {
+  const hints = parsePrescriptionHints("약명: 테스트정\n1정 1일 2회 5~7일");
+  assert.equal(hints.frequency_per_day, 2);
+  assert.equal(hints.duration_days, null);
+});
+
+test("normalizes page skew before reconstructing table rows", () => {
+  const document = parsePrescriptionDocument([
+    skewedBox("약품명", 10, 10, 130, 30),
+    skewedBox("1회 투약량", 180, 10, 275, 30),
+    skewedBox("1일 투여횟수", 310, 10, 420, 30),
+    skewedBox("총투약일수", 455, 10, 555, 30),
+    skewedBox("타이레놀정", 10, 60, 140, 80),
+    skewedBox("1정", 200, 60, 240, 80),
+    skewedBox("2회", 350, 60, 390, 80),
+    skewedBox("7일", 490, 60, 530, 80),
+  ]);
+
+  assert.equal(document.rows.length, 1);
+  assert.deepEqual(
+    [document.rows[0].product_query, document.rows[0].dose_amount, document.rows[0].frequency_per_day, document.rows[0].prescription_days],
+    ["타이레놀정", 1, 2, 7],
+  );
+});
+
+test("uses fractional numeric-only dose cells", () => {
+  const document = parsePrescriptionDocument([
+    box("약품명", 10, 10, 150, 30),
+    box("1회 투약량", 180, 10, 270, 30),
+    box("1일 투여횟수", 300, 10, 410, 30),
+    box("총투약일수", 450, 10, 550, 30),
+    box("테스트정", 10, 50, 150, 70),
+    box("1/2", 200, 50, 240, 70),
+    box("3", 340, 50, 360, 70),
+    box("5", 480, 50, 500, 70),
+  ]);
+
+  assert.equal(document.rows[0].dose_amount, 0.5);
+  assert.equal(document.rows[0].frequency_per_day, 3);
+  assert.equal(document.rows[0].prescription_days, 5);
 });

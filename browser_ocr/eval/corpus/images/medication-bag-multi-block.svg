@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620">
+  <rect width="1180" height="620" fill="#fffdf8"/>
+  <rect x="35" y="30" width="1110" height="250" rx="16" fill="none" stroke="#bbb" stroke-width="2"/>
+  <text x="65" y="115" font-family="Noto Sans CJK KR, sans-serif" font-size="48" fill="black">약명 타이레놀정</text>
+  <text x="65" y="210" font-family="Noto Sans CJK KR, sans-serif" font-size="44" fill="black">복용법 1정 1일 3회 5일 식후</text>
+  <rect x="35" y="325" width="1110" height="250" rx="16" fill="none" stroke="#bbb" stroke-width="2"/>
+  <text x="65" y="410" font-family="Noto Sans CJK KR, sans-serif" font-size="48" fill="black">약명 이부프로펜정</text>
+  <text x="65" y="505" font-family="Noto Sans CJK KR, sans-serif" font-size="44" fill="black">복용법 2정 1일 2회 3일 식후</text>
+</svg>

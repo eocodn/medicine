@@ -1,20 +1,28 @@
 {
-  "schema_version": 1,
-  "corpus_id": "synthetic-korean-prescription-model-v1",
+  "schema_version": 2,
+  "corpus_id": "synthetic-korean-prescription-model-v2",
   "synthetic_only": true,
   "gates": {
     "max_character_error_rate": 0.2,
     "critical_token_recall": 1,
-    "numeric_token_recall": 1
+    "numeric_token_recall": 1,
+    "layout_line_recall": 1,
+    "layout_order_accuracy": 1,
+    "no_text_sample_pass_rate": 1
   },
   "samples": [
-    {"id":"korean-regimen-basic","image":"images/korean-regimen-basic.svg","expected_text":"세트린정 0.5정 1일 2회 7일","critical_tokens":["세트린정","0.5정","1일","2회","7일"],"numeric_tokens":["0.5정","1일","2회","7일"]},
-    {"id":"prescription-table-header","image":"images/prescription-table-header.svg","expected_text":"약품명 1회 투약량 1일 투여횟수 총투약일수","critical_tokens":["약품명","1회","투약량","1일","투여횟수","총투약일수"],"numeric_tokens":["1회","1일"]},
-    {"id":"medication-bag-labels","image":"images/medication-bag-labels.svg","expected_text":"약명 타이레놀정 복용법 1정 1일 3회 5일 식후","critical_tokens":["약명","타이레놀정","복용법","1정","1일","3회","5일","식후"],"numeric_tokens":["1정","1일","3회","5일"]},
-    {"id":"rotated-regimen","image":"images/rotated-regimen.svg","expected_text":"타이레놀정 1정 1일 3회 5일","critical_tokens":["타이레놀정","1정","1일","3회","5일"],"numeric_tokens":["1정","1일","3회","5일"]},
-    {"id":"low-contrast","image":"images/low-contrast.svg","expected_text":"약명 이부프로펜정 1정 1일 2회","critical_tokens":["약명","이부프로펜정","1정","1일","2회"],"numeric_tokens":["1정","1일","2회"]},
-    {"id":"liquid-decimal","image":"images/liquid-decimal.svg","expected_text":"시럽 2.5mL 1일 3회 5일","critical_tokens":["시럽","2.5mL","1일","3회","5일"],"numeric_tokens":["2.5mL","1일","3회","5일"]},
-    {"id":"fractional-tablet","image":"images/fractional-tablet.svg","expected_text":"약명 테스트정 1/2정 1일 2회 7일","critical_tokens":["약명","테스트정","1/2정","1일","2회","7일"],"numeric_tokens":["1/2정","1일","2회","7일"]},
-    {"id":"long-product","image":"images/long-product.svg","expected_text":"타이레놀8시간이알서방정 1정 1일 2회 5일","critical_tokens":["타이레놀8시간이알서방정","1정","1일","2회","5일"],"numeric_tokens":["1정","1일","2회","5일"]}
+    {"id":"korean-regimen-basic","image":"images/korean-regimen-basic.svg","expected_text":"세트린정 0.5정 1일 2회 7일","critical_tokens":["세트린정","0.5정","1일","2회","7일"],"numeric_tokens":["0.5정","1일","2회","7일"],"scenario_tags":["baseline","numeric"]},
+    {"id":"korean-regimen-degraded","image":"images/korean-regimen-basic.svg","expected_text":"세트린정 0.5정 1일 2회 7일","critical_tokens":["세트린정","0.5정","1일","2회","7일"],"numeric_tokens":["0.5정","1일","2회","7일"],"transform":{"rotation_degrees":1.5,"scale":0.75,"blur_px":0.25,"contrast":0.88,"noise":0.012},"scenario_tags":["degraded","numeric","rotation"]},
+    {"id":"prescription-table-header","image":"images/prescription-table-header.svg","expected_text":"약품명 1회 투약량 1일 투여횟수 총투약일수","critical_tokens":["약품명","1회","투약량","1일","투여횟수","총투약일수"],"numeric_tokens":["1회","1일"],"scenario_tags":["table","header"]},
+    {"id":"medication-bag-labels","image":"images/medication-bag-labels.svg","expected_text":"약명 타이레놀정 복용법 1정 1일 3회 5일 식후","critical_tokens":["약명","타이레놀정","복용법","1정","1일","3회","5일","식후"],"numeric_tokens":["1정","1일","3회","5일"],"expected_lines":[["약명","타이레놀정"],["복용법","1정","3회","5일"]],"scenario_tags":["bag","layout"]},
+    {"id":"rotated-regimen","image":"images/rotated-regimen.svg","expected_text":"타이레놀정 1정 1일 3회 5일","critical_tokens":["타이레놀정","1정","1일","3회","5일"],"numeric_tokens":["1정","1일","3회","5일"],"scenario_tags":["rotation","numeric"]},
+    {"id":"low-contrast","image":"images/low-contrast.svg","expected_text":"약명 이부프로펜정 1정 1일 2회","critical_tokens":["약명","이부프로펜정","1정","1일","2회"],"numeric_tokens":["1정","1일","2회"],"scenario_tags":["low_contrast","numeric"]},
+    {"id":"liquid-decimal","image":"images/liquid-decimal.svg","expected_text":"시럽 2.5mL 1일 3회 5일","critical_tokens":["시럽","2.5mL","1일","3회","5일"],"numeric_tokens":["2.5mL","1일","3회","5일"],"scenario_tags":["numeric","liquid"]},
+    {"id":"fractional-tablet","image":"images/fractional-tablet.svg","expected_text":"약명 테스트정 1/2정 1일 2회 7일","critical_tokens":["약명","테스트정","1/2정","1일","2회","7일"],"numeric_tokens":["1/2정","1일","2회","7일"],"scenario_tags":["numeric","fraction"]},
+    {"id":"long-product","image":"images/long-product.svg","expected_text":"타이레놀8시간이알서방정 1정 1일 2회 5일","critical_tokens":["타이레놀8시간이알서방정","1정","1일","2회","5일"],"numeric_tokens":["1정","1일","2회","5일"],"scenario_tags":["long_product","numeric"]},
+    {"id":"prescription-multi-row","image":"images/prescription-multi-row.svg","expected_text":"약품명 1회투약량 1일횟수 총일수 타이레놀정 1정 3회 5일 이부프로펜정 2정 2회 3일 세트린정 0.5정 2회 7일","critical_tokens":["약품명","타이레놀정","이부프로펜정","세트린정","0.5정"],"numeric_tokens":["1정","3회","5일","2정","2회","3일","0.5정","2회","7일"],"expected_lines":[["타이레놀정","1정","3회","5일"],["이부프로펜정","2정","2회","3일"],["세트린정","0.5정","2회","7일"]],"scenario_tags":["table","layout","multi_drug"]},
+    {"id":"medication-bag-multi-block","image":"images/medication-bag-multi-block.svg","expected_text":"약명 타이레놀정 복용법 1정 1일 3회 5일 식후 약명 이부프로펜정 복용법 2정 1일 2회 3일 식후","critical_tokens":["타이레놀정","이부프로펜정","복용법","1정","2정","3회","2회"],"numeric_tokens":["1정","1일","3회","5일","2정","1일","2회","3일"],"expected_lines":[["약명","타이레놀정"],["복용법","1정","3회","5일"],["약명","이부프로펜정"],["복용법","2정","2회","3일"]],"scenario_tags":["bag","layout","multi_drug"]},
+    {"id":"dense-small-print","image":"images/dense-small-print.svg","expected_text":"약명 아세트아미노펜정 1정 1일 3회 총 5일분 아침 점심 저녁 식후 30분 보관방법 실온보관 복용 전 확인 조제일 2026-08-13","critical_tokens":["아세트아미노펜정","1정","3회","5일분","식후","30분","2026-08-13"],"numeric_tokens":["1정","1일","3회","5일분","30분","2026-08-13"],"transform":{"scale":0.8,"blur_px":0.2,"brightness":0.92},"scenario_tags":["small_print","degraded"]},
+    {"id":"blank-form","image":"images/blank-form.svg","expected_text":"","critical_tokens":[],"numeric_tokens":[],"expect_no_text":true,"scenario_tags":["negative","form"]}
   ]
 }
