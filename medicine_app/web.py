@@ -267,7 +267,27 @@ def create_web_app(
     return app
 
 
-app = create_web_app(
-    os.environ.get("MEDICINE_CANONICAL_DB", str(DEFAULT_CANONICAL_DB)),
-    os.environ.get("MEDICINE_PERSONAL_DB", str(DEFAULT_PERSONAL_DB)),
-)
+class _LazyDefaultWebApp:
+    """Delay default database binding until the ASGI server actually starts.
+
+    Importers such as tests need the app factory without requiring generated local
+    databases. Uvicorn still resolves ``medicine_app.web:app`` to this ASGI object,
+    and the first lifespan/request scope constructs the normal FastAPI application.
+    """
+
+    def __init__(self) -> None:
+        self._app: FastAPI | None = None
+
+    def _resolve(self) -> FastAPI:
+        if self._app is None:
+            self._app = create_web_app(
+                os.environ.get("MEDICINE_CANONICAL_DB", str(DEFAULT_CANONICAL_DB)),
+                os.environ.get("MEDICINE_PERSONAL_DB", str(DEFAULT_PERSONAL_DB)),
+            )
+        return self._app
+
+    async def __call__(self, scope, receive, send) -> None:
+        await self._resolve()(scope, receive, send)
+
+
+app = _LazyDefaultWebApp()
