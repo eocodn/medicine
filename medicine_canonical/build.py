@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .dose_criteria import materialize_dose_criteria
 from .inspection import canonical_stats, verify_canonical_database
 from .linking import materialize_product_criterion_links
 from .product_ingredient_applicability import materialize_product_ingredient_criterion_links
@@ -343,11 +344,13 @@ def populate_canonical_source_tables(
     permit_rows = _import_permit_snapshot(con, raw_root)
     product_rule_rows, product_flag_rows = _import_dur_snapshots(con, raw_root)
     xlsx_result = import_xlsx_sources(con, Path(kids_dir))
+    dose_result = materialize_dose_criteria(con)
     return {
         "permit_source_rows": permit_rows,
         "product_rule_rows_imported": product_rule_rows,
         "product_flag_rows_imported": product_flag_rows,
         "ingredient_rule_rows_imported": xlsx_result["ingredient_rules"],
+        **dose_result,
     }
 
 
