@@ -81,7 +81,7 @@ docker compose down
 - 복용 종료 처리 / 최근 복용 기록 조회
 - JSON API와 동일 코어를 사용하는 headless CLI
 - 서버 없는 Android 패키징
-  - WebView UI, Python 앱 코어, 검증된 canonical reference snapshot, OCR ONNX/WASM 자산을 APK에 함께 포함
+  - WebView UI, Python 앱 코어, 검증된 canonical reference snapshot을 APK에 함께 포함
   - Android 앱은 `INTERNET` 권한 없이 앱 내부 HTTPS asset origin과 네이티브 Python 브리지만 사용
   - 개인 복약 DB는 Android Keystore AES-GCM 키로 요청 사이에 암호화해 보관하고, SQLite 처리 중에만 앱 전용 저장소의 임시 평문 DB를 사용
   - 비정상 종료로 임시 평문 DB가 남으면 다음 시작 시 이를 최신 상태로 복구·checkpoint한 뒤 즉시 다시 암호화
@@ -266,50 +266,41 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 - 로그인/클라우드 동기화/다기기 공유
 - 네이티브 Android UI
 
-## Android / OCR 빌드·실행
+## Android 빌드·실행과 OCR 연구 경계
 
-PC·모바일 브라우저와 Android WebView 모두 같은 브라우저 OCR 구현을 사용합니다.
-전용 Worker가 PP-OCRv5 모바일 탐지·한국어 인식 ONNX 모델을 ONNX Runtime WebAssembly CPU
-backend로 직접 실행하며 PaddleOCR.js, OpenCV, ML Kit은 사용하지 않습니다. 사진과 인식 원문은
-Worker 메모리 안에서만 처리하고 서버·DB·웹 저장소로 보내지 않으며, 구조화된 복용 힌트만 기존
-사용자 확인 흐름으로 넘깁니다. Android에서는 Worker와 ONNX/WASM 모델도 APK asset에 포함되어
-외부 다운로드가 필요하지 않습니다. 브라우저 파서 테스트와 헤드리스 확인 CLI는 다음과 같이 실행합니다.
+현재 제품 입력은 **수기 전용**입니다. 사용자는 식약처 허가 의약품을 검색해 제품을 선택하고,
+1회량·1일 횟수·복용 시간·식사 관계·투여 경로·처방 일수 등을 직접 확인해 입력합니다.
+제품 웹 UI, 웹/Android API, Android APK에는 OCR 스캔 진입점, OCR review/batch API, ONNX/WASM OCR
+런타임 또는 OCR 모델 자산을 포함하지 않습니다.
 
-```bash
-docker compose run --rm browser-test
-printf '약명: 타이레놀정\n1정 1일 2회 7일\n오전 8시 오후 8시\n' \
-  | docker compose run -T --rm browser-ocr --input - --json
-```
+향후 파인튜닝된 OCR을 다시 연결할 때는 `medicine_app.intake`의 구조화 draft 계약을 경계로 사용합니다.
+이 계약은 하나 이상의 `product_query`와 정규화 가능한 medication draft, 명시적 uncertainty code만 허용합니다.
+canonical 제품 identity는 provider가 확정하지 않고 이후 제품 UI에서 사용자가 확인·선택합니다. 이미지 URI, 파일 경로,
+OCR 원문 같은 raw source artifact는 제품 경계를 통과시키지 않습니다. 현재 이 계약에 등록된 provider나 사용자-facing route는 없습니다.
 
-
-OCR vision 모델은 앱과 별도로 `browser_ocr` 파이프라인에서 검증합니다. 모델 원본 URL과 SHA-256은
-`model-manifest.json`에 고정되고, 합성 corpus는 실제 production Worker를 Chromium에서 실행해
-문자 오류율, 중요 토큰 재현율, 숫자 토큰 재현율을 평가합니다. 기본 corpus에는 환자 데이터가 없습니다.
+OCR 모델 연구·평가 코드는 제품과 독립된 `browser_ocr` 디렉터리에 유지합니다. 모델 원본 URL과 SHA-256은
+`model-manifest.json`에 고정되고, 합성 corpus는 실제 research Worker를 Chromium에서 실행해 문자 오류율,
+중요/숫자 토큰 재현율과 layout metric을 평가합니다. 기본 corpus에는 환자 데이터가 없습니다.
 
 ```bash
 docker compose run --rm ocr-eval
 ```
 
-실제 촬영본은 저장소 밖의 private corpus manifest를 read-only로 mount해서 같은 runner로 평가할 수 있습니다.
-평가 corpus·리포트·다운로드/빌드 도구는 배포 자산에 포함하지 않습니다. 배포 시에는 allowlist 기반
-`runtime` target으로 Worker, ONNX 모델, 인식 dictionary, ONNX Runtime WASM, 라이선스와 runtime manifest만
-잘라냅니다.
+연구용 runtime export도 제품 Docker/Android 빌드와 분리되어 있습니다. 필요할 때만 별도로 생성할 수 있습니다.
 
 ```bash
 docker build -f browser_ocr/Dockerfile --target runtime \
   --output type=local,dest=/tmp/medicine-ocr-runtime .
 ```
-Android 앱은 WebView와 시스템 사진 선택기를 UI 셸로 사용하지만 외부 웹 서버에는 연결하지 않습니다.
-정적 UI와 OCR 자산은 AndroidX WebKit의 `https://appassets.androidplatform.net` 로컬 asset origin에서
-제공하고, 앱의 `/api/...` 호출은 `MedicineNative` 브리지를 통해 APK에 포함된 Python `MedicationApp`
-코어를 직접 호출합니다. WebView의 다른 HTTP/HTTPS 요청은 차단하며 Android manifest에는
-`INTERNET` 권한이 없습니다.
+
+Android 앱은 WebView를 UI 셸로 사용하지만 외부 웹 서버에는 연결하지 않습니다. 정적 UI는 AndroidX WebKit의
+`https://appassets.androidplatform.net` 로컬 asset origin에서 제공하고, 앱의 `/api/...` 호출은
+`MedicineNative` 브리지를 통해 APK에 포함된 Python `MedicationApp` 코어를 직접 호출합니다. WebView의 다른
+HTTP/HTTPS 요청은 차단하며 Android manifest에는 `INTERNET` 권한이 없습니다.
 
 배포용 reference DB는 검증된 `canonical.sqlite`에서 런타임 테이블과 view만 추린 `mobile.sqlite`입니다.
-APK에는 압축된 asset으로 들어가며 첫 실행 때 manifest의 크기와 SHA-256을 확인하면서 앱 전용
-저장소에 원자적으로 설치합니다. reference DB는 이후 읽기 전용으로 사용하고 개인 기록은 별도의
-`personal.sqlite`에 저장합니다. 데이터 snapshot이 바뀌면 새 해시 이름으로 설치한 뒤 이전 reference
-파일을 정리합니다.
+APK에는 압축된 asset으로 들어가며 첫 실행 때 manifest의 크기와 SHA-256을 확인하면서 앱 전용 저장소에
+원자적으로 설치합니다. reference DB는 이후 읽기 전용으로 사용하고 개인 기록은 별도의 `personal.sqlite`에 저장합니다.
 
 Docker에서 데이터 release gate, compact DB 생성, Android 단위 테스트와 debug APK 빌드를 한 번에 실행합니다.
 
@@ -317,13 +308,12 @@ Docker에서 데이터 release gate, compact DB 생성, Android 단위 테스트
 docker compose run --rm android
 ```
 
-APK는 `android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. 설치 후에는 PC, LAN,
-loopback 서버나 인터넷 연결 없이 약 검색·DUR 판정·복약 기록·OCR을 실행할 수 있습니다.
-현재 Gradle 설정은 개인 기기 우선으로 `arm64-v8a`만 패키징합니다.
+APK는 `android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. 설치 후에는 PC, LAN, loopback 서버나
+인터넷 연결 없이 약 검색·DUR 판정·복약 기록을 실행할 수 있습니다. 현재 Gradle 설정은 개인 기기 우선으로
+`arm64-v8a`만 패키징합니다.
 
-release 변형도 동일한 온디바이스 구조로 빌드할 수 있지만 실제 배포 전에 Android 서명키와
-release signing configuration을 별도로 설정해야 합니다. 데이터 이용조건 검토 역시 제품 배포 전
-별도 release 절차로 남아 있습니다.
+release 변형도 동일한 온디바이스 구조로 빌드할 수 있지만 실제 배포 전에 Android 서명키와 release signing
+configuration을 별도로 설정해야 합니다. 데이터 이용조건 검토 역시 제품 배포 전 별도 release 절차로 남아 있습니다.
 
 ## 의료 정보 주의
 

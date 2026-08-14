@@ -1,25 +1,8 @@
-FROM node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS browser-ocr
-
-WORKDIR /build
-
-COPY browser_ocr/package.json browser_ocr/package-lock.json ./
-COPY browser_ocr/THIRD_PARTY_NOTICES.md ./
-COPY browser_ocr/model-manifest.json ./
-COPY browser_ocr/runtime-layout.mjs ./
-COPY browser_ocr/fetch_assets.mjs ./
-COPY browser_ocr/export_runtime.mjs ./
-COPY browser_ocr/src ./src
-
-RUN npm ci --ignore-scripts --no-audit --no-fund
-RUN mkdir -p /downloads && node fetch_assets.mjs /downloads
-RUN node export_runtime.mjs /downloads /out
-
 FROM gradle:9.4.1-jdk17
 
 ENV ANDROID_HOME=/opt/android-sdk \
     ANDROID_SDK_ROOT=/opt/android-sdk \
     GRADLE_USER_HOME=/opt/gradle-cache \
-    MEDICINE_BROWSER_OCR_ASSETS=/opt/medicine-browser-ocr \
     PATH=/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:$PATH
 
 RUN apt-get update \
@@ -34,7 +17,6 @@ RUN apt-get update \
     && sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
     && chmod -R a+rX "$ANDROID_HOME"
 
-COPY --from=browser-ocr /out /opt/medicine-browser-ocr
 
 WORKDIR /workspace/android
 COPY android/settings.gradle.kts android/build.gradle.kts android/gradle.properties ./

@@ -123,29 +123,6 @@ class PrescriptionCliTest(unittest.TestCase):
         self.assertEqual(medications[0]["course_progress"]["remaining_days"], 3)
 
 
-    def test_batch_preview_and_add_are_available_to_agent_control_cli(self) -> None:
-        rows_path = Path(self.tmp.name) / "batch.json"
-        rows_path.write_text(json.dumps({"rows": [{
-            "row_id": "row-1", "product_ref": "MFDS-SAFE", "dose_amount": 5, "dose_unit": "mg",
-            "frequency_per_day": 1, "prescription_days": 7, "start_date": "2026-08-10",
-            "schedule_times": ["08:00"], "administration_route": "oral",
-        }]}, ensure_ascii=False), encoding="utf-8")
-
-        status, preview = self.run_cli(
-            "med-batch-preview", "--person", self.person["id"], "--input", str(rows_path),
-            "--operation-id", "cli-batch-preview",
-        )
-        self.assertEqual(status, 0)
-        self.assertEqual(preview["rows"][0]["row_id"], "row-1")
-        self.assertTrue(preview["ocr_review_token"])
-
-        status, created = self.run_cli(
-            "med-batch-add", "--person", self.person["id"], "--input", str(rows_path),
-            "--request-id", "cli-batch-add",
-        )
-        self.assertEqual(status, 0)
-        self.assertEqual(len(created["medications"]), 1)
-
     def test_generic_dose_log_command_is_not_exposed(self) -> None:
         parser = build_parser()
         command_action = next(action for action in parser._actions if action.dest == "command")

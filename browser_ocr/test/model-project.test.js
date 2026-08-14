@@ -97,31 +97,28 @@ test("independent OCR Docker pipeline exposes separate eval and trimmed runtime 
   assert.match(compose, /target: eval/);
 });
 
-test("application builders consume only the exported runtime bundle", () => {
+test("product builders are detached from the OCR research runtime", () => {
   assert.equal(fs.existsSync(path.join(OCR, "prepare_models.mjs")), false);
   for (const name of ["Dockerfile", "Dockerfile.android"]) {
     const source = fs.readFileSync(path.join(ROOT, name), "utf8");
-    assert.match(source, /export_runtime\.mjs/);
-    assert.match(source, /COPY --from=browser-ocr \/out \/opt\/medicine-browser-ocr/);
-    assert.doesNotMatch(source, /prepare_models\.mjs/);
-    assert.doesNotMatch(source, /browser_ocr\/(?:eval|test|corpus)/);
+    assert.doesNotMatch(source, /browser_ocr|browser-ocr|medicine-browser-ocr|export_runtime/);
   }
+  const compose = fs.readFileSync(path.join(ROOT, "compose.yaml"), "utf8");
+  assert.doesNotMatch(compose, /MEDICINE_BROWSER_OCR_ASSETS/);
+  assert.doesNotMatch(compose, /\n  browser-ocr:/);
+  assert.match(compose, /ocr-eval:/);
 });
 
-test("deployment builders do not duplicate model archive names outside the manifest", () => {
-  for (const name of ["browser_ocr/Dockerfile", "Dockerfile", "Dockerfile.android"]) {
-    const source = fs.readFileSync(path.join(ROOT, name), "utf8");
-    assert.doesNotMatch(source, /PP-OCRv5_mobile_det_onnx_infer\.tar/);
-    assert.doesNotMatch(source, /korean_PP-OCRv5_mobile_rec_onnx_infer\.tar/);
-    assert.match(source, /export_runtime\.mjs \/downloads \/out/);
-  }
+test("model archive names remain confined to the independent OCR project", () => {
+  const source = fs.readFileSync(path.join(ROOT, "browser_ocr/Dockerfile"), "utf8");
+  assert.doesNotMatch(source, /PP-OCRv5_mobile_det_onnx_infer\.tar/);
+  assert.doesNotMatch(source, /korean_PP-OCRv5_mobile_rec_onnx_infer\.tar/);
+  assert.match(source, /export_runtime\.mjs \/downloads \/out/);
 });
 
-test("Android declares exported OCR runtime as a tracked generated asset input", () => {
+test("Android product packaging contains no OCR runtime source", () => {
   const build = fs.readFileSync(path.join(ROOT, "android/app/build.gradle.kts"), "utf8");
-  assert.match(build, /@get:InputDirectory/);
-  assert.match(build, /abstract val ocrAssets: DirectoryProperty/);
-  assert.match(build, /PrepareOcrAssets/);
-  assert.match(build, /addGeneratedSourceDirectory\(prepareOcrAssets, PrepareOcrAssets::outputDirectory\)/);
-  assert.doesNotMatch(build, /addStaticSourceDirectory\(file\(ocrAssetsDir\.get\(\)\)/);
+  const activity = fs.readFileSync(path.join(ROOT, "android/app/src/main/java/com/medicine/android/MainActivity.kt"), "utf8");
+  assert.doesNotMatch(build, /PrepareOcrAssets|ocrAssets|MEDICINE_BROWSER_OCR/);
+  assert.doesNotMatch(activity, /\/ocr-assets\//);
 });
