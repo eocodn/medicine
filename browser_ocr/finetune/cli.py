@@ -5,7 +5,13 @@ import json
 import sys
 from pathlib import Path
 
+from .coverage import audit_coverage
 from .dataset import DatasetError, build_split, dataset_stats, export_paddle, load_dataset
+from .synthetic import generate_dataset
+
+
+_DEFAULT_FONT = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+_DEFAULT_PLAN = "/workspace/browser_ocr/finetune/research-plan.json"
 
 
 def _emit(value: object, json_output: bool) -> None:
@@ -37,6 +43,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ocr-finetune", description="Medicine OCR fine-tuning dataset tools")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    generate = subparsers.add_parser("generate-synthetic")
+    generate.add_argument("--canonical-db", required=True)
+    generate.add_argument("--output-dir", required=True)
+    generate.add_argument("--count", type=int, required=True)
+    generate.add_argument("--seed", type=int, default=112)
+    generate.add_argument("--font", default=_DEFAULT_FONT)
+    generate.add_argument("--json", action="store_true")
+
     validate = subparsers.add_parser("validate")
     validate.add_argument("--manifest", required=True)
     validate.add_argument("--json", action="store_true")
@@ -44,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     stats = subparsers.add_parser("stats")
     stats.add_argument("--manifest", required=True)
     stats.add_argument("--json", action="store_true")
+
+    audit = subparsers.add_parser("audit-coverage")
+    audit.add_argument("--manifest", required=True)
+    audit.add_argument("--plan", default=_DEFAULT_PLAN)
+    audit.add_argument("--minimum-per-stratum", type=int, default=1)
+    audit.add_argument("--json", action="store_true")
 
     split = subparsers.add_parser("split")
     split.add_argument("--manifest", required=True)
@@ -67,6 +87,21 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     json_output = bool(getattr(args, "json", False))
     try:
+        if args.command == "generate-synthetic":
+            def generation_progress(done: int, total: int) -> None:
+                print(f"[ocr-finetune] generate {done}/{total}", file=sys.stderr)
+
+            result = generate_dataset(
+                args.canonical_db,
+                args.output_dir,
+                count=args.count,
+                seed=args.seed,
+                font_path=args.font,
+                progress=generation_progress,
+            )
+            _emit(result, json_output)
+            return 0
+
         def load_progress(done: int, total: int) -> None:
             print(f"[ocr-finetune] validate {done}/{total}", file=sys.stderr)
 
@@ -77,6 +112,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "stats":
             _emit(dataset_stats(dataset), json_output)
             return 0
+        if args.command == "audit-coverage":
+            result = audit_coverage(
+                dataset_stats(dataset),
+                _json_file(args.plan),
+                minimum_per_stratum=args.minimum_per_stratum,
+            )
+            _emit(result, json_output)
+            return 0 if result["status"] == "ok" else 3
         if args.command == "split":
             result = build_split(
                 dataset,
@@ -90,10 +133,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "export-paddle":
             split = _json_file(args.split)
 
-            def progress(done: int, total: int) -> None:
+            def export_progress(done: int, total: int) -> None:
                 print(f"[ocr-finetune] export {done}/{total}", file=sys.stderr)
 
-            result = export_paddle(dataset, split, args.output_dir, progress=progress)
+            result = export_paddle(dataset, split, args.output_dir, progress=export_progress)
             _emit(result, json_output)
             return 0
         raise DatasetError(f"unsupported command: {args.command}")

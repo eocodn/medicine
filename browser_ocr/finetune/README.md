@@ -68,3 +68,33 @@ The Paddle export contains `train.txt`, `val.txt`, `test.txt`, `split.json`, `ex
 4. compare the upstream model and each learning-curve checkpoint on the exact same holdouts.
 
 Do not generate a dictionary from only the training labels and silently replace the model dictionary. `observed-characters.txt` is an audit artifact; dictionary compatibility with the upstream Korean model must be checked explicitly before training.
+
+## Deterministic synthetic recognition crops
+
+`generate-synthetic` builds patient-data-free recognition crops from the canonical MFDS product-name corpus plus deterministic medicine-domain dosage and hard-negative templates. The canonical database is an input only and should be mounted read-only. Generated corpora belong under the ignored `browser_ocr/finetune/work/` tree, not in Git.
+
+The renderer uses the Noto CJK font installed in the dedicated fine-tune image. The generation report pins the canonical database SHA-256, canonical source-snapshot SHA-256, font SHA-256, generator version, seed, and sample count. Re-running the same completed configuration validates and returns the existing dataset; changing any pinned input fails rather than silently overwriting it. Interrupted generation keeps `.generation-state.json` plus `samples.partial.jsonl` and resumes from its checkpoint.
+
+```bash
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
+  docker compose run --rm \
+  -v /absolute/path/to/canonical.sqlite:/reference/canonical.sqlite:ro \
+  ocr-finetune generate-synthetic \
+  --canonical-db /reference/canonical.sqlite \
+  --output-dir /workspace/browser_ocr/finetune/work/synth-5k \
+  --count 5000 --seed 112 --json
+```
+
+The generator covers the research-plan semantic strata (`product`, `strength`, `dose`, `frequency`, `duration`, `schedule`) and hard negatives (`clinic_hours`, `phone`, `date`, `identifier`). It also creates numeric adversarial cases (`0.5정`, `1/2정`, `1~2정`) and capture-risk tags for small print, low contrast, rotation, and plastic reflection.
+
+Run the plan gate after generation. A non-zero exit code means at least one required document type, script, semantic stratum, or risk stratum is below the requested minimum.
+
+```bash
+COMPOSE_PROJECT_NAME=medicine_ocr_finetuning docker compose run --rm ocr-finetune \
+  audit-coverage \
+  --manifest /workspace/browser_ocr/finetune/work/synth-5k/manifest.json \
+  --minimum-per-stratum 300 --json
+```
+
+The canonical product source recorded by this project is the Korean MFDS `DrugPrdtPrmsnInfoService07` public API. The source portal currently reports no restriction on the permitted-use range; generated provenance records this as the internal identifier `data-go-kr-unrestricted-use`. Re-check source terms before publishing or redistributing a corpus outside this research workspace.

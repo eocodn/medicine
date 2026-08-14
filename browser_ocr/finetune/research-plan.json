@@ -18,6 +18,7 @@
     {"id": "unseen-drug", "group_by": "drug_family"}
   ],
   "required_document_types": ["prescription", "medication_bag"],
+  "required_scripts": ["korean", "latin", "digit"],
   "required_semantic_strata": [
     "product", "strength", "dose", "frequency", "duration", "schedule",
     "clinic_hours", "phone", "date", "identifier"
