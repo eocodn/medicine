@@ -77,9 +77,14 @@ function openSheet(selector) {
 }
 
 function closeSheets() {
+  const ocrReviewSheet = $("#ocr-review-sheet");
+  if (ocrReviewSheet && !ocrReviewSheet.classList.contains("hidden") && window.MedicineOcrReview?.getState?.().finalizing) {
+    return false;
+  }
   if (MedicineOcr.getReview()) MedicineOcr.cancel();
   $("#sheet-backdrop").classList.add("hidden");
   $$(".bottom-sheet").forEach((node) => node.classList.add("hidden"));
+  return true;
 }
 
 function showScreen(name) {
