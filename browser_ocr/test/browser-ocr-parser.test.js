@@ -4,8 +4,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { parsePrescriptionHints, parsePrescriptionDocument } = require("../../medicine_app/static/browser-ocr-parser.js");
 
-function box(text, x1, y1, x2, y2) {
-  return { text, score: 0.99, poly: [[x1, y1], [x2, y1], [x2, y2], [x1, y2]] };
+function box(text, x1, y1, x2, y2, score = 0.99) {
+  return { text, score, poly: [[x1, y1], [x2, y1], [x2, y2], [x1, y2]] };
 }
 
 test("normalizes Korean prescription into structured hints", () => {
@@ -202,4 +202,17 @@ test("does not leak a common regimen to drugs declared after the shared group", 
   assert.equal(document.rows[2].frequency_per_day, null);
   assert.equal(document.rows[2].prescription_days, null);
   assert.equal(document.rows[2].association, "labeled_block");
+});
+
+test("fails catastrophically low-confidence OCR fields closed", () => {
+  const document = parsePrescriptionDocument([
+    box("약명: 테스트정", 20, 10, 220, 30, 0.99),
+    box("5정 1일 2회 7일", 20, 40, 260, 60, 0.01),
+  ]);
+
+  assert.equal(document.rows.length, 1);
+  assert.equal(document.rows[0].dose_amount, null);
+  assert.equal(document.rows[0].frequency_per_day, null);
+  assert.equal(document.rows[0].prescription_days, null);
+  assert.ok(document.ambiguity_codes.includes("LOW_CONFIDENCE_OCR"));
 });

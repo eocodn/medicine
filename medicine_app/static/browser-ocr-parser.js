@@ -15,6 +15,9 @@
   const DURATION = /(?:for\s*)?(\d+)\s*(?:일(?!\s*\d*\s*회)|days?)/iu;
   const TIME_KO = /(오전|오후)\s*(\d{1,2})(?:\s*시)?(?:\s*[:：]\s*(\d{2}))?/giu;
   const TIME_EN = /\b(AM|PM)\s*(\d{1,2})(?:\s*[:：]\s*(\d{2}))?\b/giu;
+  // This is a catastrophic-confidence safety floor, not a calibrated OCR quality threshold.
+  // Broader confidence calibration belongs to the independent model evaluation pipeline.
+  const STRUCTURED_SCORE_FLOOR = 0.05;
 
   function distinct(values) {
     return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -175,11 +178,15 @@
     if (xs.length < 4 || ys.length < 4) return null;
     const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
     if (!(x2 > x1) || !(y2 > y1)) return null;
-    return { text: item.text.trim(), x1, x2, y1, y2, cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, h: y2 - y1 };
+    const rawScore = Number(item.score);
+    const score = Number.isFinite(rawScore) ? Math.max(0, Math.min(1, rawScore)) : null;
+    return { text: item.text.trim(), score, x1, x2, y1, y2, cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, h: y2 - y1 };
   }
 
   function documentLines(items) {
-    const tokens = (Array.isArray(items) ? items : []).map(geometry).filter((item) => item?.text);
+    const allTokens = (Array.isArray(items) ? items : []).map(geometry).filter((item) => item?.text);
+    const lowConfidence = allTokens.some((token) => token.score !== null && token.score < STRUCTURED_SCORE_FLOOR);
+    const tokens = allTokens.filter((token) => token.score === null || token.score >= STRUCTURED_SCORE_FLOOR);
     tokens.sort((a, b) => a.cy - b.cy || a.x1 - b.x1);
     const heights = tokens.map((item) => item.h).sort((a, b) => a - b);
     const medianHeight = heights.length ? heights[Math.floor(heights.length / 2)] : 20;
@@ -203,7 +210,7 @@
     }
     lines.sort((a, b) => a.cy - b.cy);
     for (const line of lines) line.text = line.items.map((item) => item.text).join(" ");
-    return { lines, medianHeight };
+    return { lines, medianHeight, lowConfidence };
   }
 
   function headerKey(value) {
@@ -358,10 +365,17 @@
   }
 
   function parsePrescriptionDocument(items) {
-    const { lines, medianHeight } = documentLines(items);
+    const { lines, medianHeight, lowConfidence } = documentLines(items);
     const recognized = lines.length
       ? lines.map((line) => line.text).join("\n")
-      : (Array.isArray(items) ? items : []).map((item) => typeof item?.text === "string" ? item.text : "").filter(Boolean).join("\n");
+      : (Array.isArray(items) ? items : [])
+        .filter((item) => {
+          const score = Number(item?.score);
+          return !Number.isFinite(score) || score >= STRUCTURED_SCORE_FLOOR;
+        })
+        .map((item) => typeof item?.text === "string" ? item.text : "")
+        .filter(Boolean)
+        .join("\n");
     const globalHints = parsePrescriptionHints(recognized);
     let rows = tableRows(lines);
     let unassociatedRegimen = false;
@@ -383,6 +397,7 @@
     const ambiguity = [];
     if (!rows.length) ambiguity.push("MISSING_PRODUCT");
     if (unassociatedRegimen) ambiguity.push("UNRESOLVED_REGIMEN_ASSOCIATION");
+    if (lowConfidence) ambiguity.push("LOW_CONFIDENCE_OCR");
     return {
       rows: rows.slice(0, 24),
       product_queries: distinct(rows.map((row) => row.product_query)).slice(0, 24),

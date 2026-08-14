@@ -94,3 +94,23 @@ test("review state keeps only structured multi-row medication fields", () => {
   assert.equal(received.length, 1);
   assert.equal(received[0].at(-1).length, 2);
 });
+
+test("explains low-confidence OCR uncertainty in the correction review", () => {
+  const h = harness();
+  const received = [];
+  h.ocr.init({ onReviewRequired(...args) { received.push(args); } });
+  assert.equal(h.ocr.start(), true);
+  const operationId = h.ocr.getState().operation_id;
+  assert.equal(h.ocr.handleEvent({
+    schema_version: 1,
+    operation_id: operationId,
+    sequence: 0,
+    state: "review_required",
+    rows: [{ product_query: "Testmed", schedule_times: [] }],
+    ambiguity_codes: ["LOW_CONFIDENCE_OCR"],
+  }), true);
+
+  const message = received[0][3].messages[0];
+  assert.ok(message.includes("OCR"));
+  assert.equal(message.includes("여러 약명"), false);
+});

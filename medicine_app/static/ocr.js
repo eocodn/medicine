@@ -118,6 +118,7 @@
     ambiguity.forEach((code) => {
       if (code === "UNRESOLVED_REGIMEN_ASSOCIATION") messages.push("약과 복용법 연결을 확정하지 못한 항목이 있어 직접 확인해야 합니다.");
       else if (code === "MISSING_PRODUCT") messages.push("약명을 인식하지 못한 항목이 있어 직접 확인해야 합니다.");
+      else if (code === "LOW_CONFIDENCE_OCR") messages.push("OCR 인식 신뢰도가 매우 낮은 항목은 자동 입력하지 않았습니다. 직접 확인해주세요.");
       else messages.push("여러 약명 인식 결과가 있어 품목별 확인이 필요합니다.");
     });
     unsupported.forEach((code) => {

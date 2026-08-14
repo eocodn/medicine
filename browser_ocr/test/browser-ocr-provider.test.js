@@ -7,6 +7,11 @@ const parser = require("../../medicine_app/static/browser-ocr-parser.js");
 
 const providerPath = path.resolve(__dirname, "../../medicine_app/static/browser-ocr.js");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+const box = (text, y1, y2, score = 0.99) => ({
+  text,
+  score,
+  poly: [[20, y1], [320, y1], [320, y2], [20, y2]],
+});
 
 function harness() {
   const listeners = {};
@@ -97,6 +102,29 @@ test("uses one local direct ONNX worker and emits structured review data", async
   assert.ok(h.events.some((event) => event.state === "recognizing" && event.progress === 55));
   assert.equal(worker.terminated, true);
   assert.equal(h.input.value, "");
+});
+
+test("surfaces low-confidence OCR uncertainty without prefilling structured regimen fields", async () => {
+  const h = harness();
+  command(h.provider, "start_scan", "browser-low-confidence");
+  h.input.files = [{ name: "low-confidence.png" }];
+  h.listeners.change();
+  await tick();
+
+  h.workers[0].emit({ type: "result", items: [
+    box("Product: Testmed", 10, 30, 0.99),
+    box("5 tablets 2 times/day for 7 days", 40, 60, 0.01),
+  ] });
+  await tick();
+
+  const review = h.events.find((event) => event.state === "review_required");
+  assert.equal(review.rows.length, 1);
+  assert.equal(review.rows[0].product_query, "Testmed");
+  assert.equal(review.rows[0].dose_amount, null);
+  assert.equal(review.rows[0].frequency_per_day, null);
+  assert.equal(review.rows[0].prescription_days, null);
+  assert.ok(review.ambiguity_codes.includes("LOW_CONFIDENCE_OCR"));
+  assert.ok(review.hints.ambiguity_codes.includes("LOW_CONFIDENCE_OCR"));
 });
 
 test("cancel immediately terminates the worker and rejects stale output", async () => {
