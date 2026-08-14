@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520">
+  <rect width="1280" height="520" fill="white"/>
+  <text x="55" y="72" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#222">약품명        1회투약량        1일횟수        총일수</text>
+  <line x1="45" y1="95" x2="1220" y2="95" stroke="#aaa" stroke-width="2"/>
+  <text x="55" y="175" font-family="Noto Sans CJK KR, sans-serif" font-size="46" fill="black">타이레놀정     1정     3회     5일</text>
+  <line x1="45" y1="205" x2="1220" y2="205" stroke="#ddd" stroke-width="1"/>
+  <text x="55" y="290" font-family="Noto Sans CJK KR, sans-serif" font-size="46" fill="black">이부프로펜정   2정     2회     3일</text>
+  <line x1="45" y1="320" x2="1220" y2="320" stroke="#ddd" stroke-width="1"/>
+  <text x="55" y="405" font-family="Noto Sans CJK KR, sans-serif" font-size="46" fill="black">세트린정       0.5정   2회     7일</text>
+</svg>

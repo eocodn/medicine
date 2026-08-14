@@ -50,19 +50,39 @@ test("deployment export is an explicit runtime allowlist and excludes evaluation
 
 test("checked-in model corpus has no patient data and declares model-level release gates", () => {
   const corpus = readJson("eval/corpus/manifest.json");
-  assert.equal(corpus.schema_version, 1);
+  assert.equal(corpus.schema_version, 2);
   assert.equal(corpus.synthetic_only, true);
-  assert.ok(corpus.samples.length >= 3);
+  assert.ok(corpus.samples.length >= 12);
   assert.equal(corpus.gates.critical_token_recall, 1);
   assert.equal(corpus.gates.numeric_token_recall, 1);
+  assert.equal(corpus.gates.layout_line_recall, 1);
+  assert.equal(corpus.gates.layout_order_accuracy, 1);
+  assert.equal(corpus.gates.no_text_sample_pass_rate, 1);
   assert.ok(corpus.gates.max_character_error_rate > 0 && corpus.gates.max_character_error_rate < 0.5);
+  assert.ok(corpus.samples.some((sample) => sample.expected_lines?.length >= 3));
+  assert.ok(corpus.samples.some((sample) => sample.expect_no_text === true));
+  assert.ok(corpus.samples.some((sample) => sample.transform?.blur_px > 0));
+  assert.ok(corpus.samples.some((sample) => sample.transform?.scale < 1));
   for (const sample of corpus.samples) {
     assert.match(sample.id, /^[a-z0-9_-]+$/);
-    assert.ok(sample.expected_text);
-    assert.ok(sample.critical_tokens.length > 0);
+    assert.equal(typeof sample.expected_text, "string");
+    if (!sample.expect_no_text) assert.ok(sample.critical_tokens.length > 0);
     assert.ok(Array.isArray(sample.numeric_tokens));
     assert.ok(fs.existsSync(path.join(OCR, "eval/corpus", sample.image)), sample.image);
   }
+});
+
+test("model evaluation applies declarative degradations and exposes incremental progress", () => {
+  const page = fs.readFileSync(path.join(OCR, "eval/eval-page.js"), "utf8");
+  const runner = fs.readFileSync(path.join(OCR, "eval/run_eval.mjs"), "utf8");
+  assert.match(page, /sample\.transform/);
+  assert.match(page, /rotation_degrees/);
+  assert.match(page, /blur_px/);
+  assert.match(page, /noise/);
+  assert.match(page, /__OCR_EVAL_STATE__/);
+  assert.match(runner, /__OCR_EVAL_STATE__/);
+  assert.match(runner, /checkpoint/);
+  assert.match(runner, /completed/);
 });
 
 test("independent OCR Docker pipeline exposes separate eval and trimmed runtime targets", () => {
