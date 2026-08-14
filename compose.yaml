@@ -34,6 +34,9 @@ services:
 
   test:
     build: .
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
     working_dir: /app
     volumes:
       - .:/app
