@@ -196,6 +196,7 @@ function renderHome() {
     </div>`;
 
   $$('[data-instance-taken]', root).forEach((button) => button.addEventListener("click", () => completeDoseInstance(button.dataset.instanceTaken, "taken")));
+  $$('[data-instance-skipped]', root).forEach((button) => button.addEventListener("click", () => completeDoseInstance(button.dataset.instanceSkipped, "skipped")));
   $$('[data-instance-cancel]', root).forEach((button) => button.addEventListener("click", () => cancelDoseInstance(button.dataset.instanceCancel)));
 }
 
@@ -213,7 +214,10 @@ function scheduleHtml(item) {
         ? `<button class="mini-action" data-instance-cancel="${item.id}" type="button">취소</button>`
         : item.status === "skipped"
           ? `<span class="dose-status skipped">건너뜀</span>`
-          : `<button class="mini-action" data-instance-taken="${item.id}" type="button">사용했어요</button>`}
+          : `<div class="dose-actions">
+              <button class="mini-action" data-instance-taken="${item.id}" type="button">사용했어요</button>
+              <button class="mini-action skip-action" data-instance-skipped="${item.id}" type="button">건너뛰기</button>
+            </div>`}
     </div>`;
 }
 

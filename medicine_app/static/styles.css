@@ -157,6 +157,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   border-radius: 12px;
   background: var(--brand-soft);
 }
+.dose-actions { display: grid; gap: 5px; }
+.mini-action.skip-action { background: #eceeed; color: var(--muted); }
 
 .section-heading { margin: 8px 2px 14px; align-items: end; }
 .history-heading { margin-top: 28px; }
