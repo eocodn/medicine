@@ -22,9 +22,9 @@ class GenerationError(DatasetError):
     pass
 
 
-_GENERATOR_VERSION = "1"
+_GENERATOR_VERSION = "2"
 _LICENSE_ID = "data-go-kr-unrestricted-use"
-_MAX_PRODUCT_LENGTH = 48
+_MAX_PRODUCT_LENGTH = 18
 _SOURCE_DATASET_KEY = "mfds_permit:products"
 
 
@@ -153,8 +153,7 @@ def _text_case(index: int, product: Product, rng: random.Random) -> tuple[str, l
     if case == 9:
         return f"처방번호 RX-{rng.randrange(100000, 1000000)}", ["identifier"], ["hard_negative", "exact_numeric", "mixed_script"]
     if case == 10:
-        ingredient = product.ingredient_text or rng.choice(["Acetaminophen", "Ibuprofen", "Metformin", "Cetirizine"])
-        return f"{product.product_name} {ingredient}", ["product"], ["mixed_script"]
+        return f"{product.product_name} TAB", ["product"], ["mixed_script"]
     if case == 11:
         return "1/2정 복용", ["dose"], ["exact_numeric", "fraction"]
     if case == 12:

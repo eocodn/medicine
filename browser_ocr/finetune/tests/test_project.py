@@ -21,12 +21,16 @@ class FineTuneProjectContractTest(unittest.TestCase):
         self.assertEqual(plan["real_data_policy"]["patient_data"], "forbidden")
         self.assertEqual(plan["real_data_policy"]["phase_1_use"], "holdout-only")
 
-    def test_upstream_training_is_disabled_until_weights_are_fully_pinned(self) -> None:
+    def test_upstream_model_and_source_are_cryptographically_pinned(self) -> None:
         upstream = json.loads((FINETUNE / "upstream.json").read_text(encoding="utf-8"))
         self.assertEqual(upstream["recognizer"], "korean_PP-OCRv5_mobile_rec")
-        self.assertFalse(upstream["training_enabled"])
-        self.assertIsNone(upstream["pretrained_model_sha256"])
-        self.assertEqual(upstream["pin_status"], "pending-complete-download")
+        self.assertEqual(upstream["paddleocr"]["tag"], "v3.7.0")
+        self.assertEqual(upstream["paddleocr"]["commit"], "b03f46425e8ff4442b268ce449e3eef758146cd4")
+        self.assertRegex(upstream["paddleocr"]["config_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(upstream["paddleocr"]["dictionary_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(upstream["pretrained_model_bytes"], 110996478)
+        self.assertEqual(upstream["pretrained_model_sha256"], "8975dede5e0c2f47e0a7712b3d79ffdc766972f872fd0441ebcccd9d77cd52a3")
+        self.assertEqual(upstream["pin_status"], "source-and-weights-pinned")
 
     def test_dataset_schema_forbids_patient_data(self) -> None:
         schema = json.loads((FINETUNE / "dataset.schema.json").read_text(encoding="utf-8"))

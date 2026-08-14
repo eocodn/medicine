@@ -77,6 +77,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             left_samples = (left / "samples.jsonl").read_text(encoding="utf-8")
             right_samples = (right / "samples.jsonl").read_text(encoding="utf-8")
             self.assertEqual(left_samples, right_samples)
+            self.assertLessEqual(max(len(json.loads(line)["text"]) for line in left_samples.splitlines()), 25)
 
             with Image.open(left / "images" / "sample-000000.png") as image:
                 image.load()

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .coverage import audit_coverage
 from .dataset import DatasetError, build_split, dataset_stats, export_paddle, load_dataset
+from .model_compat import audit_model_compatibility
 from .synthetic import generate_dataset
 
 
@@ -65,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--minimum-per-stratum", type=int, default=1)
     audit.add_argument("--json", action="store_true")
 
+    model = subparsers.add_parser("audit-model")
+    model.add_argument("--manifest", required=True)
+    model.add_argument("--dictionary", required=True)
+    model.add_argument("--max-text-length", type=int, default=25)
+    model.add_argument("--json", action="store_true")
+
     split = subparsers.add_parser("split")
     split.add_argument("--manifest", required=True)
     split.add_argument("--group-by", required=True, choices=["layout_family", "source_family", "drug_family"])
@@ -120,6 +127,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             _emit(result, json_output)
             return 0 if result["status"] == "ok" else 3
+        if args.command == "audit-model":
+            result = audit_model_compatibility(
+                dataset,
+                args.dictionary,
+                max_text_length=args.max_text_length,
+                use_space_char=True,
+            )
+            _emit(result, json_output)
+            return 0 if result["status"] == "ok" else 4
         if args.command == "split":
             result = build_split(
                 dataset,
