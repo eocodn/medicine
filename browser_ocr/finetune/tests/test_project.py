@@ -39,6 +39,16 @@ class FineTuneProjectContractTest(unittest.TestCase):
         self.assertEqual(runtime["verified_gpu"]["name"], "NVIDIA GeForce RTX 4080")
         self.assertEqual(runtime["verified_gpu"]["vram_mib"], 16376)
 
+
+    def test_recorded_5k_baseline_is_bound_to_synthetic_holdout(self) -> None:
+        result = json.loads((FINETUNE / "results" / "synth-5k-drug-baseline.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["dataset_fingerprint"], "7e8ba54f066354dc6da108187e7c16ec142de8dae97b30673c75f0ea938a4f57")
+        self.assertEqual(result["holdout_axis"], "drug_family")
+        self.assertEqual(result["test_samples"], 500)
+        self.assertFalse(result["real_data_evaluated"])
+        self.assertEqual(result["best_epoch"], 2)
+        self.assertGreater(result["best_test"]["acc"], result["pretrained_test"]["acc"])
+
     def test_dataset_schema_forbids_patient_data(self) -> None:
         schema = json.loads((FINETUNE / "dataset.schema.json").read_text(encoding="utf-8"))
         self.assertEqual(schema["properties"]["patient_data_policy"]["const"], "forbid")

@@ -68,3 +68,79 @@ def build_smoke_overrides(
         "Eval.loader.batch_size_per_card": batch_size,
         "Eval.loader.num_workers": 2,
     }
+
+
+def build_baseline_overrides(
+    *,
+    dataset_root: str,
+    train_labels: str,
+    val_labels: str,
+    pretrained_model: str,
+    checkpoint: str | None,
+    output_dir: str,
+    batch_size: int,
+    epochs: int,
+) -> dict[str, object]:
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if epochs <= 0:
+        raise ValueError("epochs must be positive")
+    overrides: dict[str, object] = {
+        "Global.pretrained_model": pretrained_model,
+        "Global.save_model_dir": output_dir,
+        "Global.epoch_num": epochs,
+        "Global.print_batch_step": 10,
+        "Global.save_epoch_step": 1,
+        "Global.eval_batch_step": [0, 100],
+        "Global.cal_metric_during_train": True,
+        "Global.distributed": False,
+        "Global.use_gpu": True,
+        "Train.dataset.data_dir": dataset_root,
+        "Train.dataset.label_file_list": [train_labels],
+        "Train.sampler.first_bs": batch_size,
+        "Train.loader.batch_size_per_card": batch_size,
+        "Train.loader.num_workers": 2,
+        "Eval.dataset.data_dir": dataset_root,
+        "Eval.dataset.label_file_list": [val_labels],
+        "Eval.loader.batch_size_per_card": batch_size,
+        "Eval.loader.num_workers": 2,
+    }
+    if checkpoint is not None:
+        overrides["Global.checkpoints"] = checkpoint
+    return overrides
+
+
+def find_resume_checkpoint(model_dir: str | Path) -> Path | None:
+    import re
+    from pathlib import Path
+
+    root = Path(model_dir)
+    candidates: list[tuple[int, Path]] = []
+    for params_path in root.glob("iter_epoch_*.pdparams"):
+        match = re.fullmatch(r"iter_epoch_(\d+)\.pdparams", params_path.name)
+        if match is None:
+            continue
+        prefix = params_path.with_suffix("")
+        if all(Path(str(prefix) + suffix).is_file() for suffix in (".pdparams", ".pdopt", ".states")):
+            candidates.append((int(match.group(1)), prefix))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[-1][1]
+
+
+def parse_eval_metrics(log_text: str) -> dict[str, float]:
+    import re
+
+    marker = "metric eval ***************"
+    marker_index = log_text.rfind(marker)
+    if marker_index < 0:
+        raise DatasetError("PaddleOCR evaluation log does not contain the final metric section")
+    section = log_text[marker_index + len(marker) :]
+    metrics: dict[str, float] = {}
+    for key in ("acc", "norm_edit_dis", "fps"):
+        match = re.search(rf"ppocr INFO:\s+{re.escape(key)}:([-+0-9.eE]+)", section)
+        if match is None:
+            raise DatasetError(f"PaddleOCR evaluation log is missing metric {key}")
+        metrics[key] = float(match.group(1))
+    return metrics

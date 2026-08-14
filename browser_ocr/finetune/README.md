@@ -114,3 +114,20 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning docker compose run --rm ocr-finetun
 ```
 
 The canonical product source recorded by this project is the Korean MFDS `DrugPrdtPrmsnInfoService07` public API. The source portal currently reports no restriction on the permitted-use range; generated provenance records this as the internal identifier `data-go-kr-unrestricted-use`. Re-check source terms before publishing or redistributing a corpus outside this research workspace.
+
+## First 5k learning-curve baseline
+
+The first complete baseline uses the synthetic 5k corpus with a `drug_family` graph holdout (`4000/500/500`) and batch size 32 for 10 epochs. The runner evaluates the pinned pretrained model on the fixed test split before training, checkpoints every epoch, resumes only from a complete `iter_epoch_N` checkpoint, selects `best_accuracy` by validation, and evaluates that checkpoint on the same test split. A completed run is idempotent and re-validates the best checkpoint SHA before returning the cached result.
+
+```bash
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
+  docker compose run --rm ocr-finetune-train baseline \
+  --pretrained-model /workspace/browser_ocr/finetune/work/upstream/korean_PP-OCRv5_mobile_rec_pretrained.pdparams \
+  --manifest /workspace/browser_ocr/finetune/work/synth-5k/manifest.json \
+  --export-dir /workspace/browser_ocr/finetune/work/synth-5k/paddle-drug \
+  --run-dir /workspace/browser_ocr/finetune/work/training/baseline-5k-e10-b32 \
+  --epochs 10 --batch-size 32 --json
+```
+
+The recorded synthetic-only result is in `results/synth-5k-drug-baseline.json`: pretrained exact accuracy `0.6080` versus validation-best test accuracy `0.9740`, with normalized edit distance improving from `0.9535` to `0.9975`. Validation peaked at epoch 2 and later epochs oscillated, so the 10-epoch final checkpoint is preserved for reproducibility but is not treated as the selected model. These figures are **not** evidence of real-photo or end-to-end prescription safety; real deidentified holdouts and the other layout/source holdouts remain required.

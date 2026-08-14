@@ -113,5 +113,81 @@ class TrainingRuntimeProbeTest(unittest.TestCase):
         self.assertEqual(report["cudnn_version"], 90501)
         self.assertEqual(report["matmul_checksum"], 262144.0)
 
+class BaselineTrainingPlanTest(unittest.TestCase):
+    def test_baseline_overrides_resume_from_complete_checkpoint(self) -> None:
+        from browser_ocr.finetune.training import build_baseline_overrides
+
+        overrides = build_baseline_overrides(
+            dataset_root="/data",
+            train_labels="/export/train.txt",
+            val_labels="/export/val.txt",
+            pretrained_model="/weights/base.pdparams",
+            checkpoint="/run/model/iter_epoch_3",
+            output_dir="/run/model",
+            batch_size=32,
+            epochs=10,
+        )
+        self.assertEqual(overrides["Global.epoch_num"], 10)
+        self.assertEqual(overrides["Global.checkpoints"], "/run/model/iter_epoch_3")
+        self.assertEqual(overrides["Global.pretrained_model"], "/weights/base.pdparams")
+        self.assertEqual(overrides["Global.save_epoch_step"], 1)
+        self.assertEqual(overrides["Global.print_batch_step"], 10)
+        self.assertEqual(overrides["Train.sampler.first_bs"], 32)
+
+    def test_highest_complete_epoch_checkpoint_ignores_partial_newer_epoch(self) -> None:
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from browser_ocr.finetune.training import find_resume_checkpoint
+
+        with TemporaryDirectory() as raw:
+            model = Path(raw)
+            for suffix in (".pdparams", ".pdopt", ".states"):
+                (model / f"iter_epoch_2{suffix}").write_text("ok")
+            (model / "iter_epoch_3.pdparams").write_text("partial")
+            self.assertEqual(find_resume_checkpoint(model), model / "iter_epoch_2")
+
+    def test_eval_metric_parser_uses_final_metric_section(self) -> None:
+        from browser_ocr.finetune.training import parse_eval_metrics
+
+        log = """
+[time] ppocr INFO: metric in ckpt ***************
+[time] ppocr INFO: acc:0.99
+[time] ppocr INFO: metric eval ***************
+[time] ppocr INFO: acc:0.8125
+[time] ppocr INFO: norm_edit_dis:0.945
+[time] ppocr INFO: fps:777.0
+"""
+        self.assertEqual(
+            parse_eval_metrics(log),
+            {"acc": 0.8125, "norm_edit_dis": 0.945, "fps": 777.0},
+        )
+
+class TrainingCommandStreamingTest(unittest.TestCase):
+    def test_stream_command_can_avoid_memory_capture_and_append_log(self) -> None:
+        import sys
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from browser_ocr.finetune.train_cli import _stream_command
+
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            log = root / "train.log"
+            first = _stream_command(
+                [sys.executable, "-c", "print('first')"],
+                cwd=root,
+                log_path=log,
+                capture=False,
+            )
+            second = _stream_command(
+                [sys.executable, "-c", "print('second')"],
+                cwd=root,
+                log_path=log,
+                capture=False,
+                append=True,
+            )
+            self.assertEqual(first, "")
+            self.assertEqual(second, "")
+            self.assertEqual(log.read_text(encoding="utf-8"), "first\nsecond\n")
+
 if __name__ == "__main__":
     unittest.main()

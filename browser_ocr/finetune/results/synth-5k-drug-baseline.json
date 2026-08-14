@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "chronicle": 112,
+  "experiment_id": "synth-5k-drug-baseline-v1",
+  "dataset_id": "medicine-synth-rec-v1-s112-n5000",
+  "dataset_fingerprint": "7e8ba54f066354dc6da108187e7c16ec142de8dae97b30673c75f0ea938a4f57",
+  "holdout_axis": "drug_family",
+  "train_samples": 4000,
+  "validation_samples": 500,
+  "test_samples": 500,
+  "real_data_evaluated": false,
+  "training": {
+    "epochs": 10,
+    "batch_size": 32,
+    "best_epoch": 2,
+    "max_mem_allocated_mib": 4644,
+    "gpu": "NVIDIA GeForce RTX 4080",
+    "paddlepaddle": "3.2.0",
+    "cuda_runtime": "12.6",
+    "upstream_commit": "b03f46425e8ff4442b268ce449e3eef758146cd4",
+    "pretrained_model_sha256": "8975dede5e0c2f47e0a7712b3d79ffdc766972f872fd0441ebcccd9d77cd52a3",
+    "best_checkpoint_sha256": "dfb15196ae5197ba2b29e0fff8010c3341125e498e4380280ea202e6ce1cda83",
+    "final_epoch_checkpoint_sha256": "e404531f83b56fe1edee7e9512c3d566319491ecb37667dc392876bca33697e9"
+  },
+  "pretrained_test": {
+    "acc": 0.6079999878400003,
+    "norm_edit_dis": 0.9535393281915923
+  },
+  "best_test": {
+    "acc": 0.9739999805200005,
+    "norm_edit_dis": 0.997485277816007
+  },
+  "delta": {
+    "acc": 0.36599999268000016,
+    "norm_edit_dis": 0.04394594962441478
+  },
+  "limitations": [
+    "Synthetic recognition-crop holdout only; no real deidentified prescription photos were evaluated.",
+    "The holdout isolates unseen drug families but does not by itself prove unseen layout or source generalization.",
+    "Recognition metrics do not establish end-to-end medication extraction safety or product readiness."
+  ],
+  "best_epoch": 2
+}
