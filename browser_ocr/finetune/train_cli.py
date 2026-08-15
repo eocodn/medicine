@@ -20,6 +20,7 @@ from .training import (
     find_resume_checkpoint,
     parse_eval_metrics,
     probe_paddle_runtime,
+    subset_label_file,
 )
 
 
@@ -62,15 +63,6 @@ def _format_override(value: object) -> str:
     if isinstance(value, list):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     return str(value)
-
-
-def _subset_labels(source: Path, target: Path, count: int) -> int:
-    lines = source.read_text(encoding="utf-8").splitlines()
-    if len(lines) < count:
-        raise DatasetError(f"label file {source} has only {len(lines)} rows; need {count}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n".join(lines[:count]) + "\n", encoding="utf-8")
-    return count
 
 
 def run_probe() -> dict:
@@ -220,6 +212,10 @@ def run_baseline(args: argparse.Namespace) -> dict:
         raise DatasetError("epochs must be a positive integer")
     if not isinstance(args.batch_size, int) or args.batch_size <= 0:
         raise DatasetError("batch size must be a positive integer")
+    if not isinstance(args.learning_rate, float) or args.learning_rate <= 0:
+        raise DatasetError("learning rate must be positive")
+    if not isinstance(args.warmup_epochs, int) or args.warmup_epochs < 0 or args.warmup_epochs >= args.epochs:
+        raise DatasetError("warmup epochs must be non-negative and less than total epochs")
 
     research_plan_path = Path(__file__).with_name("research-plan.json").resolve()
     research_plan = _json_file(research_plan_path)
@@ -243,6 +239,8 @@ def run_baseline(args: argparse.Namespace) -> dict:
         "pretrained_model_sha256": upstream["pretrained_model_sha256"],
         "epochs": args.epochs,
         "batch_size": args.batch_size,
+        "learning_rate": args.learning_rate,
+        "warmup_epochs": args.warmup_epochs,
     }
     state_path = run_dir / "baseline-state.json"
     result_path = run_dir / "baseline-result.json"
@@ -315,6 +313,8 @@ def run_baseline(args: argparse.Namespace) -> dict:
             output_dir=str(model_dir),
             batch_size=args.batch_size,
             epochs=args.epochs,
+            learning_rate=args.learning_rate,
+            warmup_epochs=args.warmup_epochs,
         )
         command = [sys.executable, "tools/train.py", "-c", str(config_path), "-o"]
         command.extend(f"{key}={_format_override(value)}" for key, value in overrides.items())
@@ -462,8 +462,8 @@ def run_smoke(args: argparse.Namespace) -> dict:
         labels_dir.mkdir(parents=True, exist_ok=True)
         train_labels = labels_dir / "train.txt"
         val_labels = labels_dir / "val.txt"
-        _subset_labels(export_dir / "train.txt", train_labels, args.train_samples)
-        _subset_labels(export_dir / "val.txt", val_labels, args.val_samples)
+        subset_label_file(export_dir / "train.txt", train_labels, args.train_samples)
+        subset_label_file(export_dir / "val.txt", val_labels, args.val_samples)
 
         overrides = build_smoke_overrides(
             dataset_root=str(dataset.root),
@@ -563,6 +563,8 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.add_argument("--expected-group-by", default="drug_family")
     baseline.add_argument("--epochs", type=int, default=10)
     baseline.add_argument("--batch-size", type=int, default=32)
+    baseline.add_argument("--learning-rate", type=float, default=0.0005)
+    baseline.add_argument("--warmup-epochs", type=int, default=5)
     baseline.add_argument("--json", action="store_true")
     return parser
 

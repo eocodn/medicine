@@ -30,6 +30,17 @@ def export_identity(export_dir: str | Path) -> dict[str, object]:
     }
 
 
+def subset_label_file(source: str | Path, target: str | Path, count: int) -> int:
+    source_path = Path(source)
+    target_path = Path(target)
+    lines = source_path.read_text(encoding="utf-8").splitlines()
+    if len(lines) < count:
+        raise DatasetError(f"label file {source_path} has only {len(lines)} rows; need {count}")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("\n".join(lines[:count]) + "\n", encoding="utf-8")
+    return count
+
+
 def probe_paddle_runtime(paddle: object) -> dict[str, object]:
     device = paddle.device
     if not device.is_compiled_with_cuda():
@@ -107,11 +118,17 @@ def build_baseline_overrides(
     output_dir: str,
     batch_size: int,
     epochs: int,
+    learning_rate: float = 0.0005,
+    warmup_epochs: int = 5,
 ) -> dict[str, object]:
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
     if epochs <= 0:
         raise ValueError("epochs must be positive")
+    if learning_rate <= 0:
+        raise ValueError("learning rate must be positive")
+    if warmup_epochs < 0 or warmup_epochs >= epochs:
+        raise ValueError("warmup epochs must be non-negative and less than total epochs")
     overrides: dict[str, object] = {
         "Global.pretrained_model": pretrained_model,
         "Global.save_model_dir": output_dir,
@@ -122,6 +139,8 @@ def build_baseline_overrides(
         "Global.cal_metric_during_train": True,
         "Global.distributed": False,
         "Global.use_gpu": True,
+        "Optimizer.lr.learning_rate": learning_rate,
+        "Optimizer.lr.warmup_epoch": warmup_epochs,
         "Train.dataset.data_dir": dataset_root,
         "Train.dataset.label_file_list": [train_labels],
         "Train.sampler.first_bs": batch_size,

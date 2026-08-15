@@ -134,6 +134,38 @@ class BaselineTrainingPlanTest(unittest.TestCase):
         self.assertEqual(overrides["Global.print_batch_step"], 10)
         self.assertEqual(overrides["Train.sampler.first_bs"], 32)
 
+    def test_baseline_overrides_bind_explicit_learning_rate_and_warmup(self) -> None:
+        from browser_ocr.finetune.training import build_baseline_overrides
+
+        overrides = build_baseline_overrides(
+            dataset_root="/data",
+            train_labels="/export/train.txt",
+            val_labels="/export/val.txt",
+            pretrained_model="/weights/base.pdparams",
+            checkpoint=None,
+            output_dir="/run/model",
+            batch_size=32,
+            epochs=10,
+            learning_rate=0.0001,
+            warmup_epochs=1,
+        )
+        self.assertEqual(overrides["Optimizer.lr.learning_rate"], 0.0001)
+        self.assertEqual(overrides["Optimizer.lr.warmup_epoch"], 1)
+
+        with self.assertRaisesRegex(ValueError, "learning rate"):
+            build_baseline_overrides(
+                dataset_root="/data",
+                train_labels="/export/train.txt",
+                val_labels="/export/val.txt",
+                pretrained_model="/weights/base.pdparams",
+                checkpoint=None,
+                output_dir="/run/model",
+                batch_size=32,
+                epochs=10,
+                learning_rate=0.0,
+                warmup_epochs=1,
+            )
+
     def test_highest_complete_epoch_checkpoint_ignores_partial_newer_epoch(self) -> None:
         from tempfile import TemporaryDirectory
         from pathlib import Path
