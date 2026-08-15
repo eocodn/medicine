@@ -154,7 +154,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
             "조건부임부", "1990-01-01", "female", "pregnant", lactation_status="not_breastfeeding"
         )
 
-        preview = self.app.preview_medication(pregnant["id"], {"product_ref": "MFDS-PC"})
+        preview = self.app.preview_medication(pregnant["id"], {"product_ref": "MFDS-PC", "long_term": True})
 
         pregnancy = next(row for row in preview["dur_checks"] if row["category"] == "pregnancy_contraindication")
         self.assertEqual(pregnancy["status"], "conditional")
@@ -164,7 +164,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertTrue(preview["warning_token"])
 
         medication = self.app.add_medication(
-            pregnant["id"], product_ref="MFDS-PC", acknowledge_warnings=True,
+            pregnant["id"], product_ref="MFDS-PC", long_term=True, acknowledge_warnings=True,
             warning_token=preview["warning_token"],
         )
         current = next(
@@ -251,9 +251,17 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertTrue(preview["warning_token"])
 
     def test_profile_gap_is_reported_only_for_relevant_canonical_rule(self) -> None:
-        unknown = self.app.create_person(
-            "미입력", "1990-01-01", "female", "unknown", lactation_status="unknown"
+        # Legacy profiles may still contain unanswered reproductive fields. New
+        # writes reject these states, but runtime evaluation must remain fail-closed
+        # until the user reviews the migrated profile.
+        con = sqlite3.connect(self.personal_db)
+        con.execute(
+            "INSERT INTO people(id,name,birth_date,sex,pregnancy_status,lactation_status) VALUES(?,?,?,?,?,?)",
+            ("legacy-unknown", "미입력", "1990-01-01", "female", "unknown", "unknown"),
         )
+        con.commit()
+        con.close()
+        unknown = self.app.get_person("legacy-unknown")
         unrelated = self.app.preview_medication(unknown["id"], {"product_ref": "MFDS-I"})
         lactation = self.app.preview_medication(unknown["id"], {"product_ref": "MFDS-Z"})
         self.assertNotIn(
@@ -266,7 +274,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
         )
 
     def test_male_profile_has_no_reproductive_coverage_gap(self) -> None:
-        male = self.app.create_person("남성", "1990-01-01", "male", "unknown", lactation_status="unknown")
+        male = self.app.create_person("남성", "1990-01-01", "male", "not_applicable", lactation_status="not_applicable")
         preview = self.app.preview_medication(male["id"], {"product_ref": "MFDS-Z"})
         categories = {row["category"] for row in preview["coverage"]["not_evaluable_checks"]}
         self.assertNotIn("pregnancy_contraindication", categories)

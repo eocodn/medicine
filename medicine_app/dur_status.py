@@ -97,7 +97,7 @@ def _current_mapping_issues(
         canonical_issues = medication.get("canonical_resolution_issues") or {}
         if product_matched and not canonical_issues:
             continue
-        if not medication.get("active") and courses_overlap(medication, candidate_course) is False:
+        if courses_overlap(medication, candidate_course) is False:
             continue
         scope = "canonical DUR 상세 기준" if product_matched else "MFDS ITEM_SEQ"
         issues.append({

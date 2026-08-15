@@ -93,7 +93,7 @@ def parse_interaction_timing(
     return {"status": "default", "kind": "course_overlap", "source_text": source_text}
 
 
-def _course(value: Mapping[str, Any]) -> tuple[date, date | None] | None:
+def _course(value: Mapping[str, Any]) -> tuple[date, date | None, bool] | None:
     raw_start = value.get("start_date")
     if not raw_start:
         return None
@@ -109,11 +109,14 @@ def _course(value: Mapping[str, Any]) -> tuple[date, date | None] | None:
         return None
     if end is not None and end < start:
         return None
+    if stopped is not None and stopped < start:
+        # A course canceled before its first administration has no exposure and
+        # therefore no overlap or washout tail. Treating it as unknown creates
+        # phantom interaction warnings indefinitely.
+        return start, stopped, True
     if stopped is not None:
-        if stopped < start:
-            return None
         end = stopped if end is None else min(end, stopped)
-    return start, end
+    return start, end, False
 
 
 def courses_overlap(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool | None:
@@ -121,8 +124,10 @@ def courses_overlap(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool |
     right_course = _course(right)
     if left_course is None or right_course is None:
         return None
-    left_start, left_end = left_course
-    right_start, right_end = right_course
+    left_start, left_end, left_empty = left_course
+    right_start, right_end, right_empty = right_course
+    if left_empty or right_empty:
+        return False
     if left_end is not None and left_end < right_start:
         return False
     if right_end is not None and right_end < left_start:
@@ -153,12 +158,12 @@ def interaction_timing_applies(
     *,
     candidate_side: str,
 ) -> bool:
-    """Return whether a matching DUR pair is temporally relevant.
+    """Return whether a matching DUR pair is temporally relevant."""
+    candidate = _course(candidate_course)
+    current = _course(current_course)
+    if (candidate is not None and candidate[2]) or (current is not None and current[2]):
+        return False
 
-    Prescription dates have day precision, not administration timestamps. For
-    hour-based rules a boundary calendar day remains potentially inside the
-    stated interval and therefore stays flagged.
-    """
     overlap = courses_overlap(candidate_course, current_course)
     if overlap is None:
         return True
@@ -169,15 +174,15 @@ def interaction_timing_applies(
         return True
     if kind == "course_overlap":
         return False
-    candidate = _course(candidate_course)
-    current = _course(current_course)
     if candidate is None or current is None:
         return True
+    candidate_range = (candidate[0], candidate[1])
+    current_range = (current[0], current[1])
     if kind == "minimum_separation":
-        return _potential_gap_within_hours(candidate, current, int(timing["hours"]))
+        return _potential_gap_within_hours(candidate_range, current_range, int(timing["hours"]))
     if kind == "washout_after":
-        row_left = candidate if candidate_side == "left" else current
-        row_right = current if candidate_side == "left" else candidate
+        row_left = candidate_range if candidate_side == "left" else current_range
+        row_right = current_range if candidate_side == "left" else candidate_range
         source = row_left if timing.get("source_side") == "left" else row_right
         target = row_right if timing.get("source_side") == "left" else row_left
         source_start, source_end = source

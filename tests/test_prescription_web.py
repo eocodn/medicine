@@ -33,6 +33,7 @@ class PrescriptionWebApiTest(unittest.TestCase):
                 "birth_date": "1990-01-01",
                 "sex": "female",
                 "pregnancy_status": "not_pregnant",
+                "lactation_status": "not_breastfeeding",
             },
         )
         self.assertEqual(person_response.status_code, 201)
@@ -120,7 +121,9 @@ class PrescriptionWebApiTest(unittest.TestCase):
         self.assertIn(first.status_code, (200, 201))
         self.assertIn(second.status_code, (200, 201))
         self.assertEqual(first.json()["id"], second.json()["id"])
-        medications = self.client.get(f"/api/people/{self.person['id']}/dashboard").json()["medications"]
+        medications = self.client.get(
+            f"/api/people/{self.person['id']}/dashboard", params={"date": "2026-08-10"}
+        ).json()["medications"]
         self.assertEqual(len(medications), 1)
 
     def test_patch_uses_expected_revision_and_requires_warning_acknowledgement(self) -> None:
@@ -218,7 +221,7 @@ class PrescriptionWebApiTest(unittest.TestCase):
         )
         self.assertEqual(
             {dose["scheduled_time"] for dose in refreshed["doses"] if dose["status"] == "planned"},
-            {"09:00", "21:00"},
+            {"21:00"},
         )
 
     def test_completed_dose_can_be_canceled_back_to_planned(self) -> None:

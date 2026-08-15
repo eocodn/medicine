@@ -2,6 +2,7 @@ const state = {
   people: [],
   currentPersonId: localStorage.getItem("medicine.currentPersonId"),
   dashboard: null,
+  dashboardDate: null,
   fullCatalog: false,
   pendingProduct: null,
   pendingRequestId: null,
@@ -71,17 +72,6 @@ function toast(message) {
   node._timer = setTimeout(() => node.classList.add("hidden"), 2200);
 }
 
-function openSheet(selector) {
-  $("#sheet-backdrop").classList.remove("hidden");
-  $(selector).classList.remove("hidden");
-}
-
-function closeSheets() {
-  $("#sheet-backdrop").classList.add("hidden");
-  $$(".bottom-sheet").forEach((node) => node.classList.add("hidden"));
-  return true;
-}
-
 function showScreen(name) {
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
   $$(".nav-item").forEach((node) => node.classList.toggle("active", node.dataset.nav === name));
@@ -147,6 +137,7 @@ async function loadHealth() {
 async function loadDashboard() {
   if (!state.currentPersonId) return;
   state.dashboard = await api(`/api/people/${state.currentPersonId}/dashboard`);
+  state.dashboardDate = state.dashboard?.daily_plan?.date || todayInKorea();
 }
 
 function renderAll() {
@@ -178,7 +169,7 @@ function renderHome() {
 
   root.innerHTML = `
     <div class="hero-card">
-      <p class="eyebrow">${escapeHtml(new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" }))}</p>
+      <p class="eyebrow">${escapeHtml(new Date().toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "long", day: "numeric", weekday: "short" }))}</p>
       <h2>${escapeHtml(person.name)}님의<br>복약을 챙겨볼게요.</h2>
       <p class="muted">현재 복용약 ${meds.length}개 · ${escapeHtml(profileMeta(person))}</p>
     </div>
@@ -213,7 +204,7 @@ function scheduleHtml(item) {
       ${item.status === "taken"
         ? `<button class="mini-action" data-instance-cancel="${item.id}" type="button">취소</button>`
         : item.status === "skipped"
-          ? `<span class="dose-status skipped">건너뜀</span>`
+          ? `<div class="dose-actions"><span class="dose-status skipped">건너뜀</span><button class="mini-action" data-instance-cancel="${item.id}" type="button">되돌리기</button></div>`
           : `<div class="dose-actions">
               <button class="mini-action" data-instance-taken="${item.id}" type="button">사용했어요</button>
               <button class="mini-action skip-action" data-instance-skipped="${item.id}" type="button">건너뛰기</button>
@@ -231,13 +222,15 @@ function renderMedications() {
     <article class="card med-card">
       <div class="med-row">
         <div><p class="eyebrow">${escapeHtml(med.ingredient_name || "MEDICINE")}</p><h3>${escapeHtml(med.product_name)}</h3></div>
-        ${med.dur_alert ? `<button class="dur-alert-badge" data-dur-alert="${med.id}" type="button" aria-label="현재 DUR 주의 항목 보기" title="현재 DUR 주의 항목 보기">!</button>` : ""}
+        ${med.dur_alert ? `<button class="dur-alert-badge" data-dur-alert="${med.id}" type="button" aria-label="현재 DUR 주의 항목 보기" title="현재 DUR 주의 항목 보기">!</button>` : med.dur_review_required ? `<button class="dur-review-badge" data-dur-alert="${med.id}" type="button" aria-label="확인이 필요한 DUR 항목 보기" title="확인이 필요한 DUR 항목 보기">?</button>` : ""}
       </div>
       ${medicationCourseHtml(med.course_progress)}
       <div class="med-meta">
         ${med.dosage_text ? `<span class="chip">한 번에 ${escapeHtml(formatDoseText(med.dosage_text))}</span>` : ""}
         ${med.frequency_per_day ? `<span class="chip">하루 ${escapeHtml(med.frequency_per_day)}회</span>` : ""}
         ${med.as_needed ? `<span class="chip prn-chip">필요할 때 복용</span>` : ""}
+        ${med.prn_max_per_day ? `<span class="chip">1일 최대 ${escapeHtml(med.prn_max_per_day)}회</span>` : ""}
+        ${med.long_term ? `<span class="chip">장기복용 · 종료일 없음</span>` : ""}
         ${med.meal_relation && med.meal_relation !== "unspecified" ? `<span class="chip">${escapeHtml(mealRelationLabel(med.meal_relation))}</span>` : ""}
         ${med.administration_route ? `<span class="chip">${escapeHtml(routeLabel(med.administration_route))}</span>` : ""}
         ${med.prescription_days && !med.course_progress ? `<span class="chip">${escapeHtml(med.prescription_days)}일 복용</span>` : ""}
@@ -245,6 +238,7 @@ function renderMedications() {
         ${med.source === "manual" ? `<span class="chip caution-chip">직접 입력 · DUR 제한</span>` : ""}
       </div>
       <div class="med-actions">
+        ${med.as_needed ? `<button class="primary-button" data-prn-taken="${med.id}" type="button">지금 복용 기록</button>` : ""}
         <button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>
         <button class="danger-ghost" data-stop="${med.id}" type="button">삭제</button>
       </div>
@@ -255,11 +249,14 @@ function renderMedications() {
       <span class="history-icon">${log.status === "taken" ? "✓" : "–"}</span>
       <div><strong>${escapeHtml(log.product_name)}</strong><div class="history-time">${escapeHtml(log.status === "taken" ? "사용 완료" : "건너뜀")}</div></div>
       <span class="history-time">${escapeHtml(formatTime(log.occurred_at))}</span>
+      ${log.dose_instance_id ? `<button class="mini-action" data-log-cancel="${escapeHtml(log.dose_instance_id)}" type="button">되돌리기</button>` : ""}
     </div>`).join("") : `<div class="empty-state"><strong>기록이 아직 없어요</strong>약을 복용한 뒤 완료 버튼을 눌러보세요.</div>`;
 
   $$('[data-dur-alert]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.durAlert)));
+  $$('[data-prn-taken]', medsRoot).forEach((button) => button.addEventListener("click", () => recordPrnIntake(button.dataset.prnTaken)));
   $$('[data-edit]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.edit)));
   $$('[data-stop]', medsRoot).forEach((button) => button.addEventListener("click", () => stopMedication(button.dataset.stop)));
+  $$('[data-log-cancel]', historyRoot).forEach((button) => button.addEventListener("click", () => cancelDoseInstance(button.dataset.logCancel)));
 }
 
 async function completeDoseInstance(instanceId, status) {
@@ -315,7 +312,7 @@ async function runDrugSearch() {
           <div class="result-copy">
             <div class="result-title-line"><strong>${escapeHtml(item.product_name)}</strong><span class="permit-badge ${escapeHtml(item.permit_status)}">${escapeHtml(permitStatusLabel(item.permit_status, item.permit_status_name))}</span></div>
             <span>${escapeHtml(item.ingredient_name || "성분 정보 없음")}${item.manufacturer ? ` · ${escapeHtml(item.manufacturer)}` : ""}</span>
-            <span>${item.dur_match ? "DUR 자동 확인 가능" : "DUR 자동 확인 일부 제한"}${item.cancel_date ? ` · 허가 상태 변경일 ${escapeHtml(item.cancel_date)}` : ""}</span>
+            <span>${item.dur_coverage_status === "partial" ? "DUR 일부 기준 확인 필요" : item.dur_coverage_status === "complete" ? "DUR 자동 확인 가능" : "DUR 자동 확인 일부 제한"}${item.cancel_date ? ` · 허가 상태 변경일 ${escapeHtml(item.cancel_date)}` : ""}</span>
           </div>
           <span class="add-button" aria-hidden="true">추가</span>
         </div>
@@ -365,6 +362,7 @@ function renderRiskSheet(preview, medication = null) {
   const conditionalCount = durChecks.filter((item) => item.status === "conditional").length;
   const unknownCount = durChecks.filter((item) => item.status === "unknown").length;
   const clearDurCoverage = hasClearDurCoverage(preview);
+  const permitBlocked = !medication && preview.product.permit_status && preview.product.permit_status !== "active";
   const statusHeading = medication
     ? "처방 정보를 수정합니다"
     : hitCount
@@ -379,13 +377,13 @@ function renderRiskSheet(preview, medication = null) {
   root.innerHTML = `
     <div class="sheet-header">
       <div><p class="eyebrow">DUR CHECK</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>
-      <button class="icon-button" data-close-sheet type="button">×</button>
+      <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
     </div>
     <div class="risk-summary">
       <h2>${statusHeading}</h2>
       <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필, 현재 복용약 ${preview.current_medication_count}개와 중단 이력을 기준으로 확인했습니다.</p>
     </div>
-    ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 허가 상태와 실제 보유·유통 여부는 별개일 수 있어요.</div>` : ""}
+    ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 현재 허가가 유효하지 않아 복용약으로 추가할 수 없습니다.</div>` : ""}
     <div>${durStatusHtml(durChecks)}</div>
     <div class="coverage-note"><strong>DUR 자동 확인에 포함되지 않는 정보</strong><br>알레르기, 신장·간 기능, 체중·적응증, 등록하지 않은 일반약·건강기능식품은 현재 판정에 반영하지 않습니다.</div>
     ${!medication && (preview.product.suggested_administration_route || "unknown") === "unknown" ? `<div class="coverage-note limited"><strong>투여 경로를 확인해주세요</strong><br>제품 제형만으로 사용 방법을 확정하지 못했습니다. 처방전의 투여 경로를 확인해 선택해주세요.</div>` : ""}
@@ -398,6 +396,7 @@ function renderRiskSheet(preview, medication = null) {
         <label>1일 횟수<input id="pending-frequency" type="number" min="1" max="24" placeholder="3"></label>
         <label>처방 일수<input id="pending-days" type="number" min="1" max="3650" placeholder="7"></label>
       </div>
+      <label class="checkbox-row"><input id="pending-long-term" type="checkbox"><span><strong>장기복용 · 종료일 없음</strong><small>처방 종료일이 없는 경우에만 선택하세요.</small></span></label>
       <label>복용 시간<input id="pending-times" placeholder="예: 08:00, 13:00, 19:00"></label>
       <div class="form-grid two">
         <label>식사 관계
@@ -425,12 +424,13 @@ function renderRiskSheet(preview, medication = null) {
         </label>
       </div>
       <label>복용 시작일<input id="pending-start-date" type="date"></label>
-      <label class="checkbox-row"><input id="pending-prn" type="checkbox"><span><strong>필요할 때만 복용</strong><small>정해진 오늘 일정에는 넣지 않아요.</small></span></label>
+      <label class="checkbox-row"><input id="pending-prn" type="checkbox"><span><strong>필요할 때만 복용</strong><small>고정 복용시간과 함께 사용할 수 없어요.</small></span></label>
+      <label>필요시 1일 최대 횟수<input id="pending-prn-max" type="number" min="1" max="24" placeholder="선택"></label>
     </div>
     <div id="quantitative-warning"></div>
     <div class="risk-actions">
       <button class="secondary-button" data-close-sheet type="button">취소</button>
-      <button class="primary-button" id="${medication ? "confirm-edit-med" : "confirm-add-med"}" type="button">${medication ? "수정 내용 저장" : "복용약에 추가"}</button>
+      <button class="primary-button" id="${medication ? "confirm-edit-med" : "confirm-add-med"}" type="button" ${permitBlocked ? "disabled" : ""}>${medication ? "수정 내용 저장" : permitBlocked ? "추가할 수 없는 품목" : "복용약에 추가"}</button>
     </div>
     <p class="risk-disclaimer">DUR 금기·주의는 의료진 확인을 위한 안전 신호입니다. 결과를 근거로 처방약을 임의 중단하거나 변경하지 마세요.</p>`;
   $$('[data-close-sheet]', root).forEach((button) => button.addEventListener("click", closeSheets));
@@ -439,17 +439,23 @@ function renderRiskSheet(preview, medication = null) {
     $("#pending-dose-unit", root).value = medication.dose_unit ?? "";
     $("#pending-frequency", root).value = medication.frequency_per_day ?? "";
     $("#pending-days", root).value = medication.prescription_days ?? "";
+    $("#pending-long-term", root).checked = Boolean(medication.long_term);
     $("#pending-times", root).value = (medication.schedules || []).map((item) => item.time_of_day).join(", ");
     $("#pending-meal", root).value = medication.meal_relation || "unspecified";
     $("#pending-route", root).value = medication.administration_route || "unknown";
     $("#pending-start-date", root).value = medication.start_date || "";
     $("#pending-prn", root).checked = Boolean(medication.as_needed);
+    $("#pending-prn-max", root).value = medication.prn_max_per_day ?? "";
     $("#confirm-edit-med", root).addEventListener("click", confirmEditMedication);
   } else {
     $("#pending-route", root).value = preview.product.suggested_administration_route || "unknown";
     $("#pending-start-date", root).value = todayInKorea();
     $("#confirm-add-med", root).addEventListener("click", confirmAddMedication);
   }
+  $("#pending-prn", root).addEventListener("change", () => syncPrnFields(root));
+  $("#pending-long-term", root).addEventListener("change", () => syncLongTermFields(root));
+  syncPrnFields(root);
+  syncLongTermFields(root);
 }
 
 function openMedicationEdit(medicationId) {
@@ -467,6 +473,7 @@ function openMedicationEdit(medicationId) {
     product: { product_name: medication.product_name }, person: currentPerson(),
     current_medication_count: Math.max((state.dashboard?.medications || []).length - 1, 0),
     risks: currentAssessment.risks || [],
+    review_items: currentAssessment.review_items || [],
     dur_checks: currentAssessment.dur_checks || [],
     coverage: currentAssessment.coverage || null,
     quantitative_checks: {
@@ -539,6 +546,15 @@ async function confirmAddMedication() {
   }
 }
 
+async function refreshForDateChange() {
+  if (!state.currentPersonId || document.visibilityState === "hidden") return;
+  if (state.dashboardDate === todayInKorea()) return;
+  try {
+    await loadDashboard();
+    renderAll();
+  } catch (error) { console.error("date rollover refresh failed", error); }
+}
+
 function bindEvents() {
   $$("[data-nav]").forEach((button) => button.addEventListener("click", () => showScreen(button.dataset.nav)));
   $$("[data-go]").forEach((button) => button.addEventListener("click", () => showScreen(button.dataset.go)));
@@ -550,6 +566,9 @@ function bindEvents() {
     state.searchTimer = setTimeout(runDrugSearch, 280);
   });
   $("#include-inactive").addEventListener("change", runDrugSearch);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });
+  window.addEventListener("focus", refreshForDateChange);
+  setInterval(refreshForDateChange, 60000);
 }
 
 document.addEventListener("DOMContentLoaded", async () => {

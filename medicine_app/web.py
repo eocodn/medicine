@@ -42,7 +42,9 @@ class MedicationPreviewRequest(BaseModel):
     meal_relation: str = "unspecified"
     administration_route: str = "unknown"
     as_needed: bool = False
+    prn_max_per_day: int | None = None
     prescription_days: int | None = None
+    long_term: bool = False
     schedule_times: list[str] = Field(default_factory=list)
     start_date: str | None = None
     end_date: str | None = None
@@ -61,7 +63,9 @@ class MedicationCreate(BaseModel):
     meal_relation: str = "unspecified"
     administration_route: str = "unknown"
     as_needed: bool = False
+    prn_max_per_day: int | None = None
     prescription_days: int | None = None
+    long_term: bool = False
     schedule_times: list[str] = Field(default_factory=list)
     start_date: str | None = None
     end_date: str | None = None
@@ -79,7 +83,9 @@ class MedicationUpdate(BaseModel):
     meal_relation: str | None = None
     administration_route: str | None = None
     as_needed: bool | None = None
+    prn_max_per_day: int | None = None
     prescription_days: int | None = None
+    long_term: bool | None = None
     schedule_times: list[str] | None = None
     start_date: str | None = None
     end_date: str | None = None
@@ -89,6 +95,11 @@ class MedicationUpdate(BaseModel):
 
 class DoseInstanceUpdate(BaseModel):
     status: str
+    occurred_at: str | None = None
+    note: str | None = None
+
+
+class PrnIntakeCreate(BaseModel):
     occurred_at: str | None = None
     note: str | None = None
 
@@ -231,6 +242,13 @@ def create_web_app(
             )
         except ConfirmationRequired as exc:
             return _confirmation_response(exc)
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @app.post("/api/medications/{medication_id}/prn-intakes", status_code=201)
+    def record_prn_intake(medication_id: str, payload: PrnIntakeCreate) -> dict:
+        try:
+            return service.record_prn_dose(medication_id, payload.occurred_at, payload.note)
         except Exception as exc:
             raise _translate_error(exc) from exc
 

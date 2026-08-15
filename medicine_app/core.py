@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Iterator
 
 from .persistence import ensure_personal_schema
+from .medication_policy import (
+    dur_review_required, medication_update_values, require_active_permit, resolve_product,
+)
 from .planning import (
     cancel_instance_completion,
     clock_sort_key,
@@ -17,7 +20,8 @@ from .planning import (
     record_instance,
     sort_medications_by_time,
 )
-from .prescriptions import draft_hash, normalize_draft
+from .prescriptions import draft_hash, normalize_draft, require_explicit_course_bound
+from .prn import record_prn_intake
 from .products import ProductRepository
 from .assessment import (
     assess_current_medication,
@@ -179,7 +183,9 @@ class MedicationApp:
         meal_relation: str = "unspecified",
         administration_route: str = "unknown",
         as_needed: bool = False,
+        prn_max_per_day: int | None = None,
         prescription_days: int | None = None,
+        long_term: bool = False,
         schedule_times: list[str] | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
@@ -192,9 +198,12 @@ class MedicationApp:
             dosage_text=dosage_text, dose_amount=dose_amount, dose_unit=dose_unit,
             frequency_per_day=frequency_per_day, meal_relation=meal_relation,
             administration_route=administration_route, as_needed=as_needed,
-            prescription_days=prescription_days, schedule_times=schedule_times,
+            prn_max_per_day=prn_max_per_day, prescription_days=prescription_days,
+            long_term=long_term, schedule_times=schedule_times,
             start_date=start_date, end_date=end_date,
         ))
+        require_active_permit(product)
+        require_explicit_course_bound(draft)
         payload_hash = draft_hash(person_id, product, draft)
         request_id = (request_id or "").strip() or None
         with self._personal(write_lock=True) as con:
@@ -219,9 +228,9 @@ class MedicationApp:
                 INSERT INTO medications(
                     id,person_id,catalog_item_seq,product_code,product_name,ingredient_code,ingredient_name,
                     manufacturer,catalog_source,dosage_text,dose_amount,dose_unit,frequency_per_day,
-                    meal_relation,administration_route,as_needed,prescription_days,
+                    meal_relation,administration_route,as_needed,prn_max_per_day,prescription_days,long_term,
                     start_date,end_date,active,source,revision
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,1)
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,1)
                 """,
                 (
                     medication_id, person_id, product["catalog_item_seq"], product["product_code"],
@@ -229,7 +238,8 @@ class MedicationApp:
                     product.get("manufacturer"), product["catalog_source"], draft["dosage_text"],
                     draft["dose_amount"], draft["dose_unit"], draft["frequency_per_day"],
                     draft["meal_relation"], draft["administration_route"], int(draft["as_needed"]),
-                    draft["prescription_days"], draft["start_date"], draft["end_date"], product["med_source"],
+                    draft["prn_max_per_day"], draft["prescription_days"], int(draft["long_term"]),
+                    draft["start_date"], draft["end_date"], product["med_source"],
                 ),
             )
             self._replace_schedules(con, medication_id, draft["schedule_times"], draft["dosage_text"])
@@ -248,18 +258,7 @@ class MedicationApp:
     def _resolve_product(
         self, resolved_ref: str | None, manual_name: str | None, ingredient_name: str | None
     ) -> dict:
-        if resolved_ref:
-            product = self.get_product(resolved_ref)
-            return {**product, "med_source": "catalog_search"}
-        name = (manual_name or "").strip()
-        if not name:
-            raise ValueError("product_ref, product_code or manual_name is required")
-        return {
-            "product_ref": None, "catalog_item_seq": None, "product_code": None,
-            "product_name": name, "ingredient_code": None, "ingredient_name": ingredient_name,
-            "manufacturer": None, "dosage_form": None, "catalog_source": "manual",
-            "dur_match": False, "med_source": "manual",
-        }
+        return resolve_product(self.products, resolved_ref, manual_name, ingredient_name)
 
 
     def get_medication(self, medication_id: str) -> dict:
@@ -279,6 +278,7 @@ class MedicationApp:
         data = dict(row)
         data["active"] = bool(data["active"])
         data["as_needed"] = bool(data.get("as_needed") or 0)
+        data["long_term"] = bool(data.get("long_term") or 0)
         data["meal_relation"] = data.get("meal_relation") or "unspecified"
         data["administration_route"] = data.get("administration_route") or "unknown"
         data["schedules"] = [dict(item) for item in schedules]
@@ -333,11 +333,18 @@ class MedicationApp:
             medications = self._list_medications_from_connection(
                 con, person_id, active_only=active_only
             )
+            if active_only:
+                medications = [
+                    medication for medication in medications
+                    if not medication.get("end_date") or date.fromisoformat(medication["end_date"]) >= target
+                ]
             if include_current_assessment:
                 for medication in medications:
                     if not medication.get("active"):
                         medication["current_assessment"] = None
                         medication["dur_alert"] = False
+                        medication["dur_review_required"] = False
+                        medication["review_required"] = False
                         continue
                     current_assessment = assess_current_medication(
                         self,
@@ -348,6 +355,8 @@ class MedicationApp:
                     )
                     medication["current_assessment"] = current_assessment
                     medication["dur_alert"] = has_dur_alert(current_assessment)
+                    medication["dur_review_required"] = dur_review_required(current_assessment)
+                    medication["review_required"] = bool(current_assessment.get("requires_review"))
         return sort_medications_by_time(medications, target)
 
     def get_daily_plan(self, person_id: str, target_date: str | date | None = None) -> dict:
@@ -381,6 +390,11 @@ class MedicationApp:
         with self._personal() as con:
             return record_instance(con, instance_id, status, when, note, _uuid)
 
+    def record_prn_dose(
+        self, medication_id: str, occurred_at: str | None = None, note: str | None = None
+    ) -> dict:
+        return record_prn_intake(self, medication_id, occurred_at, note, _uuid)
+
     def cancel_dose_instance(self, instance_id: str) -> dict:
         with self._personal() as con:
             return cancel_instance_completion(con, instance_id)
@@ -402,8 +416,8 @@ class MedicationApp:
         )
         allowed = {
             "dosage_text", "dose_amount", "dose_unit", "frequency_per_day", "meal_relation",
-            "administration_route", "as_needed", "prescription_days", "schedule_times",
-            "start_date", "end_date",
+            "administration_route", "as_needed", "prn_max_per_day", "prescription_days", "long_term",
+            "schedule_times", "start_date", "end_date",
         }
         unknown = set(changes) - allowed
         if unknown:
@@ -414,21 +428,9 @@ class MedicationApp:
                 raise RevisionConflict(
                     f"expected revision {expected_revision}, current revision is {current['revision']}"
                 )
-            values = {
-                "dosage_text": current.get("dosage_text"), "dose_amount": current.get("dose_amount"),
-                "dose_unit": current.get("dose_unit"), "frequency_per_day": current.get("frequency_per_day"),
-                "meal_relation": current.get("meal_relation"),
-                "administration_route": current.get("administration_route"),
-                "as_needed": current.get("as_needed"), "prescription_days": current.get("prescription_days"),
-                "schedule_times": [item["time_of_day"] for item in current["schedules"]],
-                "start_date": current.get("start_date"), "end_date": current.get("end_date"),
-            }
-            values.update(changes)
-            if "schedule_times" in changes and "frequency_per_day" not in changes:
-                values["frequency_per_day"] = None
-            if ("prescription_days" in changes or "start_date" in changes) and "end_date" not in changes:
-                values["end_date"] = None
+            values = medication_update_values(current, changes)
             draft = normalize_draft(values)
+            require_explicit_course_bound(draft)
             payload_hash = draft_hash(current["person_id"], product, draft)
             person = self._get_person_from_connection(con, current["person_id"])
             assessment = assess_medication(
@@ -444,15 +446,16 @@ class MedicationApp:
             result = con.execute(
                 """
                 UPDATE medications SET dosage_text=?,dose_amount=?,dose_unit=?,frequency_per_day=?,
-                    meal_relation=?,administration_route=?,as_needed=?,prescription_days=?,
+                    meal_relation=?,administration_route=?,as_needed=?,prn_max_per_day=?,prescription_days=?,long_term=?,
                     start_date=?,end_date=?,revision=?,updated_at=CURRENT_TIMESTAMP
                 WHERE id=? AND revision=?
                 """,
                 (
                     draft["dosage_text"], draft["dose_amount"], draft["dose_unit"],
                     draft["frequency_per_day"], draft["meal_relation"], draft["administration_route"],
-                    int(draft["as_needed"]), draft["prescription_days"], draft["start_date"],
-                    draft["end_date"], next_revision, medication_id, expected_revision,
+                    int(draft["as_needed"]), draft["prn_max_per_day"], draft["prescription_days"],
+                    int(draft["long_term"]), draft["start_date"], draft["end_date"],
+                    next_revision, medication_id, expected_revision,
                 ),
             )
             if result.rowcount != 1:
@@ -528,6 +531,7 @@ class MedicationApp:
             "person": person, "product": product, "draft": draft,
             "current_medication_count": current_count,
             "risks": assessment["risks"],
+            "review_items": assessment.get("review_items") or [],
             "dur_checks": assessment["dur_checks"],
             "quantitative_checks": {
                 "duration": assessment["duration"], "dose": assessment["dose"]
