@@ -49,6 +49,21 @@ class FineTuneProjectContractTest(unittest.TestCase):
         self.assertEqual(result["best_epoch"], 2)
         self.assertGreater(result["best_test"]["acc"], result["pretrained_test"]["acc"])
 
+    def test_recorded_source_learning_curve_uses_one_scale_stable_holdout(self) -> None:
+        result = json.loads(
+            (FINETUNE / "results" / "synth-v5-source-learning-curve.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(result["chronicle"], 112)
+        self.assertEqual(result["holdout_axis"], "source_family")
+        self.assertEqual(result["assignment"], "stable_family_hash_v1")
+        self.assertEqual(result["held_out_families"]["test"], ["synthetic-source-04", "synthetic-source-12"])
+        self.assertFalse(result["real_data_evaluated"])
+        points = result["points"]
+        self.assertEqual([point["crop_count"] for point in points], [5000, 20000])
+        self.assertGreater(points[1]["best_test"]["acc"], points[0]["best_test"]["acc"])
+        self.assertGreater(points[1]["slices"]["semantic"]["product"], points[0]["slices"]["semantic"]["product"])
+        self.assertGreater(points[1]["slices"]["risk"]["mixed_script"], points[0]["slices"]["risk"]["mixed_script"])
+
     def test_dataset_schema_forbids_patient_data(self) -> None:
         schema = json.loads((FINETUNE / "dataset.schema.json").read_text(encoding="utf-8"))
         self.assertEqual(schema["properties"]["patient_data_policy"]["const"], "forbid")

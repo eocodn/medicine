@@ -1,0 +1,181 @@
+{
+  "assignment": "stable_family_hash_v1",
+  "chronicle": 112,
+  "experiment_id": "synth-v5-source-learning-curve-stable-v1",
+  "held_out_families": {
+    "test": [
+      "synthetic-source-04",
+      "synthetic-source-12"
+    ],
+    "train": [
+      "synthetic-source-00",
+      "synthetic-source-01",
+      "synthetic-source-02",
+      "synthetic-source-03",
+      "synthetic-source-05",
+      "synthetic-source-06",
+      "synthetic-source-07",
+      "synthetic-source-08",
+      "synthetic-source-10",
+      "synthetic-source-11",
+      "synthetic-source-14",
+      "synthetic-source-15",
+      "synthetic-source-16"
+    ],
+    "val": [
+      "synthetic-source-09",
+      "synthetic-source-13"
+    ]
+  },
+  "holdout_axis": "source_family",
+  "limitations": [
+    "Synthetic recognition crops only; no real de-identified prescription or medication-bag photos were evaluated.",
+    "This measures recognition on a scale-stable unseen-source holdout, not end-to-end medication extraction safety.",
+    "A 50k point is required before deciding whether scaling toward 200k still provides material benefit."
+  ],
+  "observed_5k_to_20k": {
+    "absolute_acc_gain": 0.007674710371533555,
+    "next_learning_curve_crop_count": 50000,
+    "relative_exact_error_reduction": 0.691819343284478
+  },
+  "points": [
+    {
+      "best_checkpoint_sha256": "33d21486317d8abfebea806c60cc09dbca4098fd1d5e94b9a4c2e9d2967d0455",
+      "best_test": {
+        "acc": 0.9889064819507689,
+        "fps": 630.0009935836018,
+        "norm_edit_dis": 0.9991882736960552
+      },
+      "best_validation": {
+        "acc": 0.9926334992148528,
+        "epoch": 3,
+        "norm_edit_dis": 0.9996202046341841
+      },
+      "counts": {
+        "test": 631,
+        "train": 3826,
+        "val": 543
+      },
+      "crop_count": 5000,
+      "dataset_fingerprint": "2cf09d497e4cfc28523b9cab4f7fb1bf8aaaaaba0e27bb1bfc3b183e1e970585",
+      "dataset_id": "medicine-synth-rec-v1-s112-n5000",
+      "delta": {
+        "acc": 0.3787638608753746,
+        "norm_edit_dis": 0.039088348421054464
+      },
+      "final_epoch_checkpoint_sha256": "f2124e85f30c8ae0e98d9f4328ba67c0ed5c71214d5e027bd0041c7cb11a90a2",
+      "label_sha256": {
+        "test": "4aa334289e04c174fe26fecebed604fe9d31519d2d4cf5891737ffdd1c78d0b3",
+        "train": "9c95c3804d25cb98b937f4c29081a90bc43ef24aefee2d54429648f891b618d6",
+        "val": "8af4f4dec11c4129c24b88e387456bce3973f941ba3802292d446214fde0937f"
+      },
+      "pretrained_test": {
+        "acc": 0.6101426210753943,
+        "fps": 425.0196440673067,
+        "norm_edit_dis": 0.9600999252750008
+      },
+      "slices": {
+        "risk": {
+          "ambiguous_range": 0.9999998809523951,
+          "decimal": 0.9999998333333611,
+          "exact_numeric": 0.9909420110336593,
+          "fraction": 0.9999997777778271,
+          "hard_negative": 0.9946807981552767,
+          "low_contrast": 0.9767440724716194,
+          "mixed_script": 0.9718309174766959,
+          "plastic_reflection": 0.9999997959184089,
+          "rotation": 0.9791664626736536,
+          "small_print": 0.9915253397012423
+        },
+        "semantic": {
+          "clinic_hours": 0.9999997674419144,
+          "date": 0.9999998113207903,
+          "dose": 0.9892472586426205,
+          "duration": 0.9999997560976204,
+          "frequency": 0.9999997435898093,
+          "identifier": 0.9791664626736536,
+          "phone": 0.9999997727273243,
+          "product": 0.9649122242741389,
+          "schedule": 0.9999997826087429,
+          "strength": 0.9615382766272544
+        }
+      },
+      "split_sha256": "f11e1d6182ed3ecd6b3db14e7dc31dc6a80064b68a15ab0c20e6646b229f6667"
+    },
+    {
+      "best_checkpoint_sha256": "576ee04ffa126923a74e66346e3678d88d092a30938e1925647bbb6ace4aef05",
+      "best_test": {
+        "acc": 0.9965811923223025,
+        "fps": 813.9850684512626,
+        "norm_edit_dis": 0.9996929092193932
+      },
+      "best_validation": {
+        "acc": 0.9969918306962103,
+        "epoch": 6,
+        "norm_edit_dis": 0.9998075372427727
+      },
+      "counts": {
+        "test": 2340,
+        "train": 15333,
+        "val": 2327
+      },
+      "crop_count": 20000,
+      "dataset_fingerprint": "699863b7fbb4ca8d12e3e485057a037a92e0cd201e6f747ee9c7f4e466034e42",
+      "dataset_id": "medicine-synth-rec-v1-s112-n20000",
+      "delta": {
+        "acc": 0.3799145282909635,
+        "norm_edit_dis": 0.0395459913836439
+      },
+      "final_epoch_checkpoint_sha256": "fe0db4d03cdf30d89dfe8856cac884507e262fea5e8376e039bd6bcfa8a3febf",
+      "label_sha256": {
+        "test": "a2eef43b80f14f432dffde893091553d120c1d8206051537b29298b16867c676",
+        "train": "1160d73a4427c62de4382e205ba5cefd8c2015881560d6e0bfbe60287af621a1",
+        "val": "2cec617c5d6f142983fdbc7f0d6136f27d82fdfa081194c7749f0900b7604a5c"
+      },
+      "pretrained_test": {
+        "acc": 0.616666664031339,
+        "fps": 791.9085425143256,
+        "norm_edit_dis": 0.9601469178357493
+      },
+      "slices": {
+        "risk": {
+          "ambiguous_range": 0.9999999695121962,
+          "decimal": 0.999999939024394,
+          "exact_numeric": 0.9970178876887779,
+          "fraction": 0.9999999371069221,
+          "hard_negative": 0.997005973098713,
+          "low_contrast": 0.9970237798504828,
+          "mixed_script": 0.9927272546776863,
+          "plastic_reflection": 0.9948453095440561,
+          "rotation": 0.9949999502500024,
+          "small_print": 0.9958333125868061
+        },
+        "semantic": {
+          "clinic_hours": 0.9999999378882026,
+          "date": 0.999999940476194,
+          "dose": 0.9954128288163177,
+          "duration": 0.9999999285714336,
+          "frequency": 0.9999999408284058,
+          "identifier": 0.9888267604007396,
+          "phone": 0.9999999375000039,
+          "product": 0.9913043334593575,
+          "schedule": 0.9999999453551942,
+          "strength": 0.994949444699523
+        }
+      },
+      "split_sha256": "04999ef49a58051b17fee6669c69c9d08a80be476520488a4ebd32060e4dabe5"
+    }
+  ],
+  "real_data_evaluated": false,
+  "recognizer": "korean_PP-OCRv5_mobile_rec",
+  "schema_version": 1,
+  "seed": 112,
+  "training_profile": {
+    "batch_size": 32,
+    "epochs": 10,
+    "learning_rate": 0.0001,
+    "pretrained_model_sha256": "8975dede5e0c2f47e0a7712b3d79ffdc766972f872fd0441ebcccd9d77cd52a3",
+    "upstream_commit": "b03f46425e8ff4442b268ce449e3eef758146cd4",
+    "warmup_epochs": 1
+  }
+}
