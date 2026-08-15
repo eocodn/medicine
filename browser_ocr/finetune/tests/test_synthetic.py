@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image
 
 from browser_ocr.finetune.dataset import dataset_stats, load_dataset
-from browser_ocr.finetune.synthetic import GenerationError, generate_dataset
+from browser_ocr.finetune.synthetic import GenerationError, generate_dataset, synthetic_assignments
 
 
 class SyntheticDatasetTest(unittest.TestCase):
@@ -125,6 +125,30 @@ class SyntheticDatasetTest(unittest.TestCase):
 
             with self.assertRaisesRegex(GenerationError, "configuration"):
                 generate_dataset(canonical, output, count=41, seed=7, font_path=self.font_path())
+
+    def test_holdout_family_assignments_do_not_drop_text_or_capture_strata(self) -> None:
+        assignments = [synthetic_assignments(seed=112, index=index) for index in range(5000)]
+        for family_key in ("layout_family", "source_family"):
+            by_family: dict[str, list[dict[str, object]]] = {}
+            for assignment in assignments:
+                by_family.setdefault(str(assignment[family_key]), []).append(assignment)
+            self.assertGreaterEqual(len(by_family), 17)
+            for family, rows in by_family.items():
+                self.assertEqual(
+                    {int(row["text_case"]) for row in rows},
+                    set(range(14)),
+                    f"{family_key}={family} is missing text cases",
+                )
+                observed_capture_tags = {
+                    tag
+                    for row in rows
+                    for tag in row["capture_tags"]
+                }
+                self.assertEqual(
+                    observed_capture_tags,
+                    {"small_print", "low_contrast", "rotation", "plastic_reflection"},
+                    f"{family_key}={family} is missing capture strata",
+                )
 
 
 if __name__ == "__main__":

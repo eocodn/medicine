@@ -22,7 +22,7 @@ class GenerationError(DatasetError):
     pass
 
 
-_GENERATOR_VERSION = "2"
+_GENERATOR_VERSION = "3"
 _LICENSE_ID = "data-go-kr-unrestricted-use"
 _MAX_PRODUCT_LENGTH = 18
 _SOURCE_DATASET_KEY = "mfds_permit:products"
@@ -118,16 +118,59 @@ def load_product_lexicon(canonical_db: str | Path) -> tuple[tuple[Product, ...],
 
 
 def _index_rng(seed: int, index: int) -> random.Random:
-    material = hashlib.sha256(f"medicine-ocr-synthetic-v1\0{seed}\0{index}".encode()).digest()
+    material = hashlib.sha256(f"medicine-ocr-synthetic-v3\0content\0{seed}\0{index}".encode()).digest()
     return random.Random(int.from_bytes(material[:8], "big"))
+
+
+def _assignment_bucket(*, seed: int, index: int, namespace: str, buckets: int) -> int:
+    material = hashlib.sha256(
+        f"medicine-ocr-synthetic-v3\0assignment\0{namespace}\0{seed}\0{index}".encode()
+    ).digest()
+    return int.from_bytes(material[:8], "big") % buckets
+
+
+def synthetic_assignments(*, seed: int, index: int) -> dict[str, object]:
+    """Return deterministic, independently keyed experimental assignments.
+
+    The namespace separation is intentional: holdout family, semantic case, document
+    type, and capture artifacts must not share an index-period relationship. Otherwise
+    a held-out layout/source can accidentally become a proxy for a particular label or
+    image-degradation stratum and invalidate the generalization experiment.
+    """
+    capture_tags = [
+        tag
+        for tag, denominator in (
+            ("small_print", 5),
+            ("low_contrast", 7),
+            ("rotation", 11),
+            ("plastic_reflection", 13),
+        )
+        if _assignment_bucket(
+            seed=seed,
+            index=index,
+            namespace=f"capture:{tag}",
+            buckets=denominator,
+        ) == 0
+    ]
+    text_case_offset = _assignment_bucket(seed=seed, index=0, namespace="text-case-offset", buckets=14)
+    return {
+        "text_case": (index + text_case_offset) % 14,
+        "document_type": (
+            "prescription"
+            if _assignment_bucket(seed=seed, index=index, namespace="document-type", buckets=2) == 0
+            else "medication_bag"
+        ),
+        "layout_family": f"layout-{_assignment_bucket(seed=seed, index=index, namespace='layout', buckets=24):02d}",
+        "source_family": f"synthetic-source-{_assignment_bucket(seed=seed, index=index, namespace='source', buckets=17):02d}",
+        "capture_tags": capture_tags,
+    }
 
 
 def _slug_hash(value: str, length: int = 12) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:length]
 
 
-def _text_case(index: int, product: Product, rng: random.Random) -> tuple[str, list[str], list[str]]:
-    case = index % 14
+def _text_case(case: int, product: Product, rng: random.Random) -> tuple[str, list[str], list[str]]:
     if case == 0:
         return product.product_name, ["product"], []
     if case == 1:
@@ -161,21 +204,15 @@ def _text_case(index: int, product: Product, rng: random.Random) -> tuple[str, l
     return "1~2정 복용", ["dose"], ["exact_numeric", "ambiguous_range"]
 
 
-def _capture_tags(index: int) -> list[str]:
-    tags: list[str] = []
-    if index % 5 == 0:
-        tags.append("small_print")
-    if index % 7 == 0:
-        tags.append("low_contrast")
-    if index % 11 == 0:
-        tags.append("rotation")
-    if index % 13 == 0:
-        tags.append("plastic_reflection")
-    return tags
-
-
-def _render_line(text: str, target: Path, *, font_path: Path, index: int, rng: random.Random) -> None:
-    font_size = 20 if index % 5 == 0 else rng.randrange(24, 35)
+def _render_line(
+    text: str,
+    target: Path,
+    *,
+    font_path: Path,
+    capture_tags: list[str],
+    rng: random.Random,
+) -> None:
+    font_size = 20 if "small_print" in capture_tags else rng.randrange(24, 35)
     font = ImageFont.truetype(str(font_path), font_size)
     probe = Image.new("L", (8, 8), 255)
     draw = ImageDraw.Draw(probe)
@@ -197,19 +234,19 @@ def _render_line(text: str, target: Path, *, font_path: Path, index: int, rng: r
         height = text_height + margin_y * 2
     background = rng.randrange(244, 256)
     foreground = rng.randrange(20, 61)
-    if index % 7 == 0:
+    if "low_contrast" in capture_tags:
         background = rng.randrange(235, 247)
         foreground = rng.randrange(105, 145)
     image = Image.new("L", (max(96, width), max(40, height)), background)
     draw = ImageDraw.Draw(image)
     draw.text((margin_x - left, margin_y - top), text, fill=foreground, font=font)
-    if index % 13 == 0:
+    if "plastic_reflection" in capture_tags:
         stripe_x = max(1, image.width // 3)
         draw.polygon(
             [(stripe_x, 0), (stripe_x + 10, 0), (stripe_x + 40, image.height), (stripe_x + 28, image.height)],
             fill=min(252, background + 7),
         )
-    if index % 11 == 0:
+    if "rotation" in capture_tags:
         angle = rng.choice([-2.0, -1.25, 1.25, 2.0])
         image = image.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=background)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -332,12 +369,14 @@ def generate_dataset(
         with partial_path.open(mode, encoding="utf-8", newline="\n") as samples_file:
             for index in range(completed, count):
                 rng = _index_rng(seed, index)
+                assignment = synthetic_assignments(seed=seed, index=index)
                 product = products[rng.randrange(len(products))]
-                text, semantic_tags, risk_tags = _text_case(index, product, rng)
-                risk_tags = list(dict.fromkeys([*risk_tags, *_capture_tags(index)]))
+                text, semantic_tags, risk_tags = _text_case(int(assignment["text_case"]), product, rng)
+                capture_tags = list(assignment["capture_tags"])
+                risk_tags = list(dict.fromkeys([*risk_tags, *capture_tags]))
                 image_rel = f"images/sample-{index:06d}.png"
                 image_path = output / image_rel
-                _render_line(text, image_path, font_path=font, index=index, rng=rng)
+                _render_line(text, image_path, font_path=font, capture_tags=capture_tags, rng=rng)
                 image_sha = _sha256_file(image_path)
                 sample = {
                     "id": f"sample-{index:06d}",
@@ -345,11 +384,11 @@ def generate_dataset(
                     "image_sha256": image_sha,
                     "text": text,
                     "origin": "synthetic",
-                    "document_type": "prescription" if index % 2 == 0 else "medication_bag",
+                    "document_type": assignment["document_type"],
                     "document_id": f"doc-{index:06d}",
                     "groups": {
-                        "layout_family": f"layout-{index % 24:02d}",
-                        "source_family": f"synthetic-source-{(index * 7) % 17:02d}",
+                        "layout_family": assignment["layout_family"],
+                        "source_family": assignment["source_family"],
                         "drug_family": f"drug-{_slug_hash(product.item_seq)}",
                     },
                     "semantic_tags": semantic_tags,
