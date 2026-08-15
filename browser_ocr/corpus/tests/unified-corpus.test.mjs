@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import test from "node:test";
 
-import { buildDrugCatalog, normalizeDrugName } from "../drug_holdout.mjs";
+import { buildDrugCatalog, buildHistoricalDrugExposure, normalizeDrugName } from "../drug_holdout.mjs";
 import { generateUnifiedCorpus } from "../generator.mjs";
 import { materializeUnifiedViews } from "../materialize.mjs";
 import { validateUnifiedCorpus } from "../contract.mjs";
@@ -21,24 +21,38 @@ function drugCatalog(count = 240) {
   })));
 }
 
+function historicalExposure(catalog) {
+  return buildHistoricalDrugExposure({
+    productNames: catalog.slice(0, Math.floor(catalog.length * 0.7)).map((product) => product.product_name),
+    checkpointSha256: "b".repeat(64),
+    sourceDatasetId: "fixture-selected-recognizer-train",
+    sourceDatasetFingerprint: "c".repeat(64),
+    sourceTrainSplitSha256: "d".repeat(64),
+    sourceTrainSampleCount: 76520,
+  });
+}
+
 test("one document corpus materializes aligned detection recognition parsing and e2e views", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-unified-ocr-"));
   try {
     const corpusRoot = join(root, "corpus");
     const viewsRoot = join(corpusRoot, "views");
+    const catalog = drugCatalog();
     const corpus = await generateUnifiedCorpus({
       outputDir: corpusRoot,
       count: 12,
       seed: 311,
       drugSplitSeed: 161,
-      drugCatalog: drugCatalog(),
+      historicalDrugExposure: historicalExposure(catalog),
+      drugCatalog: catalog,
     });
     validateUnifiedCorpus(corpus);
 
     assert.equal(corpus.schema_version, 3);
     assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
     assert.equal(corpus.generator.version, 5);
-    assert.equal(corpus.drug_name_policy.id, "canonical-product-family-holdout-v1");
+    assert.equal(corpus.drug_name_policy.id, "canonical-product-family-historical-holdout-v2");
+    assert.equal(corpus.drug_name_policy.historical_exposure.id, "selected-recognizer-training-exposure-v1");
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.augmentation_difficulty)), new Set(["clean", "medium", "hard"]));
     assert.ok(corpus.samples.every((sample) => ["train", "val", "test"].includes(sample.split)));
     assert.ok(corpus.samples.every((sample) => sample.drug_name_split === sample.split));
@@ -166,8 +180,9 @@ test("unified sample split is stable as corpus scale grows", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-unified-scale-"));
   try {
     const catalog = drugCatalog();
-    const small = await generateUnifiedCorpus({ outputDir: join(root, "small"), count: 12, seed: 719, drugSplitSeed: 161, drugCatalog: catalog });
-    const large = await generateUnifiedCorpus({ outputDir: join(root, "large"), count: 24, seed: 719, drugSplitSeed: 161, drugCatalog: catalog });
+    const exposure = historicalExposure(catalog);
+    const small = await generateUnifiedCorpus({ outputDir: join(root, "small"), count: 12, seed: 719, drugSplitSeed: 161, historicalDrugExposure: exposure, drugCatalog: catalog });
+    const large = await generateUnifiedCorpus({ outputDir: join(root, "large"), count: 24, seed: 719, drugSplitSeed: 161, historicalDrugExposure: exposure, drugCatalog: catalog });
     const largeByIndex = new Map(large.samples.map((sample) => [sample.sample_index, sample]));
     for (const sample of small.samples) {
       assert.equal(sample.split, largeByIndex.get(sample.sample_index).split);
@@ -191,10 +206,10 @@ test("drug split seed stays stable across different document generation seeds", 
   try {
     const catalog = drugCatalog();
     const first = await generateUnifiedCorpus({
-      outputDir: join(root, "first"), count: 1, seed: 811, drugSplitSeed: 161, drugCatalog: catalog,
+      outputDir: join(root, "first"), count: 1, seed: 811, drugSplitSeed: 161, historicalDrugExposure: historicalExposure(catalog), drugCatalog: catalog,
     });
     const second = await generateUnifiedCorpus({
-      outputDir: join(root, "second"), count: 1, seed: 812, drugSplitSeed: 161, drugCatalog: catalog,
+      outputDir: join(root, "second"), count: 1, seed: 812, drugSplitSeed: 161, historicalDrugExposure: historicalExposure(catalog), drugCatalog: catalog,
     });
     assert.equal(first.drug_name_policy.assignment_seed, 161);
     assert.equal(second.drug_name_policy.assignment_seed, 161);

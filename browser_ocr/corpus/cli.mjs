@@ -6,6 +6,7 @@ import { auditCoverage } from "../detection/coverage.mjs";
 import { validateUnifiedCorpus } from "./contract.mjs";
 import { observedDrugLeakageReport } from "./drug_holdout.mjs";
 import { generateUnifiedCorpus } from "./generator.mjs";
+import { buildHistoricalExposureArtifact } from "./historical_exposure_builder.mjs";
 import { materializeUnifiedViews } from "./materialize.mjs";
 
 function option(args, name, fallback = null) {
@@ -65,12 +66,27 @@ async function main(argv) {
   const [command, ...args] = argv;
   const json = args.includes("--json");
   let result;
-  if (command === "generate") {
+  if (command === "historical-exposure") {
+    const manifestPath = option(args, "--manifest");
+    const splitPath = option(args, "--split");
+    const checkpointSha256 = option(args, "--checkpoint-sha256");
+    const outputPath = option(args, "--output");
+    if (!manifestPath || !splitPath || !checkpointSha256 || !outputPath) {
+      throw new Error("historical-exposure requires --manifest FILE --split FILE --checkpoint-sha256 SHA256 --output FILE");
+    }
+    result = await buildHistoricalExposureArtifact({
+      manifestPath: resolve(manifestPath),
+      splitPath: resolve(splitPath),
+      checkpointSha256,
+      outputPath: resolve(outputPath),
+    });
+  } else if (command === "generate") {
     const outputDir = option(args, "--output");
     const canonicalDb = option(args, "--canonical-db");
     const drugSplitSeed = option(args, "--drug-split-seed");
-    if (!outputDir || !canonicalDb || drugSplitSeed === null) {
-      throw new Error("generate requires --output DIR --canonical-db FILE --drug-split-seed INTEGER");
+    const historicalDrugExposure = option(args, "--historical-drug-exposure");
+    if (!outputDir || !canonicalDb || drugSplitSeed === null || !historicalDrugExposure) {
+      throw new Error("generate requires --output DIR --canonical-db FILE --drug-split-seed INTEGER --historical-drug-exposure FILE");
     }
     const parsedDrugSplitSeed = Number(drugSplitSeed);
     if (!Number.isInteger(parsedDrugSplitSeed)) throw new Error("--drug-split-seed must be an integer");
@@ -79,6 +95,7 @@ async function main(argv) {
       count: integerOption(args, "--count", 36),
       seed: integerOption(args, "--seed", 153),
       drugSplitSeed: parsedDrugSplitSeed,
+      historicalDrugExposure: resolve(historicalDrugExposure),
       canonicalDb: resolve(canonicalDb),
     });
     if (args.includes("--materialize")) {
@@ -126,7 +143,7 @@ async function main(argv) {
     result.splits = summary(corpus).splits;
     if (result.status !== "pass" || result.drug_names?.status === "fail") process.exitCode = 1;
   } else {
-    throw new Error("usage: cli.mjs <generate|validate|materialize|audit> [options] [--json]");
+    throw new Error("usage: cli.mjs <historical-exposure|generate|validate|materialize|audit> [options] [--json]");
   }
   process.stdout.write(json ? `${JSON.stringify(result)}\n` : `${JSON.stringify(result, null, 2)}\n`);
 }

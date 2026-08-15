@@ -40,6 +40,30 @@ class FineTuneProjectContractTest(unittest.TestCase):
         self.assertEqual(runtime["verified_gpu"]["vram_mib"], 16376)
 
 
+    def test_selected_100k_drug_exposure_is_bound_to_checkpoint_train_split(self) -> None:
+        exposure = json.loads(
+            (FINETUNE / "results" / "selected-100k-training-drug-exposure.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(exposure["id"], "selected-recognizer-training-exposure-v1")
+        self.assertEqual(
+            exposure["checkpoint_sha256"],
+            "dbb42982b44f10d2f2711dc7e5dcc88943241b51b00059485e9297cac0005826",
+        )
+        self.assertEqual(exposure["source_dataset_id"], "medicine-synth-rec-v1-s112-n100000")
+        self.assertEqual(
+            exposure["source_dataset_fingerprint"],
+            "35a6250cfef8d4f38eb3a6c672394ac68616faeeff900288f2233def17ea3491",
+        )
+        self.assertEqual(
+            exposure["source_train_split_sha256"],
+            "568b6e6fdfb91498f82b8cc67ad34fd14e4a9524a1394925c4e153f420d456da",
+        )
+        self.assertEqual(exposure["source_train_sample_count"], 76520)
+        self.assertEqual(exposure["product_name_count"], 12960)
+        self.assertEqual(exposure["family_count"], 11841)
+        self.assertEqual(len(exposure["product_names"]), exposure["product_name_count"])
+        self.assertEqual(len(exposure["families"]), exposure["family_count"])
+
     def test_recorded_5k_baseline_is_bound_to_synthetic_holdout(self) -> None:
         result = json.loads((FINETUNE / "results" / "synth-5k-drug-baseline.json").read_text(encoding="utf-8"))
         self.assertEqual(result["dataset_fingerprint"], "7e8ba54f066354dc6da108187e7c16ec142de8dae97b30673c75f0ea938a4f57")

@@ -9,12 +9,13 @@ import { validateCorpus } from "../contract.mjs";
 import { benchmarkMatrix, loadDetectorModelManifest } from "../detector_models.mjs";
 import { evaluateDetections } from "../evaluation.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
-import { testDrugCatalog } from "../../corpus/tests/fixtures.mjs";
+import { testDrugCatalog, testHistoricalDrugExposure } from "../../corpus/tests/fixtures.mjs";
 
 const TEST_DRUG_CATALOG = testDrugCatalog();
+const TEST_HISTORICAL_EXPOSURE = testHistoricalDrugExposure();
 
 function generateCorpus(options) {
-  return generateSyntheticCorpus({ ...options, drugSplitSeed: 161, drugCatalog: TEST_DRUG_CATALOG });
+  return generateSyntheticCorpus({ ...options, drugSplitSeed: 161, historicalDrugExposure: TEST_HISTORICAL_EXPOSURE, drugCatalog: TEST_DRUG_CATALOG });
 }
 
 function tinyCorpus() {

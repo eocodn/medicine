@@ -1,4 +1,4 @@
-import { DRUG_NAME_POLICY_ID, drugExposure, observedDrugLeakageReport } from "./drug_holdout.mjs";
+import { DRUG_NAME_POLICY_ID, HISTORICAL_EXPOSURE_ID, drugExposure, observedDrugLeakageReport } from "./drug_holdout.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const TASKS = ["detection", "recognition", "parsing", "e2e"];
@@ -111,6 +111,9 @@ function validateDrugNamePolicy(policy, splitPolicy) {
   if (!Number.isInteger(policy.eligible_product_count) || policy.eligible_product_count < 3) fail("drug_name_policy.eligible_product_count must be at least 3");
   if (!Number.isInteger(policy.eligible_family_count) || policy.eligible_family_count < 3) fail("drug_name_policy.eligible_family_count must be at least 3");
   if (!SHA256.test(policy.assignment_sha256)) fail("drug_name_policy.assignment_sha256 must be lowercase SHA-256");
+  if (policy.pool_assignment_rule !== "historically-exposed-train-unseen-balanced-val-test-v1") {
+    fail("drug_name_policy.pool_assignment_rule is unsupported");
+  }
   const source = policy.source;
   if (!source || typeof source !== "object" || Array.isArray(source)) fail("drug_name_policy.source must be an object");
   for (const key of ["dataset_key", "source_family", "source_locator"]) {
@@ -118,6 +121,18 @@ function validateDrugNamePolicy(policy, splitPolicy) {
   }
   for (const key of ["sha256", "canonical_db_sha256"]) {
     if (!SHA256.test(source[key])) fail(`drug_name_policy.source.${key} must be lowercase SHA-256`);
+  }
+  const historical = policy.historical_exposure;
+  if (!historical || typeof historical !== "object" || Array.isArray(historical)) fail("drug_name_policy.historical_exposure must be an object");
+  if (historical.id !== HISTORICAL_EXPOSURE_ID) fail(`drug_name_policy.historical_exposure.id must be ${HISTORICAL_EXPOSURE_ID}`);
+  if (typeof historical.source_dataset_id !== "string" || !historical.source_dataset_id.trim()) {
+    fail("drug_name_policy.historical_exposure.source_dataset_id is required");
+  }
+  for (const key of ["checkpoint_sha256", "source_dataset_fingerprint", "source_train_split_sha256", "product_names_sha256", "families_sha256"]) {
+    if (!SHA256.test(historical[key])) fail(`drug_name_policy.historical_exposure.${key} must be lowercase SHA-256`);
+  }
+  for (const key of ["source_train_sample_count", "product_name_count", "family_count"]) {
+    if (!Number.isInteger(historical[key]) || historical[key] <= 0) fail(`drug_name_policy.historical_exposure.${key} must be positive`);
   }
   const pools = policy.pools;
   if (!pools || typeof pools !== "object" || Array.isArray(pools)

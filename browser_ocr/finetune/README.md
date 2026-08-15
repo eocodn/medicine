@@ -140,6 +140,8 @@ New recognition training/evaluation data should be derived from the canonical fu
 
 ## Fixed full-document recognizer evaluation
 
+The tracked `results/selected-100k-training-drug-exposure.json` binds the current canonical family holdout to the exact historical train split used by the selected 100k checkpoint. New fixed-eval and full-document training corpora must use that artifact (or a cryptographically equivalent regenerated artifact) so `drug-unseen` means unseen to the model being fine-tuned, not merely held out from the new corpus.
+
 `ocr-finetune-train fixed-eval` evaluates one pinned recognizer checkpoint against a materialized unified recognition dataset with a single `tools/infer_rec.py` pass, then derives all metric slices from the immutable prediction artifact. The fixed plan reports overall and critical exact accuracy plus normalized edit similarity, product/dose/frequency/duration, clean/medium/hard, augmentation components/combinations, drug seen/unseen, and the cross-slices `seen-drug-unseen-image`, `unseen-drug-familiar-degradation`, `unseen-drug-hard-in-domain`, and `unseen-drug-hard-ood`. The runner binds dataset/checkpoint/config/source hashes in state, requires minimum support for every selection-critical slice, and returns the cached result only after revalidating the prediction artifact hash.
 
 The evaluation path allows model-incompatible **noncritical** context references to remain in the overall metric so model limitations are visible, but critical medication references must satisfy the pinned recognizer dictionary and maximum text length or evaluation fails closed. This exception applies only to direct fixed inference; training compatibility checks remain strict for every training sample.

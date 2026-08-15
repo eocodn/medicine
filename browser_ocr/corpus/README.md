@@ -24,11 +24,11 @@ Layout generation is also varied within each family. Medication row/block counts
 
 Generator v5 keeps the v4 image-degradation behavior and replaces the small built-in product-name list with an explicit canonical MFDS product-name source. Generation requires a canonical SQLite database. Eligible active names are normalized and deduplicated, then close dosage-form/strength variants are grouped into deterministic drug families before any document is generated.
 
-Families are assigned to train/validation/test drug pools with an 80/10/10 deterministic hash split. Every document samples product names only from the pool matching its parent-document split. Product regions carry `drug_family` and `drug_name_split`; documents carry `drug_name_split` plus `drug_name_exposure` (`seen` for train, `unseen` for validation/test). Validation fails closed if either an exact normalized product name or a drug family is observed in more than one pool.
+Generator v5 binds the drug holdout to the **actual selected recognizer training exposure**, not merely to a new random partition. A historical exposure artifact is derived from the exact source-train split used by the selected checkpoint. Every family observed by that checkpoint is forced into the drug `train` pool; every historically unseen family is assigned only to `val` or `test`, balanced deterministically by product count. The document split remains 80/10/10 independently. This makes `drug_name_exposure=seen` a real family-level statement about the selected checkpoint and makes validation/test families truly unseen to it. Validation fails closed on exact-name/family leakage.
 
-The drug partition seed is intentionally independent from the document-generation seed. Keep `--drug-split-seed` fixed across training and evaluation corpora so the meaning of seen/unseen medication identity remains stable while `--seed` changes document layouts, captures, and sample identities.
+The drug partition seed is intentionally independent from the document-generation seed. Keep `--drug-split-seed` and `--historical-drug-exposure` fixed across training and evaluation corpora so the unseen-family val/test assignment remains stable while `--seed` changes document layouts, captures, and sample identities.
 
-The root `drug_name_policy` binds the corpus to the canonical database SHA-256, MFDS source-snapshot SHA-256, assignment seed, pool counts, family counts, and per-pool content hashes. Product typography is fitted to the declared layout slot so longer canonical names remain readable without colliding with adjacent regimen columns.
+The root `drug_name_policy` binds the corpus to the canonical database SHA-256, MFDS source-snapshot SHA-256, assignment seed, selected checkpoint SHA-256, historical source dataset fingerprint, historical train-split SHA-256, historical vocabulary/family hashes, pool counts, and per-pool content hashes. Product typography is fitted to the declared layout slot so longer canonical names remain readable without colliding with adjacent regimen columns.
 
 ## Materialized views
 
@@ -52,11 +52,25 @@ COMPOSE_PROJECT_NAME=medicine_ocr_corpus \
   docker compose run --rm ocr-corpus generate \
   --output /workspace/browser_ocr/finetune/work/unified-360 \
   --canonical-db /data/canonical.sqlite \
+  --historical-drug-exposure /workspace/browser_ocr/finetune/results/selected-100k-training-drug-exposure.json \
   --drug-split-seed 161 \
   --count 360 --seed 153 --materialize --json
 ```
 
 Mount the authoritative database read-only into the container, for example with `-v /absolute/path/canonical.sqlite:/data/canonical.sqlite:ro`. There is no production fallback to the former small product-name catalog.
+
+The historical exposure artifact is reproducible from the selected recognizer's authoritative training dataset and split:
+
+```sh
+docker compose run --rm ocr-corpus historical-exposure \
+  --manifest /workspace/path/to/historical/manifest.json \
+  --split /workspace/path/to/historical/paddle-source-stable-v1/split.json \
+  --checkpoint-sha256 <selected-checkpoint-sha256> \
+  --output /workspace/browser_ocr/finetune/results/selected-100k-training-drug-exposure.json \
+  --json
+```
+
+The builder reads product-tagged samples from the **train membership only**, removes only the known standalone-generator product decorations, records the source dataset fingerprint and split-file SHA-256, and writes a content-hashed family exposure set. Reusing an output path with different authoritative content fails rather than overwriting it.
 
 The other commands are:
 

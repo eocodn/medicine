@@ -9,7 +9,9 @@ import {
   buildDrugNamePolicy,
   drugExposure,
   loadCanonicalDrugCatalog,
+  loadHistoricalDrugExposure,
   normalizeDrugName,
+  validateHistoricalDrugExposure,
 } from "./drug_holdout.mjs";
 import { appearanceForIndex, printerDescriptor, renderMaterialOverlay, renderPrinterOverlay } from "../detection/synthetic_appearance.mjs";
 import { captureForSample, transformPolygon } from "../detection/synthetic_capture.mjs";
@@ -26,7 +28,7 @@ import { rasterizerIdentity, renderRasterJpeg } from "../detection/synthetic_ras
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 5;
-const GENERATOR_REVISION = 3;
+const GENERATOR_REVISION = 4;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -208,7 +210,7 @@ async function renderSample(index, seed, outputDir, drugAssignment) {
 function buildCorpus({ seed, count, fingerprint, rasterizer, drugNamePolicy, samples }) {
   return validateCorpus({
     schema_version: 3,
-    corpus_id: `synthetic-medicine-document-v5-seed-${seed}-drug-seed-${drugNamePolicy.assignment_seed}-n-${count}`,
+    corpus_id: `synthetic-medicine-document-v5-seed-${seed}-drug-seed-${drugNamePolicy.assignment_seed}-hist-${drugNamePolicy.historical_exposure.families_sha256.slice(0, 12)}-n-${count}`,
     synthetic_only: true,
     tasks: [...TASKS],
     split_policy: {
@@ -335,14 +337,18 @@ function injectedDrugSource(catalog) {
   };
 }
 
-async function drugConfiguration({ canonicalDb, drugCatalog, drugSplitSeed }) {
+async function drugConfiguration({ canonicalDb, drugCatalog, drugSplitSeed, historicalDrugExposure }) {
   if (canonicalDb && drugCatalog) throw new Error("provide either canonicalDb or drugCatalog, not both");
   if (!canonicalDb && !drugCatalog) throw new Error("canonicalDb is required unless an explicit drugCatalog is provided");
   if (!Number.isInteger(drugSplitSeed)) throw new Error("drugSplitSeed must be an integer");
+  if (!historicalDrugExposure) throw new Error("historicalDrugExposure is required");
   const loaded = drugCatalog
     ? injectedDrugSource(buildDrugCatalog(drugCatalog))
     : await loadCanonicalDrugCatalog(canonicalDb);
-  const assignment = assignDrugPools(loaded.products, { seed: drugSplitSeed });
+  const exposure = typeof historicalDrugExposure === "string"
+    ? await loadHistoricalDrugExposure(historicalDrugExposure)
+    : validateHistoricalDrugExposure(historicalDrugExposure);
+  const assignment = assignDrugPools(loaded.products, { seed: drugSplitSeed, historicalExposure: exposure });
   const policy = buildDrugNamePolicy({
     catalog: loaded.products,
     assignment,
@@ -357,6 +363,7 @@ export async function generateUnifiedCorpus({
   count = 36,
   seed = 153,
   drugSplitSeed = null,
+  historicalDrugExposure = null,
   canonicalDb = null,
   drugCatalog = null,
   onProgress = null,
@@ -365,7 +372,9 @@ export async function generateUnifiedCorpus({
   if (!Number.isInteger(seed)) throw new Error("seed must be an integer");
   await mkdir(join(outputDir, "images"), { recursive: true });
 
-  const { assignment: drugAssignment, policy: drugNamePolicy } = await drugConfiguration({ canonicalDb, drugCatalog, drugSplitSeed });
+  const { assignment: drugAssignment, policy: drugNamePolicy } = await drugConfiguration({
+    canonicalDb, drugCatalog, drugSplitSeed, historicalDrugExposure,
+  });
   const { fingerprint, rasterizer } = await configurationFingerprint({ seed, count, drugNamePolicy });
   const manifestPath = join(outputDir, "manifest.json");
   const statePath = join(outputDir, STATE_FILE);

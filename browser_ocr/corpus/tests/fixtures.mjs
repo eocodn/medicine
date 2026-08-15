@@ -1,3 +1,7 @@
+import { writeFile } from "node:fs/promises";
+
+import { buildHistoricalDrugExposure } from "../drug_holdout.mjs";
+
 export function testDrugCatalog(count = 240) {
   return Array.from({ length: count }, (_, index) => ({
     item_seq: String(800000000 + index),
@@ -40,4 +44,21 @@ export async function createCanonicalDrugDb(path, count = 240) {
   } finally {
     database.close();
   }
+}
+export function testHistoricalDrugExposure(count = 240, exposedCount = Math.floor(count * 0.7)) {
+  const products = testDrugCatalog(count);
+  return buildHistoricalDrugExposure({
+    productNames: products.slice(0, exposedCount).map((product) => product.product_name),
+    checkpointSha256: "b".repeat(64),
+    sourceDatasetId: "fixture-selected-recognizer-train",
+    sourceDatasetFingerprint: "c".repeat(64),
+    sourceTrainSplitSha256: "d".repeat(64),
+    sourceTrainSampleCount: 76520,
+  });
+}
+
+export async function writeTestHistoricalDrugExposure(path, count = 240) {
+  const exposure = testHistoricalDrugExposure(count);
+  await writeFile(path, `${JSON.stringify(exposure, null, 2)}\n`, "utf8");
+  return exposure;
 }

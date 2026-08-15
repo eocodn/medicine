@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 
-import { createCanonicalDrugDb } from "./fixtures.mjs";
+import { createCanonicalDrugDb, writeTestHistoricalDrugExposure } from "./fixtures.mjs";
 
 function run(args) {
   return new Promise((resolve, reject) => {
@@ -24,8 +24,11 @@ test("ocr corpus CLI generates and validates the canonical multi-stage corpus", 
   try {
     const canonicalDb = join(root, "canonical.sqlite");
     await createCanonicalDrugDb(canonicalDb);
+    const historicalExposure = join(root, "historical-drug-exposure.json");
+    await writeTestHistoricalDrugExposure(historicalExposure);
     const generated = await run([
       "generate", "--output", root, "--canonical-db", canonicalDb, "--drug-split-seed", "161",
+      "--historical-drug-exposure", historicalExposure,
       "--count", "6", "--seed", "501", "--json",
     ]);
     assert.equal(generated.code, 0, generated.stderr);

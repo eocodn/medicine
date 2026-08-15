@@ -18,12 +18,13 @@ import {
 } from "../synthetic_catalog.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
 import { estimateRenderedTextBox } from "../synthetic_layouts.mjs";
-import { testDrugCatalog } from "../../corpus/tests/fixtures.mjs";
+import { testDrugCatalog, testHistoricalDrugExposure } from "../../corpus/tests/fixtures.mjs";
 
 const TEST_DRUG_CATALOG = testDrugCatalog();
+const TEST_HISTORICAL_EXPOSURE = testHistoricalDrugExposure();
 
 function generateCorpus(options) {
-  return generateSyntheticCorpus({ ...options, drugSplitSeed: 161, drugCatalog: TEST_DRUG_CATALOG });
+  return generateSyntheticCorpus({ ...options, drugSplitSeed: 161, historicalDrugExposure: TEST_HISTORICAL_EXPOSURE, drugCatalog: TEST_DRUG_CATALOG });
 }
 
 test("homography maps all four source controls to the exact camera-plane controls", () => {

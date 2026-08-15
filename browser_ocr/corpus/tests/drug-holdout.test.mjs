@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   assignDrugPools,
   buildDrugCatalog,
+  buildHistoricalDrugExposure,
   drugFamilyKey,
   normalizeDrugName,
   observedDrugLeakageReport,
@@ -24,6 +25,17 @@ function records(count = 180) {
   return result;
 }
 
+function historicalExposure(catalog, count = 120) {
+  return buildHistoricalDrugExposure({
+    productNames: catalog.slice(0, count).map((product) => product.product_name),
+    checkpointSha256: "b".repeat(64),
+    sourceDatasetId: "historical-recognizer-train",
+    sourceDatasetFingerprint: "c".repeat(64),
+    sourceTrainSplitSha256: "d".repeat(64),
+    sourceTrainSampleCount: 76520,
+  });
+}
+
 test("drug family normalization groups close dosage-form variants", () => {
   assert.equal(normalizeDrugName("  페니라민정  "), "페니라민정");
   assert.equal(
@@ -34,8 +46,9 @@ test("drug family normalization groups close dosage-form variants", () => {
 
 test("canonical drug assignment is deterministic and keeps exact names and near-name families in one pool", () => {
   const catalog = buildDrugCatalog(records());
-  const first = assignDrugPools(catalog, { seed: 161 });
-  const second = assignDrugPools(catalog, { seed: 161 });
+  const exposure = historicalExposure(catalog);
+  const first = assignDrugPools(catalog, { seed: 161, historicalExposure: exposure });
+  const second = assignDrugPools(catalog, { seed: 161, historicalExposure: exposure });
 
   assert.equal(first.assignment_sha256, second.assignment_sha256);
   assert.deepEqual(first.pool_summaries, second.pool_summaries);
@@ -74,4 +87,36 @@ test("observed leakage audit fails closed on exact-name or family overlap", () =
   assert.equal(exactLeak.status, "fail");
   assert.ok(exactLeak.failures.some((item) => item.includes("product name")));
   assert.ok(exactLeak.failures.some((item) => item.includes("drug family")));
+});
+
+test("historical checkpoint exposure is forced into train while held-out pools stay historically unseen", () => {
+  const catalog = buildDrugCatalog(records(240));
+  const exposedNames = [
+    ...catalog.slice(0, 170).map((product) => product.product_name),
+    "페니라민정(클로르페니라민말레산염)",
+  ];
+  const exposure = buildHistoricalDrugExposure({
+    productNames: exposedNames,
+    checkpointSha256: "b".repeat(64),
+    sourceDatasetId: "historical-recognizer-train",
+    sourceDatasetFingerprint: "c".repeat(64),
+    sourceTrainSplitSha256: "d".repeat(64),
+    sourceTrainSampleCount: 76520,
+  });
+  const assignment = assignDrugPools(catalog, { seed: 161, historicalExposure: exposure });
+  const owner = new Map();
+  for (const split of ["train", "val", "test"]) {
+    for (const product of assignment.pools[split]) owner.set(product.drug_family, split);
+  }
+  for (const family of exposure.families) {
+    if (owner.has(family)) assert.equal(owner.get(family), "train", family);
+  }
+  for (const split of ["val", "test"]) {
+    assert.ok(assignment.pools[split].every((product) => !exposure.families.includes(product.drug_family)));
+  }
+  assert.equal(owner.get(drugFamilyKey("페니라민정(클로르페니라민말레산염)")), "train");
+  assert.equal(owner.get(drugFamilyKey("페니라민주사(클로르페니라민말레산염)")), "train");
+  assert.ok(assignment.pools.train.every((product) => exposure.families.includes(product.drug_family)));
+  assert.ok(Math.abs(assignment.pools.val.length - assignment.pools.test.length) <= 2);
+  assert.equal(assignment.pool_assignment_rule, "historically-exposed-train-unseen-balanced-val-test-v1");
 });
