@@ -4,8 +4,9 @@ import { join } from "node:path";
 
 import { validateCorpus } from "./contract.mjs";
 import { appearanceForIndex, printerDescriptor, renderMaterialOverlay, renderPrinterOverlay } from "../detection/synthetic_appearance.mjs";
-import { captureForIndex, transformPolygon } from "../detection/synthetic_capture.mjs";
+import { captureForSample, transformPolygon } from "../detection/synthetic_capture.mjs";
 import {
+  AUGMENTATION_DIFFICULTIES,
   BACKGROUND_PROFILES,
   CAPTURE_PROFILES,
   LAYOUT_FAMILIES,
@@ -16,8 +17,8 @@ import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH, renderLayoutRegions } fro
 import { rasterizerIdentity, renderRasterJpeg } from "../detection/synthetic_raster.mjs";
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
-const GENERATOR_VERSION = 3;
-const GENERATOR_REVISION = 2;
+const GENERATOR_VERSION = 4;
+const GENERATOR_REVISION = 1;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -74,6 +75,7 @@ async function configurationFingerprint({ seed, count }) {
       height: DOCUMENT_HEIGHT,
       layout_families: LAYOUT_FAMILIES,
       capture_profiles: CAPTURE_PROFILES,
+      augmentation_difficulties: AUGMENTATION_DIFFICULTIES,
       material_profiles: MATERIAL_PROFILES,
       printer_profiles: PRINTER_PROFILES,
       background_profiles: BACKGROUND_PROFILES,
@@ -107,10 +109,13 @@ ${materialOverlay}
 }
 
 function buildSamplePlan(index, seed) {
-  const random = rng(sampleSeed(seed, index));
-  const layout = buildLayout(index, random);
+  const baseSeed = sampleSeed(seed, index);
+  // Independent deterministic streams keep capture severity stable when layout generation evolves.
+  const layoutRandom = rng(baseSeed ^ 0xa511e9b3);
+  const captureRandom = rng(baseSeed ^ 0x63d83595);
+  const layout = buildLayout(index, layoutRandom);
   const captureIndex = Math.floor(index / LAYOUT_FAMILIES.length) % CAPTURE_PROFILES.length;
-  const capture = captureForIndex(captureIndex, random, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
+  const capture = captureForSample(index, captureIndex, captureRandom, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
   const appearance = appearanceForIndex(index);
   const id = `synthetic-${String(index + 1).padStart(6, "0")}`;
   const image = `images/${id}.jpg`;
@@ -142,6 +147,7 @@ function buildSamplePlan(index, seed) {
       document_type: documentType(layout.layout_family),
       layout_family: layout.layout_family,
       capture_profile: capture.profile,
+      augmentation_difficulty: capture.difficulty,
       material_profile: appearance.material_profile,
       printer_profile: appearance.printer_profile,
       background_profile: appearance.background_profile,
@@ -180,7 +186,7 @@ async function renderSample(index, seed, outputDir) {
 function buildCorpus({ seed, count, fingerprint, rasterizer, samples }) {
   return validateCorpus({
     schema_version: 3,
-    corpus_id: `synthetic-medicine-document-v3-seed-${seed}-n-${count}`,
+    corpus_id: `synthetic-medicine-document-v4-seed-${seed}-n-${count}`,
     synthetic_only: true,
     tasks: [...TASKS],
     split_policy: {
@@ -336,6 +342,7 @@ export async function generateUnifiedCorpus({ outputDir, count = 36, seed = 153,
         sample_id: sample.id,
         layout_family: sample.layout_family,
         capture_profile: sample.capture_profile,
+        augmentation_difficulty: sample.augmentation_difficulty,
         material_profile: sample.material_profile,
       };
       if (shouldReport(state.completed, count)) {

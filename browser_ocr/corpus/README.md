@@ -12,6 +12,14 @@ Schema v3 keeps the existing full-page camera-like raster and authoritative text
 
 The split is assigned at the document level before any stage view is created. All recognition crops and parser nodes derived from a document inherit that exact split, so crops from one document cannot leak across train/validation/test stages.
 
+## Generator v4 augmentation
+
+Generator v4 keeps the schema-v3 stage contract but replaces mutually exclusive camera-failure presets with composable augmentation. The six capture profiles remain as balanced anchor strata, while each document also receives a `clean`, `medium`, or `hard` difficulty and an explicit `capture.augmentation_components` list. Medium and hard examples can combine perspective, defocus, motion blur, JPEG compression, contrast/exposure changes, glare, shadow, downscale→upsample loss, deterministic sensor-like Gaussian noise, white-balance shifts, partial crop, and foreground clutter in the same raster.
+
+The 36-sample cycle is balanced so every capture anchor contains clean/medium/hard examples and every layout family sees all three difficulties across capture anchors. Hard samples always contain several simultaneous degradations rather than one extreme effect. Severity parameters are recorded in the manifest and bounded by the corpus contract, so a failed OCR case can be attributed to the actual transformation vector instead of only to a coarse profile name.
+
+Layout generation is also varied within each family. Medication row/block counts, row spacing, table-column positions, medication font sizes, and selected instruction wrapping change deterministically from sample to sample. This makes parser/KIE training see real structural variation while keeping every text region and medication association explicitly annotated.
+
 ## Materialized views
 
 `materialize` writes four views under one output root:

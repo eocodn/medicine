@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 
 import { validateUnifiedCorpus } from "./contract.mjs";
 
-const MATERIALIZER_VERSION = 4;
+const MATERIALIZER_VERSION = 5;
 const STAGES = ["detection", "recognition", "parsing", "e2e"];
 const STATE_FILE = ".materialize-state.json";
 const LOCK_FILE = ".materialize.lock";
@@ -192,6 +192,8 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       height: sample.height,
       layout_family: sample.layout_family,
       capture_profile: sample.capture_profile,
+      augmentation_difficulty: sample.augmentation_difficulty,
+      augmentation_components: sample.capture.augmentation_components,
       regions: sample.regions.map((region) => ({
         region_id: region.region_id,
         polygon: region.polygon,
@@ -255,7 +257,10 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
           image: imageRel, text: region.text, semantic_role: region.semantic_role,
           association_group: region.association_group, region_class: region.region_class,
           critical: region.critical, layout_family: sample.layout_family,
-          capture_profile: sample.capture_profile, source_polygon_kind: "region_polygon",
+          capture_profile: sample.capture_profile,
+          augmentation_difficulty: sample.augmentation_difficulty,
+          augmentation_components: sample.capture.augmentation_components,
+          source_polygon_kind: "region_polygon",
         });
         assignments[sample.split].push(id);
       }
@@ -288,7 +293,12 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
           drug_family: `assoc-${associationHash}`,
         },
         semantic_tags: [slug(region.semantic_role)],
-        risk_tags: [...new Set([...sample.risk_tags.map(slug), `region-${slug(region.region_class)}`])],
+        risk_tags: [...new Set([
+          ...sample.risk_tags.map(slug),
+          `difficulty-${slug(sample.augmentation_difficulty)}`,
+          ...sample.capture.augmentation_components.map((component) => `augmentation-${slug(component)}`),
+          `region-${slug(region.region_class)}`,
+        ])],
         privacy: { contains_patient_data: false, deidentified: true },
         provenance: {
           source_id: corpus.corpus_id,
@@ -339,6 +349,8 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       split: sample.split,
       layout_family: sample.layout_family,
       capture_profile: sample.capture_profile,
+      augmentation_difficulty: sample.augmentation_difficulty,
+      augmentation_components: sample.capture.augmentation_components,
       nodes: sample.regions.map((region) => ({
         node_id: region.region_id,
         text: region.text,
@@ -389,6 +401,8 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       image: sample.image,
       layout_family: sample.layout_family,
       capture_profile: sample.capture_profile,
+      augmentation_difficulty: sample.augmentation_difficulty,
+      augmentation_components: sample.capture.augmentation_components,
       expected_rows: expectedRows(sample),
       critical_region_ids: sample.regions.filter((region) => region.critical).map((region) => region.region_id),
     }));

@@ -23,7 +23,8 @@ test("one document corpus materializes aligned detection recognition parsing and
 
     assert.equal(corpus.schema_version, 3);
     assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
-    assert.equal(corpus.generator.version, 3);
+    assert.equal(corpus.generator.version, 4);
+    assert.deepEqual(new Set(corpus.samples.map((sample) => sample.augmentation_difficulty)), new Set(["clean", "medium", "hard"]));
     assert.ok(corpus.samples.every((sample) => ["train", "val", "test"].includes(sample.split)));
     assert.ok(corpus.samples.every((sample) => ["prescription", "medication_bag"].includes(sample.document_type)));
 
@@ -58,8 +59,14 @@ test("one document corpus materializes aligned detection recognition parsing and
     assert.equal(recognition.length, corpus.samples.reduce((sum, sample) => sum + sample.regions.length, 0));
 
     const splitByDocument = new Map(corpus.samples.map((sample) => [sample.id, sample.split]));
+    const augmentationByDocument = new Map(corpus.samples.map((sample) => [sample.id, {
+      difficulty: sample.augmentation_difficulty,
+      components: sample.capture.augmentation_components,
+    }]));
     for (const item of [...detection, ...recognition, ...parsing, ...e2e]) {
       assert.equal(item.split, splitByDocument.get(item.document_id));
+      assert.equal(item.augmentation_difficulty, augmentationByDocument.get(item.document_id).difficulty);
+      assert.deepEqual(item.augmentation_components, augmentationByDocument.get(item.document_id).components);
     }
 
     const cropState = JSON.parse(await readFile(join(viewsRoot, "recognition", ".crop-state.json"), "utf8"));
@@ -110,6 +117,8 @@ test("unified sample split is stable as corpus scale grows", async () => {
       assert.equal(sample.split, largeByIndex.get(sample.sample_index).split);
       assert.equal(sample.layout_family, largeByIndex.get(sample.sample_index).layout_family);
       assert.equal(sample.capture_profile, largeByIndex.get(sample.sample_index).capture_profile);
+      assert.equal(sample.augmentation_difficulty, largeByIndex.get(sample.sample_index).augmentation_difficulty);
+      assert.deepEqual(sample.capture.augmentation_components, largeByIndex.get(sample.sample_index).capture.augmentation_components);
     }
   } finally {
     await rm(root, { recursive: true, force: true });

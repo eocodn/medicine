@@ -8,11 +8,13 @@ import { auditCoverage } from "../coverage.mjs";
 import { homographyFromQuads, transformPoint } from "../synthetic_capture.mjs";
 import { validateCorpus } from "../contract.mjs";
 import {
+  AUGMENTATION_DIFFICULTIES,
   BACKGROUND_PROFILES,
   CAPTURE_PROFILES,
   LAYOUT_FAMILIES,
   MATERIAL_PROFILES,
   PRINTER_PROFILES,
+  REQUIRED_AUGMENTATION_COMPONENTS,
 } from "../synthetic_catalog.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
 import { estimateRenderedTextBox } from "../synthetic_layouts.mjs";
@@ -58,13 +60,16 @@ test("scaled generator covers realistic layout/camera/material strata with raste
   try {
     const corpus = await generateSyntheticCorpus({ outputDir: root, count: 36, seed: 153 });
     assert.equal(corpus.schema_version, 3);
-    assert.equal(corpus.generator.version, 3);
+    assert.equal(corpus.generator.version, 4);
     assert.ok(corpus.generator.revision >= 1);
     assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
     assert.ok(corpus.samples.every((sample) => ["train", "val", "test"].includes(sample.split)));
     assert.equal(corpus.samples.length, 36);
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.layout_family)), new Set(LAYOUT_FAMILIES));
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.capture_profile)), new Set(CAPTURE_PROFILES));
+    assert.deepEqual(new Set(corpus.samples.map((sample) => sample.augmentation_difficulty)), new Set(AUGMENTATION_DIFFICULTIES));
+    const components = new Set(corpus.samples.flatMap((sample) => sample.capture.augmentation_components));
+    for (const component of REQUIRED_AUGMENTATION_COMPONENTS) assert.ok(components.has(component), component);
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.material_profile)), new Set(MATERIAL_PROFILES));
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.printer_profile)), new Set(PRINTER_PROFILES));
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.background_profile)), new Set(BACKGROUND_PROFILES));
@@ -153,6 +158,8 @@ test("coverage audit fails closed when a required synthetic stratum disappears",
     assert.equal(report.status, "pass");
     assert.equal(report.layout_families.length, LAYOUT_FAMILIES.length);
     assert.equal(report.capture_profiles.length, CAPTURE_PROFILES.length);
+    assert.equal(report.augmentation_difficulties.length, AUGMENTATION_DIFFICULTIES.length);
+    for (const component of REQUIRED_AUGMENTATION_COMPONENTS) assert.ok(report.augmentation_components[component] > 0);
     assert.equal(report.material_profiles.length, MATERIAL_PROFILES.length);
     assert.equal(report.printer_profiles.length, PRINTER_PROFILES.length);
     assert.equal(report.background_profiles.length, BACKGROUND_PROFILES.length);

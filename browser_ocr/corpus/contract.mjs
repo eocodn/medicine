@@ -58,7 +58,7 @@ function validateGates(gates) {
 function validateGenerator(generator, schemaVersion) {
   if (!generator || typeof generator !== "object" || Array.isArray(generator)) fail("generator must be an object");
   if (generator.id !== "medicine_full_document_synthetic") fail("generator.id is unsupported");
-  const expectedVersion = schemaVersion === 3 ? 3 : 2;
+  const expectedVersion = schemaVersion === 3 ? 4 : 2;
   if (generator.version !== expectedVersion) fail(`generator.version must be ${expectedVersion}`);
   if (!Number.isInteger(generator.revision) || generator.revision <= 0) fail("generator.revision must be a positive integer");
   if (!Number.isInteger(generator.seed)) fail("generator.seed must be an integer");
@@ -89,7 +89,7 @@ function validateSplitPolicy(policy, seed) {
   if (Math.abs(total - 1) > 1e-9) fail("split_policy.ratios must sum to 1");
 }
 
-function validateCapture(capture, sampleId, captureProfile) {
+function validateCapture(capture, sampleId, captureProfile, requireComposableAugmentation = false) {
   if (!capture || typeof capture !== "object" || Array.isArray(capture)) fail(`${sampleId}.capture must be an object`);
   if (capture.profile !== captureProfile) fail(`${sampleId}.capture.profile must match capture_profile`);
   if (!["projective", "homography_affine"].includes(capture.geometry_model)) fail(`${sampleId}.capture.geometry_model is invalid`);
@@ -107,6 +107,21 @@ function validateCapture(capture, sampleId, captureProfile) {
     }
   }
   uniqueStrings(capture.risk_tags, `${sampleId}.capture.risk_tags`);
+  if (requireComposableAugmentation) {
+    if (!["clean", "medium", "hard"].includes(capture.difficulty)) fail(`${sampleId}.capture.difficulty is invalid`);
+    uniqueStrings(capture.augmentation_components, `${sampleId}.capture.augmentation_components`);
+    for (const key of ["downscale_factor", "sensor_noise", "red_gain", "blue_gain"]) {
+      finiteNumber(capture[key], `${sampleId}.capture.${key}`);
+    }
+    if (capture.downscale_factor < 0.45 || capture.downscale_factor > 1) fail(`${sampleId}.capture.downscale_factor is outside [0.45,1]`);
+    if (capture.sensor_noise < 0 || capture.sensor_noise > 0.35) fail(`${sampleId}.capture.sensor_noise is outside [0,0.35]`);
+    if (capture.red_gain < 0.82 || capture.red_gain > 1.18) fail(`${sampleId}.capture.red_gain is outside [0.82,1.18]`);
+    if (capture.blue_gain < 0.82 || capture.blue_gain > 1.18) fail(`${sampleId}.capture.blue_gain is outside [0.82,1.18]`);
+    if (!Number.isInteger(capture.noise_seed) || capture.noise_seed < 0 || capture.noise_seed > 4294967295) {
+      fail(`${sampleId}.capture.noise_seed must be an unsigned 32-bit integer`);
+    }
+    if (capture.jpeg_quality < 42 || capture.jpeg_quality > 96) fail(`${sampleId}.capture.jpeg_quality is outside [42,96]`);
+  }
 }
 
 export function validateUnifiedCorpus(input) {
@@ -152,11 +167,13 @@ export function validateUnifiedCorpus(input) {
       if (typeof sample.printer_profile !== "string" || !sample.printer_profile.trim()) fail(`${sample.id}.printer_profile is required`);
       if (typeof sample.background_profile !== "string" || !sample.background_profile.trim()) fail(`${sample.id}.background_profile is required`);
       if (!Number.isInteger(sample.sample_index) || sample.sample_index < 0) fail(`${sample.id}.sample_index must be a non-negative integer`);
-      validateCapture(sample.capture, sample.id, sample.capture_profile);
+      validateCapture(sample.capture, sample.id, sample.capture_profile, unified && input.generator.version >= 4);
     }
     if (unified) {
       if (!SPLITS.has(sample.split)) fail(`${sample.id}.split must be train, val or test`);
       if (!DOCUMENT_TYPES.has(sample.document_type)) fail(`${sample.id}.document_type is unsupported`);
+      if (!["clean", "medium", "hard"].includes(sample.augmentation_difficulty)) fail(`${sample.id}.augmentation_difficulty is invalid`);
+      if (sample.capture.difficulty !== sample.augmentation_difficulty) fail(`${sample.id}.augmentation_difficulty must match capture.difficulty`);
     }
     uniqueStrings(sample.scenario_tags, `${sample.id}.scenario_tags`);
     uniqueStrings(sample.risk_tags, `${sample.id}.risk_tags`);

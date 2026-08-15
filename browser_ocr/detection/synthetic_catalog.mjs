@@ -16,6 +16,27 @@ export const CAPTURE_PROFILES = [
   "cropped_clutter",
 ];
 
+export const AUGMENTATION_DIFFICULTIES = [
+  "clean",
+  "medium",
+  "hard",
+];
+
+export const REQUIRED_AUGMENTATION_COMPONENTS = [
+  "perspective",
+  "defocus",
+  "motion_blur",
+  "jpeg_compression",
+  "contrast_exposure",
+  "glare",
+  "shadow",
+  "downscale",
+  "sensor_noise",
+  "white_balance",
+  "partial_crop",
+  "foreground_clutter",
+];
+
 export const MATERIAL_PROFILES = [
   "paper_plain",
   "paper_folded",
@@ -48,6 +69,9 @@ export const REQUIRED_RISK_TAGS = [
   "motion_blur",
   "material_fold",
   "printer_degradation",
+  "downscale",
+  "sensor_noise",
+  "white_balance",
 ];
 
 export const REQUIRED_CRITICAL_SEMANTIC_ROLES = [
@@ -66,6 +90,12 @@ export const PRODUCTS = [
   "메트포르민정",
   "록소프로펜정",
   "알마게이트정",
+  "클로피도그렐정",
+  "로수바스타틴정",
+  "에스오메프라졸정",
+  "몬테루카스트정",
+  "세파클러캡슐",
+  "글리메피리드정",
 ];
 
 export const CONTEXT_TEXT = {

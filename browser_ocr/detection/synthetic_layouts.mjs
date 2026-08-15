@@ -68,36 +68,70 @@ function pick(values, random) {
   return values[Math.floor(random() * values.length)];
 }
 
-function regimenRegions(prefix, group, y, product, rowIndex, fontSize = 40) {
+function randomInt(random, minimum, maximumInclusive) {
+  return minimum + Math.floor(random() * (maximumInclusive - minimum + 1));
+}
+
+function scaledFont(random, base, spread = 0.12, minimum = 20) {
+  return Math.max(minimum, Math.round(base * (1 - spread + random() * spread * 2)));
+}
+
+function jitteredColumns(random, bases, magnitude) {
+  return Object.fromEntries(Object.entries(bases).map(([key, value]) => [
+    key,
+    Math.round(value + (random() * 2 - 1) * magnitude),
+  ]));
+}
+
+function instructionRegions(prefix, group, x, y, fontSize, rowIndex, wrap) {
+  if (!wrap) {
+    return [region(`${prefix}-meal`, rowIndex % 2 ? "식후 30분" : "아침 저녁", x, y, 190, 58, {
+      associationGroup: group, semanticRole: "instruction", regionClass: "context", fontSize: fontSize - 4,
+    })];
+  }
+  const lines = rowIndex % 2 ? ["식후", "30분 복용"] : ["아침", "저녁 복용"];
+  return lines.map((text, line) => region(`${prefix}-meal-${line + 1}`, text, x, y + line * (fontSize + 2), 190, 36, {
+    associationGroup: group, semanticRole: "instruction", regionClass: "context", fontSize: Math.max(20, fontSize - 7),
+  }));
+}
+
+function regimenRegions(prefix, group, y, product, rowIndex, fontSize = 40, columns = null, wrapInstruction = false) {
+  const c = columns || { product: 75, dose: 430, freq: 660, days: 875, note: 1020 };
   return [
-    region(`${prefix}-product`, product, 75, y, 290, 58, { critical: true, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize }),
-    region(`${prefix}-dose`, rowIndex % 3 === 2 ? "0.5정" : `${1 + (rowIndex % 2)}정`, 430, y, 120, 58, { critical: true, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize }),
-    region(`${prefix}-freq`, `${2 + (rowIndex % 2)}회`, 660, y, 110, 58, { critical: true, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize }),
-    region(`${prefix}-days`, `${3 + (rowIndex % 5)}일`, 875, y, 110, 58, { critical: true, associationGroup: group, semanticRole: "duration", regionClass: "medication", fontSize }),
-    region(`${prefix}-meal`, rowIndex % 2 ? "식후 30분" : "아침 저녁", 1020, y, 180, 58, { associationGroup: group, semanticRole: "instruction", regionClass: "context", fontSize: fontSize - 4 }),
+    region(`${prefix}-product`, product, c.product, y, 300, 58, { critical: true, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize }),
+    region(`${prefix}-dose`, rowIndex % 3 === 2 ? "0.5정" : `${1 + (rowIndex % 2)}정`, c.dose, y, 120, 58, { critical: true, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize }),
+    region(`${prefix}-freq`, `${2 + (rowIndex % 2)}회`, c.freq, y, 110, 58, { critical: true, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize }),
+    region(`${prefix}-days`, `${3 + (rowIndex % 5)}일`, c.days, y, 110, 58, { critical: true, associationGroup: group, semanticRole: "duration", regionClass: "medication", fontSize }),
+    ...instructionRegions(prefix, group, c.note, y, fontSize, rowIndex, wrapInstruction),
   ];
 }
 
 function prescriptionTable(index, random) {
+  const rowCount = randomInt(random, 3, 7);
+  const rowGap = Math.floor(680 / Math.max(5, rowCount));
+  const columns = jitteredColumns(random, { product: 75, dose: 430, freq: 660, days: 875, note: 1020 }, 22);
+  const rowFont = scaledFont(random, 39, 0.14, 31);
+  const headerFont = scaledFont(random, 34, 0.1, 27);
   const regions = [
     region("title", "처 방 전", 490, 70, 300, 70, { semanticRole: "document_title", regionClass: "context", fontSize: 54 }),
     region("clinic", `의료기관 ${pick(CONTEXT_TEXT.clinics, random)}`, 70, 160, 360, 45, { semanticRole: "clinic", regionClass: "context", fontSize: 31 }),
     region("patient", `환자 ${pick(CONTEXT_TEXT.patients, random)}`, 485, 160, 260, 45, { semanticRole: "patient", regionClass: "context", fontSize: 31 }),
     region("date", `발행일 2026-08-${String(10 + index % 18).padStart(2, "0")}`, 820, 160, 350, 45, { semanticRole: "date", regionClass: "distractor", fontSize: 31 }),
-    region("h-product", "약품명", 75, 285, 250, 48, { semanticRole: "header", fontSize: 34 }),
-    region("h-dose", "1회 투약량", 430, 285, 210, 48, { semanticRole: "header", fontSize: 34 }),
-    region("h-freq", "1일 횟수", 660, 285, 180, 48, { semanticRole: "header", fontSize: 34 }),
-    region("h-days", "총 일수", 875, 285, 140, 48, { semanticRole: "header", fontSize: 34 }),
-    region("h-note", "용법", 1040, 285, 130, 48, { semanticRole: "header", fontSize: 34 }),
+    region("h-product", "약품명", columns.product, 285, 250, 48, { semanticRole: "header", fontSize: headerFont }),
+    region("h-dose", "1회 투약량", columns.dose, 285, 210, 48, { semanticRole: "header", fontSize: headerFont }),
+    region("h-freq", "1일 횟수", columns.freq, 285, 180, 48, { semanticRole: "header", fontSize: headerFont }),
+    region("h-days", "총 일수", columns.days, 285, 140, 48, { semanticRole: "header", fontSize: headerFont }),
+    region("h-note", "용법", columns.note, 285, 130, 48, { semanticRole: "header", fontSize: headerFont }),
   ];
-  for (let row = 0; row < 5; row += 1) {
-    regions.push(...regimenRegions(`r${row}`, `med-${row}`, 385 + row * 145, pick(PRODUCTS, random), row, 39));
+  for (let row = 0; row < rowCount; row += 1) {
+    const wrap = rowGap >= 100 && random() < 0.28;
+    regions.push(...regimenRegions(`r${row}`, `med-${row}`, 385 + row * rowGap, pick(PRODUCTS, random), row, rowFont, columns, wrap));
   }
   regions.push(
     region("footer-warning", "※ 의약품 복용 전 약사 또는 의사의 설명을 확인하세요.", 80, 1190, 840, 40, { semanticRole: "instruction", regionClass: "distractor", fontSize: 27 }),
     region("footer-phone", "문의 02-000-0000", 940, 1190, 240, 40, { semanticRole: "phone", regionClass: "distractor", fontSize: 27 }),
   );
-  const rowLines = Array.from({ length: 6 }, (_, row) => `<line x1="60" y1="${350 + row * 145}" x2="1210" y2="${350 + row * 145}" stroke="#d0d0d0"/>`).join("\n");
+  const rowLines = Array.from({ length: rowCount + 1 }, (_, row) => `<line x1="60" y1="${350 + row * rowGap}" x2="1210" y2="${350 + row * rowGap}" stroke="#d0d0d0"/>`).join("\n");
   return {
     layout_family: "prescription_table",
     scenario_tags: ["prescription", "table", "multi_medication"],
@@ -110,6 +144,10 @@ ${rowLines}`,
 }
 
 function compactPrescriptionForm(index, random) {
+  const rowCount = randomInt(random, 4, 8);
+  const rowGap = Math.floor(620 / Math.max(6, rowCount));
+  const columns = jitteredColumns(random, { product: 65, dose: 445, freq: 665, days: 865, note: 1030 }, 16);
+  const rowFont = scaledFont(random, 25, 0.14, 21);
   const regions = [
     region("title", "처 방 전", 500, 55, 280, 58, { semanticRole: "document_title", fontSize: 48 }),
     region("rx-number", `처방전 발급번호 RX-${String(17000 + index).padStart(6, "0")}`, 65, 135, 370, 34, { semanticRole: "receipt", regionClass: "distractor", fontSize: 24 }),
@@ -125,15 +163,16 @@ function compactPrescriptionForm(index, random) {
     region("head-days", "총 투약일수", 840, 350, 145, 36, { semanticRole: "header", fontSize: 25 }),
     region("head-note", "용법", 1045, 350, 100, 36, { semanticRole: "header", fontSize: 25 }),
   ];
-  for (let row = 0; row < 6; row += 1) {
+  for (let row = 0; row < rowCount; row += 1) {
     const group = `compact-rx-${row}`;
-    const y = 420 + row * 108;
+    const y = 420 + row * rowGap;
+    const valueFont = Math.max(20, rowFont - 1);
     regions.push(
-      region(`cr${row}-product`, pick(PRODUCTS, random), 65, y, 330, 34, { critical: true, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize: 25 }),
-      region(`cr${row}-dose`, row % 4 === 2 ? "0.5정" : "1정", 445, y, 105, 34, { critical: true, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize: 24 }),
-      region(`cr${row}-freq`, `${2 + row % 2}회`, 665, y, 90, 34, { critical: true, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize: 24 }),
-      region(`cr${row}-days`, `${3 + row % 5}일`, 865, y, 90, 34, { critical: true, associationGroup: group, semanticRole: "duration", regionClass: "medication", fontSize: 24 }),
-      region(`cr${row}-note`, row % 2 ? "식후30분" : "아침저녁", 1030, y, 145, 34, { associationGroup: group, semanticRole: "instruction", fontSize: 23 }),
+      region(`cr${row}-product`, pick(PRODUCTS, random), columns.product, y, 330, 34, { critical: true, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize: rowFont }),
+      region(`cr${row}-dose`, row % 4 === 2 ? "0.5정" : "1정", columns.dose, y, 105, 34, { critical: true, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize: valueFont }),
+      region(`cr${row}-freq`, `${2 + row % 2}회`, columns.freq, y, 90, 34, { critical: true, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize: valueFont }),
+      region(`cr${row}-days`, `${3 + row % 5}일`, columns.days, y, 90, 34, { critical: true, associationGroup: group, semanticRole: "duration", regionClass: "medication", fontSize: valueFont }),
+      region(`cr${row}-note`, row % 2 ? "식후30분" : "아침저녁", columns.note, y, 145, 34, { associationGroup: group, semanticRole: "instruction", fontSize: Math.max(20, valueFont - 1) }),
     );
   }
   regions.push(
@@ -144,7 +183,7 @@ function compactPrescriptionForm(index, random) {
     region("dispense-date", `조제일 2026.08.${String(10 + index % 18).padStart(2, "0")}`, 380, 1290, 300, 34, { semanticRole: "date", regionClass: "distractor", fontSize: 24 }),
     region("pharmacist", "조제약사 서명 (인)", 830, 1290, 300, 34, { semanticRole: "signature", regionClass: "distractor", fontSize: 24 }),
   );
-  const rows = Array.from({ length: 7 }, (_, row) => `<line x1="50" y1="${400 + row * 108}" x2="1225" y2="${400 + row * 108}" stroke="#9fa4a8"/>`).join("\n");
+  const rows = Array.from({ length: rowCount + 1 }, (_, row) => `<line x1="50" y1="${400 + row * rowGap}" x2="1225" y2="${400 + row * rowGap}" stroke="#9fa4a8"/>`).join("\n");
   return {
     layout_family: "compact_prescription_form",
     scenario_tags: ["prescription", "administrative_dense", "table", "multi_medication"],
@@ -159,6 +198,8 @@ ${rows}
 
 function legacyPreprintedMedicationBag(index, random) {
   const blue = "#1f6ea9";
+  const regimenFont = scaledFont(random, 35, 0.14, 29);
+  const productFont = scaledFont(random, 29, 0.14, 24);
   const regions = [
     region("brand", "조 제 약", 470, 65, 330, 58, { semanticRole: "document_title", fontSize: 48 }),
     region("patient-label", "환자명", 75, 165, 105, 36, { semanticRole: "label", fontSize: 28 }),
@@ -166,15 +207,15 @@ function legacyPreprintedMedicationBag(index, random) {
     region("age-sex", "나이 ___  성별 □남 □여", 520, 165, 360, 36, { semanticRole: "patient", regionClass: "distractor", fontSize: 26 }),
     region("dispense-date", `조제일 2026.08.${String(10 + index % 18).padStart(2, "0")}`, 890, 165, 300, 36, { semanticRole: "date", regionClass: "distractor", fontSize: 25 }),
     region("daily", "1일", 90, 290, 90, 46, { associationGroup: "bag-regimen", semanticRole: "label", fontSize: 34 }),
-    region("frequency", "3회", 205, 290, 100, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "frequency", regionClass: "medication", fontSize: 35 }),
+    region("frequency", "3회", 205, 290, 100, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "frequency", regionClass: "medication", fontSize: regimenFont }),
     region("each", "1회", 355, 290, 90, 46, { associationGroup: "bag-regimen", semanticRole: "label", fontSize: 34 }),
-    region("dose", "1포(정)", 475, 290, 150, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "dose", regionClass: "medication", fontSize: 35 }),
+    region("dose", "1포(정)", 475, 290, 150, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "dose", regionClass: "medication", fontSize: regimenFont }),
     region("days-label", "총", 680, 290, 60, 46, { associationGroup: "bag-regimen", semanticRole: "label", fontSize: 34 }),
-    region("days", "5일분", 760, 290, 130, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "duration", regionClass: "medication", fontSize: 35 }),
+    region("days", "5일분", 760, 290, 130, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "duration", regionClass: "medication", fontSize: regimenFont }),
     region("meal", "□ 식전  □ 식후 30분  □ 취침전", 90, 390, 650, 42, { associationGroup: "bag-regimen", semanticRole: "schedule", fontSize: 29 }),
     region("directions", "□ 아침   □ 점심   □ 저녁   □ 필요시", 90, 465, 690, 42, { associationGroup: "bag-regimen", semanticRole: "schedule", fontSize: 29 }),
     region("product-label", "약품명", 85, 600, 115, 34, { associationGroup: "bag-regimen", semanticRole: "product_label", fontSize: 27 }),
-    region("product", pick(PRODUCTS, random), 225, 600, 390, 38, { critical: true, associationGroup: "bag-regimen", semanticRole: "product", regionClass: "medication", fontSize: 29 }),
+    region("product", pick(PRODUCTS, random), 225, 600, 390, 38, { critical: true, associationGroup: "bag-regimen", semanticRole: "product", regionClass: "medication", fontSize: productFont }),
     region("caution-title", "복약시 주의사항", 85, 735, 220, 36, { semanticRole: "header", fontSize: 28 }),
     region("caution-1", "정해진 용법과 용량을 지켜 복용하십시오.", 85, 800, 670, 34, { semanticRole: "instruction", regionClass: "distractor", fontSize: 24 }),
     region("caution-2", "이상반응이 있으면 약사 또는 의사와 상의하십시오.", 85, 855, 730, 34, { semanticRole: "instruction", regionClass: "distractor", fontSize: 24 }),
@@ -199,21 +240,25 @@ function legacyPreprintedMedicationBag(index, random) {
 }
 
 function classicMedicationBag(index, random) {
+  const blockCount = randomInt(random, 2, 4);
+  const blockGap = Math.floor(760 / Math.max(3, blockCount));
+  const productFont = scaledFont(random, 40, 0.15, 32);
+  const valueFont = scaledFont(random, 34, 0.13, 28);
   const regions = [
     region("pharmacy", pick(CONTEXT_TEXT.pharmacies, random), 80, 80, 430, 75, { semanticRole: "pharmacy", regionClass: "context", fontSize: 52 }),
     region("patient", `환자명 ${pick(CONTEXT_TEXT.patients, random)}`, 80, 190, 330, 48, { semanticRole: "patient", regionClass: "context", fontSize: 34 }),
     region("dispense-date", `조제일 2026.08.${String(12 + index % 16).padStart(2, "0")}`, 470, 190, 330, 48, { semanticRole: "date", regionClass: "distractor", fontSize: 34 }),
     region("dose-guide", "복용방법", 80, 285, 200, 52, { semanticRole: "header", regionClass: "context", fontSize: 38 }),
   ];
-  for (let block = 0; block < 3; block += 1) {
+  for (let block = 0; block < blockCount; block += 1) {
     const group = `bag-${block}`;
-    const y = 400 + block * 260;
+    const y = 400 + block * blockGap;
     regions.push(
       region(`b${block}-label`, "약명", 90, y, 100, 50, { associationGroup: group, semanticRole: "product_label", fontSize: 34 }),
-      region(`b${block}-product`, pick(PRODUCTS, random), 230, y, 370, 55, { critical: true, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize: 40 }),
-      region(`b${block}-dose`, `${1 + block % 2}정`, 230, y + 85, 100, 48, { critical: true, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize: 34 }),
-      region(`b${block}-freq`, `${2 + block % 2}회`, 390, y + 85, 100, 48, { critical: true, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize: 34 }),
-      region(`b${block}-days`, `${5 + block}일`, 550, y + 85, 100, 48, { critical: true, associationGroup: group, semanticRole: "duration", regionClass: "medication", fontSize: 34 }),
+      region(`b${block}-product`, pick(PRODUCTS, random), 230, y, 370, 55, { critical: true, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize: productFont }),
+      region(`b${block}-dose`, `${1 + block % 2}정`, 230, y + 85, 100, 48, { critical: true, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize: valueFont }),
+      region(`b${block}-freq`, `${2 + block % 2}회`, 390, y + 85, 100, 48, { critical: true, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize: valueFont }),
+      region(`b${block}-days`, `${5 + block}일`, 550, y + 85, 100, 48, { critical: true, associationGroup: group, semanticRole: "duration", regionClass: "medication", fontSize: valueFont }),
       region(`b${block}-instruction`, block % 2 ? "아침·저녁 식후" : "매 식후 30분", 740, y + 85, 310, 48, { associationGroup: group, semanticRole: "instruction", regionClass: "context", fontSize: 31 }),
     );
   }
@@ -233,6 +278,10 @@ function classicMedicationBag(index, random) {
 }
 
 function counselingMedicationBag(index, random) {
+  const rowCount = randomInt(random, 3, 6);
+  const rowGap = Math.floor(610 / Math.max(4, rowCount));
+  const rowFont = scaledFont(random, 34, 0.14, 27);
+  const columns = jitteredColumns(random, { product: 75, dose: 430, freq: 660, days: 875, note: 1020 }, 18);
   const regions = [
     region("pharmacy", pick(CONTEXT_TEXT.pharmacies, random), 70, 70, 420, 64, { semanticRole: "pharmacy", fontSize: 46 }),
     region("guide-title", "복 약 안 내", 760, 75, 330, 60, { semanticRole: "document_title", fontSize: 44 }),
@@ -240,10 +289,10 @@ function counselingMedicationBag(index, random) {
     region("clinic", `처방 ${pick(CONTEXT_TEXT.clinics, random)}`, 420, 180, 330, 40, { semanticRole: "clinic", fontSize: 29 }),
     region("date", `조제 2026-08-${String(10 + index % 18).padStart(2, "0")}`, 820, 180, 300, 40, { semanticRole: "date", regionClass: "distractor", fontSize: 29 }),
   ];
-  for (let row = 0; row < 4; row += 1) {
+  for (let row = 0; row < rowCount; row += 1) {
     const group = `guide-${row}`;
-    const y = 310 + row * 150;
-    regions.push(...regimenRegions(`g${row}`, group, y, pick(PRODUCTS, random), row, 34));
+    const y = 310 + row * rowGap;
+    regions.push(...regimenRegions(`g${row}`, group, y, pick(PRODUCTS, random), row, rowFont, columns, rowGap >= 105 && random() < 0.22));
   }
   regions.push(
     region("warning-title", "주의사항", 80, 970, 180, 44, { semanticRole: "header", regionClass: "context", fontSize: 34 }),
@@ -266,6 +315,10 @@ function counselingMedicationBag(index, random) {
 }
 
 function pharmacyInformationSheet(index, random) {
+  const rowCount = randomInt(random, 6, 11);
+  const rowGap = Math.floor(760 / Math.max(9, rowCount));
+  const rowFont = scaledFont(random, 25, 0.14, 20);
+  const columns = jitteredColumns(random, { product: 70, dose: 430, freq: 585, days: 735, note: 900 }, 14);
   const regions = [
     region("sheet-title", "조제약 복약정보", 430, 65, 420, 60, { semanticRole: "document_title", fontSize: 46 }),
     region("patient", `성명 ${pick(CONTEXT_TEXT.patients, random)}`, 70, 165, 260, 38, { semanticRole: "patient", fontSize: 28 }),
@@ -277,16 +330,16 @@ function pharmacyInformationSheet(index, random) {
     region("head-days", "일수", 735, 260, 90, 38, { semanticRole: "header", fontSize: 27 }),
     region("head-note", "복약안내", 900, 260, 190, 38, { semanticRole: "header", fontSize: 27 }),
   ];
-  for (let row = 0; row < 9; row += 1) {
+  for (let row = 0; row < rowCount; row += 1) {
     const group = `sheet-${row}`;
-    const y = 335 + row * 82;
-    const critical = row < 6;
+    const y = 335 + row * rowGap;
+    const critical = row < Math.min(8, rowCount);
     regions.push(
-      region(`s${row}-product`, pick(PRODUCTS, random), 70, y, 300, 34, { critical, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize: 25 }),
-      region(`s${row}-dose`, row % 4 === 1 ? "0.5정" : "1정", 430, y, 85, 34, { critical, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize: 25 }),
-      region(`s${row}-freq`, `${2 + row % 2}회`, 585, y, 80, 34, { critical, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize: 25 }),
-      region(`s${row}-days`, `${3 + row % 5}일`, 735, y, 80, 34, { critical, associationGroup: group, semanticRole: "duration", regionClass: "medication", fontSize: 25 }),
-      region(`s${row}-note`, pick(CONTEXT_TEXT.instructions, random), 900, y, 230, 34, { associationGroup: group, semanticRole: "instruction", regionClass: "context", fontSize: 23 }),
+      region(`s${row}-product`, pick(PRODUCTS, random), columns.product, y, 300, 34, { critical, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize: rowFont }),
+      region(`s${row}-dose`, row % 4 === 1 ? "0.5정" : "1정", columns.dose, y, 85, 34, { critical, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize: rowFont }),
+      region(`s${row}-freq`, `${2 + row % 2}회`, columns.freq, y, 80, 34, { critical, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize: rowFont }),
+      region(`s${row}-days`, `${3 + row % 5}일`, columns.days, y, 80, 34, { critical, associationGroup: group, semanticRole: "duration", regionClass: "medication", fontSize: rowFont }),
+      region(`s${row}-note`, pick(CONTEXT_TEXT.instructions, random), columns.note, y, 230, 34, { associationGroup: group, semanticRole: "instruction", regionClass: "context", fontSize: Math.max(20, rowFont - 2) }),
     );
   }
   regions.push(
@@ -295,7 +348,7 @@ function pharmacyInformationSheet(index, random) {
     region("phone", "TEL 02-555-0101", 390, 1280, 250, 40, { semanticRole: "phone", regionClass: "distractor", fontSize: 28 }),
     region("receipt", "총 조제금액 31,600원", 760, 1280, 340, 40, { semanticRole: "receipt", regionClass: "distractor", fontSize: 28 }),
   );
-  const lines = Array.from({ length: 10 }, (_, row) => `<line x1="55" y1="${315 + row * 82}" x2="1215" y2="${315 + row * 82}" stroke="#e2e2e2"/>`).join("\n");
+  const lines = Array.from({ length: rowCount + 1 }, (_, row) => `<line x1="55" y1="${315 + row * rowGap}" x2="1215" y2="${315 + row * rowGap}" stroke="#e2e2e2"/>`).join("\n");
   return {
     layout_family: "pharmacy_information_sheet",
     scenario_tags: ["information_sheet", "dense_small_print", "multi_medication"],

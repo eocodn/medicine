@@ -115,9 +115,26 @@ export async function renderRasterJpeg({ sourceSvg, outputPath, capture, appeara
     ];
     args.push(...overlayArgs(capture, appearance, width, height));
     if (brightness !== 0 || contrast !== 0) args.push("-brightness-contrast", `${brightness}x${contrast}`);
+    if (capture.red_gain !== 1) args.push("-channel", "R", "-evaluate", "multiply", String(capture.red_gain), "+channel");
+    if (capture.blue_gain !== 1) args.push("-channel", "B", "-evaluate", "multiply", String(capture.blue_gain), "+channel");
     if (capture.defocus_radius > 0) args.push("-blur", `0x${capture.defocus_radius}`);
     if (capture.motion_blur_radius > 0) {
       args.push("-motion-blur", `0x${capture.motion_blur_radius}+${capture.motion_blur_angle}`);
+    }
+    if (capture.downscale_factor < 0.999) {
+      const reducedWidth = Math.max(64, Math.round(width * capture.downscale_factor));
+      const reducedHeight = Math.max(64, Math.round(height * capture.downscale_factor));
+      args.push(
+        "-filter", "Lanczos", "-resize", `${reducedWidth}x${reducedHeight}!`,
+        "-filter", "Triangle", "-resize", `${width}x${height}!`,
+      );
+    }
+    if (capture.sensor_noise > 0) {
+      args.push(
+        "-seed", String(capture.noise_seed >>> 0),
+        "-attenuate", String(capture.sensor_noise),
+        "+noise", "Gaussian",
+      );
     }
     args.push(
       "-strip",
