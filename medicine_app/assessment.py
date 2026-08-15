@@ -14,11 +14,12 @@ from .canonical_runtime import (
 from .canonical_safety import collect_qualitative_risks, evaluate_quantitative
 from .dur_status import build_dur_checks
 from .lactation_safety import collect_lactation_risks
+from .interaction_timing import courses_overlap
 from .product_flags import apply_product_flag_fallbacks, build_product_flag_checks
 from .safety import age_years
 
 
-EVALUATOR_VERSION = "7-canonical"
+EVALUATOR_VERSION = "9-product-safety"
 
 
 def _fallback_product(medication: Mapping[str, Any]) -> dict[str, Any]:
@@ -72,6 +73,62 @@ def _profile_rule_categories(
     return relevant
 
 
+def _course_profile_dates(draft: Mapping[str, Any], as_of: date | None) -> tuple[date | None, date | None]:
+    try:
+        start = date.fromisoformat(str(draft["start_date"])) if draft.get("start_date") else None
+        end = date.fromisoformat(str(draft["end_date"])) if draft.get("end_date") else None
+    except (TypeError, ValueError):
+        start, end = None, None
+    first = start if start is not None and (as_of is None or as_of < start) else as_of or start
+    last = end if end is not None and (first is None or end >= first) else first
+    return first, last
+
+
+def _regimen_signature(value: Mapping[str, Any]) -> tuple[Any, ...]:
+    schedules = value.get("schedule_times")
+    if schedules is None:
+        schedules = [item.get("time_of_day") for item in value.get("schedules") or []]
+    return (
+        (
+            float(value["dose_amount"])
+            if value.get("dose_amount") is not None
+            else str(value.get("dosage_text") or "")
+        ),
+        str(value.get("dose_unit") or ""),
+        value.get("frequency_per_day"),
+        bool(value.get("as_needed")),
+        value.get("prn_max_per_day"),
+        tuple(sorted(str(item) for item in schedules or [])),
+        value.get("meal_relation") or "unspecified",
+        value.get("administration_route") or "unknown",
+    )
+
+
+def _duplicate_review_items(
+    current: list[Mapping[str, Any]],
+    product: Mapping[str, Any],
+    draft: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    target = item_seq(product)
+    if not target:
+        return []
+    signature = _regimen_signature(draft)
+    items: list[dict[str, Any]] = []
+    for medication in current:
+        if item_seq(medication) != target or courses_overlap(medication, draft) is False:
+            continue
+        if _regimen_signature(medication) != signature:
+            continue
+        items.append({
+            "type": "duplicate_regimen",
+            "severity": "warning",
+            "title": "같은 복용 처방이 이미 등록되어 있어요",
+            "details": f"{medication.get('product_name') or '같은 약'}의 복용량·횟수·시간이 겹칩니다. 별도 처방이 맞는지 확인해주세요.",
+            "related_medication_id": medication.get("id"),
+        })
+    return items
+
+
 def _dedupe_risks(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen = set()
     result = []
@@ -103,6 +160,8 @@ def assess_medication(
     current = _current_products(app, current)
     if additional_current:
         current.extend(dict(item) for item in additional_current)
+    review_items = _duplicate_review_items(current, product, draft)
+    first_profile_date, last_profile_date = _course_profile_dates(draft, as_of)
     with app._canonical() as canonical_con:
         dataset = canonical_manifest(canonical_con)
         product_risks = collect_qualitative_risks(
@@ -112,7 +171,7 @@ def assess_medication(
             canonical_con, product, person
         )
         quantitative = evaluate_quantitative(canonical_con, product, draft)
-        pediatric = age_years(person["birth_date"], as_of) < 19
+        pediatric = age_years(person["birth_date"], first_profile_date) < 19
         if pediatric and quantitative["dose"].get("result") in {"within", "not_applicable"}:
             quantitative["dose"] = {
                 "result": "not_evaluable",
@@ -148,22 +207,26 @@ def assess_medication(
         coverage=coverage,
         dataset=dataset,
         candidate_course=draft,
-        as_of=as_of,
+        as_of=first_profile_date,
     )
     dur_checks = apply_product_flag_fallbacks(
         dur_checks,
         product,
         person,
         detailed_product_categories=detailed_product_categories,
-        as_of=as_of,
+        as_of=last_profile_date,
     )
     dur_checks.extend(build_product_flag_checks(product))
-    requires_review = any(item.get("status") in {"hit", "unknown"} for item in dur_checks)
+    requires_review = bool(review_items) or any(
+        item.get("status") in {"hit", "conditional", "unknown"}
+        for item in dur_checks
+    )
     return {
         "evaluator_version": EVALUATOR_VERSION,
         "dataset": dataset,
         "coverage": coverage,
         "risks": risks,
+        "review_items": review_items,
         "dur_checks": dur_checks,
         "duration": quantitative["duration"],
         "dose": quantitative["dose"],
@@ -181,6 +244,7 @@ def bind_warning_token(assessment: dict[str, Any], payload_hash: str) -> str | N
     reviewed_safety_context = {
         "coverage": assessment.get("coverage"),
         "risks": assessment.get("risks"),
+        "review_items": assessment.get("review_items"),
         "duration": assessment.get("duration"),
         "dose": assessment.get("dose"),
         "dur_checks": assessment.get("dur_checks"),
@@ -209,13 +273,13 @@ def has_dur_alert(assessment: Mapping[str, Any]) -> bool:
     """Return whether an assessment contains an actual current DUR finding.
 
     Generic review-only states such as pediatric dosing uncertainty or incomplete
-    coverage are intentionally excluded: the persistent medication-list marker
-    means that a DUR danger/warning matched or a quantitative DUR limit was
-    exceeded, not merely that the evaluator could not conclude something.
+    coverage are intentionally excluded. A rule-specific conditional finding is
+    retained because an authoritative DUR rule is known to apply subject to a
+    condition that still needs review.
     """
     dur_checks = assessment.get("dur_checks") or []
     if dur_checks:
-        return any(item.get("status") == "hit" for item in dur_checks)
+        return any(item.get("status") in {"hit", "conditional"} for item in dur_checks)
     return (
         any(
             risk.get("severity") in {"danger", "warning"}
@@ -254,7 +318,9 @@ def assess_current_medication(
         "meal_relation": medication.get("meal_relation") or "unspecified",
         "administration_route": medication.get("administration_route") or "unknown",
         "as_needed": bool(medication.get("as_needed")),
+        "prn_max_per_day": medication.get("prn_max_per_day"),
         "prescription_days": medication.get("prescription_days"),
+        "long_term": bool(medication.get("long_term")),
         "schedule_times": [
             item["time_of_day"] for item in medication.get("schedules") or []
         ],

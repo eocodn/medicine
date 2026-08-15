@@ -6,8 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .schema import CORE_SOURCE_FAMILIES, SCHEMA_VERSION
-from .sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY
-from .xlsx import XLSX_DATASETS
+from .source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_KEYS
 
 
 def canonical_stats(db_path: str | Path) -> dict:
@@ -21,6 +20,59 @@ def canonical_stats(db_path: str | Path) -> dict:
         product_rules = con.execute("SELECT COUNT(*) FROM product_rules").fetchone()[0]
         product_flags = con.execute("SELECT COUNT(*) FROM product_flags").fetchone()[0]
         ingredient_rules = con.execute("SELECT COUNT(*) FROM ingredient_rules").fetchone()[0]
+        dose_criteria = con.execute("SELECT COUNT(*) FROM dose_criteria").fetchone()[0]
+        dose_criteria_parsed = con.execute(
+            "SELECT COUNT(*) FROM dose_criteria WHERE parse_status='parsed'"
+        ).fetchone()[0]
+        dose_criteria_not_evaluable = con.execute(
+            "SELECT COUNT(*) FROM dose_criteria WHERE parse_status='not_evaluable'"
+        ).fetchone()[0]
+        linked_dose_products = con.execute(
+            """SELECT COUNT(DISTINCT r.item_seq)
+               FROM product_criterion_links l
+               JOIN product_rules r ON r.id=l.product_rule_id
+               WHERE r.category='dose_caution'"""
+        ).fetchone()[0]
+        active_linked_dose_products = con.execute(
+            """SELECT COUNT(DISTINCT r.item_seq)
+               FROM product_criterion_links l
+               JOIN product_rules r ON r.id=l.product_rule_id
+               JOIN products p ON p.item_seq=r.item_seq
+               WHERE r.category='dose_caution' AND p.permit_status='active'"""
+        ).fetchone()[0]
+        dose_evaluable_sql = """
+            WITH per_product AS (
+                SELECT r.item_seq,
+                       COUNT(*) AS linked_rows,
+                       SUM(CASE WHEN d.parse_status='parsed' THEN 1 ELSE 0 END) AS parsed_rows,
+                       COUNT(DISTINCT CASE WHEN d.parse_status='parsed'
+                           THEN d.maximum_daily_amount || char(0) || d.maximum_daily_unit END) AS thresholds
+                FROM product_criterion_links l
+                JOIN product_rules r ON r.id=l.product_rule_id
+                LEFT JOIN dose_criteria d ON d.criterion_rule_id=l.criterion_rule_id
+                WHERE r.category='dose_caution'
+                GROUP BY r.item_seq
+            )
+            SELECT COUNT(*) FROM per_product
+            WHERE linked_rows=parsed_rows AND thresholds=1
+        """
+        quantitatively_evaluable_dose_products = con.execute(dose_evaluable_sql).fetchone()[0]
+        active_quantitatively_evaluable_dose_products = con.execute(
+            """WITH per_product AS (
+                   SELECT r.item_seq,p.permit_status,COUNT(*) AS linked_rows,
+                          SUM(CASE WHEN d.parse_status='parsed' THEN 1 ELSE 0 END) AS parsed_rows,
+                          COUNT(DISTINCT CASE WHEN d.parse_status='parsed'
+                              THEN d.maximum_daily_amount || char(0) || d.maximum_daily_unit END) AS thresholds
+                   FROM product_criterion_links l
+                   JOIN product_rules r ON r.id=l.product_rule_id
+                   JOIN products p ON p.item_seq=r.item_seq
+                   LEFT JOIN dose_criteria d ON d.criterion_rule_id=l.criterion_rule_id
+                   WHERE r.category='dose_caution'
+                   GROUP BY r.item_seq,p.permit_status
+               )
+               SELECT COUNT(*) FROM per_product
+               WHERE permit_status='active' AND linked_rows=parsed_rows AND thresholds=1"""
+        ).fetchone()[0]
         dur_ingredient_concepts = con.execute(
             "SELECT COUNT(*) FROM dur_ingredient_concepts"
         ).fetchone()[0]
@@ -152,6 +204,13 @@ def canonical_stats(db_path: str | Path) -> dict:
         "product_rules": product_rules,
         "product_flags": product_flags,
         "ingredient_rules": ingredient_rules,
+        "dose_criteria": dose_criteria,
+        "dose_criteria_parsed": dose_criteria_parsed,
+        "dose_criteria_not_evaluable": dose_criteria_not_evaluable,
+        "linked_dose_products": linked_dose_products,
+        "active_linked_dose_products": active_linked_dose_products,
+        "quantitatively_evaluable_dose_products": quantitatively_evaluable_dose_products,
+        "active_quantitatively_evaluable_dose_products": active_quantitatively_evaluable_dose_products,
         "dur_ingredient_concepts": dur_ingredient_concepts,
         "dur_concept_substances": dur_concept_substances,
         "dur_product_signatures": dur_product_signatures,
@@ -311,16 +370,22 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 errors.append("unsupported source families: " + ", ".join(sorted(unsupported)))
             if missing_families:
                 errors.append("missing core source families: " + ", ".join(sorted(missing_families)))
-            expected_keys = {PERMIT_DATASET_KEY}
-            expected_keys.update(f"mfds_dur:{operation}" for operation in DUR_ENDPOINTS)
-            expected_keys.update(f"kids_mfds_xlsx:{category}" for category in XLSX_DATASETS.values())
-            actual_keys = {row[0] for row in con.execute("SELECT dataset_key FROM source_snapshots")}
-            missing_keys = expected_keys - actual_keys
-            extra_keys = actual_keys - expected_keys
+            source_rows = list(con.execute("SELECT dataset_key,source_family FROM source_snapshots"))
+            actual_keys = {row[0] for row in source_rows}
+            missing_keys = EXPECTED_CANONICAL_SOURCE_KEYS - actual_keys
+            extra_keys = actual_keys - EXPECTED_CANONICAL_SOURCE_KEYS
             if missing_keys:
                 errors.append("missing source snapshots: " + ", ".join(sorted(missing_keys)))
             if extra_keys:
                 errors.append("unexpected source snapshots: " + ", ".join(sorted(extra_keys)))
+            wrong_families = [
+                f"{key}={family}"
+                for key, family in source_rows
+                if key in EXPECTED_CANONICAL_SOURCE_FAMILIES
+                and EXPECTED_CANONICAL_SOURCE_FAMILIES[key] != family
+            ]
+            if wrong_families:
+                errors.append("source snapshot family mismatch: " + ", ".join(sorted(wrong_families)))
             bad_hashes = con.execute(
                 "SELECT COUNT(*) FROM source_snapshots WHERE LENGTH(sha256) != 64"
             ).fetchone()[0]
@@ -338,6 +403,22 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 errors.append("no product rules imported")
             if stats["ingredient_rules"] == 0:
                 errors.append("no ingredient rules imported")
+            dose_rule_count = con.execute(
+                "SELECT COUNT(*) FROM ingredient_rules WHERE category='dose_caution'"
+            ).fetchone()[0]
+            if stats["dose_criteria"] != dose_rule_count:
+                errors.append(
+                    f"dose criteria materialization mismatch: {stats['dose_criteria']}/{dose_rule_count}"
+                )
+            if dose_rule_count and stats["dose_criteria_parsed"] == 0:
+                errors.append("no quantitative dose criteria are parsable")
+            if stats["linked_dose_products"] and stats["quantitatively_evaluable_dose_products"] == 0:
+                errors.append("linked dose-caution products have zero quantitative evaluability")
+            if (
+                stats["active_linked_dose_products"]
+                and stats["active_quantitatively_evaluable_dose_products"] == 0
+            ):
+                errors.append("active linked dose-caution products have zero quantitative evaluability")
             if stats["dur_ingredient_concepts"] == 0:
                 errors.append("no DUR ingredient concepts materialized")
             if stats["dur_product_signatures"] == 0:

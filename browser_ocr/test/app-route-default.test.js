@@ -11,6 +11,7 @@ function appContext() {
   for (const selector of [
     "#pending-dose-amount", "#pending-dose-unit", "#pending-frequency", "#pending-days",
     "#pending-times", "#pending-meal", "#pending-route", "#pending-start-date", "#pending-prn",
+    "#pending-long-term", "#pending-prn-max",
     "#confirm-add-med",
   ]) {
     nodes.set(selector, {
@@ -53,6 +54,8 @@ function appContext() {
     friendlyErrorMessage: (value) => String(value),
     hasClearDurCoverage: () => true,
     durStatusHtml: () => "",
+    syncPrnFields() {},
+    syncLongTermFields() {},
     console,
     Intl,
     Date,
@@ -94,4 +97,18 @@ test("new medication stays unknown when route evidence is unavailable", () => {
 
   assert.equal(nodes.get("#pending-route").value, "unknown");
   assert.match(risk.innerHTML, /투여 경로를 확인해주세요/);
+});
+
+test("conditional DUR items get a condition-review heading", () => {
+  const { context, risk } = appContext();
+  const conditional = preview("oral");
+  conditional.dur_checks = [{
+    category: "pregnancy_contraindication",
+    status: "conditional",
+  }];
+
+  context.renderRiskSheet(conditional);
+
+  assert.match(risk.innerHTML, /조건 확인이 필요한 DUR 항목 1건이 있어요/);
+  assert.doesNotMatch(risk.innerHTML, /DUR 판정 결과를 확인할 수 없어요/);
 });

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 CORE_SOURCE_FAMILIES = frozenset({"mfds_permit_api", "mfds_dur_item_api", "kids_mfds_xlsx"})
 
 SCHEMA = r"""
@@ -117,6 +117,21 @@ CREATE INDEX idx_ingredient_rules_category ON ingredient_rules(category);
 CREATE INDEX idx_ingredient_rules_name ON ingredient_rules(ingredient_name);
 CREATE INDEX idx_ingredient_rules_name_ko ON ingredient_rules(ingredient_name_ko);
 CREATE INDEX idx_ingredient_rules_pair ON ingredient_rules(paired_ingredient_name);
+
+CREATE TABLE dose_criteria (
+    criterion_rule_id INTEGER PRIMARY KEY REFERENCES ingredient_rules(id),
+    maximum_daily_amount TEXT,
+    maximum_daily_unit TEXT,
+    parse_status TEXT NOT NULL CHECK(parse_status IN ('parsed','not_evaluable')),
+    parse_reason TEXT,
+    CHECK(
+        (parse_status='parsed' AND maximum_daily_amount IS NOT NULL
+         AND maximum_daily_unit IS NOT NULL AND parse_reason IS NULL)
+        OR
+        (parse_status='not_evaluable' AND maximum_daily_amount IS NULL
+         AND maximum_daily_unit IS NULL AND parse_reason IS NOT NULL)
+    )
+);
 
 -- DUR ingredient codes are regulatory applicability concepts, not precise
 -- chemical identities. Keep this bridge separate from canonical substances so
@@ -295,13 +310,19 @@ SELECT
     i.dosage_form AS criterion_dosage_form,
     i.note AS criterion_note,
     i.details AS criterion_details,
+    d.maximum_daily_amount AS criterion_maximum_daily_amount,
+    d.maximum_daily_unit AS criterion_maximum_daily_unit,
+    d.parse_status AS criterion_dose_parse_status,
+    d.parse_reason AS criterion_dose_parse_reason,
     l.match_method,
     l.pair_orientation
 FROM product_criterion_links l
 JOIN product_rules r
   ON r.id = l.product_rule_id
 JOIN ingredient_rules i
-  ON i.id = l.criterion_rule_id;
+  ON i.id = l.criterion_rule_id
+LEFT JOIN dose_criteria d
+  ON d.criterion_rule_id = i.id;
 
 CREATE VIEW product_ingredient_criteria AS
 SELECT

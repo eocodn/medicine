@@ -49,6 +49,26 @@ services:
       - .:/workspace
     command: ["sh", "-lc", "node --test browser_ocr/test/*.test.js"]
 
+  ocr-detection-test:
+    build:
+      context: .
+      dockerfile: browser_ocr/detection/Dockerfile
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
+    command: ["sh", "-lc", "node --test browser_ocr/detection/tests/*.test.mjs && /opt/detection-venv/bin/python -m unittest browser_ocr.detection.tests.test_detector_benchmark -v && node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json && node browser_ocr/detection/cli.mjs audit --corpus browser_ocr/detection/corpus/manifest.json --json"]
+
+  ocr-detection-benchmark:
+    build:
+      context: .
+      dockerfile: browser_ocr/detection/Dockerfile
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
+    command: ["node", "browser_ocr/detection/cli.mjs", "benchmark", "--json"]
+
   ocr-eval:
     build:
       context: .

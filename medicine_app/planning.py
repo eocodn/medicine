@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from typing import Callable
+
+from .safety import APP_TIMEZONE
 
 
 def clock_sort_key(value: str) -> tuple[int, int]:
@@ -74,18 +76,21 @@ def medication_applies_on(medication: dict, target: date) -> bool:
 
 def _desired_for_medication(medication: dict, target: date) -> list[dict]:
     dose_text = medication.get("dosage_text")
-    schedules = medication.get("schedules") or []
+    schedules = sorted(
+        medication.get("schedules") or [],
+        key=lambda schedule: clock_sort_key(schedule["time_of_day"]),
+    )
     if schedules:
         return [
             {
                 "medication_id": medication["id"],
                 "scheduled_date": target.isoformat(),
-                "schedule_key": f"time:{schedule['time_of_day']}",
+                "schedule_key": f"slot:{index}",
                 "scheduled_time": schedule["time_of_day"],
                 "slot_label": None,
                 "dose_text": schedule.get("dose_text") or dose_text,
             }
-            for schedule in schedules
+            for index, schedule in enumerate(schedules, 1)
         ]
 
     frequency = medication.get("frequency_per_day")
@@ -165,7 +170,7 @@ def materialize_daily_plan(
                COALESCE(i.ingredient_name_snapshot,m.ingredient_name) AS ingredient_name,
                m.meal_relation, m.administration_route
         FROM dose_instances i JOIN medications m ON m.id=i.medication_id
-        WHERE i.person_id=? AND i.scheduled_date=?
+        WHERE i.person_id=? AND i.scheduled_date=? AND i.schedule_key NOT LIKE 'prn:%'
         ORDER BY CASE WHEN i.scheduled_time IS NULL THEN 1 ELSE 0 END,
                  i.scheduled_time, i.schedule_key, i.rowid
         """,
@@ -234,13 +239,68 @@ def cancel_instance_completion(con: sqlite3.Connection, instance_id: str) -> dic
     row = con.execute("SELECT * FROM dose_instances WHERE id=?", (instance_id,)).fetchone()
     if row is None:
         raise KeyError("dose instance not found")
-    if row["status"] == "skipped":
-        raise ValueError("skipped dose is not a completed dose")
-
     con.execute("DELETE FROM dose_logs WHERE dose_instance_id=?", (instance_id,))
+    if str(row["schedule_key"]).startswith("prn:"):
+        # A PRN instance exists only because an actual intake was recorded. Undoing
+        # that intake removes the ad-hoc occurrence instead of leaving an invisible
+        # planned dose which can never appear in a fixed daily schedule.
+        snapshot = dict(row)
+        con.execute("DELETE FROM dose_instances WHERE id=?", (instance_id,))
+        snapshot.update(status="canceled", completed_at=None, deleted=True)
+        return snapshot
     con.execute(
         "UPDATE dose_instances SET status='planned', completed_at=NULL WHERE id=?",
         (instance_id,),
     )
     updated = con.execute("SELECT * FROM dose_instances WHERE id=?", (instance_id,)).fetchone()
     return dict(updated)
+
+
+def create_prn_instance(
+    con: sqlite3.Connection,
+    medication: dict,
+    occurred_date: date,
+    uuid_factory: Callable[[], str],
+) -> dict:
+    if not medication.get("as_needed"):
+        raise ValueError("medication is not PRN/as_needed")
+    instance_id = uuid_factory()
+    con.execute(
+        """INSERT INTO dose_instances(
+               id,medication_id,person_id,scheduled_date,schedule_key,scheduled_time,
+               slot_label,dose_text,product_name_snapshot,ingredient_name_snapshot,status
+           ) VALUES(?,?,?,?,?,NULL,?,?,?,?, 'planned')""",
+        (
+            instance_id,
+            medication["id"],
+            medication["person_id"],
+            occurred_date.isoformat(),
+            f"prn:{instance_id}",
+            "필요시",
+            medication.get("dosage_text"),
+            medication.get("product_name"),
+            medication.get("ingredient_name"),
+        ),
+    )
+    return dict(con.execute("SELECT * FROM dose_instances WHERE id=?", (instance_id,)).fetchone())
+
+
+def prn_taken_count(con: sqlite3.Connection, medication_id: str, target: date) -> int:
+    rows = con.execute(
+        """SELECT l.occurred_at FROM dose_logs l
+           JOIN dose_instances i ON i.id=l.dose_instance_id
+           WHERE l.medication_id=? AND l.status='taken' AND i.schedule_key LIKE 'prn:%'""",
+        (medication_id,),
+    ).fetchall()
+    count = 0
+    for row in rows:
+        try:
+            occurred = datetime.fromisoformat(str(row[0]))
+            occurred_date = (
+                occurred.astimezone(APP_TIMEZONE).date() if occurred.tzinfo else occurred.date()
+            )
+            if occurred_date == target:
+                count += 1
+        except ValueError:
+            continue
+    return count

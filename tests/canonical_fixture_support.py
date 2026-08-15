@@ -4,22 +4,29 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
+from medicine_canonical.dose_criteria import parse_daily_dose_threshold
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
+from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY
+from medicine_canonical.xlsx import XLSX_DATASETS
 
 
-PERMIT_SOURCE = "mfds_permit:fixture"
-DUR_SOURCE = "mfds_dur:fixture"
-XLSX_SOURCE = "kids_mfds_xlsx:fixture"
+PERMIT_SOURCE = PERMIT_DATASET_KEY
+DUR_SOURCE = "mfds_dur:getUsjntTabooInfoList03"
+XLSX_SOURCE = "kids_mfds_xlsx:lactation_caution"
+
+
+def expected_source_snapshots() -> list[tuple[str, str]]:
+    return (
+        [(PERMIT_DATASET_KEY, "mfds_permit_api")]
+        + [(f"mfds_dur:{operation}", "mfds_dur_item_api") for operation in DUR_ENDPOINTS]
+        + [(f"kids_mfds_xlsx:{category}", "kids_mfds_xlsx") for category in XLSX_DATASETS.values()]
+    )
 
 
 def create_canonical_fixture(path: Path) -> sqlite3.Connection:
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
-    for key, family, ordinal in (
-        (PERMIT_SOURCE, "mfds_permit_api", 1),
-        (DUR_SOURCE, "mfds_dur_item_api", 2),
-        (XLSX_SOURCE, "kids_mfds_xlsx", 3),
-    ):
+    for ordinal, (key, family) in enumerate(expected_source_snapshots(), 1):
         con.execute(
             """INSERT INTO source_snapshots(
                    dataset_key,source_family,source_locator,snapshot_path,row_count,sha256,metadata_json
@@ -115,6 +122,14 @@ def add_linked_rule(
          str(criterion_source_row)),
     )
     criterion_rule_id = int(cur.lastrowid)
+    if category == "dose_caution":
+        amount, unit, status, reason = parse_daily_dose_threshold(rule_value or effect_name)
+        con.execute(
+            """INSERT INTO dose_criteria(
+                   criterion_rule_id,maximum_daily_amount,maximum_daily_unit,parse_status,parse_reason
+               ) VALUES(?,?,?,?,?)""",
+            (criterion_rule_id, amount, unit, status, reason),
+        )
     con.execute(
         """INSERT INTO product_criterion_links(
                product_rule_id,criterion_rule_id,match_method,pair_orientation

@@ -19,3 +19,7 @@ android/app/build/
 browser_ocr/finetune/work/
 browser_ocr/finetune/private/
 browser_ocr/finetune/checkpoints/
+
+# Detector benchmark model/result caches are reproducible from pinned manifests.
+browser_ocr/detection/.cache/
+browser_ocr/detection/results/

@@ -26,6 +26,7 @@ function profileMeta(person) {
     if (person.pregnancy_status === "pregnant") parts.push(pregnancyLabel(person.pregnancy_status));
     if (person.lactation_status === "breastfeeding") parts.push(lactationLabel(person.lactation_status));
   }
+  if (person.profile_needs_review) parts.push("정보 확인 필요");
   return parts.join(" · ");
 }
 
@@ -72,23 +73,13 @@ async function selectPerson(personId) {
 
 function syncReproductiveFields() {
   const form = $("#person-form");
-  const sex = form.elements.sex.value;
-  const pregnancy = form.elements.pregnancy_status;
-  const lactation = form.elements.lactation_status;
-  const hidden = sex === "male";
-  $$('[data-reproductive-field]', form).forEach((node) => node.classList.toggle("hidden", hidden));
-  if (hidden) {
-    pregnancy.value = "not_applicable";
-    lactation.value = "not_applicable";
-    pregnancy.dataset.autoNotApplicable = "1";
-    lactation.dataset.autoNotApplicable = "1";
-  } else {
-    for (const input of [pregnancy, lactation]) {
-      if (input.dataset.autoNotApplicable === "1") input.value = "unknown";
-      delete input.dataset.autoNotApplicable;
-    }
+  const female = form.elements.sex.value === "female";
+  for (const input of [form.elements.pregnancy_status, form.elements.lactation_status]) {
+    input.disabled = !female;
   }
+  $$('[data-reproductive-field]', form).forEach((node) => node.classList.toggle("hidden", !female));
 }
+
 
 function openPersonForm(personId = null) {
   const form = $("#person-form");
@@ -113,6 +104,10 @@ async function submitPerson(event) {
   event.preventDefault();
   const formElement = event.currentTarget;
   const payload = Object.fromEntries(new FormData(formElement).entries());
+  if (payload.sex === "male") {
+    payload.pregnancy_status = "not_applicable";
+    payload.lactation_status = "not_applicable";
+  }
   const editingId = state.editingPersonId;
   try {
     const person = await api(editingId ? `/api/people/${editingId}` : "/api/people", {

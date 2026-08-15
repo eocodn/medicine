@@ -65,6 +65,7 @@ class ProductRepository:
         ]
         linked = linked_categories(con, target_item_seq)
         issues = category_resolution_issues(con, target_item_seq)
+        coverage_status = "partial" if issues else "complete" if linked else "limited"
         return {
             "product_ref": target_item_seq,
             "catalog_item_seq": target_item_seq,
@@ -96,6 +97,7 @@ class ProductRepository:
             "permit_status": row["permit_status"],
             "catalog_source": "canonical",
             "dur_match": bool(linked),
+            "dur_coverage_status": coverage_status,
             "canonical_linked_categories": sorted(linked),
             "canonical_resolution_issues": {key: len(value) for key, value in sorted(issues.items())},
         }

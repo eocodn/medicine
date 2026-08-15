@@ -14,6 +14,10 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("addGeneratedSourceDirectory", gradle)
         self.assertNotIn("assets.srcDirs", gradle)
         self.assertNotIn("project.copy", gradle)
+        runtime = Path("medicine_app/canonical_runtime.py").read_text()
+        self.assertIn('include("medicine_app/**/*.py")', gradle)
+        self.assertNotIn("from medicine_canonical", runtime)
+        self.assertNotIn("import medicine_canonical", runtime)
 
     def test_retired_legacy_etl_is_not_packaged_or_exposed(self) -> None:
         compose = Path("compose.yaml").read_text()

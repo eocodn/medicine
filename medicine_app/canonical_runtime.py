@@ -6,9 +6,34 @@ import re
 import sqlite3
 from typing import Any, Mapping
 
+# Keep this allowlist in the Android-packaged medicine_app tree. The canonical
+# builder owns the same release policy separately; tests require them to match so
+# mobile runtime verification never depends on the omitted medicine_canonical package.
+_RUNTIME_SOURCE_FAMILIES = {
+    "mfds_permit:products": "mfds_permit_api",
+    "mfds_dur:getUsjntTabooInfoList03": "mfds_dur_item_api",
+    "mfds_dur:getSpcifyAgrdeTabooInfoList03": "mfds_dur_item_api",
+    "mfds_dur:getPwnmTabooInfoList03": "mfds_dur_item_api",
+    "mfds_dur:getCpctyAtentInfoList03": "mfds_dur_item_api",
+    "mfds_dur:getMdctnPdAtentInfoList03": "mfds_dur_item_api",
+    "mfds_dur:getOdsnAtentInfoList03": "mfds_dur_item_api",
+    "mfds_dur:getEfcyDplctInfoList03": "mfds_dur_item_api",
+    "mfds_dur:getDurPrdlstInfoList03": "mfds_dur_item_api",
+    "mfds_dur:getSeobangjeongPartitnAtentInfoList03": "mfds_dur_item_api",
+    "kids_mfds_xlsx:combination_contraindication": "kids_mfds_xlsx",
+    "kids_mfds_xlsx:age_contraindication": "kids_mfds_xlsx",
+    "kids_mfds_xlsx:pregnancy_contraindication": "kids_mfds_xlsx",
+    "kids_mfds_xlsx:dose_caution": "kids_mfds_xlsx",
+    "kids_mfds_xlsx:duration_caution": "kids_mfds_xlsx",
+    "kids_mfds_xlsx:elderly_caution": "kids_mfds_xlsx",
+    "kids_mfds_xlsx:therapeutic_duplication_caution": "kids_mfds_xlsx",
+    "kids_mfds_xlsx:lactation_caution": "kids_mfds_xlsx",
+}
+_RUNTIME_SOURCE_KEYS = frozenset(_RUNTIME_SOURCE_FAMILIES)
 
-_CANONICAL_SCHEMA_VERSION = "7"
-_REQUIRED_FAMILIES = {"mfds_permit_api", "mfds_dur_item_api", "kids_mfds_xlsx"}
+
+_CANONICAL_SCHEMA_VERSION = "8"
+_REQUIRED_FAMILIES = set(_RUNTIME_SOURCE_FAMILIES.values())
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -25,6 +50,15 @@ def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
         "SELECT dataset_key,source_family,sha256,row_count,fetched_at,effective_date FROM source_snapshots ORDER BY dataset_key"
     )]
     families = {str(row["source_family"]) for row in rows}
+    actual_keys = {str(row["dataset_key"]) for row in rows}
+    missing_sources = sorted(_RUNTIME_SOURCE_KEYS - actual_keys)
+    unexpected_sources = sorted(actual_keys - _RUNTIME_SOURCE_KEYS)
+    misclassified_sources = sorted(
+        str(row["dataset_key"])
+        for row in rows
+        if str(row["dataset_key"]) in _RUNTIME_SOURCE_FAMILIES
+        and _RUNTIME_SOURCE_FAMILIES[str(row["dataset_key"])] != str(row["source_family"])
+    )
     invalid = [
         str(row["dataset_key"])
         for row in rows
@@ -45,6 +79,9 @@ def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
         and meta.get("schema_version") == _CANONICAL_SCHEMA_VERSION
         and meta.get("build_stage") == "complete"
         and families == _REQUIRED_FAMILIES
+        and not missing_sources
+        and not unexpected_sources
+        and not misclassified_sources
         and unresolved_link_ambiguities == []
         and not invalid
     )
@@ -56,6 +93,9 @@ def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
         "source_count": len(rows),
         "source_families": sorted(families),
         "invalid_sources": invalid,
+        "missing_sources": missing_sources,
+        "unexpected_sources": unexpected_sources,
+        "misclassified_sources": misclassified_sources,
     }
 
 
@@ -95,6 +135,11 @@ def linked_product_rows(
             "paired_ingredient_name": row.get("criterion_paired_ingredient_name") or row.get("paired_ingredient_name"),
             "rule_value": row.get("criterion_rule_value"),
             "dosage_form": row.get("criterion_dosage_form"),
+            "product_dosage_form": row.get("product_dosage_form"),
+            "maximum_daily_amount": row.get("criterion_maximum_daily_amount"),
+            "maximum_daily_unit": row.get("criterion_maximum_daily_unit"),
+            "dose_parse_status": row.get("criterion_dose_parse_status"),
+            "dose_parse_reason": row.get("criterion_dose_parse_reason"),
             "note": row.get("criterion_note"),
             # MFDS product detail retains product-specific timing/quantity evidence.
             "details": row.get("product_details") or row.get("criterion_details"),

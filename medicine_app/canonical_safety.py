@@ -9,7 +9,7 @@ from typing import Any, Mapping
 from .canonical_runtime import has_unlinked_product_rule, item_seq, linked_product_rows
 from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 from .safety import (
-    _COUNT_UNITS, _countable_form, _detail_content, _draft_quantity, _frequency, _source_quantity,
+    _COUNT_UNITS, _draft_quantity, _frequency, _source_quantity,
     age_rule_evaluation, age_years,
 )
 
@@ -45,6 +45,26 @@ def _canonical_ingredient(row: Mapping[str, Any]) -> str | None:
 
 def _canonical_paired_ingredient(row: Mapping[str, Any]) -> str | None:
     return row.get("criterion_paired_ingredient_name") or row.get("paired_ingredient_name")
+
+
+def _pregnancy_rule_display(value: Any) -> str:
+    text = str(value or "").strip()
+    if text in {"1", "2"}:
+        return f"{text}등급"
+    return text or "등급 미표기"
+
+
+def _pregnancy_rule_is_conditional(value: Any) -> bool:
+    """Return whether the DUR grade itself carries an applicability qualifier.
+
+    Canonical pregnancy criteria use plain ``1등급``/``2등급`` for unconditional
+    grades and parenthesized text for form, indication, duration, gestational-age,
+    or explicit exception conditions. Those conditions are authoritative evidence,
+    but the current medication/profile inputs do not model every required clinical
+    fact, so they must stay review-required without being presented as a definite hit.
+    """
+    text = str(value or "").strip()
+    return bool(re.search(r"[12]\s*등급\s*\(", text))
 
 
 _DURATION_LIMIT_RE = re.compile(r"^\s*(?P<amount>\d+)\s*(?P<unit>일|주|개월)?\s*$")
@@ -92,7 +112,7 @@ def _combination_risks(
                 continue
             message = details or "DUR 병용금기 조합에 해당합니다."
             if timing.get("status") == "not_evaluable":
-                message += " 복용 간격 조건은 자동 판정하지 못해 경고를 유지합니다."
+                message += " 병용금기 규칙은 확인되지만 복용 간격 조건의 적용 여부를 추가로 확인해야 합니다."
             finding = {
                 "type": "combination_contraindication", "severity": "danger",
                 "title": f"{medication['product_name']}와 병용금기", "details": message,
@@ -100,7 +120,7 @@ def _combination_risks(
                 "source_scope": "canonical_product",
             }
             if timing.get("status") == "not_evaluable":
-                finding["evaluation_status"] = "unknown"
+                finding["evaluation_status"] = "conditional"
             risks.append(finding)
         if not rows and _unlinked_combination_exists(con, target, paired):
             risks.append({
@@ -113,11 +133,32 @@ def _combination_risks(
     return risks
 
 
+def _profile_evaluation_dates(
+    candidate_course: Mapping[str, Any] | None,
+    as_of: date | None,
+) -> list[date | None]:
+    course = candidate_course or {}
+    try:
+        start = date.fromisoformat(str(course["start_date"])) if course.get("start_date") else None
+        end = date.fromisoformat(str(course["end_date"])) if course.get("end_date") else None
+    except (TypeError, ValueError):
+        start, end = None, None
+    if as_of is not None:
+        first = start if start is not None and as_of < start else as_of
+    else:
+        first = start
+    dates: list[date | None] = [first]
+    if end is not None and (first is None or end > first):
+        dates.append(end)
+    return dates
+
+
 def _person_specific_risks(
     con: sqlite3.Connection,
     person: Mapping[str, Any],
     product: Mapping[str, Any],
     as_of: date | None = None,
+    candidate_course: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     target = item_seq(product)
     if not target:
@@ -126,17 +167,23 @@ def _person_specific_risks(
     for category in ("age_contraindication", "pregnancy_contraindication", "elderly_caution"):
         rows.extend(linked_product_rows(con, target, category))
     risks: list[dict[str, Any]] = []
-    current_age = age_years(person["birth_date"], as_of)
+    evaluation_dates = _profile_evaluation_dates(candidate_course, as_of)
     for row in rows:
         category = str(row["category"])
         rule_value = row.get("criterion_rule_value")
         if category == "age_contraindication":
-            applies, reason = age_rule_evaluation(
-                person["birth_date"], rule_value,
-                row.get("product_dosage_form") or product.get("dosage_form"),
-                as_of,
-            )
-            if applies is None:
+            evaluations = [
+                age_rule_evaluation(
+                    person["birth_date"], rule_value,
+                    row.get("product_dosage_form") or product.get("dosage_form"),
+                    evaluation_date,
+                )
+                for evaluation_date in evaluation_dates
+            ]
+            if any(applies is True for applies, _ in evaluations):
+                title, severity = f"연령금기 · {rule_value}", "danger"
+            elif any(applies is None for applies, _ in evaluations):
+                reason = next((reason for applies, reason in evaluations if applies is None and reason), None)
                 risks.append({
                     "type": category,
                     "severity": "info",
@@ -148,23 +195,26 @@ def _person_specific_risks(
                     "source_row": row.get("criterion_source_row"),
                 })
                 continue
-            if not applies:
+            else:
                 continue
-            title, severity = f"연령금기 · {rule_value}", "danger"
         elif category == "pregnancy_contraindication":
             if person.get("pregnancy_status") != "pregnant":
                 continue
-            title, severity = f"임부금기 · {rule_value or '등급 미표기'}", "danger"
+            rule_display = _pregnancy_rule_display(rule_value)
+            title, severity = f"임부금기 · {rule_display}", "danger"
         else:
-            if current_age < 65:
+            if not any(age_years(person["birth_date"], evaluation_date) >= 65 for evaluation_date in evaluation_dates):
                 continue
             title, severity = "노인주의 대상", "warning"
-        risks.append({
+        finding = {
             "type": category, "severity": severity, "title": title,
             "details": _canonical_details(row), "source_scope": "canonical_product",
             "dataset_key": row.get("criterion_source_dataset_key"),
             "source_row": row.get("criterion_source_row"),
-        })
+        }
+        if category == "pregnancy_contraindication" and _pregnancy_rule_is_conditional(rule_value):
+            finding["evaluation_status"] = "conditional"
+        risks.append(finding)
     return risks
 
 
@@ -211,7 +261,7 @@ def collect_qualitative_risks(
     course = candidate_course or {}
     risks = (
         _combination_risks(con, product, current, course)
-        + _person_specific_risks(con, person, product, as_of)
+        + _person_specific_risks(con, person, product, as_of, candidate_course=course)
         + _duplication_risks(con, product, current, course)
     )
     seen = set()
@@ -275,7 +325,15 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
     dose_rows = linked_product_rows(con, target, "dose_caution") if target else []
     dose: dict[str, Any] = {"result": "not_evaluable", "source_scope": "canonical_product"}
     source, source_reason = _source_quantity(dose_rows) if dose_rows else (None, None)
-    entered, entered_reason = _draft_quantity(draft, product)
+    product_dose_forms = sorted({
+        str(row.get("product_dosage_form")).strip()
+        for row in dose_rows
+        if row.get("product_dosage_form") and str(row.get("product_dosage_form")).strip()
+    })
+    entered, entered_reason = _draft_quantity(
+        draft, product,
+        product_dosage_form=", ".join(product_dose_forms) if product_dose_forms else None,
+    )
     frequency, frequency_reason = _frequency(draft)
     if not dose_rows:
         if target and has_unlinked_product_rule(con, target, "dose_caution"):
@@ -292,17 +350,10 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
         threshold_amount, threshold_unit = source
         entered_amount, entered_unit = entered
         daily_amount = None
-        if threshold_unit is None and entered_unit in _COUNT_UNITS and _countable_form(entered_unit, product.get("dosage_form")):
-            threshold_unit = entered_unit
         if threshold_unit == "mg" and entered_unit == "mg":
             daily_amount = entered_amount * frequency
         elif threshold_unit == "mg" and entered_unit in _COUNT_UNITS:
-            content = _detail_content(dose_rows[0].get("details")) if len(dose_rows) == 1 else None
-            if content is None:
-                dose["reason"] = "count dose requires an unambiguous per-unit ingredient content"
-            else:
-                daily_amount = entered_amount * frequency * content
-                dose["per_unit_ingredient_amount"] = float(content)
+            dose["reason"] = "count dose requires an authoritative per-unit ingredient content"
         elif threshold_unit in _COUNT_UNITS and entered_unit == threshold_unit:
             daily_amount = entered_amount * frequency
         else:

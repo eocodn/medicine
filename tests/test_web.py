@@ -32,10 +32,10 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('id="include-inactive"', response.text)
         self.assertIn('src="/static/native-api.js?v=20260811k"', response.text)
         self.assertIn('src="/static/people.js?v=20260811k"', response.text)
-        self.assertIn('href="/static/styles.css?v=20260813b"', response.text)
+        self.assertIn('href="/static/styles.css?v=20260814c"', response.text)
         self.assertIn('src="/static/timeline.js?v=20260811b"', response.text)
         self.assertIn('src="/static/prescription.js?v=20260811e"', response.text)
-        self.assertIn('src="/static/app.js?v=20260814a"', response.text)
+        self.assertIn('src="/static/app.js?v=20260814c"', response.text)
         self.assertIn("약을 검색하세요", response.text)
         self.assertNotIn("로컬 우선", response.text)
         self.assertNotIn("personal.sqlite", response.text)
@@ -76,6 +76,8 @@ class WebApiTest(unittest.TestCase):
         self.assertNotIn("변경 이력", script.text)
         self.assertIn("data-instance-cancel", script.text)
         self.assertIn("cancelDoseInstance", script.text)
+        self.assertIn("data-instance-skipped", script.text)
+        self.assertIn('completeDoseInstance(button.dataset.instanceSkipped, "skipped")', script.text)
         self.assertNotIn("data-taken=", script.text)
         self.assertNotIn("function logDose", script.text)
         self.assertIn('type="button">삭제</button>', script.text)
@@ -157,6 +159,32 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(response.json()[0]["permit_status"], "withdrawn")
         self.assertEqual(response.json()[0]["permit_status_name"], "취하")
 
+    def test_inactive_product_cannot_enter_current_medication_regimen(self) -> None:
+        person = self.client.post(
+            "/api/people",
+            json={
+                "name": "허가상태", "birth_date": "1990-01-01", "sex": "male",
+                "pregnancy_status": "not_applicable", "lactation_status": "not_applicable",
+            },
+        ).json()
+        response = self.client.post(
+            f"/api/people/{person['id']}/medications",
+            json={"product_ref": "MFDS-W", "prescription_days": 7, "start_date": "2026-08-10"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("inactive permit", response.json()["detail"])
+
+    def test_female_profile_requires_explicit_binary_reproductive_states(self) -> None:
+        response = self.client.post(
+            "/api/people",
+            json={
+                "name": "미완성", "birth_date": "1990-01-01", "sex": "female",
+                "pregnancy_status": "not_pregnant",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("lactation_status", response.json()["detail"])
+
     def test_web_app_requires_canonical_reference_database(self) -> None:
         missing = self.canonical_db.with_name("missing-canonical.sqlite")
         with self.assertRaisesRegex(FileNotFoundError, "canonical database not found"):
@@ -170,6 +198,7 @@ class WebApiTest(unittest.TestCase):
                 "birth_date": "2010-01-10",
                 "sex": "female",
                 "pregnancy_status": "pregnant",
+                "lactation_status": "not_breastfeeding",
             },
         )
         self.assertEqual(person_response.status_code, 201)
@@ -181,13 +210,13 @@ class WebApiTest(unittest.TestCase):
 
         current_warning = self.client.post(
             f"/api/people/{person['id']}/medications",
-            json={"product_code": "MFDS-A", "schedule_times": ["08:00"]},
+            json={"product_code": "MFDS-A", "schedule_times": ["08:00"], "long_term": True},
         )
         self.assertEqual(current_warning.status_code, 409)
         current_added = self.client.post(
             f"/api/people/{person['id']}/medications",
             json={
-                "product_code": "MFDS-A", "schedule_times": ["08:00"],
+                "product_code": "MFDS-A", "schedule_times": ["08:00"], "long_term": True,
                 "acknowledge_warnings": True,
                 "warning_token": current_warning.json()["warning_token"],
             },
@@ -202,14 +231,14 @@ class WebApiTest(unittest.TestCase):
 
         added = self.client.post(
             f"/api/people/{person['id']}/medications",
-            json={"product_code": "MFDS-B", "dosage_text": "1정", "schedule_times": ["20:00"]},
+            json={"product_code": "MFDS-B", "dosage_text": "1정", "schedule_times": ["20:00"], "long_term": True},
         )
         self.assertEqual(added.status_code, 409)
         warning = added.json()
         acknowledged = self.client.post(
             f"/api/people/{person['id']}/medications",
             json={
-                "product_code": "MFDS-B", "dosage_text": "1정", "schedule_times": ["20:00"],
+                "product_code": "MFDS-B", "dosage_text": "1정", "schedule_times": ["20:00"], "long_term": True,
                 "acknowledge_warnings": True, "warning_token": warning["warning_token"],
             },
         )
@@ -246,7 +275,7 @@ class WebApiTest(unittest.TestCase):
                 "birth_date": "1990-01-01",
                 "sex": "female",
                 "pregnancy_status": "not_pregnant",
-                "lactation_status": "unknown",
+                "lactation_status": "not_breastfeeding",
             },
         )
         self.assertEqual(created.status_code, 201)
@@ -273,7 +302,7 @@ class WebApiTest(unittest.TestCase):
     def test_structured_prescription_and_daily_plan_api(self) -> None:
         person = self.client.post(
             "/api/people",
-            json={"name": "일정", "birth_date": "1990-01-01", "sex": "female", "pregnancy_status": "not_pregnant"},
+            json={"name": "일정", "birth_date": "1990-01-01", "sex": "female", "pregnancy_status": "not_pregnant", "lactation_status": "not_breastfeeding"},
         ).json()
 
         search = self.client.get("/api/products", params={"q": "전체카탈로그약B"})

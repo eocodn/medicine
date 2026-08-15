@@ -42,7 +42,9 @@ class MedicationPreviewRequest(BaseModel):
     meal_relation: str = "unspecified"
     administration_route: str = "unknown"
     as_needed: bool = False
+    prn_max_per_day: int | None = None
     prescription_days: int | None = None
+    long_term: bool = False
     schedule_times: list[str] = Field(default_factory=list)
     start_date: str | None = None
     end_date: str | None = None
@@ -61,7 +63,9 @@ class MedicationCreate(BaseModel):
     meal_relation: str = "unspecified"
     administration_route: str = "unknown"
     as_needed: bool = False
+    prn_max_per_day: int | None = None
     prescription_days: int | None = None
+    long_term: bool = False
     schedule_times: list[str] = Field(default_factory=list)
     start_date: str | None = None
     end_date: str | None = None
@@ -79,7 +83,9 @@ class MedicationUpdate(BaseModel):
     meal_relation: str | None = None
     administration_route: str | None = None
     as_needed: bool | None = None
+    prn_max_per_day: int | None = None
     prescription_days: int | None = None
+    long_term: bool | None = None
     schedule_times: list[str] | None = None
     start_date: str | None = None
     end_date: str | None = None
@@ -89,6 +95,11 @@ class MedicationUpdate(BaseModel):
 
 class DoseInstanceUpdate(BaseModel):
     status: str
+    occurred_at: str | None = None
+    note: str | None = None
+
+
+class PrnIntakeCreate(BaseModel):
     occurred_at: str | None = None
     note: str | None = None
 
@@ -234,6 +245,13 @@ def create_web_app(
         except Exception as exc:
             raise _translate_error(exc) from exc
 
+    @app.post("/api/medications/{medication_id}/prn-intakes", status_code=201)
+    def record_prn_intake(medication_id: str, payload: PrnIntakeCreate) -> dict:
+        try:
+            return service.record_prn_dose(medication_id, payload.occurred_at, payload.note)
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
     @app.get("/api/medications/{medication_id}/history")
     def medication_history(medication_id: str) -> list[dict]:
         try:
@@ -267,7 +285,27 @@ def create_web_app(
     return app
 
 
-app = create_web_app(
-    os.environ.get("MEDICINE_CANONICAL_DB", str(DEFAULT_CANONICAL_DB)),
-    os.environ.get("MEDICINE_PERSONAL_DB", str(DEFAULT_PERSONAL_DB)),
-)
+class _LazyDefaultWebApp:
+    """Delay default database binding until the ASGI server actually starts.
+
+    Importers such as tests need the app factory without requiring generated local
+    databases. Uvicorn still resolves ``medicine_app.web:app`` to this ASGI object,
+    and the first lifespan/request scope constructs the normal FastAPI application.
+    """
+
+    def __init__(self) -> None:
+        self._app: FastAPI | None = None
+
+    def _resolve(self) -> FastAPI:
+        if self._app is None:
+            self._app = create_web_app(
+                os.environ.get("MEDICINE_CANONICAL_DB", str(DEFAULT_CANONICAL_DB)),
+                os.environ.get("MEDICINE_PERSONAL_DB", str(DEFAULT_PERSONAL_DB)),
+            )
+        return self._app
+
+    async def __call__(self, scope, receive, send) -> None:
+        await self._resolve()(scope, receive, send)
+
+
+app = _LazyDefaultWebApp()

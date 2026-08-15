@@ -70,6 +70,36 @@ test("warning preview renders qualitative DUR details before acknowledgement", a
   assert.match(html, /함께 복용하면 안 됩니다/);
 });
 
+test("conditional DUR review renders as a distinct detailed state", () => {
+  const context = prescriptionContext({});
+  const html = context.durStatusHtml([{
+    category: "pregnancy_contraindication", label: "임부금기", status: "conditional",
+    summary: "임부금기 · 2등급(말라리아 치료시 제외)",
+    findings: [{
+      title: "임부금기 · 2등급(말라리아 치료시 제외)",
+      details: "적응증에 따라 예외가 있어 적용 여부 확인이 필요합니다.",
+    }],
+  }]);
+
+  assert.match(html, /dur-check conditional/);
+  assert.match(html, /2등급\(말라리아 치료시 제외\)/);
+  assert.match(html, /적응증에 따라 예외/);
+  assert.doesNotMatch(html, /dur-check unknown/);
+});
+
+test("conditional DUR review has its own orange styling contract", () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, "../../medicine_app/static/styles.css"), "utf8",
+  );
+
+  assert.match(css, /--conditional:/);
+  assert.match(css, /--conditional-soft:/);
+  assert.match(css, /\.dur-check\.conditional\s*\{/);
+  assert.match(css, /background:\s*var\(--conditional-soft\)/);
+  assert.match(css, /\.dur-check\.unknown\s*\{/);
+  assert.match(css, /background:\s*var\(--warning-soft\)/);
+});
+
 test("structured interaction timing is visible in the warning details", async () => {
   const context = prescriptionContext({
     warning_token: "warning-token",

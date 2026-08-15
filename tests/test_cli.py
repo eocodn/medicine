@@ -20,7 +20,7 @@ class PrescriptionCliTest(unittest.TestCase):
         self.personal_db = root / "personal.sqlite"
         make_canonical_db(self.canonical_db)
         app = MedicationApp(self.canonical_db, self.personal_db)
-        self.person = app.create_person("CLI", "1990-01-01")
+        self.person = app.create_person("CLI", "1990-01-01", "male", "not_applicable", "not_applicable")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -70,7 +70,7 @@ class PrescriptionCliTest(unittest.TestCase):
         status, created = self.run_cli(
             "person-add", "--name", "관리", "--birth-date", "1990-01-01",
             "--sex", "female", "--pregnancy-status", "not_pregnant",
-            "--lactation-status", "unknown",
+            "--lactation-status", "not_breastfeeding",
         )
         self.assertEqual(status, 0)
 

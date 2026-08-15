@@ -61,8 +61,8 @@ docker compose down
   - 복용 시간
   - 식전·식후 등 식사 관계
   - 경구·외용·흡입 등 투여 경로
-  - 처방 일수와 시작·종료일
-  - 필요시 복용(PRN)
+  - 처방 일수와 시작·종료일, 또는 명시적 장기복용(종료일 없음)
+  - 필요시 복용(PRN): 고정 일정과 분리하고 1일 최대 횟수 및 실제 복용 기록 지원
 - 입력 처방의 정량 DUR 확인
   - canonical 제품 기준 투여기간과 처방 일수를 자동 비교
   - 제품규칙과 상세기준 연결을 확정할 수 없는 경우 보완 추측 없이 판정 불가로 표시
@@ -72,12 +72,12 @@ docker compose down
   - 경고 확인 토큰은 처방 내용, 당시 DUR 데이터셋과 실제 평가 결과에 묶여 안전성 맥락이 바뀌면 재확인 필요
 - 처방 수정과 변경 이력
   - revision 기반 동시 수정 충돌 방지
-  - 수정 시 미래의 미완료 일정만 교체하고 과거 완료·건너뜀 기록 보존
+  - 수정 시 하루 복용 회차 identity를 보존해 시간 변경이 추가 복용을 만들지 않고, 과거 완료·건너뜀 기록 보존
   - 등록·수정·종료 당시 처방, DUR 판정, 평가기 버전과 데이터셋 식별자 스냅샷 보존
 - 오늘 복용 계획 자동 생성
   - 같은 날짜를 여러 번 조회해도 동일 복용 인스턴스 유지
-  - 복용 완료 / 건너뜀 상태 추적
-  - PRN 약은 고정 일정과 분리
+  - 복용 완료 / 건너뜀 상태 추적 및 잘못 누른 기록 되돌리기
+  - PRN 약은 고정 일정과 분리하고 실제 복용 시점만 별도로 기록
 - 복용 종료 처리 / 최근 복용 기록 조회
 - JSON API와 동일 코어를 사용하는 headless CLI
 - 서버 없는 Android 패키징
@@ -184,6 +184,7 @@ docker compose run --rm app person-add \
   --birth-date 1990-01-01 \
   --sex female \
   --pregnancy-status not_pregnant \
+  --lactation-status not_breastfeeding \
   --json
 
 # 의약품 검색
@@ -221,6 +222,16 @@ docker compose run --rm app med-update \
   --medication <MEDICATION_ID> --expected-revision <REVISION> \
   --time 09:00 --time 21:00 --json
 docker compose run --rm app med-history --medication <MEDICATION_ID> --json
+
+# 종료일 없는 장기복용은 --days 대신 명시적으로 --long-term 사용
+# 필요시 복용은 고정 --frequency/--time 없이 --prn과 선택적 --prn-max 사용
+docker compose run --rm app med-add \
+  --person <PERSON_ID> --product-ref <PRODUCT_REF> \
+  --prn --prn-max 3 --long-term --request-id <UNIQUE_REQUEST_ID> --json
+
+# 필요시 약을 실제 복용했을 때 기록
+docker compose run --rm app prn-intake \
+  --medication <MEDICATION_ID> --json
 
 # 하루 복용 계획
 docker compose run --rm app daily-plan \

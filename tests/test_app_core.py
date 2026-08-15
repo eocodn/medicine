@@ -95,15 +95,15 @@ class MedicationAppTest(unittest.TestCase):
     def test_missing_administration_route_defaults_to_unknown_not_oral(self) -> None:
         person = self.app.create_person("Route", "1990-01-01", "male")
 
-        medication = self.app.add_medication(person["id"], product_ref="MFDS-N")
+        medication = self.app.add_medication(person["id"], product_ref="MFDS-N", long_term=True)
 
         self.assertEqual(medication["administration_route"], "unknown")
 
     def test_manages_multiple_people_and_separate_medication_lists(self) -> None:
-        alice = self.app.create_person("Alice", "1990-04-03", "female", "not_pregnant")
+        alice = self.app.create_person("Alice", "1990-04-03", "female", "not_pregnant", "not_breastfeeding")
         bob = self.app.create_person("Bob", "1988-09-11", "male", "not_applicable")
 
-        self.app.add_medication(alice["id"], product_code="MFDS-A", dosage_text="1정", schedule_times=["08:00"])
+        self.app.add_medication(alice["id"], product_code="MFDS-A", dosage_text="1정", schedule_times=["08:00"], long_term=True)
 
         self.assertEqual([p["name"] for p in self.app.list_people()], ["Alice", "Bob"])
         self.assertEqual(len(self.app.list_medications(alice["id"])), 1)
@@ -117,7 +117,7 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(male["lactation_status"], "not_applicable")
 
         female = self.app.create_person(
-            "Female", "1990-01-01", "female", "not_pregnant", lactation_status="unknown"
+            "Female", "1990-01-01", "female", "not_pregnant", lactation_status="not_breastfeeding"
         )
         updated = self.app.update_person(
             female["id"], "Female", "1990-01-01", "female", "not_pregnant", "breastfeeding"
@@ -128,7 +128,7 @@ class MedicationAppTest(unittest.TestCase):
         person = self.app.create_person("Delete", "1990-01-01", "male")
         medication = self.app.add_medication(
             person["id"], product_code="MFDS-A", schedule_times=["08:00"], start_date="2026-08-11",
-            request_id="delete-person-med"
+            long_term=True, request_id="delete-person-med"
         )
         plan = self.app.get_daily_plan(person["id"], "2026-08-11")
         self.app.record_dose_instance(
@@ -151,10 +151,10 @@ class MedicationAppTest(unittest.TestCase):
             con.close()
 
     def test_preview_combines_current_medications_age_and_pregnancy(self) -> None:
-        person = self.app.create_person("Teen", "2010-01-10", "female", "pregnant")
-        current_preview = self.app.preview_medication(person["id"], "MFDS-A")
+        person = self.app.create_person("Teen", "2010-01-10", "female", "pregnant", "not_breastfeeding")
+        current_preview = self.app.preview_medication(person["id"], {"product_code": "MFDS-A", "long_term": True})
         self.app.add_medication(
-            person["id"], product_code="MFDS-A", acknowledge_warnings=True,
+            person["id"], product_code="MFDS-A", long_term=True, acknowledge_warnings=True,
             warning_token=current_preview["warning_token"],
         )
 
@@ -227,7 +227,7 @@ class MedicationAppTest(unittest.TestCase):
         con.commit()
         con.close()
         person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
-        medication = self.app.add_medication(person["id"], product_code="MFDS-A", start_date="2026-08-01")
+        medication = self.app.add_medication(person["id"], product_code="MFDS-A", start_date="2026-08-01", long_term=True)
         stopped = self.app.stop_medication(medication["id"], expected_revision=medication["revision"])
         stopped_on = date.fromisoformat(stopped["stopped_at"])
 
@@ -315,7 +315,7 @@ class MedicationAppTest(unittest.TestCase):
         self.assertNotIn("therapeutic_duplication_caution", {r["type"] for r in separated["risks"]})
 
     def test_active_medication_is_reassessed_after_profile_change_without_rewriting_history(self) -> None:
-        person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant")
+        person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
         medication = self.app.add_medication(person["id"], product_code="MFDS-B", prescription_days=7)
         historical = self.app.get_medication(medication["id"])["assessment"]
         self.assertNotIn(
@@ -326,7 +326,7 @@ class MedicationAppTest(unittest.TestCase):
         self.assertFalse(before_change["dur_alert"])
 
         self.app.update_person(
-            person["id"], "Adult", "1990-01-01", "female", "pregnant", "unknown"
+            person["id"], "Adult", "1990-01-01", "female", "pregnant", "not_breastfeeding"
         )
         current = self.app.list_medications(person["id"], as_of=date(2026, 8, 11))[0]
 
@@ -339,12 +339,12 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(preserved, historical)
 
     def test_acknowledged_dur_findings_remain_flagged_for_all_active_medications(self) -> None:
-        person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant")
-        first = self.app.add_medication(person["id"], product_code="MFDS-A")
-        second_preview = self.app.preview_medication(person["id"], "MFDS-B")
+        person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
+        first = self.app.add_medication(person["id"], product_code="MFDS-A", long_term=True)
+        second_preview = self.app.preview_medication(person["id"], {"product_code": "MFDS-B", "long_term": True})
         second = self.app.add_medication(
             person["id"],
-            product_code="MFDS-B",
+            product_code="MFDS-B", long_term=True,
             acknowledge_warnings=True,
             warning_token=second_preview["warning_token"],
         )
@@ -381,8 +381,8 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(current["current_assessment"]["duration"]["result"], "exceeded")
 
     def test_detects_therapeutic_duplication_and_elderly_caution(self) -> None:
-        older = self.app.create_person("Older", "1940-02-01", "female", "not_pregnant")
-        self.app.add_medication(older["id"], product_code="MFDS-A")
+        older = self.app.create_person("Older", "1940-02-01", "female", "not_pregnant", "not_breastfeeding")
+        self.app.add_medication(older["id"], product_code="MFDS-A", long_term=True)
 
         duplicate = self.app.preview_medication(older["id"], "MFDS-C", as_of=date(2026, 8, 9))
         self.assertIn("therapeutic_duplication_caution", {r["type"] for r in duplicate["risks"]})
@@ -391,9 +391,9 @@ class MedicationAppTest(unittest.TestCase):
         self.assertIn("elderly_caution", {r["type"] for r in elderly["risks"]})
 
     def test_records_dose_history(self) -> None:
-        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
+        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
         med = self.app.add_medication(
-            person["id"], product_code="MFDS-A", start_date="2026-08-09",
+            person["id"], product_code="MFDS-A", start_date="2026-08-09", long_term=True,
             schedule_times=["08:00", "20:00"],
         )
 
@@ -408,8 +408,8 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(history[0]["dose_instance_id"], plan["doses"][0]["id"])
 
     def test_default_dose_timestamp_uses_korea_timezone(self) -> None:
-        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
-        self.app.add_medication(person["id"], product_code="MFDS-A", schedule_times=["08:00"])
+        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
+        self.app.add_medication(person["id"], product_code="MFDS-A", schedule_times=["08:00"], long_term=True)
         plan = self.app.get_daily_plan(person["id"])
 
         self.app.record_dose_instance(plan["doses"][0]["id"], "taken")
@@ -472,7 +472,7 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(app.search_products("약A", limit=10)[0]["product_ref"], "MFDS-A")
 
     def test_adds_structured_prescription_and_computes_end_date(self) -> None:
-        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
+        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
         med = self.app.add_medication(
             person["id"],
             product_ref="MFDS-B",
@@ -497,7 +497,7 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(med["end_date"], "2026-08-14")
 
     def test_daily_plan_is_idempotent_and_tracks_instance_completion(self) -> None:
-        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
+        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
         self.app.add_medication(
             person["id"],
             product_code="MFDS-A",
@@ -535,7 +535,7 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual(self.app.get_daily_plan(person["id"], "2026-08-13")["doses"], [])
 
     def test_medications_and_daily_doses_are_sorted_by_time_with_course_progress(self) -> None:
-        person = self.app.create_person("시간순", "1990-01-01", "female", "not_pregnant")
+        person = self.app.create_person("시간순", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
         late = self.app.add_medication(
             person["id"], product_code="MFDS-D", start_date="2026-08-10",
             prescription_days=5, schedule_times=["20:00"],
@@ -545,7 +545,7 @@ class MedicationAppTest(unittest.TestCase):
             prescription_days=5, schedule_times=["08:00"],
         )
         floating = self.app.add_medication(
-            person["id"], product_code="MFDS-D", start_date="2026-08-10",
+            person["id"], product_code="MFDS-D", start_date="2026-08-10", long_term=True,
             frequency_per_day=1,
         )
         con = sqlite3.connect(self.personal_db)
@@ -573,21 +573,25 @@ class MedicationAppTest(unittest.TestCase):
         upcoming = self.app.list_medications(person["id"], as_of=date(2026, 8, 9))[0]["course_progress"]
         first_day = self.app.list_medications(person["id"], as_of=date(2026, 8, 10))[0]["course_progress"]
         final_day = self.app.list_medications(person["id"], as_of=date(2026, 8, 14))[0]["course_progress"]
-        completed = self.app.list_medications(person["id"], as_of=date(2026, 8, 15))[0]["course_progress"]
+        completed_current = self.app.list_medications(person["id"], as_of=date(2026, 8, 15))
+        completed = self.app.list_medications(
+            person["id"], active_only=False, as_of=date(2026, 8, 15)
+        )[0]["course_progress"]
         self.assertEqual((upcoming["status"], upcoming["current_day"], upcoming["remaining_days"]), ("upcoming", 0, 5))
         self.assertEqual((first_day["current_day"], first_day["remaining_days"]), (1, 4))
         self.assertEqual((final_day["current_day"], final_day["remaining_days"]), (5, 0))
+        self.assertEqual([item["id"] for item in completed_current], [floating["id"]])
         self.assertEqual((completed["status"], completed["current_day"], completed["remaining_days"]), ("completed", 5, 0))
 
     def test_daily_plan_uses_unscheduled_frequency_slots_and_separates_prn(self) -> None:
-        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant")
-        self.app.add_medication(person["id"], product_code="MFDS-A", frequency_per_day=3, start_date="2026-08-10")
+        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
+        self.app.add_medication(person["id"], product_code="MFDS-A", frequency_per_day=3, start_date="2026-08-10", long_term=True)
         prn_preview = self.app.preview_medication(
             person["id"],
-            {"product_code": "MFDS-B", "as_needed": True, "dose_amount": 1, "dose_unit": "정", "start_date": "2026-08-10"},
+            {"product_code": "MFDS-B", "as_needed": True, "dose_amount": 1, "dose_unit": "정", "start_date": "2026-08-10", "long_term": True},
         )
         prn = self.app.add_medication(
-            person["id"], product_code="MFDS-B", as_needed=True, dose_amount=1, dose_unit="정", start_date="2026-08-10",
+            person["id"], product_code="MFDS-B", as_needed=True, dose_amount=1, dose_unit="정", start_date="2026-08-10", long_term=True,
             acknowledge_warnings=True, warning_token=prn_preview["warning_token"],
         )
 

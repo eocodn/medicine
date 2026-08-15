@@ -9,6 +9,8 @@
   --brand-soft: #dce9df;
   --danger: #a23934;
   --danger-soft: #f7e2df;
+  --conditional: #9c4a0a;
+  --conditional-soft: #fde2c2;
   --warning: #8a5a14;
   --warning-soft: #f7ecd5;
   --info: #315a77;
@@ -157,6 +159,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   border-radius: 12px;
   background: var(--brand-soft);
 }
+.dose-actions { display: grid; gap: 5px; }
+.mini-action.skip-action { background: #eceeed; color: var(--muted); }
 
 .section-heading { margin: 8px 2px 14px; align-items: end; }
 .history-heading { margin-top: 28px; }
@@ -406,6 +410,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .dur-check-heading span { font-size: 13px; font-weight: 800; }
 .dur-check p { margin: 7px 0 0; font-size: 13px; line-height: 1.55; }
 .dur-check.hit { padding: 15px; background: var(--danger-soft); border-color: #ecc7c2; color: #712a26; }
+.dur-check.conditional { padding: 12px 14px; background: var(--conditional-soft); border-color: #eab06b; color: var(--conditional); }
 .dur-check.unknown { padding: 12px 14px; background: var(--warning-soft); border-color: #ead8b4; color: #69440e; }
 .dur-check.compact { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 11px; margin-bottom: 5px; border-radius: 12px; color: var(--muted); background: var(--surface-soft); font-size: 12px; }
 .dur-check.compact strong { color: #536059; }
@@ -473,3 +478,20 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .checkbox-row input { width: 22px !important; min-height: 22px !important; margin-top: 2px; }
 .checkbox-row span { display: grid; gap: 3px; }
 .checkbox-row small { color: var(--muted); font-weight: 500; line-height: 1.45; }
+.dur-review-badge {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e1c98f;
+  border-radius: 50%;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  appearance: none;
+}
