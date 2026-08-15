@@ -2,13 +2,10 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
-import { auditCoverage } from "./coverage.mjs";
-import { runDetectorBenchmarkMatrix } from "./benchmark.mjs";
-import { validateCorpus } from "./contract.mjs";
-import { benchmarkMatrix, loadDetectorModelManifest } from "./detector_models.mjs";
-import { evaluateDetections } from "./evaluation.mjs";
-import { fetchDetectorAssets } from "./fetch_detector_assets.mjs";
-import { generateSyntheticCorpus } from "./synthetic.mjs";
+import { auditCoverage } from "../detection/coverage.mjs";
+import { validateUnifiedCorpus } from "./contract.mjs";
+import { generateUnifiedCorpus } from "./generator.mjs";
+import { materializeUnifiedViews } from "./materialize.mjs";
 
 function option(args, name, fallback = null) {
   const index = args.lastIndexOf(name);
@@ -30,7 +27,7 @@ function safePath(root, relativePath) {
 }
 
 async function loadCorpus(path) {
-  return validateCorpus(JSON.parse(await readFile(path, "utf8")));
+  return validateUnifiedCorpus(JSON.parse(await readFile(path, "utf8")));
 }
 
 async function validateFiles(corpus, corpusPath) {
@@ -44,6 +41,20 @@ async function validateFiles(corpus, corpusPath) {
   }
 }
 
+function summary(corpus) {
+  return {
+    schema_version: corpus.schema_version,
+    status: "valid",
+    corpus_id: corpus.corpus_id,
+    tasks: corpus.tasks,
+    generator: corpus.generator,
+    documents: corpus.samples.length,
+    regions: corpus.samples.reduce((sum, sample) => sum + sample.regions.length, 0),
+    critical_regions: corpus.samples.reduce((sum, sample) => sum + sample.regions.filter((region) => region.critical).length, 0),
+    splits: Object.fromEntries(["train", "val", "test"].map((name) => [name, corpus.samples.filter((sample) => sample.split === name).length])),
+  };
+}
+
 async function main(argv) {
   const [command, ...args] = argv;
   const json = args.includes("--json");
@@ -51,25 +62,39 @@ async function main(argv) {
   if (command === "generate") {
     const outputDir = option(args, "--output");
     if (!outputDir) throw new Error("generate requires --output DIR");
-    result = await generateSyntheticCorpus({
+    const corpus = await generateUnifiedCorpus({
       outputDir: resolve(outputDir),
       count: integerOption(args, "--count", 36),
       seed: integerOption(args, "--seed", 153),
     });
+    if (args.includes("--materialize")) {
+      const views = await materializeUnifiedViews({
+        corpusPath: resolve(outputDir, "manifest.json"),
+        outputDir: resolve(outputDir, "views"),
+        python: option(args, "--python", "/opt/detection-venv/bin/python"),
+      });
+      result = { ...summary(corpus), views };
+    } else {
+      result = summary(corpus);
+    }
   } else if (command === "validate") {
     const corpusPath = option(args, "--corpus");
     if (!corpusPath) throw new Error("validate requires --corpus FILE");
     const corpus = await loadCorpus(resolve(corpusPath));
     await validateFiles(corpus, resolve(corpusPath));
-    result = {
-      schema_version: corpus.schema_version,
-      status: "valid",
-      corpus_id: corpus.corpus_id,
-      generator: corpus.generator,
-      samples: corpus.samples.length,
-      regions: corpus.samples.reduce((sum, sample) => sum + sample.regions.length, 0),
-      critical_regions: corpus.samples.reduce((sum, sample) => sum + sample.regions.filter((region) => region.critical).length, 0),
-    };
+    result = summary(corpus);
+  } else if (command === "materialize") {
+    const corpusPath = option(args, "--corpus");
+    const outputDir = option(args, "--output");
+    if (!corpusPath || !outputDir) throw new Error("materialize requires --corpus FILE --output DIR");
+    const corpus = await loadCorpus(resolve(corpusPath));
+    if (corpus.schema_version !== 3) throw new Error("materialize requires unified OCR corpus schema v3");
+    await validateFiles(corpus, resolve(corpusPath));
+    result = await materializeUnifiedViews({
+      corpusPath: resolve(corpusPath),
+      outputDir: resolve(outputDir),
+      python: option(args, "--python", "/opt/detection-venv/bin/python"),
+    });
   } else if (command === "audit") {
     const corpusPath = option(args, "--corpus");
     if (!corpusPath) throw new Error("audit requires --corpus FILE");
@@ -81,37 +106,12 @@ async function main(argv) {
       minimumPerRisk: integerOption(args, "--min-risk", 1),
       minimumCriticalPerRole: integerOption(args, "--min-critical-role", 1),
     });
+    result.corpus_id = corpus.corpus_id;
+    result.tasks = corpus.tasks;
+    result.splits = summary(corpus).splits;
     if (result.status !== "pass") process.exitCode = 1;
-  } else if (command === "evaluate") {
-    const corpusPath = option(args, "--corpus");
-    const predictionsPath = option(args, "--predictions");
-    if (!corpusPath || !predictionsPath) throw new Error("evaluate requires --corpus FILE --predictions FILE");
-    const corpus = await loadCorpus(resolve(corpusPath));
-    await validateFiles(corpus, resolve(corpusPath));
-    const predictions = JSON.parse(await readFile(resolve(predictionsPath), "utf8"));
-    result = evaluateDetections(corpus, predictions);
-    if (result.status !== "pass") process.exitCode = 1;
-  } else if (command === "matrix") {
-    result = benchmarkMatrix(await loadDetectorModelManifest());
-  } else if (command === "assets") {
-    const outputDir = option(args, "--output", "browser_ocr/detection/.cache/models");
-    result = await fetchDetectorAssets({ outputDir: resolve(outputDir) });
-  } else if (command === "benchmark") {
-    const corpusPath = option(args, "--corpus", "browser_ocr/detection/corpus/manifest.json");
-    const cacheDir = option(args, "--cache", "browser_ocr/detection/.cache/models");
-    const outputDir = option(args, "--output", "browser_ocr/detection/results/zero-shot");
-    const model = option(args, "--model");
-    const edge = option(args, "--edge");
-    result = await runDetectorBenchmarkMatrix({
-      corpusPath: resolve(corpusPath),
-      cacheDir: resolve(cacheDir),
-      outputDir: resolve(outputDir),
-      models: model ? [model] : null,
-      detectorEdges: edge ? [integerOption(args, "--edge", 0)] : null,
-      threads: integerOption(args, "--threads", 1),
-    });
   } else {
-    throw new Error("usage: cli.mjs <generate|validate|audit|evaluate|matrix|assets|benchmark> [options] [--json]");
+    throw new Error("usage: cli.mjs <generate|validate|materialize|audit> [options] [--json]");
   }
   process.stdout.write(json ? `${JSON.stringify(result)}\n` : `${JSON.stringify(result, null, 2)}\n`);
 }

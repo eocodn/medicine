@@ -57,9 +57,11 @@ test("scaled generator covers realistic layout/camera/material strata with raste
   const root = await mkdtemp(join(tmpdir(), "medicine-det-v2-"));
   try {
     const corpus = await generateSyntheticCorpus({ outputDir: root, count: 36, seed: 153 });
-    assert.equal(corpus.schema_version, 2);
-    assert.equal(corpus.generator.version, 2);
-    assert.ok(corpus.generator.revision >= 2);
+    assert.equal(corpus.schema_version, 3);
+    assert.equal(corpus.generator.version, 3);
+    assert.ok(corpus.generator.revision >= 1);
+    assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
+    assert.ok(corpus.samples.every((sample) => ["train", "val", "test"].includes(sample.split)));
     assert.equal(corpus.samples.length, 36);
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.layout_family)), new Set(LAYOUT_FAMILIES));
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.capture_profile)), new Set(CAPTURE_PROFILES));

@@ -134,6 +134,10 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
 
 The recorded synthetic-only result is in `results/synth-5k-drug-baseline.json`: pretrained exact accuracy `0.6080` versus validation-best test accuracy `0.9740`, with normalized edit distance improving from `0.9535` to `0.9975`. Validation peaked at epoch 2 and later epochs oscillated, so the 10-epoch final checkpoint is preserved for reproducibility but is not treated as the selected model. These figures are **not** evidence of real-photo or end-to-end prescription safety; real deidentified holdouts and the other layout/source holdouts remain required.
 
+## Unified full-document recognition data
+
+New recognition training/evaluation data should be derived from the canonical full-document corpus rather than a separate line-image generator when the goal is E2E robustness. `ocr-corpus generate --materialize` writes `views/recognition/manifest.json` plus a Paddle-ready `views/recognition/paddle/` export. Each crop is rectified from the final degraded document raster and inherits its parent document train/validation/test split, semantic role, association group, layout, capture profile, and risk tags. This makes motion/JPEG or perspective recognition failures directly comparable with detector and E2E results from the same source documents. The older standalone 100k recognition corpus remains a retained historical training artifact, not the canonical source for future full-document robustness experiments.
+
 ## Full-document detector → fine-tuned recognizer research path
 
 `ocr-full-document` composes the mobile detector research pipeline with a completed fine-tune baseline. The default detector is the selected `PP-OCRv5_mobile_det` candidate at edge 640. Its official ONNX archive is verified against `browser_ocr/detection/detector-models.json`; the recognizer is loaded directly from the `best_checkpoint` recorded by the supplied baseline result and its SHA-256 is verified before inference.

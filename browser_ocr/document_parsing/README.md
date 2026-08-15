@@ -46,6 +46,10 @@ fields the expected row intentionally leaves unresolved. A parser that cannot
 prove a field association should leave that field unresolved rather than
 borrowing a plausible exact value from another medication.
 
+## Unified full-document parser data
+
+The canonical OCR corpus can materialize parser/KIE data from the same documents used for detector and recognizer experiments. `views/parsing/samples.jsonl` exposes box text/geometry, semantic roles, association groups, and positive `same_medication` edges for learned models. `views/parsing/oracle-{train,val,test}.json` and `oracle-manifest.json` use the existing parser corpus contract for rule-based or oracle-box evaluation. Product labels such as `약명` are represented explicitly as `product_label` evidence instead of being reconstructed by text-specific fixture logic. This view is intentionally independent of whether the eventual parser is deterministic or learned.
+
 ## Agent Control CLI
 
 Validate the tracked synthetic corpus:

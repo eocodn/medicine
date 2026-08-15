@@ -173,7 +173,7 @@ function legacyPreprintedMedicationBag(index, random) {
     region("days", "5일분", 760, 290, 130, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "duration", regionClass: "medication", fontSize: 35 }),
     region("meal", "□ 식전  □ 식후 30분  □ 취침전", 90, 390, 650, 42, { associationGroup: "bag-regimen", semanticRole: "schedule", fontSize: 29 }),
     region("directions", "□ 아침   □ 점심   □ 저녁   □ 필요시", 90, 465, 690, 42, { associationGroup: "bag-regimen", semanticRole: "schedule", fontSize: 29 }),
-    region("product-label", "약품명", 85, 600, 115, 34, { associationGroup: "bag-regimen", semanticRole: "header", fontSize: 27 }),
+    region("product-label", "약품명", 85, 600, 115, 34, { associationGroup: "bag-regimen", semanticRole: "product_label", fontSize: 27 }),
     region("product", pick(PRODUCTS, random), 225, 600, 390, 38, { critical: true, associationGroup: "bag-regimen", semanticRole: "product", regionClass: "medication", fontSize: 29 }),
     region("caution-title", "복약시 주의사항", 85, 735, 220, 36, { semanticRole: "header", fontSize: 28 }),
     region("caution-1", "정해진 용법과 용량을 지켜 복용하십시오.", 85, 800, 670, 34, { semanticRole: "instruction", regionClass: "distractor", fontSize: 24 }),
@@ -209,7 +209,7 @@ function classicMedicationBag(index, random) {
     const group = `bag-${block}`;
     const y = 400 + block * 260;
     regions.push(
-      region(`b${block}-label`, "약명", 90, y, 100, 50, { associationGroup: group, semanticRole: "label", fontSize: 34 }),
+      region(`b${block}-label`, "약명", 90, y, 100, 50, { associationGroup: group, semanticRole: "product_label", fontSize: 34 }),
       region(`b${block}-product`, pick(PRODUCTS, random), 230, y, 370, 55, { critical: true, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize: 40 }),
       region(`b${block}-dose`, `${1 + block % 2}정`, 230, y + 85, 100, 48, { critical: true, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize: 34 }),
       region(`b${block}-freq`, `${2 + block % 2}회`, 390, y + 85, 100, 48, { critical: true, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize: 34 }),
