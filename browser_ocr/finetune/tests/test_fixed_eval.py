@@ -62,12 +62,14 @@ class FixedRecognitionEvaluationTest(unittest.TestCase):
         dataset = self._dataset()
         plan = build_fixed_eval_plan(dataset, minimum_required_count=1)
 
-        self.assertEqual(plan["policy_id"], "fixed-recognition-eval-v1")
+        self.assertEqual(plan["policy_id"], "fixed-recognition-eval-v2")
         self.assertEqual(plan["drug_assignment_seed"], 161)
         self.assertEqual(plan["slices"]["seen-drug-unseen-image"]["sample_ids"], ["a", "b", "h"])
         self.assertEqual(plan["slices"]["unseen-drug-familiar-degradation"]["sample_ids"], ["c", "d"])
         self.assertEqual(plan["slices"]["unseen-drug-hard-in-domain"]["sample_ids"], ["e"])
         self.assertEqual(plan["slices"]["unseen-drug-hard-ood"]["sample_ids"], ["f", "g"])
+        self.assertEqual(plan["slices"]["product-seen"]["sample_ids"], ["a"])
+        self.assertEqual(plan["slices"]["product-unseen"]["sample_ids"], ["e"])
         self.assertIn("augmentation-component-motion-blur", plan["slices"])
         self.assertTrue(any(name.startswith("augmentation-combination-") for name in plan["slices"]))
 

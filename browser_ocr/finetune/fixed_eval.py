@@ -10,7 +10,7 @@ from .full_document import parse_recognition_rows
 from .model_compat import audit_model_compatibility
 
 
-FIXED_EVAL_POLICY_ID = "fixed-recognition-eval-v1"
+FIXED_EVAL_POLICY_ID = "fixed-recognition-eval-v2"
 OOD_POLICY_ID = "severe-motion-downscale-jpeg-v1"
 CRITICAL_ROLES = ("product", "dose", "frequency", "duration")
 REQUIRED_CROSS_SLICES = (
@@ -138,6 +138,13 @@ def build_fixed_eval_plan(dataset: Dataset, *, minimum_required_count: int = 32)
             sample["id"] for sample in critical if _contains(sample, f"drug-exposure-{exposure}")
         )
 
+    for exposure in ("seen", "unseen"):
+        slices[f"product-{exposure}"] = _slice_entry(
+            sample["id"]
+            for sample in critical
+            if _semantic(sample, "product") and _contains(sample, f"drug-exposure-{exposure}")
+        )
+
     slices["seen-drug-unseen-image"] = _slice_entry(
         sample["id"] for sample in critical if _contains(sample, "drug-exposure-seen")
     )
@@ -187,6 +194,8 @@ def build_fixed_eval_plan(dataset: Dataset, *, minimum_required_count: int = 32)
         "difficulty-hard",
         "drug-seen",
         "drug-unseen",
+        "product-seen",
+        "product-unseen",
         *REQUIRED_CROSS_SLICES,
     ]
     for name in required:

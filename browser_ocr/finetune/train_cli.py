@@ -12,6 +12,8 @@ from .dataset import DatasetError, load_dataset
 from .evaluation import evaluate_test_slices, prepare_test_slices
 from .fixed_eval_runner import run_fixed_eval
 from .model_compat import audit_model_compatibility
+from .selected_finetune import run_selected_finetune
+from .train_parser import build_parser
 from .runner_io import (
     json_file as _json_file,
     sha256_file as _sha256_file,
@@ -19,6 +21,7 @@ from .runner_io import (
     verify_sha as _verify_sha,
     write_json_atomic as _write_json_atomic,
 )
+from .training_view_runner import run_prepare_mixed_training_view, run_prepare_training_view
 from .training import (
     build_baseline_overrides,
     build_smoke_overrides,
@@ -503,63 +506,23 @@ def run_smoke(args: argparse.Namespace) -> dict:
         return result
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ocr-finetune-train")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    probe = subparsers.add_parser("probe")
-    probe.add_argument("--json", action="store_true")
-
-    smoke = subparsers.add_parser("smoke")
-    smoke.add_argument("--upstream", default="/workspace/browser_ocr/finetune/upstream.json")
-    smoke.add_argument("--paddleocr-root", default="/opt/PaddleOCR")
-    smoke.add_argument("--pretrained-model", required=True)
-    smoke.add_argument("--manifest", required=True)
-    smoke.add_argument("--export-dir", required=True)
-    smoke.add_argument("--run-dir", required=True)
-    smoke.add_argument("--expected-group-by", default="drug_family")
-    smoke.add_argument("--train-samples", type=int, default=128)
-    smoke.add_argument("--val-samples", type=int, default=64)
-    smoke.add_argument("--batch-size", type=int, default=16)
-    smoke.add_argument("--json", action="store_true")
-
-    baseline = subparsers.add_parser("baseline")
-    baseline.add_argument("--upstream", default="/workspace/browser_ocr/finetune/upstream.json")
-    baseline.add_argument("--paddleocr-root", default="/opt/PaddleOCR")
-    baseline.add_argument("--pretrained-model", required=True)
-    baseline.add_argument("--manifest", required=True)
-    baseline.add_argument("--export-dir", required=True)
-    baseline.add_argument("--run-dir", required=True)
-    baseline.add_argument("--expected-group-by", default="drug_family")
-    baseline.add_argument("--epochs", type=int, default=10)
-    baseline.add_argument("--batch-size", type=int, default=32)
-    baseline.add_argument("--learning-rate", type=float, default=0.0005)
-    baseline.add_argument("--warmup-epochs", type=int, default=5)
-    baseline.add_argument("--json", action="store_true")
-
-    fixed_eval = subparsers.add_parser("fixed-eval")
-    fixed_eval.add_argument("--upstream", default="/workspace/browser_ocr/finetune/upstream.json")
-    fixed_eval.add_argument("--paddleocr-root", default="/opt/PaddleOCR")
-    fixed_eval.add_argument("--baseline-result", required=True)
-    fixed_eval.add_argument("--expected-checkpoint-sha256")
-    fixed_eval.add_argument("--manifest", required=True)
-    fixed_eval.add_argument("--run-dir", required=True)
-    fixed_eval.add_argument("--minimum-required-count", type=int, default=32)
-    fixed_eval.add_argument("--device", choices=("gpu", "cpu"), default="gpu")
-    fixed_eval.add_argument("--json", action="store_true")
-    return parser
-
-
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "probe":
             result = run_probe()
+        elif args.command == "prepare-training-view":
+            result = run_prepare_training_view(args)
+        elif args.command == "prepare-mixed-training-view":
+            result = run_prepare_mixed_training_view(args)
         elif args.command == "smoke":
             result = run_smoke(args)
         elif args.command == "baseline":
             result = run_baseline(args)
         elif args.command == "fixed-eval":
             result = run_fixed_eval(args)
+        elif args.command == "selected-finetune":
+            result = run_selected_finetune(args)
         else:
             raise DatasetError(f"unsupported command: {args.command}")
         if args.json:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -16,6 +17,15 @@ from .fixed_eval import (
 )
 from .full_document_cli import load_selected_recognizer
 from .runner_io import json_file, sha256_file, stream_command, verify_sha, write_json_atomic
+
+
+def _canonical_sha256(value: object) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _fixed_eval_core_sha256() -> str:
+    return sha256_file(Path(__file__).with_name("fixed_eval.py"))
 
 
 def run_fixed_eval(args: argparse.Namespace) -> dict:
@@ -61,6 +71,9 @@ def run_fixed_eval(args: argparse.Namespace) -> dict:
         "drug_assignment_seed": plan["drug_assignment_seed"],
         "drug_assignment_sha256": plan["drug_assignment_sha256"],
         "recognition_evaluation_policy": plan["recognition_evaluation_policy"],
+        "fixed_eval_policy_id": plan["policy_id"],
+        "fixed_eval_plan_sha256": _canonical_sha256(plan),
+        "fixed_eval_core_sha256": _fixed_eval_core_sha256(),
         "minimum_required_count": args.minimum_required_count,
         "baseline_result_sha256": sha256_file(recognizer["result_path"]),
         "checkpoint_sha256": recognizer["checkpoint_sha256"],
