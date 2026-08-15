@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cases": [
     {
       "case_id": "prescription-table-two-rows",
@@ -21,8 +21,8 @@
         {"box_id": "b4", "text": "7일", "confidence": 1.0, "polygon": [[450, 105], [550, 105], [550, 130], [450, 130]]}
       ],
       "expected_rows": [
-        {"row_id": "a", "product_query": "가나다정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []},
-        {"row_id": "b", "product_query": "라마바정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": []}
+        {"row_id": "a1", "product_query": "가나다정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": [], "evidence": {"product_query": ["a1"], "dose_amount": ["a2"], "dose_unit": ["a2"], "frequency_per_day": ["a3"], "prescription_days": ["a4"]}},
+        {"row_id": "b1", "product_query": "라마바정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": [], "evidence": {"product_query": ["b1"], "dose_amount": ["b2"], "dose_unit": ["b2"], "frequency_per_day": ["b3"], "prescription_days": ["b4"]}}
       ]
     },
     {
@@ -37,8 +37,8 @@
         {"box_id": "b2", "text": "복용법: 1회 2정 1일 2회 7일", "confidence": 1.0, "polygon": [[20, 142], [410, 142], [410, 168], [20, 168]]}
       ],
       "expected_rows": [
-        {"row_id": "a", "product_query": "다라정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []},
-        {"row_id": "b", "product_query": "마바정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": []}
+        {"row_id": "a1", "product_query": "다라정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": [], "evidence": {"product_query": ["a1"], "dose_amount": ["a2"], "dose_unit": ["a2"], "frequency_per_day": ["a2"], "prescription_days": ["a2"]}},
+        {"row_id": "b1", "product_query": "마바정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": [], "evidence": {"product_query": ["b1"], "dose_amount": ["b2"], "dose_unit": ["b2"], "frequency_per_day": ["b2"], "prescription_days": ["b2"]}}
       ]
     },
     {
@@ -54,9 +54,9 @@
         {"box_id": "c2", "text": "복용법: 1회 2정 1일 1회 3일", "confidence": 1.0, "polygon": [[20, 187], [410, 187], [410, 213], [20, 213]]}
       ],
       "expected_rows": [
-        {"row_id": "a", "product_query": "사아정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []},
-        {"row_id": "b", "product_query": "자차정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []},
-        {"row_id": "c", "product_query": "카타정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 1, "prescription_days": 3}, "uncertainty_codes": []}
+        {"row_id": "a1", "product_query": "사아정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": [], "evidence": {"product_query": ["a1"], "dose_amount": ["g1"], "dose_unit": ["g1"], "frequency_per_day": ["g1"], "prescription_days": ["g1"]}},
+        {"row_id": "b1", "product_query": "자차정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": [], "evidence": {"product_query": ["b1"], "dose_amount": ["g1"], "dose_unit": ["g1"], "frequency_per_day": ["g1"], "prescription_days": ["g1"]}},
+        {"row_id": "c1", "product_query": "카타정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 1, "prescription_days": 3}, "uncertainty_codes": [], "evidence": {"product_query": ["c1"], "dose_amount": ["c2"], "dose_unit": ["c2"], "frequency_per_day": ["c2"], "prescription_days": ["c2"]}}
       ]
     },
     {
@@ -78,7 +78,7 @@
         {"box_id": "r4", "text": "7일", "confidence": 1.0, "polygon": [[450, 65], [550, 65], [550, 90], [450, 90]]}
       ],
       "expected_rows": [
-        {"row_id": "a", "product_query": "파하정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": []}
+        {"row_id": "r1", "product_query": "파하정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": [], "evidence": {"product_query": ["r1"], "dose_amount": ["r2"], "dose_unit": ["r2"], "frequency_per_day": ["r3"], "prescription_days": ["r4"]}}
       ]
     },
     {
@@ -97,7 +97,7 @@
         {"box_id": "r4", "text": "5일", "confidence": 1.0, "polygon": [[450, 103], [550, 110], [548, 135], [448, 128]]}
       ],
       "expected_rows": [
-        {"row_id": "a", "product_query": "거너정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []}
+        {"row_id": "r1", "product_query": "거너정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": [], "evidence": {"product_query": ["r1"], "dose_amount": ["r2"], "dose_unit": ["r2"], "frequency_per_day": ["r3"], "prescription_days": ["r4"]}}
       ]
     },
     {
@@ -114,7 +114,23 @@
         {"box_id": "r1", "text": "복용법: 1회 1정 1일 2회 5일", "confidence": 1.0, "polygon": [[20, 55], [410, 55], [410, 82], [20, 82]]}
       ],
       "expected_rows": [
-        {"row_id": "a", "product_query": "너더정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 5}, "uncertainty_codes": []}
+        {"row_id": "l1", "product_query": "너더정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 5}, "uncertainty_codes": [], "evidence": {"product_query": ["l1", "l2", "l3", "p1", "p2"], "dose_amount": ["r1"], "dose_unit": ["r1"], "frequency_per_day": ["r1"], "prescription_days": ["r1"]}}
+      ]
+    },
+    {
+      "case_id": "repeated-product-two-blocks",
+      "source_kind": "synthetic",
+      "scenario_tags": ["medication_bag", "multi_medication", "repeated_product"],
+      "risk_tags": ["row_association"],
+      "boxes": [
+        {"box_id": "a1", "text": "약명: 동일정", "confidence": 1.0, "polygon": [[20, 20], [220, 20], [220, 45], [20, 45]]},
+        {"box_id": "a2", "text": "복용법: 1회 1정 1일 3회 5일", "confidence": 1.0, "polygon": [[20, 52], [410, 52], [410, 78], [20, 78]]},
+        {"box_id": "b1", "text": "약명: 동일정", "confidence": 1.0, "polygon": [[20, 110], [220, 110], [220, 135], [20, 135]]},
+        {"box_id": "b2", "text": "복용법: 1회 2정 1일 2회 7일", "confidence": 1.0, "polygon": [[20, 142], [410, 142], [410, 168], [20, 168]]}
+      ],
+      "expected_rows": [
+        {"row_id": "a1", "product_query": "동일정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": [], "evidence": {"product_query": ["a1"], "dose_amount": ["a2"], "dose_unit": ["a2"], "frequency_per_day": ["a2"], "prescription_days": ["a2"]}},
+        {"row_id": "b1", "product_query": "동일정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": [], "evidence": {"product_query": ["b1"], "dose_amount": ["b2"], "dose_unit": ["b2"], "frequency_per_day": ["b2"], "prescription_days": ["b2"]}}
       ]
     }
   ]

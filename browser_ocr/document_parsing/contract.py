@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _TAG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ISSUE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
@@ -22,8 +22,7 @@ _CASE_FIELDS = {
     "expected_rows",
 }
 _BOX_FIELDS = {"box_id", "text", "confidence", "polygon"}
-_ROW_FIELDS = {"row_id", "product_query", "draft", "uncertainty_codes"}
-_DRAFT_FIELDS = {
+DRAFT_FIELDS = {
     "dosage_text",
     "dose_amount",
     "dose_unit",
@@ -36,6 +35,8 @@ _DRAFT_FIELDS = {
     "start_date",
     "end_date",
 }
+_ROW_FIELDS = {"row_id", "product_query", "draft", "uncertainty_codes", "evidence"}
+_EVIDENCE_FIELDS = {"product_query", *DRAFT_FIELDS}
 
 
 class CorpusError(ValueError):
@@ -56,6 +57,7 @@ class ExpectedRow:
     product_query: str
     draft: Mapping[str, Any]
     uncertainty_codes: tuple[str, ...]
+    evidence: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -145,13 +147,56 @@ def _box(value: object, case_id: str) -> OcrBox:
     )
 
 
-def normalize_rows(value: object, label: str = "rows", *, allow_empty: bool = False) -> list[dict[str, Any]]:
+def _normalize_evidence(
+    value: object,
+    *,
+    label: str,
+    row_id: str,
+    draft: Mapping[str, Any],
+    valid_box_ids: set[str] | None,
+) -> dict[str, list[str]]:
+    data = _require_mapping(value, f"evidence in {label}")
+    _reject_unknown(data, _EVIDENCE_FIELDS, f"evidence in {label}")
+    normalized: dict[str, list[str]] = {}
+    for field, raw_ids in data.items():
+        if not isinstance(raw_ids, list) or not raw_ids or len(raw_ids) > 32:
+            raise CorpusError(f"evidence for {field} in {label} must contain 1-32 box ids")
+        ids: list[str] = []
+        for raw_id in raw_ids:
+            box_id = _require_id(raw_id, f"evidence box id for {field} in {label}")
+            if valid_box_ids is not None and box_id not in valid_box_ids:
+                raise CorpusError(f"evidence for {field} in {label} references unknown box_id {box_id}")
+            if box_id not in ids:
+                ids.append(box_id)
+        normalized[field] = ids
+    product_evidence = normalized.get("product_query")
+    if not product_evidence:
+        raise CorpusError(f"product_query evidence is required in {label}")
+    if row_id != product_evidence[0]:
+        raise CorpusError(f"row_id in {label} must equal the first product_query evidence box id")
+    for field, field_value in draft.items():
+        if field_value is not None and field not in normalized:
+            raise CorpusError(f"evidence for non-null draft field {field} is required in {label}")
+    for field in normalized:
+        if field == "product_query":
+            continue
+        if field not in draft or draft[field] is None:
+            raise CorpusError(f"evidence for unresolved draft field {field} is not allowed in {label}")
+    return normalized
+
+
+def normalize_rows(
+    value: object,
+    label: str = "rows",
+    *,
+    allow_empty: bool = False,
+    valid_box_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
     minimum = 0 if allow_empty else 1
     if not isinstance(value, list) or not minimum <= len(value) <= 24:
         raise CorpusError(f"{label} must contain between {minimum} and 24 medication rows")
     rows: list[dict[str, Any]] = []
     row_ids: set[str] = set()
-    product_queries: set[str] = set()
     for index, raw in enumerate(value):
         data = _require_mapping(raw, f"{label}[{index}]")
         _reject_unknown(data, _ROW_FIELDS, f"{label}[{index}]")
@@ -162,11 +207,8 @@ def normalize_rows(value: object, label: str = "rows", *, allow_empty: bool = Fa
         product_query = str(data.get("product_query") or "").strip()
         if not product_query or len(product_query) > 256:
             raise CorpusError(f"product_query in {label}[{index}] must contain 1-256 characters")
-        if product_query in product_queries:
-            raise CorpusError(f"product_query values must be unique in {label} for benchmark alignment")
-        product_queries.add(product_query)
         draft = _require_mapping(data.get("draft"), f"draft in {label}[{index}]")
-        _reject_unknown(draft, _DRAFT_FIELDS, f"draft in {label}[{index}]")
+        _reject_unknown(draft, DRAFT_FIELDS, f"draft in {label}[{index}]")
         issues = data.get("uncertainty_codes")
         if not isinstance(issues, list) or len(issues) > 16:
             raise CorpusError(f"uncertainty_codes in {label}[{index}] must be a list with at most 16 values")
@@ -177,12 +219,20 @@ def normalize_rows(value: object, label: str = "rows", *, allow_empty: bool = Fa
                 raise CorpusError(f"invalid uncertainty code in {label}[{index}]")
             if issue not in normalized_issues:
                 normalized_issues.append(issue)
+        evidence = _normalize_evidence(
+            data.get("evidence"),
+            label=f"{label}[{index}]",
+            row_id=row_id,
+            draft=draft,
+            valid_box_ids=valid_box_ids,
+        )
         rows.append(
             {
                 "row_id": row_id,
                 "product_query": product_query,
                 "draft": dict(draft),
                 "uncertainty_codes": normalized_issues,
+                "evidence": evidence,
             }
         )
     return rows
@@ -201,13 +251,18 @@ def _case(value: object) -> CorpusCase:
     box_ids = [box.box_id for box in boxes]
     if len(box_ids) != len(set(box_ids)):
         raise CorpusError(f"box_id values must be unique in {case_id}")
-    rows = normalize_rows(data.get("expected_rows"), f"expected_rows in {case_id}")
+    rows = normalize_rows(
+        data.get("expected_rows"),
+        f"expected_rows in {case_id}",
+        valid_box_ids=set(box_ids),
+    )
     expected_rows = tuple(
         ExpectedRow(
             row_id=row["row_id"],
             product_query=row["product_query"],
             draft=row["draft"],
             uncertainty_codes=tuple(row["uncertainty_codes"]),
+            evidence={key: tuple(value) for key, value in row["evidence"].items()},
         )
         for row in rows
     )
@@ -251,6 +306,7 @@ def rows_as_dicts(rows: Iterable[ExpectedRow]) -> list[dict[str, Any]]:
             "product_query": row.product_query,
             "draft": dict(row.draft),
             "uncertainty_codes": list(row.uncertainty_codes),
+            "evidence": {key: list(value) for key, value in row.evidence.items()},
         }
         for row in rows
     ]
@@ -260,6 +316,7 @@ __all__ = [
     "Corpus",
     "CorpusCase",
     "CorpusError",
+    "DRAFT_FIELDS",
     "ExpectedRow",
     "OcrBox",
     "SCHEMA_VERSION",

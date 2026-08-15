@@ -11,7 +11,7 @@ from pathlib import Path
 class CliTest(unittest.TestCase):
     def test_validate_corpus_json(self) -> None:
         corpus = {
-            "schema_version": 1,
+            "schema_version": 2,
             "cases": [
                 {
                     "case_id": "simple",
@@ -28,10 +28,11 @@ class CliTest(unittest.TestCase):
                     ],
                     "expected_rows": [
                         {
-                            "row_id": "m1",
+                            "row_id": "b1",
                             "product_query": "약A",
                             "draft": {},
                             "uncertainty_codes": [],
+                            "evidence": {"product_query": ["b1"]},
                         }
                     ],
                 }
@@ -62,7 +63,7 @@ class CliTest(unittest.TestCase):
 
     def test_evaluate_json_accepts_fail_closed_empty_rows(self) -> None:
         corpus = {
-            "schema_version": 1,
+            "schema_version": 2,
             "cases": [
                 {
                     "case_id": "simple",
@@ -79,17 +80,18 @@ class CliTest(unittest.TestCase):
                     ],
                     "expected_rows": [
                         {
-                            "row_id": "m1",
+                            "row_id": "b1",
                             "product_query": "약A",
                             "draft": {"frequency_per_day": 3},
                             "uncertainty_codes": [],
+                            "evidence": {"product_query": ["b1"], "frequency_per_day": ["b1"]},
                         }
                     ],
                 }
             ],
         }
         predictions = {
-            "schema_version": 1,
+            "schema_version": 2,
             "predictions": [{"case_id": "simple", "rows": []}],
         }
         with tempfile.TemporaryDirectory() as tmp:
@@ -138,7 +140,7 @@ class CliTest(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["baseline"], "geometry_rule_v1")
-        self.assertEqual(len(result["predictions"]["predictions"]), 6)
+        self.assertEqual(len(result["predictions"]["predictions"]), 7)
         self.assertTrue(result["evaluation"]["safety_pass"])
 
 

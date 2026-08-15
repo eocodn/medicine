@@ -12,7 +12,7 @@ CORPUS = Path("browser_ocr/document_parsing/corpus/manifest.json")
 class ProjectCorpusTest(unittest.TestCase):
     def test_seed_corpus_covers_historical_structure_failures(self) -> None:
         corpus = load_corpus(CORPUS)
-        self.assertGreaterEqual(len(corpus.cases), 6)
+        self.assertGreaterEqual(len(corpus.cases), 7)
         scenario_tags = {tag for case in corpus.cases for tag in case.scenario_tags}
         risk_tags = {tag for case in corpus.cases for tag in case.risk_tags}
         self.assertTrue(
@@ -22,6 +22,7 @@ class ProjectCorpusTest(unittest.TestCase):
                 "shared_regimen",
                 "split_boxes",
                 "skewed_geometry",
+                "repeated_product",
             }.issubset(scenario_tags)
         )
         self.assertTrue(

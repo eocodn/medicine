@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from statistics import median
 from typing import Any, Iterable, Sequence
 
-from .contract import Corpus, OcrBox
+from .contract import SCHEMA_VERSION, Corpus, OcrBox
 from .evaluation import evaluate_corpus
 
 
@@ -224,12 +224,15 @@ def _clean_product(value: str) -> str:
     return compact.strip()
 
 
-def _new_row(product_query: str, index: int) -> dict[str, Any]:
+def _new_row(product_query: str, product_evidence: Sequence[str]) -> dict[str, Any]:
+    if not product_evidence:
+        raise ValueError("product evidence is required")
     return {
-        "row_id": f"row-{index + 1}",
+        "row_id": product_evidence[0],
         "product_query": product_query,
         "draft": {},
         "uncertainty_codes": [],
+        "evidence": {"product_query": list(product_evidence)},
     }
 
 
@@ -247,18 +250,24 @@ def _table_rows(lines: Sequence[_Line]) -> tuple[list[dict[str, Any]], set[int]]
             line = lines[line_index]
             if _header_anchors(line):
                 break
-            cells: dict[str, list[str]] = {}
+            cells: dict[str, list[_Token]] = {}
             for item in line.items:
                 column = next((index for index, boundary in enumerate(boundaries) if item.cx < boundary), len(anchors) - 1)
                 key = anchors[column][0]
-                cells.setdefault(key, []).append(item.text)
-            product = _clean_product("".join(cells.get("product", [])))
+                cells.setdefault(key, []).append(item)
+            product_items = cells.get("product", [])
+            product = _clean_product("".join(item.text for item in product_items))
             if not product or not any(key in cells for key in ("dose", "frequency", "days")):
                 continue
-            row = _new_row(product, len(rows))
+            row = _new_row(product, [item.box_id for item in product_items])
             for key in ("dose", "frequency", "days"):
                 if key in cells:
-                    row["draft"].update(_table_value(key, "".join(cells[key])))
+                    items = cells[key]
+                    parsed = _table_value(key, "".join(item.text for item in items))
+                    row["draft"].update(parsed)
+                    evidence = [item.box_id for item in items]
+                    for field in parsed:
+                        row["evidence"][field] = evidence
             rows.append(row)
             consumed.add(line_index)
         if rows:
@@ -266,12 +275,12 @@ def _table_rows(lines: Sequence[_Line]) -> tuple[list[dict[str, Any]], set[int]]
     return [], set()
 
 
-def _labeled_product(line: _Line) -> str | None:
+def _labeled_product(line: _Line) -> tuple[str, list[str]] | None:
     match = _PRODUCT_PREFIX.fullmatch(line.compact)
     if match is None:
         return None
     product = _clean_product(match.group(1))
-    return product or None
+    return (product, [item.box_id for item in line.items]) if product else None
 
 
 def _is_common_regimen(line: _Line) -> bool:
@@ -283,14 +292,19 @@ def _is_explicit_regimen(line: _Line) -> bool:
 
 
 def _labeled_rows(lines: Sequence[_Line], median_height: float) -> tuple[list[dict[str, Any]], set[int]]:
-    product_lines = [(index, product) for index, line in enumerate(lines) if (product := _labeled_product(line))]
+    product_lines = [
+        (index, product, evidence)
+        for index, line in enumerate(lines)
+        if (found := _labeled_product(line)) is not None
+        for product, evidence in [found]
+    ]
     if not product_lines:
         return [], set()
-    rows = [_new_row(product, index) for index, (_, product) in enumerate(product_lines)]
-    consumed: set[int] = {line_index for line_index, _ in product_lines}
+    rows = [_new_row(product, evidence) for _, product, evidence in product_lines]
+    consumed: set[int] = {line_index for line_index, _, _ in product_lines}
     common_indexes = {index for index, line in enumerate(lines) if _is_common_regimen(line)}
 
-    for row_index, (line_index, _) in enumerate(product_lines):
+    for row_index, (line_index, _, _) in enumerate(product_lines):
         next_product = product_lines[row_index + 1][0] if row_index + 1 < len(product_lines) else len(lines)
         previous_cy = lines[line_index].cy
         for candidate_index in range(line_index + 1, next_product):
@@ -305,6 +319,9 @@ def _labeled_rows(lines: Sequence[_Line], median_height: float) -> tuple[list[di
             fields = _parse_regimen(line.text)
             if fields:
                 rows[row_index]["draft"].update(fields)
+                evidence = [item.box_id for item in line.items]
+                for field in fields:
+                    rows[row_index]["evidence"][field] = evidence
                 consumed.add(candidate_index)
 
     for common_index in sorted(common_indexes):
@@ -318,7 +335,10 @@ def _labeled_rows(lines: Sequence[_Line], median_height: float) -> tuple[list[di
             line = lines[cursor]
             if lower_cy - line.cy > max(55.0, median_height * 2.8):
                 break
-            marker = next((index for index, (product_index, _) in enumerate(product_lines) if product_index == cursor), None)
+            marker = next(
+                (index for index, (product_index, _, _) in enumerate(product_lines) if product_index == cursor),
+                None,
+            )
             if marker is None:
                 break
             members.insert(0, marker)
@@ -326,15 +346,18 @@ def _labeled_rows(lines: Sequence[_Line], median_height: float) -> tuple[list[di
             cursor -= 1
         if not members:
             continue
+        common_evidence = [item.box_id for item in lines[common_index].items]
         for row_index in members:
             for key, value in fields.items():
-                rows[row_index]["draft"].setdefault(key, value)
+                if key not in rows[row_index]["draft"]:
+                    rows[row_index]["draft"][key] = value
+                    rows[row_index]["evidence"][key] = common_evidence
         consumed.add(common_index)
 
     if len(rows) > 1:
         unassociated = False
         for index, line in enumerate(lines):
-            if index in consumed or _labeled_product(line) or _is_common_regimen(line):
+            if index in consumed or _labeled_product(line) is not None or _is_common_regimen(line):
                 continue
             if _parse_regimen(line.text):
                 unassociated = True
@@ -359,7 +382,7 @@ def parse_boxes(boxes: Iterable[OcrBox]) -> list[dict[str, Any]]:
 
 def run_baseline(corpus: Corpus) -> dict[str, Any]:
     predictions = {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "predictions": [
             {"case_id": case.case_id, "rows": parse_boxes(case.boxes)}
             for case in corpus.cases
