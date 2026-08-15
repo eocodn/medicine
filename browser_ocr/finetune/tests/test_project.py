@@ -59,10 +59,14 @@ class FineTuneProjectContractTest(unittest.TestCase):
         self.assertEqual(result["held_out_families"]["test"], ["synthetic-source-04", "synthetic-source-12"])
         self.assertFalse(result["real_data_evaluated"])
         points = result["points"]
-        self.assertEqual([point["crop_count"] for point in points], [5000, 20000])
+        self.assertEqual([point["crop_count"] for point in points], [5000, 20000, 50000])
         self.assertGreater(points[1]["best_test"]["acc"], points[0]["best_test"]["acc"])
+        self.assertGreater(points[2]["best_test"]["acc"], points[1]["best_test"]["acc"])
         self.assertGreater(points[1]["slices"]["semantic"]["product"], points[0]["slices"]["semantic"]["product"])
+        self.assertGreater(points[2]["slices"]["semantic"]["product"], points[1]["slices"]["semantic"]["product"])
         self.assertGreater(points[1]["slices"]["risk"]["mixed_script"], points[0]["slices"]["risk"]["mixed_script"])
+        self.assertGreater(points[2]["slices"]["risk"]["mixed_script"], points[1]["slices"]["risk"]["mixed_script"])
+        self.assertGreater(result["observed_20k_to_50k"]["relative_exact_error_reduction"], 0.5)
 
     def test_dataset_schema_forbids_patient_data(self) -> None:
         schema = json.loads((FINETUNE / "dataset.schema.json").read_text(encoding="utf-8"))
