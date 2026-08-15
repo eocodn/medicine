@@ -81,3 +81,52 @@ docker compose run --rm ocr-document-parse \
 
 The command returns both the generated prediction envelope and the benchmark
 evaluation so later baselines can be compared under exactly the same contract.
+
+## Learned layout research baseline
+
+`hashed_layout_linear_v2` is a deliberately small learned comparison model. OCR
+regions are nodes. A multiclass node head predicts `product`, `dose`,
+`frequency`, `duration`, or `other` from bounded hashed text features, OCR
+confidence, and normalized box geometry. A separate learned edge head predicts
+whether a structured field belongs to a candidate product using relative
+geometry plus local product-neighborhood features. The decoder retains the same
+source-region evidence contract as `geometry_rule_v2` and leaves ambiguous edges
+unresolved rather than selecting the nearest medication blindly.
+
+The node head can be initialized from a balanced deterministic sample of the
+retained 100k recognition corpus, while layout edges are trained only on the
+full-document records supplied to the current fold. The research CLI runs both
+capture-profile and whole-layout-family cross-validation and compares learned
+output with `geometry_rule_v2` using the same evidence-based medication safety
+metrics:
+
+```sh
+docker compose run --rm \
+  -v /path/to/full-document-results:/results:ro \
+  -v /path/to/synth-100k-v5:/semantic:ro \
+  ocr-document-learned benchmark \
+  --corpus /workspace/browser_ocr/detection/corpus/manifest.json \
+  --results-root /results \
+  --output-dir /workspace/browser_ocr/finetune/work/learned-layout \
+  --semantic-samples /semantic/samples.jsonl \
+  --semantic-per-role 2500 --semantic-epochs 12 \
+  --epochs 60 --seed 112 --json
+```
+
+The tracked `results/learned-layout-v2-summary.json` records the current outcome.
+On the 36-document synthetic benchmark, capture-profile holdout ties
+`geometry_rule_v2` exactly: 580/672 critical fields, 145/168 rows, 36/36 safety
+passes, zero false exact fields, and learned edge precision/recall/F1 of 1.0.
+Whole-layout-family holdout is worse: 570/672 critical fields and 31/36 safety
+passes versus 580/672 and 36/36 for the rule baseline. All five false exact
+fields are from the unseen `legacy_preprinted_medication_bag` family, where the
+edge head remains perfect but the node head cannot distinguish standalone
+printed labels such as `1일`/`1회` from values and has never learned the
+`1포(정)` dose form in context.
+
+Therefore this learned model is **not promoted** into the full-document OCR
+pipeline. The next learned experiment should broaden contextual node training
+coverage or introduce a small contextual node encoder; threshold tuning or
+hard-coded OCR substitutions are not justified by this result. These numbers
+remain synthetic-only research evidence and are not a real-photo or production
+release result.

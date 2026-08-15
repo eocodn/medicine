@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "model_id": "hashed_layout_linear_v2",
+  "model_bytes": 10622,
+  "real_data_evaluated": false,
+  "decision": "do_not_promote",
+  "decision_reason": "The learned relation head is safe and exact under capture-profile holdout, but the unseen-layout holdout is worse than geometry_rule_v2 and produces false exact fields on the legacy preprinted medication-bag family.",
+  "semantic_pretraining": {
+    "source": "retained synth-100k-v5 recognition corpus",
+    "eligible_seen": {
+      "product": 21429,
+      "dose": 21427,
+      "frequency": 7143,
+      "duration": 7143,
+      "other": 35715
+    },
+    "selected_per_role": 2500,
+    "selected_total": 12500,
+    "epochs": 12,
+    "selected_fingerprint": "42f1961ded451bb0b9e9f9bcc9c8276f9f939df3d01ddbf960fb11ebce7224f6"
+  },
+  "capture_profile_cv": {
+    "folds": 6,
+    "node_role_accuracy": 0.9667673716012085,
+    "edge_precision": 1.0,
+    "edge_recall": 1.0,
+    "edge_f1": 1.0,
+    "learned": {
+      "sample_count": 36,
+      "quality_pass_samples": 31,
+      "safety_pass_samples": 36,
+      "metrics": {
+        "row_recall": 0.8630952380952381,
+        "critical_field_exact_accuracy": 0.8630952380952381
+      },
+      "totals": {
+        "expected_rows": 168,
+        "predicted_rows": 145,
+        "matched_rows": 145,
+        "missing_rows": 23,
+        "critical_field_exact": 580,
+        "critical_field_total": 672,
+        "false_exact_fields": 0,
+        "unresolved_fields": 0,
+        "cross_medication_associations": 0,
+        "unproven_associations": 0
+      }
+    },
+    "geometry_rule_v2": {
+      "sample_count": 36,
+      "quality_pass_samples": 31,
+      "safety_pass_samples": 36,
+      "metrics": {
+        "row_recall": 0.8630952380952381,
+        "critical_field_exact_accuracy": 0.8630952380952381
+      }
+    }
+  },
+  "layout_family_cv": {
+    "folds": 6,
+    "node_role_accuracy": 0.9690332326283988,
+    "edge_precision": 1.0,
+    "edge_recall": 1.0,
+    "edge_f1": 1.0,
+    "learned": {
+      "sample_count": 36,
+      "quality_pass_samples": 26,
+      "safety_pass_samples": 31,
+      "metrics": {
+        "row_recall": 0.8630952380952381,
+        "critical_field_exact_accuracy": 0.8482142857142857
+      },
+      "totals": {
+        "expected_rows": 168,
+        "predicted_rows": 145,
+        "matched_rows": 145,
+        "missing_rows": 23,
+        "critical_field_exact": 570,
+        "critical_field_total": 672,
+        "false_exact_fields": 5,
+        "unresolved_fields": 5,
+        "cross_medication_associations": 0,
+        "unproven_associations": 0
+      }
+    },
+    "geometry_rule_v2": {
+      "sample_count": 36,
+      "quality_pass_samples": 31,
+      "safety_pass_samples": 36,
+      "metrics": {
+        "row_recall": 0.8630952380952381,
+        "critical_field_exact_accuracy": 0.8630952380952381
+      }
+    }
+  },
+  "limiting_fold": {
+    "layout_family": "legacy_preprinted_medication_bag",
+    "sample_count": 6,
+    "learned_safety_pass_samples": 1,
+    "learned_critical_field_exact": 10,
+    "critical_field_total": 24,
+    "false_exact_fields": 5,
+    "cross_medication_associations": 0,
+    "edge_f1": 1.0,
+    "node_role_accuracy": 0.8409090909090909,
+    "observed_node_generalization_failure": "Standalone printed labels such as 1일/1회 are confused with values, while the unseen 1포(정) dose pattern is classified as other. This requires broader contextual node training data or a contextual node encoder rather than threshold tuning."
+  }
+}
