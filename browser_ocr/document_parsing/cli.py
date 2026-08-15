@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from .baseline import run_baseline
 from .contract import CorpusError, load_corpus
 from .evaluation import evaluate_corpus
 
@@ -38,6 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--corpus", required=True)
     evaluate.add_argument("--predictions", required=True)
     evaluate.add_argument("--json", action="store_true")
+
+    baseline = subparsers.add_parser("run-baseline")
+    baseline.add_argument("--corpus", required=True)
+    baseline.add_argument("--json", action="store_true")
     return parser
 
 
@@ -64,6 +69,10 @@ def main(argv: list[str] | None = None) -> int:
             result = evaluate_corpus(corpus, _load_json(args.predictions))
             _emit(result, json_output)
             return 0 if result["safety_pass"] else 3
+        if args.command == "run-baseline":
+            result = run_baseline(corpus)
+            _emit(result, json_output)
+            return 0 if result["evaluation"]["safety_pass"] else 3
         raise CorpusError(f"unsupported command: {args.command}")
     except CorpusError as exc:
         error = {"status": "error", "error": str(exc)}
