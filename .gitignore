@@ -14,3 +14,7 @@ data/canonical/
 android/.gradle/
 android/build/
 android/app/build/
+
+# Detector benchmark model/result caches are reproducible from pinned manifests.
+browser_ocr/detection/.cache/
+browser_ocr/detection/results/

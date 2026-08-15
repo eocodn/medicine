@@ -5,6 +5,9 @@
   "license": "UNLICENSED",
   "scripts": {
     "test": "node --test test/*.test.js",
+    "detection:test": "node --test detection/tests/*.test.mjs",
+    "detection:validate": "node detection/cli.mjs validate --corpus detection/corpus/manifest.json --json",
+    "detection:audit": "node detection/cli.mjs audit --corpus detection/corpus/manifest.json --json",
     "probe-browser": "node probe_browser.mjs",
     "model:eval": "node eval/run_eval.mjs"
   },
