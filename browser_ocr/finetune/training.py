@@ -1,6 +1,33 @@
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 from .dataset import DatasetError
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def export_identity(export_dir: str | Path) -> dict[str, object]:
+    root = Path(export_dir)
+    required = [root / "split.json", *(root / f"{name}.txt" for name in ("train", "val", "test"))]
+    missing = [path.name for path in required if not path.is_file()]
+    if missing:
+        raise DatasetError(f"Paddle export identity files are missing: {', '.join(missing)}")
+    return {
+        "schema_version": 1,
+        "split_sha256": _sha256_file(root / "split.json"),
+        "label_sha256": {
+            name: _sha256_file(root / f"{name}.txt")
+            for name in ("train", "val", "test")
+        },
+    }
 
 
 def probe_paddle_runtime(paddle: object) -> dict[str, object]:

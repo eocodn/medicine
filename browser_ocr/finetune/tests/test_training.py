@@ -162,6 +162,28 @@ class BaselineTrainingPlanTest(unittest.TestCase):
             {"acc": 0.8125, "norm_edit_dis": 0.945, "fps": 777.0},
         )
 
+    def test_export_identity_changes_when_split_or_label_content_changes(self) -> None:
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from browser_ocr.finetune.training import export_identity
+
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "split.json").write_text(json.dumps({"splits": {"test": ["a"]}}), encoding="utf-8")
+            for name in ("train", "val", "test"):
+                (root / f"{name}.txt").write_text(f"images/{name}.png\t{name}\n", encoding="utf-8")
+            first = export_identity(root)
+
+            (root / "test.txt").write_text("images/test.png\tchanged\n", encoding="utf-8")
+            second = export_identity(root)
+            self.assertNotEqual(first, second)
+
+            (root / "test.txt").write_text("images/test.png\ttest\n", encoding="utf-8")
+            (root / "split.json").write_text(json.dumps({"splits": {"test": ["b"]}}), encoding="utf-8")
+            third = export_identity(root)
+            self.assertNotEqual(first, third)
+
 class TrainingCommandStreamingTest(unittest.TestCase):
     def test_stream_command_can_avoid_memory_capture_and_append_log(self) -> None:
         import sys

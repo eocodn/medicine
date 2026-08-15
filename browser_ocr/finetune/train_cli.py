@@ -11,10 +11,12 @@ import sys
 from pathlib import Path
 
 from .dataset import DatasetError, load_dataset
+from .evaluation import evaluate_test_slices, prepare_test_slices
 from .model_compat import audit_model_compatibility
 from .training import (
     build_baseline_overrides,
     build_smoke_overrides,
+    export_identity,
     find_resume_checkpoint,
     parse_eval_metrics,
     probe_paddle_runtime,
@@ -219,6 +221,13 @@ def run_baseline(args: argparse.Namespace) -> dict:
     if not isinstance(args.batch_size, int) or args.batch_size <= 0:
         raise DatasetError("batch size must be a positive integer")
 
+    research_plan_path = Path(__file__).with_name("research-plan.json").resolve()
+    research_plan = _json_file(research_plan_path)
+    required_semantic_tags = research_plan.get("required_semantic_strata")
+    required_risk_tags = research_plan.get("required_risk_strata")
+    if not isinstance(required_semantic_tags, list) or not isinstance(required_risk_tags, list):
+        raise DatasetError("research plan is missing required semantic/risk strata")
+
     run_dir = Path(args.run_dir).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     lock_path = run_dir / ".baseline.lock"
@@ -228,6 +237,8 @@ def run_baseline(args: argparse.Namespace) -> dict:
         "dataset_fingerprint": dataset.fingerprint,
         "export_group_by": export_meta["group_by"],
         "export_counts": export_meta["counts"],
+        "export_identity": export_identity(export_dir),
+        "research_plan_sha256": _sha256_file(research_plan_path),
         "upstream_commit": paddle_info["commit"],
         "pretrained_model_sha256": upstream["pretrained_model_sha256"],
         "epochs": args.epochs,
@@ -260,6 +271,16 @@ def run_baseline(args: argparse.Namespace) -> dict:
                 raise DatasetError("baseline model directory exists without authoritative state")
             state = {"schema_version": 1, "status": "initializing", "profile": profile}
             _write_json_atomic(state_path, state)
+
+        slice_plan = prepare_test_slices(
+            dataset=dataset,
+            export_dir=export_dir,
+            output_dir=run_dir / "slice-labels",
+            expected_group_by=args.expected_group_by,
+            required_semantic_tags=required_semantic_tags,
+            required_risk_tags=required_risk_tags,
+        )
+        _write_json_atomic(run_dir / "slice-plan.json", slice_plan)
 
         pretrained_eval_path = run_dir / "pretrained-test.json"
         if pretrained_eval_path.exists():
@@ -340,6 +361,24 @@ def run_baseline(args: argparse.Namespace) -> dict:
             log_path=run_dir / "best-test.log",
             checkpoint=best_prefix,
         )
+        state["status"] = "evaluating-slices"
+        _write_json_atomic(state_path, state)
+
+        def evaluate_slice(label_file: Path, model: str, stem: str) -> dict[str, float]:
+            print(f"[ocr-finetune-train] evaluate {stem} model={model}", flush=True)
+            return _evaluate_model(
+                source_root=source_root,
+                config_path=config_path,
+                dataset_root=dataset.root,
+                test_labels=label_file,
+                batch_size=args.batch_size,
+                log_path=run_dir / "slice-logs" / f"{stem}-{model}.log",
+                pretrained_model=weight if model == "pretrained" else None,
+                checkpoint=best_prefix if model == "checkpoint" else None,
+            )
+
+        slice_metrics = evaluate_test_slices(slice_plan, evaluate=evaluate_slice)
+        _write_json_atomic(run_dir / "slice-result.json", slice_metrics)
         pretrained_metrics = pretrained_eval["metrics"]
         result = {
             "schema_version": 1,
@@ -355,6 +394,7 @@ def run_baseline(args: argparse.Namespace) -> dict:
             "best_checkpoint_sha256": _sha256_file(best_checkpoint),
             "final_epoch_checkpoint": str(final_epoch) + ".pdparams",
             "final_epoch_checkpoint_sha256": _sha256_file(Path(str(final_epoch) + ".pdparams")),
+            "slices": slice_metrics,
             "train_log": str(run_dir / "train.log"),
         }
         _write_json_atomic(result_path, result)
