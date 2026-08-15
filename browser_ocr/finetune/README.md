@@ -138,6 +138,22 @@ The recorded synthetic-only result is in `results/synth-5k-drug-baseline.json`: 
 
 New recognition training/evaluation data should be derived from the canonical full-document corpus rather than a separate line-image generator when the goal is E2E robustness. `ocr-corpus generate --materialize` writes `views/recognition/manifest.json` plus a Paddle-ready `views/recognition/paddle/` export. Each crop is rectified from the final degraded document raster and inherits its parent document train/validation/test split, semantic role, association group, layout, capture anchor, augmentation difficulty/components, and risk tags. Generator v4 composes camera failures, so one crop can simultaneously carry motion blur, JPEG loss, downscale, noise, exposure/color drift, perspective, and glare/shadow rather than belonging to only one degradation bucket. This makes recognition failures directly comparable with detector and E2E results from the same source documents. The older standalone 100k recognition corpus remains a retained historical training artifact, not the canonical source for future full-document robustness experiments.
 
+## Fixed full-document recognizer evaluation
+
+`ocr-finetune-train fixed-eval` evaluates one pinned recognizer checkpoint against a materialized unified recognition dataset with a single `tools/infer_rec.py` pass, then derives all metric slices from the immutable prediction artifact. The fixed plan reports overall and critical exact accuracy plus normalized edit similarity, product/dose/frequency/duration, clean/medium/hard, augmentation components/combinations, drug seen/unseen, and the cross-slices `seen-drug-unseen-image`, `unseen-drug-familiar-degradation`, `unseen-drug-hard-in-domain`, and `unseen-drug-hard-ood`. The runner binds dataset/checkpoint/config/source hashes in state, requires minimum support for every selection-critical slice, and returns the cached result only after revalidating the prediction artifact hash.
+
+The evaluation path allows model-incompatible **noncritical** context references to remain in the overall metric so model limitations are visible, but critical medication references must satisfy the pinned recognizer dictionary and maximum text length or evaluation fails closed. This exception applies only to direct fixed inference; training compatibility checks remain strict for every training sample.
+
+```bash
+COMPOSE_PROJECT_NAME=medicine_ocr_fixed_eval \
+  docker compose run --rm ocr-finetune-train fixed-eval \
+  --baseline-result /workspace/path/to/baseline-result.json \
+  --expected-checkpoint-sha256 <sha256> \
+  --manifest /workspace/path/to/views/recognition/manifest.json \
+  --run-dir /workspace/browser_ocr/finetune/work/fixed-eval/run-1 \
+  --minimum-required-count 32 --device gpu --json
+```
+
 ## Full-document detector → fine-tuned recognizer research path
 
 `ocr-full-document` composes the mobile detector research pipeline with a completed fine-tune baseline. The default detector is the selected `PP-OCRv5_mobile_det` candidate at edge 640. Its official ONNX archive is verified against `browser_ocr/detection/detector-models.json`; the recognizer is loaded directly from the `best_checkpoint` recorded by the supplied baseline result and its SHA-256 is verified before inference.

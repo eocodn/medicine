@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
-import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -12,7 +10,15 @@ from pathlib import Path
 
 from .dataset import DatasetError, load_dataset
 from .evaluation import evaluate_test_slices, prepare_test_slices
+from .fixed_eval_runner import run_fixed_eval
 from .model_compat import audit_model_compatibility
+from .runner_io import (
+    json_file as _json_file,
+    sha256_file as _sha256_file,
+    stream_command as _stream_command,
+    verify_sha as _verify_sha,
+    write_json_atomic as _write_json_atomic,
+)
 from .training import (
     build_baseline_overrides,
     build_smoke_overrides,
@@ -23,39 +29,6 @@ from .training import (
     probe_paddle_runtime,
     subset_label_file,
 )
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _json_file(path: Path) -> dict:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise DatasetError(f"could not read JSON file {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise DatasetError(f"JSON file must contain an object: {path}")
-    return value
-
-
-def _write_json_atomic(path: Path, value: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
-
-
-def _verify_sha(path: Path, expected: str, label: str) -> None:
-    if not path.is_file():
-        raise DatasetError(f"{label} does not exist: {path}")
-    actual = _sha256_file(path)
-    if actual != expected:
-        raise DatasetError(f"{label} SHA-256 mismatch: expected {expected}, got {actual}")
 
 
 def run_probe() -> dict:
@@ -133,6 +106,7 @@ def _stream_command(
     log_path: Path,
     capture: bool = True,
     append: bool = False,
+    echo: bool = True,
 ) -> str:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     captured: list[str] = []
@@ -147,7 +121,8 @@ def _stream_command(
         )
         assert process.stdout is not None
         for line in process.stdout:
-            print(line, end="", flush=True)
+            if echo:
+                print(line, end="", flush=True)
             log.write(line)
             log.flush()
             if capture:
@@ -396,6 +371,7 @@ def run_baseline(args: argparse.Namespace) -> dict:
         _write_json_atomic(state_path, state)
         return result
 
+
 def run_smoke(args: argparse.Namespace) -> dict:
     upstream_path = Path(args.upstream).resolve()
     upstream = _json_file(upstream_path)
@@ -559,6 +535,17 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.add_argument("--learning-rate", type=float, default=0.0005)
     baseline.add_argument("--warmup-epochs", type=int, default=5)
     baseline.add_argument("--json", action="store_true")
+
+    fixed_eval = subparsers.add_parser("fixed-eval")
+    fixed_eval.add_argument("--upstream", default="/workspace/browser_ocr/finetune/upstream.json")
+    fixed_eval.add_argument("--paddleocr-root", default="/opt/PaddleOCR")
+    fixed_eval.add_argument("--baseline-result", required=True)
+    fixed_eval.add_argument("--expected-checkpoint-sha256")
+    fixed_eval.add_argument("--manifest", required=True)
+    fixed_eval.add_argument("--run-dir", required=True)
+    fixed_eval.add_argument("--minimum-required-count", type=int, default=32)
+    fixed_eval.add_argument("--device", choices=("gpu", "cpu"), default="gpu")
+    fixed_eval.add_argument("--json", action="store_true")
     return parser
 
 
@@ -571,6 +558,8 @@ def main(argv: list[str] | None = None) -> int:
             result = run_smoke(args)
         elif args.command == "baseline":
             result = run_baseline(args)
+        elif args.command == "fixed-eval":
+            result = run_fixed_eval(args)
         else:
             raise DatasetError(f"unsupported command: {args.command}")
         if args.json:

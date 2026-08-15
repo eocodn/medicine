@@ -80,6 +80,7 @@ test("one document corpus materializes aligned detection recognition parsing and
 
     const detection = lines(await readFile(join(viewsRoot, "detection", "samples.jsonl"), "utf8"));
     const recognition = lines(await readFile(join(viewsRoot, "recognition", "index.jsonl"), "utf8"));
+    const recognitionSamples = lines(await readFile(join(viewsRoot, "recognition", "samples.jsonl"), "utf8"));
     const parsing = lines(await readFile(join(viewsRoot, "parsing", "samples.jsonl"), "utf8"));
     const e2e = lines(await readFile(join(viewsRoot, "e2e", "samples.jsonl"), "utf8"));
 
@@ -99,6 +100,14 @@ test("one document corpus materializes aligned detection recognition parsing and
     assert.equal(parsing.length, 12);
     assert.equal(e2e.length, 12);
     assert.equal(recognition.length, corpus.samples.reduce((sum, sample) => sum + sample.regions.length, 0));
+    assert.equal(recognitionSamples.length, recognition.length);
+    const recognitionSampleById = new Map(recognitionSamples.map((sample) => [sample.id, sample]));
+    for (const item of recognition) {
+      assert.equal(
+        recognitionSampleById.get(item.id).risk_tags.includes("critical-medication"),
+        item.critical,
+      );
+    }
 
     const splitByDocument = new Map(corpus.samples.map((sample) => [sample.id, sample.split]));
     const augmentationByDocument = new Map(corpus.samples.map((sample) => [sample.id, {
@@ -144,6 +153,7 @@ test("one document corpus materializes aligned detection recognition parsing and
     const manifest = JSON.parse(await readFile(join(viewsRoot, "recognition", "manifest.json"), "utf8"));
     assert.equal(manifest.task, "text_recognition");
     assert.equal(manifest.metadata.parent_corpus_id, corpus.corpus_id);
+    assert.equal(manifest.metadata.recognition_evaluation_policy.id, "severe-motion-downscale-jpeg-v1");
     const split = JSON.parse(await readFile(join(viewsRoot, "recognition", "document-split.json"), "utf8"));
     assert.equal(split.parent_corpus_id, corpus.corpus_id);
     assert.deepEqual(Object.keys(split.splits).sort(), ["test", "train", "val"]);

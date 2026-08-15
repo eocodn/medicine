@@ -4,8 +4,9 @@ import { mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from "node
 import { dirname, join, relative, resolve } from "node:path";
 
 import { validateUnifiedCorpus } from "./contract.mjs";
+import { RECOGNITION_EVAL_POLICY, recognitionOodTag } from "./evaluation_policy.mjs";
 
-const MATERIALIZER_VERSION = 6;
+const MATERIALIZER_VERSION = 7;
 const STAGES = ["detection", "recognition", "parsing", "e2e"];
 const STATE_FILE = ".materialize-state.json";
 const LOCK_FILE = ".materialize.lock";
@@ -300,6 +301,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       const sample = corpus.samples.find((candidate) => candidate.id === item.document_id);
       const imageHash = await fileSha256(join(recognitionDir, item.image));
       item.image_sha256 = imageHash;
+      const oodTag = recognitionOodTag(sample.capture);
       recognitionSamples.push({
         id: item.id,
         image: item.image,
@@ -319,6 +321,8 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
           `difficulty-${slug(sample.augmentation_difficulty)}`,
           ...sample.capture.augmentation_components.map((component) => `augmentation-${slug(component)}`),
           `region-${slug(region.region_class)}`,
+          ...(region.critical ? ["critical-medication"] : []),
+          ...(oodTag ? [oodTag] : []),
           ...(sample.drug_name_split ? [`drug-split-${slug(sample.drug_name_split)}`] : []),
           ...(sample.drug_name_exposure ? [`drug-exposure-${slug(sample.drug_name_exposure)}`] : []),
         ])],
@@ -348,6 +352,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
         parent_corpus_sha256: profile.corpus_sha256,
         crop_polygon_kind: "region_polygon",
         document_split_policy: corpus.split_policy,
+        recognition_evaluation_policy: RECOGNITION_EVAL_POLICY,
         ...(corpus.drug_name_policy ? { drug_name_policy: corpus.drug_name_policy } : {}),
       },
     });
