@@ -174,6 +174,54 @@ class FineTuneDatasetTest(unittest.TestCase):
             self.assertEqual(sample_split["a1"], sample_split["a2"])
             self.assertEqual(sample_split["a1"], sample_split["b1"])
 
+    def test_scale_stable_split_keeps_family_assignment_when_samples_grow(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            small_samples = []
+            large_samples = []
+            for family_index in range(17):
+                source = f"synthetic-source-{family_index:02d}"
+                first = sample(
+                    f"small-{family_index:02d}",
+                    text="1정",
+                    document=f"small-doc-{family_index:02d}",
+                    layout=f"layout-{family_index:02d}",
+                    source=source,
+                    drug=f"drug-{family_index:02d}",
+                )
+                small_samples.append(first)
+                large_samples.append(json.loads(json.dumps(first)))
+                large_samples.append(sample(
+                    f"large-{family_index:02d}",
+                    text="2정",
+                    document=f"large-doc-{family_index:02d}",
+                    layout=f"layout-extra-{family_index:02d}",
+                    source=source,
+                    drug=f"drug-extra-{family_index:02d}",
+                ))
+
+            small = load_dataset(DatasetFixture(root / "small", small_samples).manifest)
+            large = load_dataset(DatasetFixture(root / "large", large_samples).manifest)
+            small_split = build_split(
+                small, group_by="source_family", seed=112, stable_across_scales=True,
+            )
+            large_split = build_split(
+                large, group_by="source_family", seed=112, stable_across_scales=True,
+            )
+
+            def assignments(dataset, split):
+                by_id = {item["id"]: item for item in dataset.samples}
+                result = {}
+                for split_name, ids in split["splits"].items():
+                    for sample_id in ids:
+                        family = by_id[sample_id]["groups"]["source_family"]
+                        result.setdefault(family, set()).add(split_name)
+                return {family: next(iter(names)) for family, names in result.items() if len(names) == 1}
+
+            self.assertEqual(assignments(small, small_split), assignments(large, large_split))
+            self.assertEqual(small_split["assignment"], "stable_family_hash_v1")
+            self.assertEqual(large_split["assignment"], "stable_family_hash_v1")
+
     def test_union_find_handles_more_than_recursion_limit_in_one_group(self) -> None:
         from browser_ocr.finetune.dataset import _UnionFind
 

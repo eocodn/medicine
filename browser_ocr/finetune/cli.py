@@ -79,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     split.add_argument("--train-ratio", type=float, default=0.8)
     split.add_argument("--val-ratio", type=float, default=0.1)
     split.add_argument("--test-ratio", type=float, default=0.1)
+    split.add_argument("--stable-across-scales", action="store_true")
     split.add_argument("--output", required=True)
     split.add_argument("--json", action="store_true")
 
@@ -142,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
                 group_by=args.group_by,
                 seed=args.seed,
                 ratios=(args.train_ratio, args.val_ratio, args.test_ratio),
+                stable_across_scales=args.stable_across_scales,
             )
             _write_json(args.output, result)
             _emit(result, json_output)

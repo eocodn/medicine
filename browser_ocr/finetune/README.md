@@ -58,6 +58,8 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning docker compose run --rm ocr-finetun
 
 The Paddle export contains `train.txt`, `val.txt`, `test.txt`, `split.json`, `export.json`, and `observed-characters.txt`. `data_dir` remains the original dataset root; images are not duplicated.
 
+For learning-curve comparisons across corpus sizes, add `--stable-across-scales`. This assigns each connected holdout component from the selected family IDs rather than its current sample membership, so an existing layout/source/drug family does not move between train, validation, and test merely because more samples were generated. The command fails closed if the deterministic family hash leaves any split empty. Keep the same seed and ratios at every learning-curve point.
+
 ## Training runtime
 
 `upstream.json` now records a complete source/model/runtime pin and has `training_enabled=true`. Training is still research-only and does not change the product OCR boundary. The pinned training image uses PaddleOCR v3.7.0, PaddlePaddle GPU 3.2.0 with CUDA 12.6, exact OCR/runtime dependency locks, and the upstream Korean dictionary.

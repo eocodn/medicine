@@ -343,6 +343,32 @@ def _component_hash(seed: int, sample_ids: Iterable[str]) -> str:
     return hashlib.sha256(f"{seed}\0{joined}".encode("utf-8")).hexdigest()
 
 
+def _stable_component_split(
+    *,
+    seed: int,
+    group_by: str,
+    group_ids: Iterable[str],
+    ratios: tuple[float, float, float],
+) -> str:
+    # A learning-curve holdout must not move just because more samples were
+    # added to an existing family. Hash only the selected family identities,
+    # never sample counts or sample IDs. If later data connects previously
+    # separate families, the component identity intentionally changes because
+    # the leakage boundary itself changed.
+    material = "\0".join(
+        ["medicine-ocr-stable-holdout-v1", str(seed), group_by, *sorted(group_ids)]
+    )
+    digest = hashlib.sha256(material.encode("utf-8")).digest()
+    position = int.from_bytes(digest, "big") / float(1 << 256)
+    train_end = float(ratios[0])
+    val_end = train_end + float(ratios[1])
+    if position < train_end:
+        return "train"
+    if position < val_end:
+        return "val"
+    return "test"
+
+
 def _connected_components(dataset: Dataset, group_by: str) -> list[list[str]]:
     if group_by not in _GROUP_KEYS:
         raise DatasetError(f"group_by must be one of {', '.join(_GROUP_KEYS)}")
@@ -364,6 +390,7 @@ def build_split(
     group_by: str,
     seed: int,
     ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
+    stable_across_scales: bool = False,
 ) -> dict:
     if not isinstance(seed, int):
         raise DatasetError("seed must be an integer")
@@ -378,26 +405,37 @@ def build_split(
         raise DatasetError(
             f"{group_by} split has only {len(components)} connected components; at least 3 are required"
         )
-    components.sort(key=lambda ids: (-len(ids), _component_hash(seed, ids)))
-    total = len(dataset.samples)
-    targets = {name: ratios[index] * total for index, name in enumerate(_SPLIT_NAMES)}
     assigned: dict[str, list[str]] = {name: [] for name in _SPLIT_NAMES}
-
-    for index, component in enumerate(components):
-        empty = [name for name in _SPLIT_NAMES if not assigned[name]]
-        remaining = len(components) - index
-        if empty and remaining <= len(empty):
-            candidates = empty
-        else:
-            candidates = list(_SPLIT_NAMES)
-        name = max(
-            candidates,
-            key=lambda split_name: (
-                (targets[split_name] - len(assigned[split_name])) / max(targets[split_name], 1.0),
-                -_SPLIT_NAMES.index(split_name),
-            ),
-        )
-        assigned[name].extend(component)
+    if stable_across_scales:
+        by_id = {sample["id"]: sample for sample in dataset.samples}
+        for component in components:
+            group_ids = {by_id[sample_id]["groups"][group_by] for sample_id in component}
+            name = _stable_component_split(
+                seed=seed,
+                group_by=group_by,
+                group_ids=group_ids,
+                ratios=ratios,
+            )
+            assigned[name].extend(component)
+    else:
+        components.sort(key=lambda ids: (-len(ids), _component_hash(seed, ids)))
+        total = len(dataset.samples)
+        targets = {name: ratios[index] * total for index, name in enumerate(_SPLIT_NAMES)}
+        for index, component in enumerate(components):
+            empty = [name for name in _SPLIT_NAMES if not assigned[name]]
+            remaining = len(components) - index
+            if empty and remaining <= len(empty):
+                candidates = empty
+            else:
+                candidates = list(_SPLIT_NAMES)
+            name = max(
+                candidates,
+                key=lambda split_name: (
+                    (targets[split_name] - len(assigned[split_name])) / max(targets[split_name], 1.0),
+                    -_SPLIT_NAMES.index(split_name),
+                ),
+            )
+            assigned[name].extend(component)
 
     for name in _SPLIT_NAMES:
         assigned[name].sort()
@@ -408,7 +446,7 @@ def build_split(
     if len(flattened) != len(set(flattened)) or set(flattened) != {sample["id"] for sample in dataset.samples}:
         raise DatasetError("split assignment does not cover the dataset exactly once")
 
-    return {
+    result = {
         "schema_version": 1,
         "dataset_id": dataset.manifest["dataset_id"],
         "dataset_fingerprint": dataset.fingerprint,
@@ -420,6 +458,9 @@ def build_split(
         "counts": {name: len(assigned[name]) for name in _SPLIT_NAMES},
         "splits": assigned,
     }
+    if stable_across_scales:
+        result["assignment"] = "stable_family_hash_v1"
+    return result
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -487,6 +528,8 @@ def export_paddle(
             "observed_characters_file": "observed-characters.txt",
             "observed_character_count": len(observed),
         }
+        if "assignment" in split:
+            report["assignment"] = split["assignment"]
         _write_json(stage / "export.json", report)
 
         if output.exists():
