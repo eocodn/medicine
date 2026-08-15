@@ -6,8 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .schema import CORE_SOURCE_FAMILIES, SCHEMA_VERSION
-from .sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY
-from .xlsx import XLSX_DATASETS
+from .source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_KEYS
 
 
 def canonical_stats(db_path: str | Path) -> dict:
@@ -371,16 +370,22 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 errors.append("unsupported source families: " + ", ".join(sorted(unsupported)))
             if missing_families:
                 errors.append("missing core source families: " + ", ".join(sorted(missing_families)))
-            expected_keys = {PERMIT_DATASET_KEY}
-            expected_keys.update(f"mfds_dur:{operation}" for operation in DUR_ENDPOINTS)
-            expected_keys.update(f"kids_mfds_xlsx:{category}" for category in XLSX_DATASETS.values())
-            actual_keys = {row[0] for row in con.execute("SELECT dataset_key FROM source_snapshots")}
-            missing_keys = expected_keys - actual_keys
-            extra_keys = actual_keys - expected_keys
+            source_rows = list(con.execute("SELECT dataset_key,source_family FROM source_snapshots"))
+            actual_keys = {row[0] for row in source_rows}
+            missing_keys = EXPECTED_CANONICAL_SOURCE_KEYS - actual_keys
+            extra_keys = actual_keys - EXPECTED_CANONICAL_SOURCE_KEYS
             if missing_keys:
                 errors.append("missing source snapshots: " + ", ".join(sorted(missing_keys)))
             if extra_keys:
                 errors.append("unexpected source snapshots: " + ", ".join(sorted(extra_keys)))
+            wrong_families = [
+                f"{key}={family}"
+                for key, family in source_rows
+                if key in EXPECTED_CANONICAL_SOURCE_FAMILIES
+                and EXPECTED_CANONICAL_SOURCE_FAMILIES[key] != family
+            ]
+            if wrong_families:
+                errors.append("source snapshot family mismatch: " + ", ".join(sorted(wrong_families)))
             bad_hashes = con.execute(
                 "SELECT COUNT(*) FROM source_snapshots WHERE LENGTH(sha256) != 64"
             ).fetchone()[0]

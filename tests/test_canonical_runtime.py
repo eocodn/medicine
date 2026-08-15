@@ -8,6 +8,9 @@ from contextlib import closing
 from pathlib import Path
 
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
+from medicine_canonical.source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES
+from medicine_app.canonical_runtime import _RUNTIME_SOURCE_FAMILIES
+from tests.canonical_fixture_support import expected_source_snapshots
 from medicine_app.core import MedicationApp
 from medicine_app.products import ProductRepository
 
@@ -16,11 +19,7 @@ def make_canonical_runtime_db(path: Path) -> None:
     con = sqlite3.connect(path)
     try:
         con.executescript(SCHEMA)
-        snapshots = [
-            ("mfds_permit:products", "mfds_permit_api"),
-            ("mfds_dur:getUsjntTabooInfoList03", "mfds_dur_item_api"),
-            ("kids_mfds_xlsx:lactation_caution", "kids_mfds_xlsx"),
-        ]
+        snapshots = expected_source_snapshots()
         for index, (key, family) in enumerate(snapshots, 1):
             con.execute(
                 """INSERT INTO source_snapshots(
@@ -150,6 +149,17 @@ class CanonicalRuntimeTest(unittest.TestCase):
         self.assertEqual(lactation["status"], "unknown")
         self.assertIn("확인", lactation["summary"])
         self.assertIsNotNone(preview["warning_token"])
+
+    def test_runtime_source_policy_matches_release_policy(self) -> None:
+        self.assertEqual(_RUNTIME_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_FAMILIES)
+
+    def test_runtime_manifest_requires_exact_source_snapshot_set(self) -> None:
+        from medicine_app.canonical_runtime import canonical_manifest
+        with closing(sqlite3.connect(self.canonical)) as con:
+            con.execute("DELETE FROM source_snapshots WHERE dataset_key='kids_mfds_xlsx:dose_caution'")
+            con.commit()
+            manifest = canonical_manifest(con)
+        self.assertEqual(manifest["status"], "not_verified")
 
     def test_runtime_manifest_fails_closed_on_persisted_link_ambiguity(self) -> None:
         from medicine_app.canonical_runtime import canonical_manifest

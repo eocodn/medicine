@@ -87,6 +87,24 @@ def make_canonical_db(path: Path) -> None:
     )
     add_lactation(con, item_seq="MFDS-Z", ingredient="Zolpidem", details="수유 중 주의")
     add_lactation(con, item_seq="MFDS-LU", ingredient="Osimertinib", unresolved=True)
+    # The mobile release gate verifies bridge materialization, so this synthetic
+    # canonical fixture carries representative bridge rows instead of bypassing
+    # release verification in tests.
+    criterion_id = con.execute("SELECT id FROM ingredient_rules ORDER BY id LIMIT 1").fetchone()[0]
+    con.execute(
+        "INSERT INTO dur_ingredient_concepts(concept_id,category,ingredient_code) VALUES('fixture:concept','duration_caution','D-MFDS-Z')"
+    )
+    con.execute(
+        """INSERT INTO dur_product_item_signatures(
+               item_seq,signature_type,signature_key,component_count,match_method,evidence_kind
+           ) VALUES('MFDS-Z','code','D-MFDS-Z',1,'mfds_ingredient_code','fixture')"""
+    )
+    con.execute(
+        """INSERT INTO dur_criterion_signatures(
+               criterion_rule_id,category,effect_key,signature_type,signature_key,match_method,evidence_kind
+           ) VALUES(?,'duration_caution','','code','D-MFDS-Z','ingredient_preprocessed','fixture')""",
+        (criterion_id,),
+    )
     con.commit()
     con.close()
 
