@@ -1,25 +1,53 @@
 export const LAYOUT_FAMILIES = [
   "prescription_table",
+  "compact_prescription_form",
+  "legacy_preprinted_medication_bag",
   "classic_medication_bag",
   "counseling_medication_bag",
   "pharmacy_information_sheet",
 ];
 
 export const CAPTURE_PROFILES = [
-  "flat_clean",
-  "oblique_photo",
-  "low_contrast_blur",
+  "flat_scan",
+  "perspective_phone",
+  "low_contrast_defocus",
   "glare_shadow",
+  "motion_jpeg",
+  "cropped_clutter",
+];
+
+export const MATERIAL_PROFILES = [
+  "paper_plain",
+  "paper_folded",
+  "plastic_wrinkled",
+];
+
+export const PRINTER_PROFILES = [
+  "laser_clean",
+  "low_toner",
+  "ink_bleed",
+];
+
+export const BACKGROUND_PROFILES = [
+  "desk_light",
+  "desk_dark",
+  "pharmacy_counter",
 ];
 
 export const REQUIRED_RISK_TAGS = [
   "small_text",
   "row_association",
   "column_association",
-  "oblique_geometry",
+  "projective_geometry",
   "blur",
   "glare",
   "plastic_reflection",
+  "partial_crop",
+  "clutter",
+  "jpeg_artifacts",
+  "motion_blur",
+  "material_fold",
+  "printer_degradation",
 ];
 
 export const REQUIRED_CRITICAL_SEMANTIC_ROLES = [

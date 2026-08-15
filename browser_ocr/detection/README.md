@@ -18,22 +18,24 @@ It intentionally does not depend on the recognition fine-tuning or document-pars
 
 Generator v2 is designed to scale beyond the original six-document harness while keeping the ground truth authoritative and resumable.
 
-- Four procedural layout families: prescription table, classic medication bag, counseling/information-dense medication bag, and pharmacy information sheet.
-- Four capture profiles: clean flat scan, oblique affine phone capture, low-contrast blur, and glare/shadow/plastic-reflection stress.
+- Six procedural layout families: general prescription table, dense administrative prescription form, legacy blue preprinted medication bag, classic medication bag, counseling/information-dense medication bag, and pharmacy information sheet.
+- Six raster capture profiles: flat scan, true projective phone perspective, low-contrast defocus, glare/shadow, motion-blur + JPEG compression, and partial-crop + foreground clutter.
+- Three material profiles (plain paper, folded paper, wrinkled plastic), three printer profiles (clean laser, low toner, ink bleed), and three scene-background profiles.
 - Every visible synthetic text item is annotated. Medication fields, contextual fields, and distractor text are separate `region_class` values.
-- Each text region stores both its local `source_polygon` and the final transformed `polygon`, so geometry remains exact after the deterministic capture transform.
-- Generation is deterministic per sample index, uses an exclusive output lock, atomically writes images/checkpoints/manifests, verifies checkpoint image hashes on resume, and rejects seed/count/config drift. The generator revision is part of the fingerprint so implementation changes cannot silently reuse an older completed corpus.
+- Each text region stores both its local `source_polygon` and the final homography-transformed `polygon`, so projective geometry stays authoritative after camera simulation.
+- Final corpus images are JPEG raster captures produced by ImageMagick with librsvg. Both rasterizer and SVG-delegate versions are fingerprinted into the generator configuration so renderer changes cannot silently reuse old output.
+- Generation is deterministic per sample index, uses an exclusive output lock, atomically writes images/checkpoints/manifests, verifies checkpoint image hashes on resume, and rejects seed/count/renderer/config drift. The generator revision is part of the fingerprint so implementation changes cannot silently reuse an older completed corpus.
 - Long runs emit progress on stderr while JSON results remain clean on stdout.
-- Coverage auditing fails closed if required layout, capture, risk, or critical medication-field strata disappear.
+- Coverage auditing fails closed if required layout, capture, material, printer, background, risk, or critical medication-field strata disappear.
 
-The current capture transform is affine. It covers rotation, scale, bounded shear, blur, contrast/brightness shifts, glare, shadow, and crease-like reflection artifacts. True projective/perspective warping is intentionally left as a later raster-rendering extension rather than approximated with incorrect ground-truth geometry.
+The tracked seed is intentionally small and synthetic-only. It is a detector stress harness, not evidence that a model generalizes to real patient photos. Real-photo holdouts remain necessary before any release decision.
 
 ## Agent Control CLI
 
 All commands support machine-readable JSON output.
 
 ```sh
-node browser_ocr/detection/cli.mjs generate --output /tmp/detection-corpus --count 1600 --seed 153 --json
+node browser_ocr/detection/cli.mjs generate --output /tmp/detection-corpus --count 360 --seed 153 --json
 node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json
 node browser_ocr/detection/cli.mjs audit --corpus browser_ocr/detection/corpus/manifest.json --json
 node browser_ocr/detection/cli.mjs matrix --json

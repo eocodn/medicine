@@ -10,17 +10,21 @@ import { generateSyntheticCorpus } from "../synthetic.mjs";
 
 function tinyCorpus() {
   const identityCapture = {
-    profile: "flat_clean",
-    scale: 1,
-    angle_degrees: 0,
-    shear_x: 0,
-    shear_y: 0,
-    blur_px: 0,
+    profile: "flat_scan",
+    geometry_model: "homography_affine",
+    source_corners: [[0, 0], [200, 0], [200, 100], [0, 100]],
+    destination_corners: [[0, 0], [200, 0], [200, 100], [0, 100]],
+    homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    defocus_radius: 0,
+    motion_blur_radius: 0,
+    motion_blur_angle: 0,
     contrast: 1,
     brightness: 1,
+    jpeg_quality: 92,
     glare_opacity: 0,
     shadow_opacity: 0,
-    matrix: [1, 0, 0, 1, 0, 0],
+    camera_failure_modes: [],
+    risk_tags: [],
   };
   const taggedRegion = (value) => ({
     ...value,
@@ -32,7 +36,15 @@ function tinyCorpus() {
     schema_version: 2,
     corpus_id: "tiny",
     synthetic_only: true,
-    generator: { id: "medicine_full_document_synthetic", version: 2, revision: 1, seed: 1, count: 1, fingerprint: "b".repeat(64) },
+    generator: {
+      id: "medicine_full_document_synthetic",
+      version: 2,
+      revision: 2,
+      seed: 1,
+      count: 1,
+      fingerprint: "b".repeat(64),
+      rasterizer: { engine: "imagemagick-convert", version: "Version: ImageMagick test", svg_delegate: "rsvg-convert test", fingerprint: "c".repeat(64) },
+    },
     provenance: { kind: "procedural_synthetic", patient_data: false },
     gates: {
       min_recall: 1,
@@ -44,13 +56,16 @@ function tinyCorpus() {
     },
     samples: [{
       id: "sample",
-      image: "sample.svg",
+      image: "sample.jpg",
       image_sha256: "a".repeat(64),
       width: 200,
       height: 100,
       sample_index: 0,
       layout_family: "prescription_table",
-      capture_profile: "flat_clean",
+      capture_profile: "flat_scan",
+      material_profile: "paper_plain",
+      printer_profile: "laser_clean",
+      background_profile: "desk_light",
       capture: identityCapture,
       scenario_tags: ["prescription_table"],
       risk_tags: ["row_association"],
@@ -79,6 +94,9 @@ test("contract validates strict full-document quadrilateral corpus", () => {
     delete sample.sample_index;
     delete sample.layout_family;
     delete sample.capture_profile;
+    delete sample.material_profile;
+    delete sample.printer_profile;
+    delete sample.background_profile;
     delete sample.capture;
     for (const region of sample.regions) {
       delete region.source_polygon;
@@ -100,8 +118,8 @@ test("synthetic generator is deterministic and emits valid full documents", asyn
     assert.equal(a.samples.length, 6);
     assert.ok(a.samples.every((sample) => sample.width === 1280 && sample.height === 1600));
     assert.ok(a.samples.some((sample) => sample.scenario_tags.includes("multi_medication")));
-    const svg = await readFile(join(first, a.samples[0].image), "utf8");
-    assert.match(svg, /<svg/);
+    const image = await readFile(join(first, a.samples[0].image));
+    assert.deepEqual([...image.subarray(0, 2)], [0xff, 0xd8]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

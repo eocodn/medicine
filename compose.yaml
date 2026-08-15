@@ -47,10 +47,13 @@ services:
     command: ["sh", "-lc", "node --test browser_ocr/test/*.test.js"]
 
   ocr-detection-test:
-    image: node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+    build:
+      context: .
+      dockerfile: browser_ocr/detection/Dockerfile
     working_dir: /workspace
     volumes:
       - .:/workspace
+    user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
     command: ["sh", "-lc", "node --test browser_ocr/detection/tests/*.test.mjs && node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json && node browser_ocr/detection/cli.mjs audit --corpus browser_ocr/detection/corpus/manifest.json --json"]
 
   ocr-eval:

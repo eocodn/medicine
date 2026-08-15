@@ -63,7 +63,7 @@ async function main(argv) {
     if (!outputDir) throw new Error("generate requires --output DIR");
     result = await generateSyntheticCorpus({
       outputDir: resolve(outputDir),
-      count: integerOption(args, "--count", 16),
+      count: integerOption(args, "--count", 36),
       seed: integerOption(args, "--seed", 153),
     });
   } else if (command === "validate") {

@@ -79,6 +79,95 @@ ${rowLines}`,
   };
 }
 
+function compactPrescriptionForm(index, random) {
+  const regions = [
+    region("title", "처 방 전", 500, 55, 280, 58, { semanticRole: "document_title", fontSize: 48 }),
+    region("rx-number", `처방전 발급번호 RX-${String(17000 + index).padStart(6, "0")}`, 65, 135, 370, 34, { semanticRole: "receipt", regionClass: "distractor", fontSize: 24 }),
+    region("use-period", "사용기간 발행일로부터 3일", 820, 135, 340, 34, { semanticRole: "date", regionClass: "distractor", fontSize: 24 }),
+    region("patient", `환자성명 ${pick(CONTEXT_TEXT.patients, random)}`, 65, 205, 300, 36, { semanticRole: "patient", fontSize: 27 }),
+    region("patient-id", "환자번호 00012345", 400, 205, 270, 36, { semanticRole: "receipt", regionClass: "distractor", fontSize: 25 }),
+    region("clinic", `의료기관 ${pick(CONTEXT_TEXT.clinics, random)}`, 65, 258, 360, 36, { semanticRole: "clinic", fontSize: 27 }),
+    region("prescriber", "처방의 홍길동  면허번호 12345", 500, 258, 450, 36, { semanticRole: "prescriber", fontSize: 25 }),
+    region("clinic-phone", "TEL 02-234-5678", 980, 258, 210, 36, { semanticRole: "phone", regionClass: "distractor", fontSize: 24 }),
+    region("head-product", "약품명", 65, 350, 300, 36, { semanticRole: "header", fontSize: 27 }),
+    region("head-dose", "1회 투약량", 440, 350, 155, 36, { semanticRole: "header", fontSize: 25 }),
+    region("head-freq", "1일 투여횟수", 635, 350, 165, 36, { semanticRole: "header", fontSize: 25 }),
+    region("head-days", "총 투약일수", 840, 350, 145, 36, { semanticRole: "header", fontSize: 25 }),
+    region("head-note", "용법", 1045, 350, 100, 36, { semanticRole: "header", fontSize: 25 }),
+  ];
+  for (let row = 0; row < 6; row += 1) {
+    const group = `compact-rx-${row}`;
+    const y = 420 + row * 108;
+    regions.push(
+      region(`cr${row}-product`, pick(PRODUCTS, random), 65, y, 330, 34, { critical: true, associationGroup: group, semanticRole: "product", regionClass: "medication", fontSize: 25 }),
+      region(`cr${row}-dose`, row % 4 === 2 ? "0.5정" : "1정", 445, y, 105, 34, { critical: true, associationGroup: group, semanticRole: "dose", regionClass: "medication", fontSize: 24 }),
+      region(`cr${row}-freq`, `${2 + row % 2}회`, 665, y, 90, 34, { critical: true, associationGroup: group, semanticRole: "frequency", regionClass: "medication", fontSize: 24 }),
+      region(`cr${row}-days`, `${3 + row % 5}일`, 865, y, 90, 34, { critical: true, associationGroup: group, semanticRole: "duration", regionClass: "medication", fontSize: 24 }),
+      region(`cr${row}-note`, row % 2 ? "식후30분" : "아침저녁", 1030, y, 145, 34, { associationGroup: group, semanticRole: "instruction", fontSize: 23 }),
+    );
+  }
+  regions.push(
+    region("injection-note", "주사제 처방 없음", 65, 1115, 250, 32, { semanticRole: "instruction", regionClass: "distractor", fontSize: 23 }),
+    region("special-note", "특이사항 없음", 400, 1115, 230, 32, { semanticRole: "instruction", regionClass: "distractor", fontSize: 23 }),
+    region("signature", "처방의 서명 (인)", 900, 1200, 250, 36, { semanticRole: "signature", regionClass: "distractor", fontSize: 25 }),
+    region("pharmacy-area", "조제기관 기재란", 65, 1290, 240, 34, { semanticRole: "header", fontSize: 24 }),
+    region("dispense-date", `조제일 2026.08.${String(10 + index % 18).padStart(2, "0")}`, 380, 1290, 300, 34, { semanticRole: "date", regionClass: "distractor", fontSize: 24 }),
+    region("pharmacist", "조제약사 서명 (인)", 830, 1290, 300, 34, { semanticRole: "signature", regionClass: "distractor", fontSize: 24 }),
+  );
+  const rows = Array.from({ length: 7 }, (_, row) => `<line x1="50" y1="${400 + row * 108}" x2="1225" y2="${400 + row * 108}" stroke="#9fa4a8"/>`).join("\n");
+  return {
+    layout_family: "compact_prescription_form",
+    scenario_tags: ["prescription", "administrative_dense", "table", "multi_medication"],
+    risk_tags: ["small_text", "row_association", "column_association", "distractor_text"],
+    regions,
+    decorations: `<rect x="35" y="25" width="1210" height="1530" fill="#fff" stroke="#555" stroke-width="2"/>
+<rect x="50" y="325" width="1175" height="825" fill="none" stroke="#7d8388" stroke-width="1.5"/>
+${rows}
+<rect x="50" y="1260" width="1175" height="180" fill="none" stroke="#92979b"/>`,
+  };
+}
+
+function legacyPreprintedMedicationBag(index, random) {
+  const blue = "#1f6ea9";
+  const regions = [
+    region("brand", "조 제 약", 470, 65, 330, 58, { semanticRole: "document_title", fontSize: 48 }),
+    region("patient-label", "환자명", 75, 165, 105, 36, { semanticRole: "label", fontSize: 28 }),
+    region("patient", pick(CONTEXT_TEXT.patients, random), 205, 165, 260, 36, { semanticRole: "patient", fontSize: 29 }),
+    region("age-sex", "나이 ___  성별 □남 □여", 520, 165, 360, 36, { semanticRole: "patient", regionClass: "distractor", fontSize: 26 }),
+    region("dispense-date", `조제일 2026.08.${String(10 + index % 18).padStart(2, "0")}`, 890, 165, 300, 36, { semanticRole: "date", regionClass: "distractor", fontSize: 25 }),
+    region("daily", "1일", 90, 290, 90, 46, { semanticRole: "label", fontSize: 34 }),
+    region("frequency", "3회", 205, 290, 100, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "frequency", regionClass: "medication", fontSize: 35 }),
+    region("each", "1회", 355, 290, 90, 46, { semanticRole: "label", fontSize: 34 }),
+    region("dose", "1포(정)", 475, 290, 150, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "dose", regionClass: "medication", fontSize: 35 }),
+    region("days-label", "총", 680, 290, 60, 46, { semanticRole: "label", fontSize: 34 }),
+    region("days", "5일분", 760, 290, 130, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "duration", regionClass: "medication", fontSize: 35 }),
+    region("meal", "□ 식전  □ 식후 30분  □ 취침전", 90, 390, 650, 42, { semanticRole: "schedule", fontSize: 29 }),
+    region("directions", "□ 아침   □ 점심   □ 저녁   □ 필요시", 90, 465, 690, 42, { semanticRole: "schedule", fontSize: 29 }),
+    region("product-label", "약품명", 85, 600, 115, 34, { semanticRole: "header", fontSize: 27 }),
+    region("product", pick(PRODUCTS, random), 225, 600, 390, 38, { critical: true, associationGroup: "bag-regimen", semanticRole: "product", regionClass: "medication", fontSize: 29 }),
+    region("caution-title", "복약시 주의사항", 85, 735, 220, 36, { semanticRole: "header", fontSize: 28 }),
+    region("caution-1", "정해진 용법과 용량을 지켜 복용하십시오.", 85, 800, 670, 34, { semanticRole: "instruction", regionClass: "distractor", fontSize: 24 }),
+    region("caution-2", "이상반응이 있으면 약사 또는 의사와 상의하십시오.", 85, 855, 730, 34, { semanticRole: "instruction", regionClass: "distractor", fontSize: 24 }),
+    region("pharmacy", pick(CONTEXT_TEXT.pharmacies, random), 80, 1250, 350, 46, { semanticRole: "pharmacy", fontSize: 36 }),
+    region("phone", "TEL 02-1234-5678", 80, 1315, 300, 36, { semanticRole: "phone", regionClass: "distractor", fontSize: 25 }),
+    region("address", "서울시 테스트구 약국로 00", 80, 1365, 390, 34, { semanticRole: "address", regionClass: "distractor", fontSize: 23 }),
+  ];
+  return {
+    layout_family: "legacy_preprinted_medication_bag",
+    scenario_tags: ["medication_bag", "legacy_preprinted", "checkbox_form"],
+    risk_tags: ["small_text", "row_association", "shared_visual_style", "preprinted_lines"],
+    regions,
+    decorations: `<rect x="38" y="32" width="1204" height="1518" rx="12" fill="#fff" stroke="${blue}" stroke-width="5"/>
+<rect x="62" y="145" width="1160" height="100" fill="none" stroke="${blue}" stroke-width="3"/>
+<rect x="62" y="265" width="1160" height="270" fill="none" stroke="${blue}" stroke-width="4"/>
+<line x1="62" y1="365" x2="1222" y2="365" stroke="${blue}" stroke-width="2"/>
+<rect x="62" y="570" width="1160" height="360" fill="none" stroke="${blue}" stroke-width="3"/>
+<path d="M70 1160 H1210 M70 1220 H1210" stroke="${blue}" stroke-width="2"/>
+<circle cx="1100" cy="1300" r="72" fill="none" stroke="${blue}" stroke-width="5" opacity="0.55"/>
+<text x="1040" y="1310" font-family="Noto Sans CJK KR, sans-serif" font-size="27" fill="${blue}" opacity="0.6">약사인</text>`,
+  };
+}
+
 function classicMedicationBag(index, random) {
   const regions = [
     region("pharmacy", pick(CONTEXT_TEXT.pharmacies, random), 80, 80, 430, 75, { semanticRole: "pharmacy", regionClass: "context", fontSize: 52 }),
@@ -190,6 +279,8 @@ ${lines}`,
 
 const BUILDERS = {
   prescription_table: prescriptionTable,
+  compact_prescription_form: compactPrescriptionForm,
+  legacy_preprinted_medication_bag: legacyPreprintedMedicationBag,
   classic_medication_bag: classicMedicationBag,
   counseling_medication_bag: counselingMedicationBag,
   pharmacy_information_sheet: pharmacyInformationSheet,
@@ -200,11 +291,17 @@ export function buildLayout(index, random) {
   return BUILDERS[family](index, random);
 }
 
-export function renderLayoutRegions(regions) {
+export function renderLayoutRegions(regions, printer = { profile: "laser_clean" }) {
+  const fontFamily = printer.profile === "ink_bleed"
+    ? "Noto Serif CJK KR, serif"
+    : "Noto Sans CJK KR, sans-serif";
+  const fill = printer.profile === "low_toner" ? "#666" : "#202020";
   return regions.map((item) => {
     const [[x, y], [rightX, rightY]] = item.polygon;
     const width = Math.hypot(rightX - x, rightY - y);
     const baseline = y + Math.round(item.font_size_px * 0.82);
-    return `<text x="${x}" y="${baseline}" textLength="${width}" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="${item.font_size_px}" fill="#202020">${escapeXml(item.text)}</text>`;
+    const primary = `<text x="${x}" y="${baseline}" textLength="${width}" lengthAdjust="spacingAndGlyphs" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="${fill}">${escapeXml(item.text)}</text>`;
+    if (printer.profile !== "ink_bleed") return primary;
+    return `${primary}\n<text x="${x + 1.2}" y="${baseline + 0.7}" textLength="${width}" lengthAdjust="spacingAndGlyphs" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="#303030" opacity="0.24">${escapeXml(item.text)}</text>`;
   }).join("\n");
 }

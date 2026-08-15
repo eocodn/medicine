@@ -60,20 +60,37 @@ function validateGenerator(generator) {
   if (!Number.isInteger(generator.seed)) fail("generator.seed must be an integer");
   if (!Number.isInteger(generator.count) || generator.count <= 0) fail("generator.count must be a positive integer");
   if (!SHA256.test(generator.fingerprint)) fail("generator.fingerprint must be lowercase SHA-256");
+  if (!generator.rasterizer || typeof generator.rasterizer !== "object" || Array.isArray(generator.rasterizer)) fail("generator.rasterizer must be an object");
+  if (generator.rasterizer.engine !== "imagemagick-convert") fail("generator.rasterizer.engine is unsupported");
+  if (typeof generator.rasterizer.version !== "string" || !generator.rasterizer.version.trim()) fail("generator.rasterizer.version is required");
+  if (typeof generator.rasterizer.svg_delegate !== "string" || !generator.rasterizer.svg_delegate.trim()) fail("generator.rasterizer.svg_delegate is required");
+  if (!SHA256.test(generator.rasterizer.fingerprint)) fail("generator.rasterizer.fingerprint must be lowercase SHA-256");
 }
 
 function validateCapture(capture, sampleId, captureProfile) {
   if (!capture || typeof capture !== "object" || Array.isArray(capture)) fail(`${sampleId}.capture must be an object`);
   if (capture.profile !== captureProfile) fail(`${sampleId}.capture.profile must match capture_profile`);
-  for (const key of ["scale", "angle_degrees", "shear_x", "shear_y", "blur_px", "contrast", "brightness", "glare_opacity", "shadow_opacity"]) {
+  if (!["projective", "homography_affine"].includes(capture.geometry_model)) fail(`${sampleId}.capture.geometry_model is invalid`);
+  for (const key of ["defocus_radius", "motion_blur_radius", "motion_blur_angle", "contrast", "brightness", "jpeg_quality", "glare_opacity", "shadow_opacity"]) {
     finiteNumber(capture[key], `${sampleId}.capture.${key}`);
   }
-  if (!Array.isArray(capture.matrix) || capture.matrix.length !== 6) fail(`${sampleId}.capture.matrix must have six coefficients`);
-  for (const [index, value] of capture.matrix.entries()) finiteNumber(value, `${sampleId}.capture.matrix[${index}]`);
-  if (capture.scale <= 0 || capture.scale > 1.2) fail(`${sampleId}.capture.scale is out of range`);
-  if (capture.blur_px < 0 || capture.blur_px > 3) fail(`${sampleId}.capture.blur_px is out of range`);
+  if (!Array.isArray(capture.homography) || capture.homography.length !== 9) fail(`${sampleId}.capture.homography must have nine coefficients`);
+  for (const [index, value] of capture.homography.entries()) finiteNumber(value, `${sampleId}.capture.homography[${index}]`);
+  for (const key of ["source_corners", "destination_corners"]) {
+    if (!Array.isArray(capture[key]) || capture[key].length !== 4) fail(`${sampleId}.capture.${key} must contain four points`);
+    for (const [index, point] of capture[key].entries()) {
+      if (!Array.isArray(point) || point.length !== 2) fail(`${sampleId}.capture.${key}[${index}] must be [x,y]`);
+      finiteNumber(point[0], `${sampleId}.capture.${key}[${index}].x`);
+      finiteNumber(point[1], `${sampleId}.capture.${key}[${index}].y`);
+    }
+  }
+  uniqueStrings(capture.camera_failure_modes, `${sampleId}.capture.camera_failure_modes`);
+  uniqueStrings(capture.risk_tags, `${sampleId}.capture.risk_tags`);
+  if (capture.defocus_radius < 0 || capture.defocus_radius > 5) fail(`${sampleId}.capture.defocus_radius is out of range`);
+  if (capture.motion_blur_radius < 0 || capture.motion_blur_radius > 20) fail(`${sampleId}.capture.motion_blur_radius is out of range`);
   if (capture.contrast <= 0 || capture.contrast > 2) fail(`${sampleId}.capture.contrast is out of range`);
   if (capture.brightness <= 0 || capture.brightness > 2) fail(`${sampleId}.capture.brightness is out of range`);
+  if (!Number.isInteger(capture.jpeg_quality) || capture.jpeg_quality < 20 || capture.jpeg_quality > 100) fail(`${sampleId}.capture.jpeg_quality is out of range`);
   if (capture.glare_opacity < 0 || capture.glare_opacity > 1) fail(`${sampleId}.capture.glare_opacity is out of range`);
   if (capture.shadow_opacity < 0 || capture.shadow_opacity > 1) fail(`${sampleId}.capture.shadow_opacity is out of range`);
 }
@@ -110,6 +127,9 @@ export function validateCorpus(input) {
     if (enhancedSynthetic) {
       if (typeof sample.layout_family !== "string" || !sample.layout_family.trim()) fail(`${sample.id}.layout_family is required`);
       if (typeof sample.capture_profile !== "string" || !sample.capture_profile.trim()) fail(`${sample.id}.capture_profile is required`);
+      if (typeof sample.material_profile !== "string" || !sample.material_profile.trim()) fail(`${sample.id}.material_profile is required`);
+      if (typeof sample.printer_profile !== "string" || !sample.printer_profile.trim()) fail(`${sample.id}.printer_profile is required`);
+      if (typeof sample.background_profile !== "string" || !sample.background_profile.trim()) fail(`${sample.id}.background_profile is required`);
       if (!Number.isInteger(sample.sample_index) || sample.sample_index < 0) fail(`${sample.id}.sample_index must be a non-negative integer`);
       validateCapture(sample.capture, sample.id, sample.capture_profile);
     }
