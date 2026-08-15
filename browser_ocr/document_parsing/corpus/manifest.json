@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "prescription-table-two-rows",
+      "source_kind": "synthetic",
+      "scenario_tags": ["prescription_table", "multi_medication"],
+      "risk_tags": ["row_association"],
+      "boxes": [
+        {"box_id": "h1", "text": "약품명", "confidence": 1.0, "polygon": [[20, 20], [180, 20], [180, 45], [20, 45]]},
+        {"box_id": "h2", "text": "1회 투약량", "confidence": 1.0, "polygon": [[200, 20], [300, 20], [300, 45], [200, 45]]},
+        {"box_id": "h3", "text": "1일 투여횟수", "confidence": 1.0, "polygon": [[320, 20], [430, 20], [430, 45], [320, 45]]},
+        {"box_id": "h4", "text": "총 투약일수", "confidence": 1.0, "polygon": [[450, 20], [550, 20], [550, 45], [450, 45]]},
+        {"box_id": "a1", "text": "가나다정", "confidence": 1.0, "polygon": [[20, 65], [180, 65], [180, 90], [20, 90]]},
+        {"box_id": "a2", "text": "1정", "confidence": 1.0, "polygon": [[200, 65], [300, 65], [300, 90], [200, 90]]},
+        {"box_id": "a3", "text": "3회", "confidence": 1.0, "polygon": [[320, 65], [430, 65], [430, 90], [320, 90]]},
+        {"box_id": "a4", "text": "5일", "confidence": 1.0, "polygon": [[450, 65], [550, 65], [550, 90], [450, 90]]},
+        {"box_id": "b1", "text": "라마바정", "confidence": 1.0, "polygon": [[20, 105], [180, 105], [180, 130], [20, 130]]},
+        {"box_id": "b2", "text": "2정", "confidence": 1.0, "polygon": [[200, 105], [300, 105], [300, 130], [200, 130]]},
+        {"box_id": "b3", "text": "2회", "confidence": 1.0, "polygon": [[320, 105], [430, 105], [430, 130], [320, 130]]},
+        {"box_id": "b4", "text": "7일", "confidence": 1.0, "polygon": [[450, 105], [550, 105], [550, 130], [450, 130]]}
+      ],
+      "expected_rows": [
+        {"row_id": "a", "product_query": "가나다정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []},
+        {"row_id": "b", "product_query": "라마바정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": []}
+      ]
+    },
+    {
+      "case_id": "medication-bag-two-blocks",
+      "source_kind": "synthetic",
+      "scenario_tags": ["medication_bag", "multi_medication"],
+      "risk_tags": ["row_association"],
+      "boxes": [
+        {"box_id": "a1", "text": "약명: 다라정", "confidence": 1.0, "polygon": [[20, 20], [220, 20], [220, 45], [20, 45]]},
+        {"box_id": "a2", "text": "복용법: 1회 1정 1일 3회 5일", "confidence": 1.0, "polygon": [[20, 52], [410, 52], [410, 78], [20, 78]]},
+        {"box_id": "b1", "text": "약명: 마바정", "confidence": 1.0, "polygon": [[20, 110], [220, 110], [220, 135], [20, 135]]},
+        {"box_id": "b2", "text": "복용법: 1회 2정 1일 2회 7일", "confidence": 1.0, "polygon": [[20, 142], [410, 142], [410, 168], [20, 168]]}
+      ],
+      "expected_rows": [
+        {"row_id": "a", "product_query": "다라정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []},
+        {"row_id": "b", "product_query": "마바정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": []}
+      ]
+    },
+    {
+      "case_id": "shared-regimen-bounded-group",
+      "source_kind": "synthetic",
+      "scenario_tags": ["medication_bag", "shared_regimen", "multi_medication"],
+      "risk_tags": ["shared_scope", "row_association"],
+      "boxes": [
+        {"box_id": "a1", "text": "약명: 사아정", "confidence": 1.0, "polygon": [[20, 20], [210, 20], [210, 45], [20, 45]]},
+        {"box_id": "b1", "text": "약명: 자차정", "confidence": 1.0, "polygon": [[20, 52], [210, 52], [210, 77], [20, 77]]},
+        {"box_id": "g1", "text": "공통 복용법: 1회 1정 1일 3회 5일", "confidence": 1.0, "polygon": [[20, 88], [440, 88], [440, 114], [20, 114]]},
+        {"box_id": "c1", "text": "약명: 카타정", "confidence": 1.0, "polygon": [[20, 155], [210, 155], [210, 180], [20, 180]]},
+        {"box_id": "c2", "text": "복용법: 1회 2정 1일 1회 3일", "confidence": 1.0, "polygon": [[20, 187], [410, 187], [410, 213], [20, 213]]}
+      ],
+      "expected_rows": [
+        {"row_id": "a", "product_query": "사아정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []},
+        {"row_id": "b", "product_query": "자차정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []},
+        {"row_id": "c", "product_query": "카타정", "draft": {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 1, "prescription_days": 3}, "uncertainty_codes": []}
+      ]
+    },
+    {
+      "case_id": "split-table-headers",
+      "source_kind": "synthetic",
+      "scenario_tags": ["prescription_table", "split_boxes", "multi_medication"],
+      "risk_tags": ["header_reconstruction", "row_association"],
+      "boxes": [
+        {"box_id": "h1", "text": "약품명", "confidence": 1.0, "polygon": [[20, 20], [180, 20], [180, 45], [20, 45]]},
+        {"box_id": "h2a", "text": "1회", "confidence": 1.0, "polygon": [[200, 20], [235, 20], [235, 45], [200, 45]]},
+        {"box_id": "h2b", "text": "투약량", "confidence": 1.0, "polygon": [[240, 20], [300, 20], [300, 45], [240, 45]]},
+        {"box_id": "h3a", "text": "1일", "confidence": 1.0, "polygon": [[320, 20], [355, 20], [355, 45], [320, 45]]},
+        {"box_id": "h3b", "text": "투여횟수", "confidence": 1.0, "polygon": [[360, 20], [430, 20], [430, 45], [360, 45]]},
+        {"box_id": "h4a", "text": "총", "confidence": 1.0, "polygon": [[450, 20], [475, 20], [475, 45], [450, 45]]},
+        {"box_id": "h4b", "text": "투약일수", "confidence": 1.0, "polygon": [[480, 20], [550, 20], [550, 45], [480, 45]]},
+        {"box_id": "r1", "text": "파하정", "confidence": 1.0, "polygon": [[20, 65], [180, 65], [180, 90], [20, 90]]},
+        {"box_id": "r2", "text": "1정", "confidence": 1.0, "polygon": [[200, 65], [300, 65], [300, 90], [200, 90]]},
+        {"box_id": "r3", "text": "2회", "confidence": 1.0, "polygon": [[320, 65], [430, 65], [430, 90], [320, 90]]},
+        {"box_id": "r4", "text": "7일", "confidence": 1.0, "polygon": [[450, 65], [550, 65], [550, 90], [450, 90]]}
+      ],
+      "expected_rows": [
+        {"row_id": "a", "product_query": "파하정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7}, "uncertainty_codes": []}
+      ]
+    },
+    {
+      "case_id": "skewed-prescription-row",
+      "source_kind": "synthetic",
+      "scenario_tags": ["prescription_table", "skewed_geometry"],
+      "risk_tags": ["row_association"],
+      "boxes": [
+        {"box_id": "h1", "text": "약품명", "confidence": 1.0, "polygon": [[20, 20], [180, 31], [178, 56], [18, 45]]},
+        {"box_id": "h2", "text": "1회 투약량", "confidence": 1.0, "polygon": [[200, 33], [300, 40], [298, 65], [198, 58]]},
+        {"box_id": "h3", "text": "1일 투여횟수", "confidence": 1.0, "polygon": [[320, 42], [430, 50], [428, 75], [318, 67]]},
+        {"box_id": "h4", "text": "총 투약일수", "confidence": 1.0, "polygon": [[450, 51], [550, 58], [548, 83], [448, 76]]},
+        {"box_id": "r1", "text": "거너정", "confidence": 1.0, "polygon": [[20, 72], [180, 83], [178, 108], [18, 97]]},
+        {"box_id": "r2", "text": "1정", "confidence": 1.0, "polygon": [[200, 85], [300, 92], [298, 117], [198, 110]]},
+        {"box_id": "r3", "text": "3회", "confidence": 1.0, "polygon": [[320, 94], [430, 102], [428, 127], [318, 119]]},
+        {"box_id": "r4", "text": "5일", "confidence": 1.0, "polygon": [[450, 103], [550, 110], [548, 135], [448, 128]]}
+      ],
+      "expected_rows": [
+        {"row_id": "a", "product_query": "거너정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 3, "prescription_days": 5}, "uncertainty_codes": []}
+      ]
+    },
+    {
+      "case_id": "split-medication-label",
+      "source_kind": "synthetic",
+      "scenario_tags": ["medication_bag", "split_boxes"],
+      "risk_tags": ["product_reconstruction"],
+      "boxes": [
+        {"box_id": "l1", "text": "약", "confidence": 1.0, "polygon": [[20, 20], [45, 20], [45, 45], [20, 45]]},
+        {"box_id": "l2", "text": "명", "confidence": 1.0, "polygon": [[48, 20], [73, 20], [73, 45], [48, 45]]},
+        {"box_id": "l3", "text": ":", "confidence": 1.0, "polygon": [[76, 20], [86, 20], [86, 45], [76, 45]]},
+        {"box_id": "p1", "text": "너더", "confidence": 1.0, "polygon": [[92, 20], [142, 20], [142, 45], [92, 45]]},
+        {"box_id": "p2", "text": "정", "confidence": 1.0, "polygon": [[145, 20], [170, 20], [170, 45], [145, 45]]},
+        {"box_id": "r1", "text": "복용법: 1회 1정 1일 2회 5일", "confidence": 1.0, "polygon": [[20, 55], [410, 55], [410, 82], [20, 82]]}
+      ],
+      "expected_rows": [
+        {"row_id": "a", "product_query": "너더정", "draft": {"dose_amount": 1, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 5}, "uncertainty_codes": []}
+      ]
+    }
+  ]
+}
