@@ -6,6 +6,8 @@ import os
 import sqlite3
 from pathlib import Path
 
+from .inspection import verify_canonical_database
+
 
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
@@ -46,6 +48,10 @@ def build_mobile_database(
     manifest = Path(manifest_path) if manifest_path else output.with_name("mobile.manifest.json")
     if not source.is_file():
         raise FileNotFoundError(f"canonical database not found: {source}")
+    verification = verify_canonical_database(source)
+    if verification["status"] != "verified":
+        details = "; ".join(verification["errors"]) or "unknown verification failure"
+        raise ValueError(f"canonical verification failed: {details}")
     output.parent.mkdir(parents=True, exist_ok=True)
     manifest.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")

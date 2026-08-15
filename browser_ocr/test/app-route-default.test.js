@@ -11,6 +11,7 @@ function appContext() {
   for (const selector of [
     "#pending-dose-amount", "#pending-dose-unit", "#pending-frequency", "#pending-days",
     "#pending-times", "#pending-meal", "#pending-route", "#pending-start-date", "#pending-prn",
+    "#pending-long-term", "#pending-prn-max",
     "#confirm-add-med",
   ]) {
     nodes.set(selector, {
@@ -53,6 +54,8 @@ function appContext() {
     friendlyErrorMessage: (value) => String(value),
     hasClearDurCoverage: () => true,
     durStatusHtml: () => "",
+    syncPrnFields() {},
+    syncLongTermFields() {},
     console,
     Intl,
     Date,

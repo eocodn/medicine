@@ -53,7 +53,7 @@ class ManualOnlyIntakeTest(unittest.TestCase):
 
     def test_web_api_has_no_ocr_or_batch_ingestion_routes(self) -> None:
         person = self.client.post(
-            "/api/people", json={"name": "수기", "birth_date": "1990-01-01"}
+            "/api/people", json={"name": "수기", "birth_date": "1990-01-01", "sex": "male", "pregnancy_status": "not_applicable", "lactation_status": "not_applicable"}
         ).json()
         for path, payload in [
             (f"/api/people/{person['id']}/medications/ocr-preview", {}),
@@ -76,7 +76,7 @@ class ManualOnlyIntakeTest(unittest.TestCase):
     def test_android_bridge_has_no_ocr_or_batch_ingestion_routes(self) -> None:
         api = MobileApi(self.canonical_db, self.personal_db)
         created = json.loads(api.request(
-            "POST", "/api/people", json.dumps({"name": "수기", "birth_date": "1990-01-01"})
+            "POST", "/api/people", json.dumps({"name": "수기", "birth_date": "1990-01-01", "sex": "male", "pregnancy_status": "not_applicable", "lactation_status": "not_applicable"})
         ))
         person_id = created["body"]["id"]
         for path in [

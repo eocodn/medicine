@@ -67,7 +67,9 @@ MEDICATION_COLUMNS = {
     "meal_relation": "TEXT",
     "administration_route": "TEXT",
     "as_needed": "INTEGER NOT NULL DEFAULT 0",
+    "prn_max_per_day": "INTEGER",
     "prescription_days": "INTEGER",
+    "long_term": "INTEGER NOT NULL DEFAULT 0",
     "stopped_at": "TEXT",
     "revision": "INTEGER NOT NULL DEFAULT 1",
     # SQLite cannot add a column with a CURRENT_TIMESTAMP default via ALTER
@@ -121,6 +123,38 @@ def _add_missing_columns(con: sqlite3.Connection, table: str, columns: dict[str,
     for name, definition in columns.items():
         if name not in existing:
             con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+
+
+def _migrate_occurrence_keys(con: sqlite3.Connection) -> None:
+    """Convert time-derived dose identities to stable daily occurrence slots.
+
+    Completed rows are historical facts, so only their internal identity changes.
+    A two-phase rename avoids UNIQUE collisions when legacy time keys coexist with
+    slot keys left by an earlier frequency-only regimen.
+    """
+    groups = con.execute(
+        """SELECT DISTINCT medication_id,scheduled_date FROM dose_instances
+           WHERE schedule_key LIKE 'time:%'"""
+    ).fetchall()
+    for medication_id, scheduled_date in groups:
+        rows = con.execute(
+            """SELECT id FROM dose_instances
+               WHERE medication_id=? AND scheduled_date=? AND schedule_key NOT LIKE 'prn:%'
+               ORDER BY CASE WHEN scheduled_time IS NULL THEN 1 ELSE 0 END,
+                        scheduled_time,created_at,rowid""",
+            (medication_id, scheduled_date),
+        ).fetchall()
+        for row in rows:
+            con.execute(
+                "UPDATE dose_instances SET schedule_key=? WHERE id=?",
+                (f"migrate:{row[0]}", row[0]),
+            )
+        for index, row in enumerate(rows, 1):
+            con.execute(
+                "UPDATE dose_instances SET schedule_key=? WHERE id=?",
+                (f"slot:{index}", row[0]),
+            )
 
 
 def ensure_personal_schema(con: sqlite3.Connection) -> None:
@@ -192,6 +226,14 @@ def ensure_personal_schema(con: sqlite3.Connection) -> None:
         WHERE active=0 AND stopped_at IS NULL
         """
     )
+    # Before long_term existed, an absent end date was the only representation
+    # of an intentionally unbounded regimen. Preserve those existing records as
+    # explicit long-term state instead of changing their schedule semantics.
+    con.execute(
+        """UPDATE medications SET long_term=1
+           WHERE end_date IS NULL AND prescription_days IS NULL AND COALESCE(long_term,0)=0"""
+    )
+    _migrate_occurrence_keys(con)
     con.execute(
         """
         UPDATE people

@@ -56,6 +56,15 @@ class MobileDatabaseTest(unittest.TestCase):
         lactation = next(row for row in preview["dur_checks"] if row["category"] == "lactation_caution")
         self.assertEqual(lactation["status"], "hit")
 
+    def test_mobile_build_rejects_incomplete_source_snapshot_set(self) -> None:
+        with sqlite3.connect(self.canonical_db) as con:
+            con.execute("DELETE FROM source_snapshots WHERE dataset_key='kids_mfds_xlsx:dose_caution'")
+            con.commit()
+        with self.assertRaisesRegex(ValueError, "canonical verification failed"):
+            build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
+        self.assertFalse(self.mobile_db.exists())
+        self.assertFalse(self.manifest.exists())
+
     def test_canonical_cli_builds_mobile_snapshot(self) -> None:
         other = self.mobile_db.with_name("mobile-cli.sqlite")
         manifest = self.manifest.with_name("mobile-cli.manifest.json")

@@ -121,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     person_add = sub.add_parser("person-add")
     person_add.add_argument("--name", required=True)
     person_add.add_argument("--birth-date", required=True)
-    person_add.add_argument("--sex", default="unknown")
+    person_add.add_argument("--sex", choices=["female", "male"], required=True)
     person_add.add_argument("--pregnancy-status", default="unknown")
     person_add.add_argument("--lactation-status", default="unknown")
     person_add.add_argument("--json", action="store_true")
@@ -159,7 +159,9 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument("--meal-relation", default="unspecified")
     preview.add_argument("--route", default="unknown")
     preview.add_argument("--prn", action="store_true")
+    preview.add_argument("--prn-max", type=int)
     preview.add_argument("--days", type=int)
+    preview.add_argument("--long-term", action="store_true")
     preview.add_argument("--start-date")
     preview.add_argument("--end-date")
     preview.add_argument("--time", action="append", default=[])
@@ -175,7 +177,9 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--meal-relation", default="unspecified")
     add.add_argument("--route", default="unknown")
     add.add_argument("--prn", action="store_true")
+    add.add_argument("--prn-max", type=int)
     add.add_argument("--days", type=int)
+    add.add_argument("--long-term", action="store_true")
     add.add_argument("--start-date")
     add.add_argument("--end-date")
     add.add_argument("--time", action="append", default=[])
@@ -197,7 +201,12 @@ def build_parser() -> argparse.ArgumentParser:
     prn.add_argument("--prn", dest="as_needed", action="store_true")
     prn.add_argument("--scheduled", dest="as_needed", action="store_false")
     update.set_defaults(as_needed=None)
+    update.add_argument("--prn-max", type=int)
     update.add_argument("--days", type=int)
+    long_term = update.add_mutually_exclusive_group()
+    long_term.add_argument("--long-term", dest="long_term", action="store_true")
+    long_term.add_argument("--bounded", dest="long_term", action="store_false")
+    update.set_defaults(long_term=None)
     update.add_argument("--start-date")
     update.add_argument("--end-date")
     update.add_argument("--time", action="append")
@@ -228,6 +237,12 @@ def build_parser() -> argparse.ArgumentParser:
     instance_cancel = sub.add_parser("dose-instance-cancel")
     instance_cancel.add_argument("--instance", required=True)
     instance_cancel.add_argument("--json", action="store_true")
+
+    prn_intake = sub.add_parser("prn-intake")
+    prn_intake.add_argument("--medication", required=True)
+    prn_intake.add_argument("--at")
+    prn_intake.add_argument("--note")
+    prn_intake.add_argument("--json", action="store_true")
 
     screenshot = sub.add_parser("screenshot")
     screenshot.add_argument("--output", type=Path, default=Path("data/debug/mobile.png"))
@@ -263,7 +278,8 @@ def _dispatch(args, app: MedicationApp):
             "product_ref": args.product_ref, "dose_amount": args.dose_amount,
             "dose_unit": args.dose_unit, "frequency_per_day": args.frequency,
             "meal_relation": args.meal_relation, "administration_route": args.route,
-            "as_needed": args.prn, "prescription_days": args.days,
+            "as_needed": args.prn, "prn_max_per_day": args.prn_max,
+            "prescription_days": args.days, "long_term": args.long_term,
             "start_date": args.start_date, "end_date": args.end_date,
             "schedule_times": args.time,
         })
@@ -278,7 +294,9 @@ def _dispatch(args, app: MedicationApp):
             meal_relation=args.meal_relation,
             administration_route=args.route,
             as_needed=args.prn,
+            prn_max_per_day=args.prn_max,
             prescription_days=args.days,
+            long_term=args.long_term,
             start_date=args.start_date,
             end_date=args.end_date,
             schedule_times=args.time,
@@ -291,7 +309,8 @@ def _dispatch(args, app: MedicationApp):
             "dosage_text": args.dose, "dose_amount": args.dose_amount,
             "dose_unit": args.dose_unit, "frequency_per_day": args.frequency,
             "meal_relation": args.meal_relation, "administration_route": args.route,
-            "as_needed": args.as_needed, "prescription_days": args.days,
+            "as_needed": args.as_needed, "prn_max_per_day": args.prn_max,
+            "prescription_days": args.days, "long_term": args.long_term,
             "start_date": args.start_date, "end_date": args.end_date,
             "schedule_times": args.time,
         }
@@ -310,6 +329,8 @@ def _dispatch(args, app: MedicationApp):
         payload = app.record_dose_instance(args.instance, args.status, args.at)
     elif args.command == "dose-instance-cancel":
         payload = app.cancel_dose_instance(args.instance)
+    elif args.command == "prn-intake":
+        payload = app.record_prn_dose(args.medication, args.at, args.note)
     elif args.command == "screenshot":
         if args.width < 320 or args.height < 480:
             raise SystemExit("screenshot dimensions are too small")

@@ -89,34 +89,31 @@
     <div class="sheet-handle"></div>
     <div class="sheet-header">
       <div><p class="eyebrow">NEW PROFILE</p><h2 id="person-form-title">관리 대상 추가</h2></div>
-      <button class="icon-button" data-close-sheet type="button">×</button>
+      <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
     </div>
     <form id="person-form" class="form-stack">
       <input name="notes" type="hidden">
       <label>이름<input name="name" required placeholder="예: 나, 엄마"></label>
       <label>생년월일<input name="birth_date" type="date" min="1000-01-01" required></label>
       <label>성별
-        <select name="sex">
-          <option value="unknown">선택 안 함</option>
+        <select name="sex" required>
+          <option value="" selected disabled>선택하세요</option>
           <option value="female">여성</option>
           <option value="male">남성</option>
-          <option value="other">기타</option>
         </select>
       </label>
       <label data-reproductive-field>임신 여부
-        <select name="pregnancy_status">
-          <option value="unknown">알 수 없음 / 선택 안 함</option>
+        <select name="pregnancy_status" required>
+          <option value="" selected disabled>선택하세요</option>
           <option value="pregnant">임신 중</option>
           <option value="not_pregnant">임신 중 아님</option>
-          <option value="not_applicable">해당 없음</option>
         </select>
       </label>
       <label data-reproductive-field>수유 여부
-        <select name="lactation_status">
-          <option value="unknown">알 수 없음 / 선택 안 함</option>
+        <select name="lactation_status" required>
+          <option value="" selected disabled>선택하세요</option>
           <option value="breastfeeding">수유 중</option>
           <option value="not_breastfeeding">수유 중 아님</option>
-          <option value="not_applicable">해당 없음</option>
         </select>
       </label>
       <button id="person-submit" class="primary-button wide" type="submit">프로필 저장</button>
@@ -125,6 +122,7 @@
 
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/static/native-api.js?v=20260811k" defer></script>
+  <script src="/static/dialog.js?v=20260815a" defer></script>
   <script src="/static/prescription.js?v=20260811e" defer></script>
   <script src="/static/people.js?v=20260811k" defer></script>
   <script src="/static/timeline.js?v=20260811b" defer></script>

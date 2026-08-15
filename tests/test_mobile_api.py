@@ -93,7 +93,7 @@ class MobileApiTest(unittest.TestCase):
         })
         self.api.service.add_medication(
             person["id"], product_ref="MFDS-A", dose_amount=1, dose_unit="정",
-            frequency_per_day=1, start_date="2026-08-10", schedule_times=["08:00"],
+            frequency_per_day=1, start_date="2026-08-10", schedule_times=["08:00"], long_term=True,
         )
         _, plan = self.request("GET", f"/api/people/{person['id']}/daily-plan?date=2026-08-10")
         instance = plan["doses"][0]
@@ -118,6 +118,29 @@ class MobileApiTest(unittest.TestCase):
         _, dashboard = self.request("GET", f"/api/people/{person['id']}/dashboard?date=2026-08-10")
         self.assertEqual(dashboard["daily_plan"]["doses"][0]["status"], "planned")
         self.assertEqual(dashboard["recent_logs"], [])
+
+    def test_prn_intake_route_records_actual_use_and_enforces_daily_maximum(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "필요시", "birth_date": "1990-01-01", "sex": "male",
+            "pregnancy_status": "not_applicable", "lactation_status": "not_applicable",
+        })
+        medication = self.api.service.add_medication(
+            person["id"], product_ref="MFDS-A", as_needed=True, prn_max_per_day=1,
+            long_term=True, start_date="2026-08-10",
+        )
+
+        status, recorded = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes",
+            {"occurred_at": "2026-08-10T12:00:00+09:00"},
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(recorded["status"], "taken")
+        status, blocked = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes",
+            {"occurred_at": "2026-08-10T18:00:00+09:00"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("maximum", blocked["detail"])
 
     def test_confirmation_and_validation_errors_keep_http_compatible_envelopes(self) -> None:
         _, person = self.request("POST", "/api/people", {
@@ -168,7 +191,7 @@ class MobileApiTest(unittest.TestCase):
             "birth_date": "1990-01-01",
             "sex": "female",
             "pregnancy_status": "not_pregnant",
-            "lactation_status": "unknown",
+            "lactation_status": "not_breastfeeding",
         })
         self.assertEqual(status, 201)
 
@@ -195,7 +218,7 @@ class MobileApiTest(unittest.TestCase):
             "birth_date": "1990-01-01",
             "sex": "female",
             "pregnancy_status": "not_pregnant",
-            "lactation_status": "unknown",
+            "lactation_status": "not_breastfeeding",
         })
         self.api.service.add_medication(person["id"], product_ref="MFDS-B", prescription_days=7)
 
@@ -207,7 +230,7 @@ class MobileApiTest(unittest.TestCase):
             "birth_date": "1990-01-01",
             "sex": "female",
             "pregnancy_status": "pregnant",
-            "lactation_status": "unknown",
+            "lactation_status": "not_breastfeeding",
         })
         self.assertEqual(status, 200)
         _, after = self.request("GET", f"/api/people/{person['id']}/dashboard?date=2026-08-11")

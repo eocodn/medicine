@@ -40,11 +40,11 @@ def _add_years(value: date, years: int) -> date:
 
 
 def age_years(birth_date: str, as_of: date | None = None) -> int:
-    """Return completed years, matching the original core calculation."""
+    """Return completed years using the same anniversary rule as DUR age checks."""
     birth = _parse_birth_date(birth_date)
     today = as_of or datetime.now(APP_TIMEZONE).date()
     years = today.year - birth.year
-    if (today.month, today.day) < (birth.month, birth.day):
+    if today < _add_years(birth, years):
         years -= 1
     return max(years, 0)
 

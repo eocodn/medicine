@@ -133,11 +133,32 @@ def _combination_risks(
     return risks
 
 
+def _profile_evaluation_dates(
+    candidate_course: Mapping[str, Any] | None,
+    as_of: date | None,
+) -> list[date | None]:
+    course = candidate_course or {}
+    try:
+        start = date.fromisoformat(str(course["start_date"])) if course.get("start_date") else None
+        end = date.fromisoformat(str(course["end_date"])) if course.get("end_date") else None
+    except (TypeError, ValueError):
+        start, end = None, None
+    if as_of is not None:
+        first = start if start is not None and as_of < start else as_of
+    else:
+        first = start
+    dates: list[date | None] = [first]
+    if end is not None and (first is None or end > first):
+        dates.append(end)
+    return dates
+
+
 def _person_specific_risks(
     con: sqlite3.Connection,
     person: Mapping[str, Any],
     product: Mapping[str, Any],
     as_of: date | None = None,
+    candidate_course: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     target = item_seq(product)
     if not target:
@@ -146,17 +167,23 @@ def _person_specific_risks(
     for category in ("age_contraindication", "pregnancy_contraindication", "elderly_caution"):
         rows.extend(linked_product_rows(con, target, category))
     risks: list[dict[str, Any]] = []
-    current_age = age_years(person["birth_date"], as_of)
+    evaluation_dates = _profile_evaluation_dates(candidate_course, as_of)
     for row in rows:
         category = str(row["category"])
         rule_value = row.get("criterion_rule_value")
         if category == "age_contraindication":
-            applies, reason = age_rule_evaluation(
-                person["birth_date"], rule_value,
-                row.get("product_dosage_form") or product.get("dosage_form"),
-                as_of,
-            )
-            if applies is None:
+            evaluations = [
+                age_rule_evaluation(
+                    person["birth_date"], rule_value,
+                    row.get("product_dosage_form") or product.get("dosage_form"),
+                    evaluation_date,
+                )
+                for evaluation_date in evaluation_dates
+            ]
+            if any(applies is True for applies, _ in evaluations):
+                title, severity = f"연령금기 · {rule_value}", "danger"
+            elif any(applies is None for applies, _ in evaluations):
+                reason = next((reason for applies, reason in evaluations if applies is None and reason), None)
                 risks.append({
                     "type": category,
                     "severity": "info",
@@ -168,16 +195,15 @@ def _person_specific_risks(
                     "source_row": row.get("criterion_source_row"),
                 })
                 continue
-            if not applies:
+            else:
                 continue
-            title, severity = f"연령금기 · {rule_value}", "danger"
         elif category == "pregnancy_contraindication":
             if person.get("pregnancy_status") != "pregnant":
                 continue
             rule_display = _pregnancy_rule_display(rule_value)
             title, severity = f"임부금기 · {rule_display}", "danger"
         else:
-            if current_age < 65:
+            if not any(age_years(person["birth_date"], evaluation_date) >= 65 for evaluation_date in evaluation_dates):
                 continue
             title, severity = "노인주의 대상", "warning"
         finding = {
@@ -235,7 +261,7 @@ def collect_qualitative_risks(
     course = candidate_course or {}
     risks = (
         _combination_risks(con, product, current, course)
-        + _person_specific_risks(con, person, product, as_of)
+        + _person_specific_risks(con, person, product, as_of, candidate_course=course)
         + _duplication_risks(con, product, current, course)
     )
     seen = set()

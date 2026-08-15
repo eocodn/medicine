@@ -12,9 +12,11 @@ from openpyxl import Workbook
 
 from medicine_canonical.build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
 from medicine_canonical.cli import main as canonical_main
-from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_PAGE_SIZE_MAX, sync_canonical_api_sources
+from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY, PERMIT_PAGE_SIZE_MAX, sync_canonical_api_sources
 from medicine_canonical import linking as canonical_linking
 from medicine_canonical.schema import SCHEMA
+from medicine_canonical.source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_KEYS
+from medicine_canonical.xlsx import XLSX_DATASETS
 
 
 class CanonicalDatabaseTest(unittest.TestCase):
@@ -409,6 +411,25 @@ class CanonicalDatabaseTest(unittest.TestCase):
         verification = verify_canonical_database(self.db)
         self.assertEqual(verification["status"], "invalid")
         self.assertIn("resolved/unresolved ingredient applicability overlap", " ".join(verification["errors"]))
+
+    def test_release_source_policy_matches_declared_sources(self) -> None:
+        expected = {PERMIT_DATASET_KEY}
+        expected.update(f"mfds_dur:{operation}" for operation in DUR_ENDPOINTS)
+        expected.update(f"kids_mfds_xlsx:{category}" for category in XLSX_DATASETS.values())
+        self.assertEqual(EXPECTED_CANONICAL_SOURCE_KEYS, expected)
+        self.assertEqual(len(EXPECTED_CANONICAL_SOURCE_FAMILIES), 18)
+
+    def test_verify_rejects_source_key_family_mismatch(self) -> None:
+        self._build()
+        with closing(sqlite3.connect(self.db)) as con:
+            con.execute(
+                "UPDATE source_snapshots SET source_family='mfds_dur_item_api' "
+                "WHERE dataset_key='kids_mfds_xlsx:dose_caution'"
+            )
+            con.commit()
+        verification = verify_canonical_database(self.db)
+        self.assertEqual(verification["status"], "invalid")
+        self.assertIn("source snapshot family mismatch", " ".join(verification["errors"]))
 
     def test_declares_all_expected_live_dur_endpoints(self) -> None:
         self.assertEqual(len(DUR_ENDPOINTS), 9)

@@ -50,7 +50,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
         self.personal_db = root / "personal.sqlite"
         make_canonical_db(self.canonical_db)
         self.app = MedicationApp(self.canonical_db, self.personal_db)
-        self.person = self.app.create_person("환자", "1990-01-01", "unknown", "unknown")
+        self.person = self.app.create_person("환자", "1990-01-01", "male", "not_applicable", "not_applicable")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -309,7 +309,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
         self.assertEqual(self._dimension(preview, "dose")["maximum_daily_amount"], 4000.0)
 
     def test_adult_dose_threshold_does_not_reassure_a_child(self) -> None:
-        child = self.app.create_person("소아", "2015-01-01", "female", "not_pregnant")
+        child = self.app.create_person("소아", "2015-01-01", "female", "not_pregnant", "not_breastfeeding")
 
         preview = self.app.preview_medication(child["id"], self._draft(dose_amount=5))
 

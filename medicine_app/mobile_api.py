@@ -16,19 +16,19 @@ from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, Revi
 _PERSON_FIELDS = {"name", "birth_date", "sex", "pregnancy_status", "lactation_status", "notes"}
 _PREVIEW_FIELDS = {
     "product_ref", "product_code", "dosage_text", "dose_amount", "dose_unit",
-    "frequency_per_day", "meal_relation", "administration_route", "as_needed",
-    "prescription_days", "schedule_times", "start_date", "end_date",
+    "frequency_per_day", "meal_relation", "administration_route", "as_needed", "prn_max_per_day",
+    "prescription_days", "long_term", "schedule_times", "start_date", "end_date",
 }
 _CREATE_FIELDS = {
     "product_ref", "product_code", "manual_name", "ingredient_name", "dosage_text", "dose_amount",
-    "dose_unit", "frequency_per_day", "meal_relation", "administration_route", "as_needed",
-    "prescription_days", "schedule_times", "start_date", "end_date", "request_id",
+    "dose_unit", "frequency_per_day", "meal_relation", "administration_route", "as_needed", "prn_max_per_day",
+    "prescription_days", "long_term", "schedule_times", "start_date", "end_date", "request_id",
     "acknowledge_warnings", "warning_token",
 }
 _UPDATE_FIELDS = {
     "expected_revision", "dosage_text", "dose_amount", "dose_unit", "frequency_per_day",
-    "meal_relation", "administration_route", "as_needed", "prescription_days", "schedule_times",
-    "start_date", "end_date", "acknowledge_warnings", "warning_token",
+    "meal_relation", "administration_route", "as_needed", "prn_max_per_day", "prescription_days", "long_term",
+    "schedule_times", "start_date", "end_date", "acknowledge_warnings", "warning_token",
 }
 _DOSE_FIELDS = {"status", "occurred_at", "note"}
 
@@ -203,6 +203,13 @@ class MobileApi:
             except ValueError as exc:
                 raise ValueError("expected_revision must be an integer") from exc
             return 200, service.stop_medication(match.group(1), expected_revision=revision)
+
+        match = re.fullmatch(r"/api/medications/([^/]+)/prn-intakes", path)
+        if method == "POST" and match:
+            payload = _validated_fields(_body_object(body_json), {"occurred_at", "note"})
+            return 201, service.record_prn_dose(
+                match.group(1), payload.get("occurred_at"), payload.get("note")
+            )
 
         match = re.fullmatch(r"/api/medications/([^/]+)/history", path)
         if method == "GET" and match:
