@@ -227,9 +227,16 @@ def build_dur_checks(
         hit_findings = [
             finding for finding in findings
             if finding.get("severity") in {"danger", "warning"}
-            and finding.get("evaluation_status") != "unknown"
+            and finding.get("evaluation_status") not in {"unknown", "conditional"}
         ]
-        unresolved_findings = [finding for finding in findings if finding not in hit_findings]
+        conditional_findings = [
+            finding for finding in findings
+            if finding.get("evaluation_status") == "conditional"
+        ]
+        unresolved_findings = [
+            finding for finding in findings
+            if finding not in hit_findings and finding not in conditional_findings
+        ]
 
         if hit_findings:
             first = hit_findings[0]
@@ -245,6 +252,18 @@ def build_dur_checks(
 
         if _profile_not_applicable(category, person, current_age=current_age):
             result.append(_item(category, label, "not_applicable", "해당사항 없음"))
+            continue
+
+        if conditional_findings:
+            first = conditional_findings[0]
+            result.append(_item(
+                category,
+                label,
+                "conditional",
+                str(first.get("title") or f"{label} 조건 확인 필요"),
+                details=str(first.get("details") or "규칙의 적용 조건을 확인해야 합니다."),
+                findings=conditional_findings,
+            ))
             continue
 
         if category == "dose_caution":

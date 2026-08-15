@@ -71,6 +71,17 @@ function durStatusHtml(items) {
         : `<div class="dur-finding"><strong>${summary}</strong>${item.details ? `<p>${escapeHtml(item.details)}</p>` : ""}</div>`;
       return `<section class="dur-check hit">${detailHtml}</section>`;
     }
+    if (status === "conditional") {
+      const detailHtml = findings.length
+        ? findings.map((finding) => `
+          <div class="dur-finding">
+            <strong>${escapeHtml(finding.title || item.summary || "DUR 조건 확인 필요")}</strong>
+            <p>${escapeHtml(finding.details || item.details || "규칙의 적용 조건을 확인해야 합니다.")}</p>
+            ${interactionTimingHtml(finding.timing)}
+          </div>`).join("")
+        : (item.details ? `<p>${escapeHtml(item.details)}</p>` : "");
+      return `<section class="dur-check conditional"><div class="dur-check-heading"><strong>${label}</strong><span>${summary}</span></div>${detailHtml}</section>`;
+    }
     if (status === "unknown") {
       return `<section class="dur-check unknown"><div class="dur-check-heading"><strong>${label}</strong><span>${summary}</span></div>${item.details ? `<p>${escapeHtml(item.details)}</p>` : ""}</section>`;
     }
