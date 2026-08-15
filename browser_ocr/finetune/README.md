@@ -133,3 +133,23 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
 ```
 
 The recorded synthetic-only result is in `results/synth-5k-drug-baseline.json`: pretrained exact accuracy `0.6080` versus validation-best test accuracy `0.9740`, with normalized edit distance improving from `0.9535` to `0.9975`. Validation peaked at epoch 2 and later epochs oscillated, so the 10-epoch final checkpoint is preserved for reproducibility but is not treated as the selected model. These figures are **not** evidence of real-photo or end-to-end prescription safety; real deidentified holdouts and the other layout/source holdouts remain required.
+
+## Full-document detector → fine-tuned recognizer research path
+
+`ocr-full-document` composes the mobile detector research pipeline with a completed fine-tune baseline. The default detector is the selected `PP-OCRv5_mobile_det` candidate at edge 640. Its official ONNX archive is verified against `browser_ocr/detection/detector-models.json`; the recognizer is loaded directly from the `best_checkpoint` recorded by the supplied baseline result and its SHA-256 is verified before inference.
+
+The command performs full-document detection, perspective-normalizes each quadrilateral into a recognition crop, runs the selected Korean recognizer, and emits a JSON region list containing both detection and recognition scores. It is an Agent Control / research interface, not a layout parser: the current region order is deterministic top-to-bottom/left-to-right and does not infer medication row associations.
+
+Detector assets must already be present under the detection cache (the detection pipeline's `assets` command populates that cache). Generated crops, logs, state, and results should remain under ignored `browser_ocr/finetune/work/` paths.
+
+```bash
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
+  docker compose run --rm ocr-full-document \
+  --image /workspace/browser_ocr/detection/corpus/images/synthetic-000001.jpg \
+  --baseline-result /workspace/browser_ocr/finetune/work/training/baseline-v5-100k-source-stable-e10-b32-lr1e4-w1/baseline-result.json \
+  --output-dir /workspace/browser_ocr/finetune/work/full-document/synthetic-000001 \
+  --json
+```
+
+The output directory is stateful and strict. Re-running exactly the same image/model profile returns the completed result; changing an input or model hash for the same directory fails rather than mixing artifacts. A crashed/failed run can resume by re-running the identical profile after the process lock is released. No-detection is reported explicitly as `skipped_no_detections` for recognition rather than silently substituting another OCR path.

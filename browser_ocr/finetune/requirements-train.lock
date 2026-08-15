@@ -12,11 +12,13 @@ lazy-loader==0.5
 lmdb==2.3.0
 networkx==3.6.1
 numpy==2.5.2
+onnxruntime==1.23.2
 opencv-contrib-python==5.0.0.93
 opencv-python-headless==5.0.0.93
 opencv-python==5.0.0.93
 packaging==26.3
 pillow==12.3.0
+psutil==7.0.0
 pyclipper==1.4.0
 pydantic==2.13.4
 pydantic_core==2.46.4

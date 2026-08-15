@@ -83,6 +83,47 @@ def _order_box_points(points: np.ndarray) -> np.ndarray:
     return np.array([left[0], right[0], right[1], left[1]], dtype=np.float32)
 
 
+def rectify_text_crop(image: np.ndarray, polygon: list[list[float]] | np.ndarray) -> np.ndarray:
+    if image is None or image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("recognition crop source image must be a BGR image")
+    points = np.asarray(polygon, dtype=np.float32)
+    if points.shape != (4, 2) or not np.isfinite(points).all():
+        raise ValueError("text polygon must contain four finite x/y points")
+    points = _order_box_points(points)
+    width = max(
+        np.linalg.norm(points[0] - points[1]),
+        np.linalg.norm(points[2] - points[3]),
+    )
+    height = max(
+        np.linalg.norm(points[0] - points[3]),
+        np.linalg.norm(points[1] - points[2]),
+    )
+    target_width = max(1, int(round(float(width))))
+    target_height = max(1, int(round(float(height))))
+    destination = np.asarray(
+        [
+            [0, 0],
+            [target_width - 1, 0],
+            [target_width - 1, target_height - 1],
+            [0, target_height - 1],
+        ],
+        dtype=np.float32,
+    )
+    transform = cv2.getPerspectiveTransform(points, destination)
+    crop = cv2.warpPerspective(
+        image,
+        transform,
+        (target_width, target_height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    # PaddleOCR's recognizer expects long text lines horizontally. Rotating a
+    # clearly vertical detector box here mirrors its system-inference crop path.
+    if crop.shape[0] / max(1, crop.shape[1]) >= 1.5:
+        crop = np.rot90(crop).copy()
+    return crop
+
+
 def _mini_box(contour: np.ndarray) -> tuple[np.ndarray, float]:
     rect = cv2.minAreaRect(contour.astype(np.float32))
     box = _order_box_points(cv2.boxPoints(rect))

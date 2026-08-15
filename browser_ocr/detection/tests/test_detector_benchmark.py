@@ -7,6 +7,7 @@ import numpy as np
 
 from browser_ocr.detection.detector_benchmark import (
     db_postprocess,
+    rectify_text_crop,
     resize_dimensions,
     validate_official_config,
 )
@@ -42,6 +43,27 @@ class DetectorBenchmarkCoreTest(unittest.TestCase):
             self.assertGreaterEqual(y, 0)
             self.assertLessEqual(x, 640)
             self.assertLessEqual(y, 640)
+
+    def test_rectify_text_crop_warps_quad_to_horizontal_recognition_crop(self):
+        image = np.zeros((120, 220, 3), dtype=np.uint8)
+        image[20:80, 20:200] = 255
+        crop = rectify_text_crop(
+            image,
+            [[24, 32], [194, 20], [198, 64], [28, 78]],
+        )
+        self.assertEqual(crop.ndim, 3)
+        self.assertEqual(crop.shape[2], 3)
+        self.assertGreater(crop.shape[1], crop.shape[0])
+        self.assertGreater(crop.shape[1], 140)
+        self.assertGreater(crop.mean(), 180)
+
+    def test_rectify_text_crop_rotates_tall_text_region_for_recognizer(self):
+        image = np.full((220, 120, 3), 200, dtype=np.uint8)
+        crop = rectify_text_crop(
+            image,
+            [[36, 18], [76, 18], [76, 202], [36, 202]],
+        )
+        self.assertGreater(crop.shape[1], crop.shape[0])
 
     def test_official_inference_yaml_must_match_pinned_db_settings(self):
         pinned = {
