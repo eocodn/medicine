@@ -1,0 +1,5173 @@
+{
+  "schema_version": 1,
+  "corpus_id": "synthetic-prescription-detection-v1-seed-153-n-6",
+  "synthetic_only": true,
+  "gates": {
+    "min_recall": 0.95,
+    "min_precision": 0.9,
+    "min_critical_box_recall": 0.98,
+    "max_merge_errors": 0,
+    "max_cross_association_merges": 0,
+    "max_split_errors": 0
+  },
+  "samples": [
+    {
+      "id": "synthetic-0001",
+      "image": "images/synthetic-0001.svg",
+      "image_sha256": "bde73409a96c25a08be9ffa73eb11bc0be2dad14080ff84da15098bb97bf7d89",
+      "width": 1280,
+      "height": 1600,
+      "scenario_tags": [
+        "prescription_table",
+        "multi_medication"
+      ],
+      "risk_tags": [
+        "small_text",
+        "row_association",
+        "column_association"
+      ],
+      "regions": [
+        {
+          "region_id": "h-product",
+          "text": "약품명",
+          "polygon": [
+            [
+              70,
+              180
+            ],
+            [
+              320,
+              180
+            ],
+            [
+              320,
+              234
+            ],
+            [
+              70,
+              234
+            ]
+          ],
+          "critical": false,
+          "association_group": "header",
+          "semantic_role": "header"
+        },
+        {
+          "region_id": "h-dose",
+          "text": "1회 투약량",
+          "polygon": [
+            [
+              420,
+              180
+            ],
+            [
+              640,
+              180
+            ],
+            [
+              640,
+              234
+            ],
+            [
+              420,
+              234
+            ]
+          ],
+          "critical": false,
+          "association_group": "header",
+          "semantic_role": "header"
+        },
+        {
+          "region_id": "h-freq",
+          "text": "1일 횟수",
+          "polygon": [
+            [
+              720,
+              180
+            ],
+            [
+              920,
+              180
+            ],
+            [
+              920,
+              234
+            ],
+            [
+              720,
+              234
+            ]
+          ],
+          "critical": false,
+          "association_group": "header",
+          "semantic_role": "header"
+        },
+        {
+          "region_id": "h-days",
+          "text": "총 일수",
+          "polygon": [
+            [
+              1010,
+              180
+            ],
+            [
+              1160,
+              180
+            ],
+            [
+              1160,
+              234
+            ],
+            [
+              1010,
+              234
+            ]
+          ],
+          "critical": false,
+          "association_group": "header",
+          "semantic_role": "header"
+        },
+        {
+          "region_id": "r0-product",
+          "text": "타이레놀정",
+          "polygon": [
+            [
+              70,
+              320
+            ],
+            [
+              340,
+              320
+            ],
+            [
+              340,
+              382
+            ],
+            [
+              70,
+              382
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-0",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "r0-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              320
+            ],
+            [
+              580,
+              320
+            ],
+            [
+              580,
+              382
+            ],
+            [
+              430,
+              382
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-0",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "r0-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              730,
+              320
+            ],
+            [
+              870,
+              320
+            ],
+            [
+              870,
+              382
+            ],
+            [
+              730,
+              382
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-0",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "r0-days",
+          "text": "3일",
+          "polygon": [
+            [
+              1010,
+              320
+            ],
+            [
+              1130,
+              320
+            ],
+            [
+              1130,
+              382
+            ],
+            [
+              1010,
+              382
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-0",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "r1-product",
+          "text": "세트린정",
+          "polygon": [
+            [
+              70,
+              500
+            ],
+            [
+              340,
+              500
+            ],
+            [
+              340,
+              562
+            ],
+            [
+              70,
+              562
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-1",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "r1-dose",
+          "text": "2정",
+          "polygon": [
+            [
+              430,
+              500
+            ],
+            [
+              580,
+              500
+            ],
+            [
+              580,
+              562
+            ],
+            [
+              430,
+              562
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-1",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "r1-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              730,
+              500
+            ],
+            [
+              870,
+              500
+            ],
+            [
+              870,
+              562
+            ],
+            [
+              730,
+              562
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-1",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "r1-days",
+          "text": "5일",
+          "polygon": [
+            [
+              1010,
+              500
+            ],
+            [
+              1130,
+              500
+            ],
+            [
+              1130,
+              562
+            ],
+            [
+              1010,
+              562
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-1",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "r2-product",
+          "text": "아목시실린캡슐",
+          "polygon": [
+            [
+              70,
+              680
+            ],
+            [
+              340,
+              680
+            ],
+            [
+              340,
+              742
+            ],
+            [
+              70,
+              742
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-2",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "r2-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              680
+            ],
+            [
+              580,
+              680
+            ],
+            [
+              580,
+              742
+            ],
+            [
+              430,
+              742
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-2",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "r2-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              730,
+              680
+            ],
+            [
+              870,
+              680
+            ],
+            [
+              870,
+              742
+            ],
+            [
+              730,
+              742
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-2",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "r2-days",
+          "text": "7일",
+          "polygon": [
+            [
+              1010,
+              680
+            ],
+            [
+              1130,
+              680
+            ],
+            [
+              1130,
+              742
+            ],
+            [
+              1010,
+              742
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-2",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "r3-product",
+          "text": "메트포르민정",
+          "polygon": [
+            [
+              70,
+              860
+            ],
+            [
+              340,
+              860
+            ],
+            [
+              340,
+              922
+            ],
+            [
+              70,
+              922
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-3",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "r3-dose",
+          "text": "2정",
+          "polygon": [
+            [
+              430,
+              860
+            ],
+            [
+              580,
+              860
+            ],
+            [
+              580,
+              922
+            ],
+            [
+              430,
+              922
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-3",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "r3-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              730,
+              860
+            ],
+            [
+              870,
+              860
+            ],
+            [
+              870,
+              922
+            ],
+            [
+              730,
+              922
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-3",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "r3-days",
+          "text": "9일",
+          "polygon": [
+            [
+              1010,
+              860
+            ],
+            [
+              1130,
+              860
+            ],
+            [
+              1130,
+              922
+            ],
+            [
+              1010,
+              922
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-3",
+          "semantic_role": "duration"
+        }
+      ]
+    },
+    {
+      "id": "synthetic-0002",
+      "image": "images/synthetic-0002.svg",
+      "image_sha256": "9522f9a6b5352b73002a3d57f5c0b2199e7cb42a8b3195d7ad5131b88cded630",
+      "width": 1280,
+      "height": 1600,
+      "scenario_tags": [
+        "medication_bag",
+        "multi_medication",
+        "dense_blocks"
+      ],
+      "risk_tags": [
+        "row_association",
+        "shared_visual_style"
+      ],
+      "regions": [
+        {
+          "region_id": "b0-label",
+          "text": "약명",
+          "polygon": [
+            [
+              85,
+              240
+            ],
+            [
+              195,
+              240
+            ],
+            [
+              195,
+              298
+            ],
+            [
+              85,
+              298
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-0",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b0-product",
+          "text": "세트린정",
+          "polygon": [
+            [
+              240,
+              240
+            ],
+            [
+              600,
+              240
+            ],
+            [
+              600,
+              298
+            ],
+            [
+              240,
+              298
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-0",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "b0-regimen-label",
+          "text": "복용법",
+          "polygon": [
+            [
+              85,
+              345
+            ],
+            [
+              225,
+              345
+            ],
+            [
+              225,
+              399
+            ],
+            [
+              85,
+              399
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-0",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b0-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              275,
+              345
+            ],
+            [
+              385,
+              345
+            ],
+            [
+              385,
+              399
+            ],
+            [
+              275,
+              399
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-0",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "b0-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              450,
+              345
+            ],
+            [
+              560,
+              345
+            ],
+            [
+              560,
+              399
+            ],
+            [
+              450,
+              399
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-0",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "b0-days",
+          "text": "5일",
+          "polygon": [
+            [
+              625,
+              345
+            ],
+            [
+              735,
+              345
+            ],
+            [
+              735,
+              399
+            ],
+            [
+              625,
+              399
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-0",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "b0-meal",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              805,
+              345
+            ],
+            [
+              1025,
+              345
+            ],
+            [
+              1025,
+              399
+            ],
+            [
+              805,
+              399
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-0",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "b1-label",
+          "text": "약명",
+          "polygon": [
+            [
+              85,
+              590
+            ],
+            [
+              195,
+              590
+            ],
+            [
+              195,
+              648
+            ],
+            [
+              85,
+              648
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-1",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b1-product",
+          "text": "메트포르민정",
+          "polygon": [
+            [
+              240,
+              590
+            ],
+            [
+              600,
+              590
+            ],
+            [
+              600,
+              648
+            ],
+            [
+              240,
+              648
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-1",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "b1-regimen-label",
+          "text": "복용법",
+          "polygon": [
+            [
+              85,
+              695
+            ],
+            [
+              225,
+              695
+            ],
+            [
+              225,
+              749
+            ],
+            [
+              85,
+              749
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-1",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b1-dose",
+          "text": "2정",
+          "polygon": [
+            [
+              275,
+              695
+            ],
+            [
+              385,
+              695
+            ],
+            [
+              385,
+              749
+            ],
+            [
+              275,
+              749
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-1",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "b1-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              450,
+              695
+            ],
+            [
+              560,
+              695
+            ],
+            [
+              560,
+              749
+            ],
+            [
+              450,
+              749
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-1",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "b1-days",
+          "text": "6일",
+          "polygon": [
+            [
+              625,
+              695
+            ],
+            [
+              735,
+              695
+            ],
+            [
+              735,
+              749
+            ],
+            [
+              625,
+              749
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-1",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "b1-meal",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              805,
+              695
+            ],
+            [
+              1025,
+              695
+            ],
+            [
+              1025,
+              749
+            ],
+            [
+              805,
+              749
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-1",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "b2-label",
+          "text": "약명",
+          "polygon": [
+            [
+              85,
+              940
+            ],
+            [
+              195,
+              940
+            ],
+            [
+              195,
+              998
+            ],
+            [
+              85,
+              998
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-2",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b2-product",
+          "text": "세트린정",
+          "polygon": [
+            [
+              240,
+              940
+            ],
+            [
+              600,
+              940
+            ],
+            [
+              600,
+              998
+            ],
+            [
+              240,
+              998
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-2",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "b2-regimen-label",
+          "text": "복용법",
+          "polygon": [
+            [
+              85,
+              1045
+            ],
+            [
+              225,
+              1045
+            ],
+            [
+              225,
+              1099
+            ],
+            [
+              85,
+              1099
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-2",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b2-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              275,
+              1045
+            ],
+            [
+              385,
+              1045
+            ],
+            [
+              385,
+              1099
+            ],
+            [
+              275,
+              1099
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-2",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "b2-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              450,
+              1045
+            ],
+            [
+              560,
+              1045
+            ],
+            [
+              560,
+              1099
+            ],
+            [
+              450,
+              1099
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-2",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "b2-days",
+          "text": "7일",
+          "polygon": [
+            [
+              625,
+              1045
+            ],
+            [
+              735,
+              1045
+            ],
+            [
+              735,
+              1099
+            ],
+            [
+              625,
+              1099
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-2",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "b2-meal",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              805,
+              1045
+            ],
+            [
+              1025,
+              1045
+            ],
+            [
+              1025,
+              1099
+            ],
+            [
+              805,
+              1099
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-2",
+          "semantic_role": "instruction"
+        }
+      ]
+    },
+    {
+      "id": "synthetic-0003",
+      "image": "images/synthetic-0003.svg",
+      "image_sha256": "1aa3c25a2400cba6f73a2dbad53994e9a2802fb695513d81ba998c2129e9a2e8",
+      "width": 1280,
+      "height": 1600,
+      "scenario_tags": [
+        "dense_small_print",
+        "multi_medication"
+      ],
+      "risk_tags": [
+        "small_text",
+        "row_association",
+        "detector_resolution"
+      ],
+      "regions": [
+        {
+          "region_id": "d0-product",
+          "text": "세트린정",
+          "polygon": [
+            [
+              70,
+              180
+            ],
+            [
+              370,
+              180
+            ],
+            [
+              370,
+              218
+            ],
+            [
+              70,
+              218
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-0",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d0-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              180
+            ],
+            [
+              520,
+              180
+            ],
+            [
+              520,
+              218
+            ],
+            [
+              430,
+              218
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-0",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d0-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              180
+            ],
+            [
+              670,
+              180
+            ],
+            [
+              670,
+              218
+            ],
+            [
+              585,
+              218
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-0",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d0-days",
+          "text": "3일",
+          "polygon": [
+            [
+              735,
+              180
+            ],
+            [
+              820,
+              180
+            ],
+            [
+              820,
+              218
+            ],
+            [
+              735,
+              218
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-0",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d0-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              180
+            ],
+            [
+              1090,
+              180
+            ],
+            [
+              1090,
+              218
+            ],
+            [
+              900,
+              218
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-0",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d1-product",
+          "text": "아목시실린캡슐",
+          "polygon": [
+            [
+              70,
+              270
+            ],
+            [
+              370,
+              270
+            ],
+            [
+              370,
+              308
+            ],
+            [
+              70,
+              308
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-1",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d1-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              270
+            ],
+            [
+              520,
+              270
+            ],
+            [
+              520,
+              308
+            ],
+            [
+              430,
+              308
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-1",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d1-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              270
+            ],
+            [
+              670,
+              270
+            ],
+            [
+              670,
+              308
+            ],
+            [
+              585,
+              308
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-1",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d1-days",
+          "text": "4일",
+          "polygon": [
+            [
+              735,
+              270
+            ],
+            [
+              820,
+              270
+            ],
+            [
+              820,
+              308
+            ],
+            [
+              735,
+              308
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-1",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d1-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              270
+            ],
+            [
+              1090,
+              270
+            ],
+            [
+              1090,
+              308
+            ],
+            [
+              900,
+              308
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-1",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d2-product",
+          "text": "레바미피드정",
+          "polygon": [
+            [
+              70,
+              360
+            ],
+            [
+              370,
+              360
+            ],
+            [
+              370,
+              398
+            ],
+            [
+              70,
+              398
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-2",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d2-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              360
+            ],
+            [
+              520,
+              360
+            ],
+            [
+              520,
+              398
+            ],
+            [
+              430,
+              398
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-2",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d2-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              360
+            ],
+            [
+              670,
+              360
+            ],
+            [
+              670,
+              398
+            ],
+            [
+              585,
+              398
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-2",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d2-days",
+          "text": "5일",
+          "polygon": [
+            [
+              735,
+              360
+            ],
+            [
+              820,
+              360
+            ],
+            [
+              820,
+              398
+            ],
+            [
+              735,
+              398
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-2",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d2-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              360
+            ],
+            [
+              1090,
+              360
+            ],
+            [
+              1090,
+              398
+            ],
+            [
+              900,
+              398
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-2",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d3-product",
+          "text": "메트포르민정",
+          "polygon": [
+            [
+              70,
+              450
+            ],
+            [
+              370,
+              450
+            ],
+            [
+              370,
+              488
+            ],
+            [
+              70,
+              488
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-3",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d3-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              450
+            ],
+            [
+              520,
+              450
+            ],
+            [
+              520,
+              488
+            ],
+            [
+              430,
+              488
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-3",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d3-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              450
+            ],
+            [
+              670,
+              450
+            ],
+            [
+              670,
+              488
+            ],
+            [
+              585,
+              488
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-3",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d3-days",
+          "text": "6일",
+          "polygon": [
+            [
+              735,
+              450
+            ],
+            [
+              820,
+              450
+            ],
+            [
+              820,
+              488
+            ],
+            [
+              735,
+              488
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-3",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d3-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              450
+            ],
+            [
+              1090,
+              450
+            ],
+            [
+              1090,
+              488
+            ],
+            [
+              900,
+              488
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-3",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d4-product",
+          "text": "타이레놀정",
+          "polygon": [
+            [
+              70,
+              540
+            ],
+            [
+              370,
+              540
+            ],
+            [
+              370,
+              578
+            ],
+            [
+              70,
+              578
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-4",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d4-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              540
+            ],
+            [
+              520,
+              540
+            ],
+            [
+              520,
+              578
+            ],
+            [
+              430,
+              578
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-4",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d4-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              540
+            ],
+            [
+              670,
+              540
+            ],
+            [
+              670,
+              578
+            ],
+            [
+              585,
+              578
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-4",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d4-days",
+          "text": "7일",
+          "polygon": [
+            [
+              735,
+              540
+            ],
+            [
+              820,
+              540
+            ],
+            [
+              820,
+              578
+            ],
+            [
+              735,
+              578
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-4",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d4-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              540
+            ],
+            [
+              1090,
+              540
+            ],
+            [
+              1090,
+              578
+            ],
+            [
+              900,
+              578
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-4",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d5-product",
+          "text": "이부프로펜정",
+          "polygon": [
+            [
+              70,
+              630
+            ],
+            [
+              370,
+              630
+            ],
+            [
+              370,
+              668
+            ],
+            [
+              70,
+              668
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-5",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d5-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              630
+            ],
+            [
+              520,
+              630
+            ],
+            [
+              520,
+              668
+            ],
+            [
+              430,
+              668
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-5",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d5-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              630
+            ],
+            [
+              670,
+              630
+            ],
+            [
+              670,
+              668
+            ],
+            [
+              585,
+              668
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-5",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d5-days",
+          "text": "3일",
+          "polygon": [
+            [
+              735,
+              630
+            ],
+            [
+              820,
+              630
+            ],
+            [
+              820,
+              668
+            ],
+            [
+              735,
+              668
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-5",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d5-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              630
+            ],
+            [
+              1090,
+              630
+            ],
+            [
+              1090,
+              668
+            ],
+            [
+              900,
+              668
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-5",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d6-product",
+          "text": "세트린정",
+          "polygon": [
+            [
+              70,
+              720
+            ],
+            [
+              370,
+              720
+            ],
+            [
+              370,
+              758
+            ],
+            [
+              70,
+              758
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-6",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d6-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              720
+            ],
+            [
+              520,
+              720
+            ],
+            [
+              520,
+              758
+            ],
+            [
+              430,
+              758
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-6",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d6-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              720
+            ],
+            [
+              670,
+              720
+            ],
+            [
+              670,
+              758
+            ],
+            [
+              585,
+              758
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-6",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d6-days",
+          "text": "4일",
+          "polygon": [
+            [
+              735,
+              720
+            ],
+            [
+              820,
+              720
+            ],
+            [
+              820,
+              758
+            ],
+            [
+              735,
+              758
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-6",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d6-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              720
+            ],
+            [
+              1090,
+              720
+            ],
+            [
+              1090,
+              758
+            ],
+            [
+              900,
+              758
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-6",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d7-product",
+          "text": "아목시실린캡슐",
+          "polygon": [
+            [
+              70,
+              810
+            ],
+            [
+              370,
+              810
+            ],
+            [
+              370,
+              848
+            ],
+            [
+              70,
+              848
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-7",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d7-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              810
+            ],
+            [
+              520,
+              810
+            ],
+            [
+              520,
+              848
+            ],
+            [
+              430,
+              848
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-7",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d7-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              810
+            ],
+            [
+              670,
+              810
+            ],
+            [
+              670,
+              848
+            ],
+            [
+              585,
+              848
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-7",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d7-days",
+          "text": "5일",
+          "polygon": [
+            [
+              735,
+              810
+            ],
+            [
+              820,
+              810
+            ],
+            [
+              820,
+              848
+            ],
+            [
+              735,
+              848
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-7",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d7-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              810
+            ],
+            [
+              1090,
+              810
+            ],
+            [
+              1090,
+              848
+            ],
+            [
+              900,
+              848
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-7",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d8-product",
+          "text": "레바미피드정",
+          "polygon": [
+            [
+              70,
+              900
+            ],
+            [
+              370,
+              900
+            ],
+            [
+              370,
+              938
+            ],
+            [
+              70,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d8-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              900
+            ],
+            [
+              520,
+              900
+            ],
+            [
+              520,
+              938
+            ],
+            [
+              430,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d8-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              900
+            ],
+            [
+              670,
+              900
+            ],
+            [
+              670,
+              938
+            ],
+            [
+              585,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d8-days",
+          "text": "6일",
+          "polygon": [
+            [
+              735,
+              900
+            ],
+            [
+              820,
+              900
+            ],
+            [
+              820,
+              938
+            ],
+            [
+              735,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d8-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              900
+            ],
+            [
+              1090,
+              900
+            ],
+            [
+              1090,
+              938
+            ],
+            [
+              900,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d9-product",
+          "text": "메트포르민정",
+          "polygon": [
+            [
+              70,
+              990
+            ],
+            [
+              370,
+              990
+            ],
+            [
+              370,
+              1028
+            ],
+            [
+              70,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d9-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              990
+            ],
+            [
+              520,
+              990
+            ],
+            [
+              520,
+              1028
+            ],
+            [
+              430,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d9-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              990
+            ],
+            [
+              670,
+              990
+            ],
+            [
+              670,
+              1028
+            ],
+            [
+              585,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d9-days",
+          "text": "7일",
+          "polygon": [
+            [
+              735,
+              990
+            ],
+            [
+              820,
+              990
+            ],
+            [
+              820,
+              1028
+            ],
+            [
+              735,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d9-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              990
+            ],
+            [
+              1090,
+              990
+            ],
+            [
+              1090,
+              1028
+            ],
+            [
+              900,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d10-product",
+          "text": "타이레놀정",
+          "polygon": [
+            [
+              70,
+              1080
+            ],
+            [
+              370,
+              1080
+            ],
+            [
+              370,
+              1118
+            ],
+            [
+              70,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d10-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              1080
+            ],
+            [
+              520,
+              1080
+            ],
+            [
+              520,
+              1118
+            ],
+            [
+              430,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d10-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              1080
+            ],
+            [
+              670,
+              1080
+            ],
+            [
+              670,
+              1118
+            ],
+            [
+              585,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d10-days",
+          "text": "3일",
+          "polygon": [
+            [
+              735,
+              1080
+            ],
+            [
+              820,
+              1080
+            ],
+            [
+              820,
+              1118
+            ],
+            [
+              735,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d10-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              1080
+            ],
+            [
+              1090,
+              1080
+            ],
+            [
+              1090,
+              1118
+            ],
+            [
+              900,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d11-product",
+          "text": "이부프로펜정",
+          "polygon": [
+            [
+              70,
+              1170
+            ],
+            [
+              370,
+              1170
+            ],
+            [
+              370,
+              1208
+            ],
+            [
+              70,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d11-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              1170
+            ],
+            [
+              520,
+              1170
+            ],
+            [
+              520,
+              1208
+            ],
+            [
+              430,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d11-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              1170
+            ],
+            [
+              670,
+              1170
+            ],
+            [
+              670,
+              1208
+            ],
+            [
+              585,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d11-days",
+          "text": "4일",
+          "polygon": [
+            [
+              735,
+              1170
+            ],
+            [
+              820,
+              1170
+            ],
+            [
+              820,
+              1208
+            ],
+            [
+              735,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d11-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              1170
+            ],
+            [
+              1090,
+              1170
+            ],
+            [
+              1090,
+              1208
+            ],
+            [
+              900,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "instruction"
+        }
+      ]
+    },
+    {
+      "id": "synthetic-0004",
+      "image": "images/synthetic-0004.svg",
+      "image_sha256": "a73758ccdd874382bdc5b800c6c11de08ba35be009c7ea732e2f52b4c45160fe",
+      "width": 1280,
+      "height": 1600,
+      "scenario_tags": [
+        "prescription_table",
+        "multi_medication",
+        "skewed_geometry"
+      ],
+      "risk_tags": [
+        "small_text",
+        "row_association",
+        "column_association"
+      ],
+      "regions": [
+        {
+          "region_id": "h-product",
+          "text": "약품명",
+          "polygon": [
+            [
+              70,
+              180
+            ],
+            [
+              319.981342415113,
+              183.0542502088118
+            ],
+            [
+              319.3216243700096,
+              237.0502201704762
+            ],
+            [
+              69.34028195489665,
+              233.9959699616644
+            ]
+          ],
+          "critical": false,
+          "association_group": "header",
+          "semantic_role": "header"
+        },
+        {
+          "region_id": "h-dose",
+          "text": "1회 투약량",
+          "polygon": [
+            [
+              420,
+              180
+            ],
+            [
+              639.9835813252994,
+              182.68774018375439
+            ],
+            [
+              639.3238632801961,
+              236.6837101454188
+            ],
+            [
+              419.3402819548966,
+              233.9959699616644
+            ]
+          ],
+          "critical": false,
+          "association_group": "header",
+          "semantic_role": "header"
+        },
+        {
+          "region_id": "h-freq",
+          "text": "1일 횟수",
+          "polygon": [
+            [
+              720,
+              180
+            ],
+            [
+              919.9850739320904,
+              182.44340016704945
+            ],
+            [
+              919.325355886987,
+              236.43937012871385
+            ],
+            [
+              719.3402819548967,
+              233.9959699616644
+            ]
+          ],
+          "critical": false,
+          "association_group": "header",
+          "semantic_role": "header"
+        },
+        {
+          "region_id": "h-days",
+          "text": "총 일수",
+          "polygon": [
+            [
+              1010,
+              180
+            ],
+            [
+              1159.9888054490677,
+              181.83255012528707
+            ],
+            [
+              1159.3290874039644,
+              235.82852008695147
+            ],
+            [
+              1009.3402819548967,
+              233.9959699616644
+            ]
+          ],
+          "critical": false,
+          "association_group": "header",
+          "semantic_role": "header"
+        },
+        {
+          "region_id": "r0-product",
+          "text": "메트포르민정",
+          "polygon": [
+            [
+              70,
+              320
+            ],
+            [
+              339.97984980832206,
+              323.29859022551676
+            ],
+            [
+              339.22239575653674,
+              385.2939631444648
+            ],
+            [
+              69.24254594821467,
+              381.995372918948
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-0",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "r0-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              320
+            ],
+            [
+              579.9888054490677,
+              321.83255012528707
+            ],
+            [
+              579.2313513972824,
+              383.8279230442351
+            ],
+            [
+              429.2425459482147,
+              381.995372918948
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-0",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "r0-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              730,
+              320
+            ],
+            [
+              869.9895517524633,
+              321.71038011693463
+            ],
+            [
+              869.232097700678,
+              383.70575303588265
+            ],
+            [
+              729.2425459482147,
+              381.995372918948
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-0",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "r0-days",
+          "text": "3일",
+          "polygon": [
+            [
+              1010,
+              320
+            ],
+            [
+              1129.9910443592541,
+              321.46604010022963
+            ],
+            [
+              1129.2335903074688,
+              383.46141301917766
+            ],
+            [
+              1009.2425459482147,
+              381.995372918948
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-0",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "r1-product",
+          "text": "아목시실린캡슐",
+          "polygon": [
+            [
+              70,
+              500
+            ],
+            [
+              339.97984980832206,
+              503.29859022551676
+            ],
+            [
+              339.22239575653674,
+              565.2939631444648
+            ],
+            [
+              69.24254594821467,
+              561.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-1",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "r1-dose",
+          "text": "2정",
+          "polygon": [
+            [
+              430,
+              500
+            ],
+            [
+              579.9888054490677,
+              501.83255012528707
+            ],
+            [
+              579.2313513972824,
+              563.8279230442351
+            ],
+            [
+              429.2425459482147,
+              561.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-1",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "r1-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              730,
+              500
+            ],
+            [
+              869.9895517524633,
+              501.71038011693463
+            ],
+            [
+              869.232097700678,
+              563.7057530358827
+            ],
+            [
+              729.2425459482147,
+              561.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-1",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "r1-days",
+          "text": "5일",
+          "polygon": [
+            [
+              1010,
+              500
+            ],
+            [
+              1129.9910443592541,
+              501.46604010022963
+            ],
+            [
+              1129.2335903074688,
+              563.4614130191776
+            ],
+            [
+              1009.2425459482147,
+              561.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-1",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "r2-product",
+          "text": "메트포르민정",
+          "polygon": [
+            [
+              70,
+              680
+            ],
+            [
+              339.97984980832206,
+              683.2985902255167
+            ],
+            [
+              339.22239575653674,
+              745.2939631444647
+            ],
+            [
+              69.24254594821467,
+              741.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-2",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "r2-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              680
+            ],
+            [
+              579.9888054490677,
+              681.8325501252871
+            ],
+            [
+              579.2313513972824,
+              743.8279230442351
+            ],
+            [
+              429.2425459482147,
+              741.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-2",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "r2-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              730,
+              680
+            ],
+            [
+              869.9895517524633,
+              681.7103801169346
+            ],
+            [
+              869.232097700678,
+              743.7057530358827
+            ],
+            [
+              729.2425459482147,
+              741.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-2",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "r2-days",
+          "text": "7일",
+          "polygon": [
+            [
+              1010,
+              680
+            ],
+            [
+              1129.9910443592541,
+              681.4660401002296
+            ],
+            [
+              1129.2335903074688,
+              743.4614130191776
+            ],
+            [
+              1009.2425459482147,
+              741.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-2",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "r3-product",
+          "text": "메트포르민정",
+          "polygon": [
+            [
+              70,
+              860
+            ],
+            [
+              339.97984980832206,
+              863.2985902255167
+            ],
+            [
+              339.22239575653674,
+              925.2939631444647
+            ],
+            [
+              69.24254594821467,
+              921.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-3",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "r3-dose",
+          "text": "2정",
+          "polygon": [
+            [
+              430,
+              860
+            ],
+            [
+              579.9888054490677,
+              861.8325501252871
+            ],
+            [
+              579.2313513972824,
+              923.8279230442351
+            ],
+            [
+              429.2425459482147,
+              921.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-3",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "r3-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              730,
+              860
+            ],
+            [
+              869.9895517524633,
+              861.7103801169346
+            ],
+            [
+              869.232097700678,
+              923.7057530358827
+            ],
+            [
+              729.2425459482147,
+              921.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-3",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "r3-days",
+          "text": "9일",
+          "polygon": [
+            [
+              1010,
+              860
+            ],
+            [
+              1129.9910443592541,
+              861.4660401002296
+            ],
+            [
+              1129.2335903074688,
+              923.4614130191776
+            ],
+            [
+              1009.2425459482147,
+              921.9953729189481
+            ]
+          ],
+          "critical": true,
+          "association_group": "med-3",
+          "semantic_role": "duration"
+        }
+      ]
+    },
+    {
+      "id": "synthetic-0005",
+      "image": "images/synthetic-0005.svg",
+      "image_sha256": "30163a8addcfa5923d66dc778d7b19c2191af918575e6f2f4c215cf8ec733425",
+      "width": 1280,
+      "height": 1600,
+      "scenario_tags": [
+        "medication_bag",
+        "multi_medication"
+      ],
+      "risk_tags": [
+        "row_association",
+        "shared_visual_style"
+      ],
+      "regions": [
+        {
+          "region_id": "b0-label",
+          "text": "약명",
+          "polygon": [
+            [
+              85,
+              240
+            ],
+            [
+              195,
+              240
+            ],
+            [
+              195,
+              298
+            ],
+            [
+              85,
+              298
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-0",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b0-product",
+          "text": "타이레놀정",
+          "polygon": [
+            [
+              240,
+              240
+            ],
+            [
+              600,
+              240
+            ],
+            [
+              600,
+              298
+            ],
+            [
+              240,
+              298
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-0",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "b0-regimen-label",
+          "text": "복용법",
+          "polygon": [
+            [
+              85,
+              345
+            ],
+            [
+              225,
+              345
+            ],
+            [
+              225,
+              399
+            ],
+            [
+              85,
+              399
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-0",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b0-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              275,
+              345
+            ],
+            [
+              385,
+              345
+            ],
+            [
+              385,
+              399
+            ],
+            [
+              275,
+              399
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-0",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "b0-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              450,
+              345
+            ],
+            [
+              560,
+              345
+            ],
+            [
+              560,
+              399
+            ],
+            [
+              450,
+              399
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-0",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "b0-days",
+          "text": "5일",
+          "polygon": [
+            [
+              625,
+              345
+            ],
+            [
+              735,
+              345
+            ],
+            [
+              735,
+              399
+            ],
+            [
+              625,
+              399
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-0",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "b0-meal",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              805,
+              345
+            ],
+            [
+              1025,
+              345
+            ],
+            [
+              1025,
+              399
+            ],
+            [
+              805,
+              399
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-0",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "b1-label",
+          "text": "약명",
+          "polygon": [
+            [
+              85,
+              590
+            ],
+            [
+              195,
+              590
+            ],
+            [
+              195,
+              648
+            ],
+            [
+              85,
+              648
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-1",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b1-product",
+          "text": "이부프로펜정",
+          "polygon": [
+            [
+              240,
+              590
+            ],
+            [
+              600,
+              590
+            ],
+            [
+              600,
+              648
+            ],
+            [
+              240,
+              648
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-1",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "b1-regimen-label",
+          "text": "복용법",
+          "polygon": [
+            [
+              85,
+              695
+            ],
+            [
+              225,
+              695
+            ],
+            [
+              225,
+              749
+            ],
+            [
+              85,
+              749
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-1",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b1-dose",
+          "text": "2정",
+          "polygon": [
+            [
+              275,
+              695
+            ],
+            [
+              385,
+              695
+            ],
+            [
+              385,
+              749
+            ],
+            [
+              275,
+              749
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-1",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "b1-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              450,
+              695
+            ],
+            [
+              560,
+              695
+            ],
+            [
+              560,
+              749
+            ],
+            [
+              450,
+              749
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-1",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "b1-days",
+          "text": "6일",
+          "polygon": [
+            [
+              625,
+              695
+            ],
+            [
+              735,
+              695
+            ],
+            [
+              735,
+              749
+            ],
+            [
+              625,
+              749
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-1",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "b1-meal",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              805,
+              695
+            ],
+            [
+              1025,
+              695
+            ],
+            [
+              1025,
+              749
+            ],
+            [
+              805,
+              749
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-1",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "b2-label",
+          "text": "약명",
+          "polygon": [
+            [
+              85,
+              940
+            ],
+            [
+              195,
+              940
+            ],
+            [
+              195,
+              998
+            ],
+            [
+              85,
+              998
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-2",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b2-product",
+          "text": "이부프로펜정",
+          "polygon": [
+            [
+              240,
+              940
+            ],
+            [
+              600,
+              940
+            ],
+            [
+              600,
+              998
+            ],
+            [
+              240,
+              998
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-2",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "b2-regimen-label",
+          "text": "복용법",
+          "polygon": [
+            [
+              85,
+              1045
+            ],
+            [
+              225,
+              1045
+            ],
+            [
+              225,
+              1099
+            ],
+            [
+              85,
+              1099
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-2",
+          "semantic_role": "label"
+        },
+        {
+          "region_id": "b2-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              275,
+              1045
+            ],
+            [
+              385,
+              1045
+            ],
+            [
+              385,
+              1099
+            ],
+            [
+              275,
+              1099
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-2",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "b2-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              450,
+              1045
+            ],
+            [
+              560,
+              1045
+            ],
+            [
+              560,
+              1099
+            ],
+            [
+              450,
+              1099
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-2",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "b2-days",
+          "text": "7일",
+          "polygon": [
+            [
+              625,
+              1045
+            ],
+            [
+              735,
+              1045
+            ],
+            [
+              735,
+              1099
+            ],
+            [
+              625,
+              1099
+            ]
+          ],
+          "critical": true,
+          "association_group": "bag-2",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "b2-meal",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              805,
+              1045
+            ],
+            [
+              1025,
+              1045
+            ],
+            [
+              1025,
+              1099
+            ],
+            [
+              805,
+              1099
+            ]
+          ],
+          "critical": false,
+          "association_group": "bag-2",
+          "semantic_role": "instruction"
+        }
+      ]
+    },
+    {
+      "id": "synthetic-0006",
+      "image": "images/synthetic-0006.svg",
+      "image_sha256": "4471fc00a98148278c95c8617bd4b47dde525d8cb250711ffec70206198b41f8",
+      "width": 1280,
+      "height": 1600,
+      "scenario_tags": [
+        "dense_small_print",
+        "multi_medication"
+      ],
+      "risk_tags": [
+        "small_text",
+        "row_association",
+        "detector_resolution"
+      ],
+      "regions": [
+        {
+          "region_id": "d0-product",
+          "text": "메트포르민정",
+          "polygon": [
+            [
+              70,
+              180
+            ],
+            [
+              370,
+              180
+            ],
+            [
+              370,
+              218
+            ],
+            [
+              70,
+              218
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-0",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d0-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              180
+            ],
+            [
+              520,
+              180
+            ],
+            [
+              520,
+              218
+            ],
+            [
+              430,
+              218
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-0",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d0-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              180
+            ],
+            [
+              670,
+              180
+            ],
+            [
+              670,
+              218
+            ],
+            [
+              585,
+              218
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-0",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d0-days",
+          "text": "3일",
+          "polygon": [
+            [
+              735,
+              180
+            ],
+            [
+              820,
+              180
+            ],
+            [
+              820,
+              218
+            ],
+            [
+              735,
+              218
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-0",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d0-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              180
+            ],
+            [
+              1090,
+              180
+            ],
+            [
+              1090,
+              218
+            ],
+            [
+              900,
+              218
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-0",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d1-product",
+          "text": "타이레놀정",
+          "polygon": [
+            [
+              70,
+              270
+            ],
+            [
+              370,
+              270
+            ],
+            [
+              370,
+              308
+            ],
+            [
+              70,
+              308
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-1",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d1-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              270
+            ],
+            [
+              520,
+              270
+            ],
+            [
+              520,
+              308
+            ],
+            [
+              430,
+              308
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-1",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d1-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              270
+            ],
+            [
+              670,
+              270
+            ],
+            [
+              670,
+              308
+            ],
+            [
+              585,
+              308
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-1",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d1-days",
+          "text": "4일",
+          "polygon": [
+            [
+              735,
+              270
+            ],
+            [
+              820,
+              270
+            ],
+            [
+              820,
+              308
+            ],
+            [
+              735,
+              308
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-1",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d1-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              270
+            ],
+            [
+              1090,
+              270
+            ],
+            [
+              1090,
+              308
+            ],
+            [
+              900,
+              308
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-1",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d2-product",
+          "text": "이부프로펜정",
+          "polygon": [
+            [
+              70,
+              360
+            ],
+            [
+              370,
+              360
+            ],
+            [
+              370,
+              398
+            ],
+            [
+              70,
+              398
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-2",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d2-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              360
+            ],
+            [
+              520,
+              360
+            ],
+            [
+              520,
+              398
+            ],
+            [
+              430,
+              398
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-2",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d2-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              360
+            ],
+            [
+              670,
+              360
+            ],
+            [
+              670,
+              398
+            ],
+            [
+              585,
+              398
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-2",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d2-days",
+          "text": "5일",
+          "polygon": [
+            [
+              735,
+              360
+            ],
+            [
+              820,
+              360
+            ],
+            [
+              820,
+              398
+            ],
+            [
+              735,
+              398
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-2",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d2-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              360
+            ],
+            [
+              1090,
+              360
+            ],
+            [
+              1090,
+              398
+            ],
+            [
+              900,
+              398
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-2",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d3-product",
+          "text": "세트린정",
+          "polygon": [
+            [
+              70,
+              450
+            ],
+            [
+              370,
+              450
+            ],
+            [
+              370,
+              488
+            ],
+            [
+              70,
+              488
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-3",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d3-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              450
+            ],
+            [
+              520,
+              450
+            ],
+            [
+              520,
+              488
+            ],
+            [
+              430,
+              488
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-3",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d3-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              450
+            ],
+            [
+              670,
+              450
+            ],
+            [
+              670,
+              488
+            ],
+            [
+              585,
+              488
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-3",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d3-days",
+          "text": "6일",
+          "polygon": [
+            [
+              735,
+              450
+            ],
+            [
+              820,
+              450
+            ],
+            [
+              820,
+              488
+            ],
+            [
+              735,
+              488
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-3",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d3-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              450
+            ],
+            [
+              1090,
+              450
+            ],
+            [
+              1090,
+              488
+            ],
+            [
+              900,
+              488
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-3",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d4-product",
+          "text": "아목시실린캡슐",
+          "polygon": [
+            [
+              70,
+              540
+            ],
+            [
+              370,
+              540
+            ],
+            [
+              370,
+              578
+            ],
+            [
+              70,
+              578
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-4",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d4-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              540
+            ],
+            [
+              520,
+              540
+            ],
+            [
+              520,
+              578
+            ],
+            [
+              430,
+              578
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-4",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d4-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              540
+            ],
+            [
+              670,
+              540
+            ],
+            [
+              670,
+              578
+            ],
+            [
+              585,
+              578
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-4",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d4-days",
+          "text": "7일",
+          "polygon": [
+            [
+              735,
+              540
+            ],
+            [
+              820,
+              540
+            ],
+            [
+              820,
+              578
+            ],
+            [
+              735,
+              578
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-4",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d4-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              540
+            ],
+            [
+              1090,
+              540
+            ],
+            [
+              1090,
+              578
+            ],
+            [
+              900,
+              578
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-4",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d5-product",
+          "text": "레바미피드정",
+          "polygon": [
+            [
+              70,
+              630
+            ],
+            [
+              370,
+              630
+            ],
+            [
+              370,
+              668
+            ],
+            [
+              70,
+              668
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-5",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d5-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              630
+            ],
+            [
+              520,
+              630
+            ],
+            [
+              520,
+              668
+            ],
+            [
+              430,
+              668
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-5",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d5-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              630
+            ],
+            [
+              670,
+              630
+            ],
+            [
+              670,
+              668
+            ],
+            [
+              585,
+              668
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-5",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d5-days",
+          "text": "3일",
+          "polygon": [
+            [
+              735,
+              630
+            ],
+            [
+              820,
+              630
+            ],
+            [
+              820,
+              668
+            ],
+            [
+              735,
+              668
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-5",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d5-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              630
+            ],
+            [
+              1090,
+              630
+            ],
+            [
+              1090,
+              668
+            ],
+            [
+              900,
+              668
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-5",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d6-product",
+          "text": "메트포르민정",
+          "polygon": [
+            [
+              70,
+              720
+            ],
+            [
+              370,
+              720
+            ],
+            [
+              370,
+              758
+            ],
+            [
+              70,
+              758
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-6",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d6-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              720
+            ],
+            [
+              520,
+              720
+            ],
+            [
+              520,
+              758
+            ],
+            [
+              430,
+              758
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-6",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d6-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              720
+            ],
+            [
+              670,
+              720
+            ],
+            [
+              670,
+              758
+            ],
+            [
+              585,
+              758
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-6",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d6-days",
+          "text": "4일",
+          "polygon": [
+            [
+              735,
+              720
+            ],
+            [
+              820,
+              720
+            ],
+            [
+              820,
+              758
+            ],
+            [
+              735,
+              758
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-6",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d6-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              720
+            ],
+            [
+              1090,
+              720
+            ],
+            [
+              1090,
+              758
+            ],
+            [
+              900,
+              758
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-6",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d7-product",
+          "text": "타이레놀정",
+          "polygon": [
+            [
+              70,
+              810
+            ],
+            [
+              370,
+              810
+            ],
+            [
+              370,
+              848
+            ],
+            [
+              70,
+              848
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-7",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d7-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              810
+            ],
+            [
+              520,
+              810
+            ],
+            [
+              520,
+              848
+            ],
+            [
+              430,
+              848
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-7",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d7-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              810
+            ],
+            [
+              670,
+              810
+            ],
+            [
+              670,
+              848
+            ],
+            [
+              585,
+              848
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-7",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d7-days",
+          "text": "5일",
+          "polygon": [
+            [
+              735,
+              810
+            ],
+            [
+              820,
+              810
+            ],
+            [
+              820,
+              848
+            ],
+            [
+              735,
+              848
+            ]
+          ],
+          "critical": true,
+          "association_group": "dense-7",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d7-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              810
+            ],
+            [
+              1090,
+              810
+            ],
+            [
+              1090,
+              848
+            ],
+            [
+              900,
+              848
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-7",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d8-product",
+          "text": "이부프로펜정",
+          "polygon": [
+            [
+              70,
+              900
+            ],
+            [
+              370,
+              900
+            ],
+            [
+              370,
+              938
+            ],
+            [
+              70,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d8-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              900
+            ],
+            [
+              520,
+              900
+            ],
+            [
+              520,
+              938
+            ],
+            [
+              430,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d8-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              900
+            ],
+            [
+              670,
+              900
+            ],
+            [
+              670,
+              938
+            ],
+            [
+              585,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d8-days",
+          "text": "6일",
+          "polygon": [
+            [
+              735,
+              900
+            ],
+            [
+              820,
+              900
+            ],
+            [
+              820,
+              938
+            ],
+            [
+              735,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d8-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              900
+            ],
+            [
+              1090,
+              900
+            ],
+            [
+              1090,
+              938
+            ],
+            [
+              900,
+              938
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-8",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d9-product",
+          "text": "세트린정",
+          "polygon": [
+            [
+              70,
+              990
+            ],
+            [
+              370,
+              990
+            ],
+            [
+              370,
+              1028
+            ],
+            [
+              70,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d9-dose",
+          "text": "0.5정",
+          "polygon": [
+            [
+              430,
+              990
+            ],
+            [
+              520,
+              990
+            ],
+            [
+              520,
+              1028
+            ],
+            [
+              430,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d9-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              990
+            ],
+            [
+              670,
+              990
+            ],
+            [
+              670,
+              1028
+            ],
+            [
+              585,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d9-days",
+          "text": "7일",
+          "polygon": [
+            [
+              735,
+              990
+            ],
+            [
+              820,
+              990
+            ],
+            [
+              820,
+              1028
+            ],
+            [
+              735,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d9-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              990
+            ],
+            [
+              1090,
+              990
+            ],
+            [
+              1090,
+              1028
+            ],
+            [
+              900,
+              1028
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-9",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d10-product",
+          "text": "아목시실린캡슐",
+          "polygon": [
+            [
+              70,
+              1080
+            ],
+            [
+              370,
+              1080
+            ],
+            [
+              370,
+              1118
+            ],
+            [
+              70,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d10-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              1080
+            ],
+            [
+              520,
+              1080
+            ],
+            [
+              520,
+              1118
+            ],
+            [
+              430,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d10-freq",
+          "text": "2회",
+          "polygon": [
+            [
+              585,
+              1080
+            ],
+            [
+              670,
+              1080
+            ],
+            [
+              670,
+              1118
+            ],
+            [
+              585,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d10-days",
+          "text": "3일",
+          "polygon": [
+            [
+              735,
+              1080
+            ],
+            [
+              820,
+              1080
+            ],
+            [
+              820,
+              1118
+            ],
+            [
+              735,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d10-note",
+          "text": "아침 저녁",
+          "polygon": [
+            [
+              900,
+              1080
+            ],
+            [
+              1090,
+              1080
+            ],
+            [
+              1090,
+              1118
+            ],
+            [
+              900,
+              1118
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-10",
+          "semantic_role": "instruction"
+        },
+        {
+          "region_id": "d11-product",
+          "text": "레바미피드정",
+          "polygon": [
+            [
+              70,
+              1170
+            ],
+            [
+              370,
+              1170
+            ],
+            [
+              370,
+              1208
+            ],
+            [
+              70,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "product"
+        },
+        {
+          "region_id": "d11-dose",
+          "text": "1정",
+          "polygon": [
+            [
+              430,
+              1170
+            ],
+            [
+              520,
+              1170
+            ],
+            [
+              520,
+              1208
+            ],
+            [
+              430,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "dose"
+        },
+        {
+          "region_id": "d11-freq",
+          "text": "3회",
+          "polygon": [
+            [
+              585,
+              1170
+            ],
+            [
+              670,
+              1170
+            ],
+            [
+              670,
+              1208
+            ],
+            [
+              585,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "frequency"
+        },
+        {
+          "region_id": "d11-days",
+          "text": "4일",
+          "polygon": [
+            [
+              735,
+              1170
+            ],
+            [
+              820,
+              1170
+            ],
+            [
+              820,
+              1208
+            ],
+            [
+              735,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "duration"
+        },
+        {
+          "region_id": "d11-note",
+          "text": "식후 30분",
+          "polygon": [
+            [
+              900,
+              1170
+            ],
+            [
+              1090,
+              1170
+            ],
+            [
+              1090,
+              1208
+            ],
+            [
+              900,
+              1208
+            ]
+          ],
+          "critical": false,
+          "association_group": "dense-11",
+          "semantic_role": "instruction"
+        }
+      ]
+    }
+  ]
+}

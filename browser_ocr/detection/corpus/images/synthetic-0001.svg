@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1600" viewBox="0 0 1280 1600">
+<rect width="1280" height="1600" fill="#f7f7f5"/>
+<rect x="45" y="130" width="1170" height="930" fill="none" stroke="#b8b8b8" stroke-width="2"/>
+<line x1="55" y1="405" x2="1190" y2="405" stroke="#d8d8d8"/>
+<line x1="55" y1="585" x2="1190" y2="585" stroke="#d8d8d8"/>
+<line x1="55" y1="765" x2="1190" y2="765" stroke="#d8d8d8"/>
+<line x1="55" y1="945" x2="1190" y2="945" stroke="#d8d8d8"/>
+<text x="70" y="214" textLength="250" lengthAdjust="spacingAndGlyphs" transform="rotate(0 70 180)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">약품명</text>
+<text x="420" y="214" textLength="220" lengthAdjust="spacingAndGlyphs" transform="rotate(0 420 180)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">1회 투약량</text>
+<text x="720" y="214" textLength="200" lengthAdjust="spacingAndGlyphs" transform="rotate(0 720 180)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">1일 횟수</text>
+<text x="1010" y="214" textLength="150" lengthAdjust="spacingAndGlyphs" transform="rotate(0 1010 180)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">총 일수</text>
+<text x="70" y="354" textLength="270" lengthAdjust="spacingAndGlyphs" transform="rotate(0 70 320)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">타이레놀정</text>
+<text x="430" y="354" textLength="150" lengthAdjust="spacingAndGlyphs" transform="rotate(0 430 320)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">1정</text>
+<text x="730" y="354" textLength="140" lengthAdjust="spacingAndGlyphs" transform="rotate(0 730 320)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">2회</text>
+<text x="1010" y="354" textLength="120" lengthAdjust="spacingAndGlyphs" transform="rotate(0 1010 320)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">3일</text>
+<text x="70" y="534" textLength="270" lengthAdjust="spacingAndGlyphs" transform="rotate(0 70 500)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">세트린정</text>
+<text x="430" y="534" textLength="150" lengthAdjust="spacingAndGlyphs" transform="rotate(0 430 500)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">2정</text>
+<text x="730" y="534" textLength="140" lengthAdjust="spacingAndGlyphs" transform="rotate(0 730 500)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">3회</text>
+<text x="1010" y="534" textLength="120" lengthAdjust="spacingAndGlyphs" transform="rotate(0 1010 500)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">5일</text>
+<text x="70" y="714" textLength="270" lengthAdjust="spacingAndGlyphs" transform="rotate(0 70 680)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">아목시실린캡슐</text>
+<text x="430" y="714" textLength="150" lengthAdjust="spacingAndGlyphs" transform="rotate(0 430 680)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">0.5정</text>
+<text x="730" y="714" textLength="140" lengthAdjust="spacingAndGlyphs" transform="rotate(0 730 680)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">2회</text>
+<text x="1010" y="714" textLength="120" lengthAdjust="spacingAndGlyphs" transform="rotate(0 1010 680)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">7일</text>
+<text x="70" y="894" textLength="270" lengthAdjust="spacingAndGlyphs" transform="rotate(0 70 860)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">메트포르민정</text>
+<text x="430" y="894" textLength="150" lengthAdjust="spacingAndGlyphs" transform="rotate(0 430 860)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">2정</text>
+<text x="730" y="894" textLength="140" lengthAdjust="spacingAndGlyphs" transform="rotate(0 730 860)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">3회</text>
+<text x="1010" y="894" textLength="120" lengthAdjust="spacingAndGlyphs" transform="rotate(0 1010 860)" font-family="Noto Sans CJK KR, sans-serif" font-size="42" fill="#202020">9일</text>
+</svg>
