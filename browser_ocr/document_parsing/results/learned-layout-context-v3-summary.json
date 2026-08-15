@@ -1,0 +1,315 @@
+{
+  "architecture": {
+    "context_head": "residual role correction over six nearest OCR boxes plus directional/same-row/same-column document context",
+    "fail_closed_ambiguous_edges": true,
+    "local_role_head": "semantic-pretrained hashed text + lexical/numeric + OCR confidence + normalized bbox softmax",
+    "same_medication_head": "learned product-field relation classifier with relative geometry and local product graph context",
+    "source_evidence_preserved": true
+  },
+  "context_training": {
+    "capture_counts": {
+      "cropped_clutter": 60,
+      "flat_scan": 60,
+      "glare_shadow": 60,
+      "low_contrast_defocus": 60,
+      "motion_jpeg": 60,
+      "perspective_phone": 60
+    },
+    "corpus_id": "synthetic-prescription-detection-v2-seed-911-n-360",
+    "corpus_path": "browser_ocr/finetune/work/layout-context-train-360/manifest.json",
+    "critical_regions": 6000,
+    "epochs": 8,
+    "generator_fingerprint": "463da45b15afd0b1d36775aaf08b1079f54b71715c9840231be7b51f9b9546fc",
+    "layout_counts": {
+      "classic_medication_bag": 60,
+      "compact_prescription_form": 60,
+      "counseling_medication_bag": 60,
+      "legacy_preprinted_medication_bag": 60,
+      "pharmacy_information_sheet": 60,
+      "prescription_table": 60
+    },
+    "regions": 13140,
+    "sample_count": 360,
+    "seed": 911
+  },
+  "decision": "hold_for_real_validation",
+  "decision_reason": "The contextual learned parser exactly matches geometry_rule_v2 on a seed-disjoint 36-document detector+100k-OCR synthetic holdout with zero false exact or cross-medication associations, but no real full-document corpus has been evaluated yet.",
+  "determinism": {
+    "exact_repeat": true,
+    "repeat_model_sha256": "742f2f7004a8561d3e93fd4d6c136309c04dc9bc3508c9ffb48f33549ce74a05",
+    "semantic_selected_fingerprint": "42f1961ded451bb0b9e9f9bcc9c8276f9f939df3d01ddbf960fb11ebce7224f6"
+  },
+  "evaluation": {
+    "by_capture_profile": {
+      "cropped_clutter": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "cross_medication_associations": 0,
+        "expected_rows": 28,
+        "false_exact_fields": 0,
+        "matched_rows": 28,
+        "quality_pass_samples": 6,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "flat_scan": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "cross_medication_associations": 0,
+        "expected_rows": 28,
+        "false_exact_fields": 0,
+        "matched_rows": 28,
+        "quality_pass_samples": 6,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "glare_shadow": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "cross_medication_associations": 0,
+        "expected_rows": 28,
+        "false_exact_fields": 0,
+        "matched_rows": 28,
+        "quality_pass_samples": 6,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "low_contrast_defocus": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "cross_medication_associations": 0,
+        "expected_rows": 28,
+        "false_exact_fields": 0,
+        "matched_rows": 28,
+        "quality_pass_samples": 6,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "motion_jpeg": {
+        "critical_field_exact": 20,
+        "critical_field_total": 112,
+        "cross_medication_associations": 0,
+        "expected_rows": 28,
+        "false_exact_fields": 0,
+        "matched_rows": 5,
+        "quality_pass_samples": 1,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "perspective_phone": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "cross_medication_associations": 0,
+        "expected_rows": 28,
+        "false_exact_fields": 0,
+        "matched_rows": 28,
+        "quality_pass_samples": 6,
+        "safety_pass_samples": 6,
+        "samples": 6
+      }
+    },
+    "by_layout_family": {
+      "classic_medication_bag": {
+        "critical_field_exact": 60,
+        "critical_field_total": 72,
+        "cross_medication_associations": 0,
+        "expected_rows": 18,
+        "false_exact_fields": 0,
+        "matched_rows": 15,
+        "quality_pass_samples": 5,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "compact_prescription_form": {
+        "critical_field_exact": 120,
+        "critical_field_total": 144,
+        "cross_medication_associations": 0,
+        "expected_rows": 36,
+        "false_exact_fields": 0,
+        "matched_rows": 30,
+        "quality_pass_samples": 5,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "counseling_medication_bag": {
+        "critical_field_exact": 80,
+        "critical_field_total": 96,
+        "cross_medication_associations": 0,
+        "expected_rows": 24,
+        "false_exact_fields": 0,
+        "matched_rows": 20,
+        "quality_pass_samples": 5,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "legacy_preprinted_medication_bag": {
+        "critical_field_exact": 20,
+        "critical_field_total": 24,
+        "cross_medication_associations": 0,
+        "expected_rows": 6,
+        "false_exact_fields": 0,
+        "matched_rows": 5,
+        "quality_pass_samples": 5,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "pharmacy_information_sheet": {
+        "critical_field_exact": 180,
+        "critical_field_total": 216,
+        "cross_medication_associations": 0,
+        "expected_rows": 54,
+        "false_exact_fields": 0,
+        "matched_rows": 45,
+        "quality_pass_samples": 5,
+        "safety_pass_samples": 6,
+        "samples": 6
+      },
+      "prescription_table": {
+        "critical_field_exact": 120,
+        "critical_field_total": 120,
+        "cross_medication_associations": 0,
+        "expected_rows": 30,
+        "false_exact_fields": 0,
+        "matched_rows": 30,
+        "quality_pass_samples": 6,
+        "safety_pass_samples": 6,
+        "samples": 6
+      }
+    },
+    "corpus_id": "synthetic-prescription-detection-v2-seed-153-n-36",
+    "detector_asset_sha256": "781056046c9ed77a15c94681605db6a0f62317c2e9cce6931c71da2478d4bc30",
+    "detector_edge": 640,
+    "detector_model": "PP-OCRv5_mobile_det",
+    "generator_fingerprint": "cf8e03e45f33616611ce523512e8dd22e44666caa9a950d42a6764b3a0076281",
+    "geometry_rule_v2": {
+      "metrics": {
+        "critical_field_exact_accuracy": 0.8630952380952381,
+        "row_recall": 0.8630952380952381
+      },
+      "quality_pass_samples": 31,
+      "safety_pass_samples": 36,
+      "sample_count": 36,
+      "totals": {
+        "critical_detection_matched": 600,
+        "critical_detection_total": 600,
+        "critical_field_exact": 580,
+        "critical_field_total": 672,
+        "cross_medication_associations": 0,
+        "expected_rows": 168,
+        "false_exact_fields": 0,
+        "matched_rows": 145,
+        "missing_rows": 23,
+        "predicted_rows": 145,
+        "unexpected_rows": 0,
+        "unproven_associations": 0,
+        "unresolved_fields": 0
+      }
+    },
+    "learned": {
+      "metrics": {
+        "critical_field_exact_accuracy": 0.8630952380952381,
+        "row_recall": 0.8630952380952381
+      },
+      "quality_pass_samples": 31,
+      "safety_pass_samples": 36,
+      "sample_count": 36,
+      "totals": {
+        "critical_detection_matched": 600,
+        "critical_detection_total": 600,
+        "critical_field_exact": 580,
+        "critical_field_total": 672,
+        "cross_medication_associations": 0,
+        "expected_rows": 168,
+        "false_exact_fields": 0,
+        "matched_rows": 145,
+        "missing_rows": 23,
+        "predicted_rows": 145,
+        "unexpected_rows": 0,
+        "unproven_associations": 0,
+        "unresolved_fields": 0
+      }
+    },
+    "node_roles": {
+      "accuracy": 0.974320241691843,
+      "macro_f1": 0.9690826330374673,
+      "per_role": {
+        "dose": {
+          "f1": 0.962962962962963,
+          "precision": 1.0,
+          "recall": 0.9285714285714286,
+          "support": 168
+        },
+        "duration": {
+          "f1": 0.9909909909909909,
+          "precision": 1.0,
+          "recall": 0.9821428571428571,
+          "support": 168
+        },
+        "frequency": {
+          "f1": 0.9693251533742331,
+          "precision": 1.0,
+          "recall": 0.9404761904761905,
+          "support": 168
+        },
+        "other": {
+          "f1": 0.983358547655068,
+          "precision": 0.9701492537313433,
+          "recall": 0.9969325153374233,
+          "support": 652
+        },
+        "product": {
+          "f1": 0.9387755102040817,
+          "precision": 0.92,
+          "recall": 0.9583333333333334,
+          "support": 168
+        }
+      }
+    },
+    "recognizer_checkpoint_sha256": "dbb42982b44f10d2f2711dc7e5dcc88943241b51b00059485e9297cac0005826",
+    "same_medication_edges": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tn": 2520,
+      "tp": 504
+    },
+    "sample_count": 36,
+    "seed": 153
+  },
+  "model_bytes": 38140,
+  "model_id": "hashed_layout_context_v3",
+  "model_sha256": "742f2f7004a8561d3e93fd4d6c136309c04dc9bc3508c9ffb48f33549ce74a05",
+  "real_data_evaluated": false,
+  "runtime_probe": {
+    "documents_per_run": 36,
+    "environment": "host CPython; parser-only research probe, not Android",
+    "mean_ms_per_document": 14.446,
+    "release_gate": false,
+    "runs": 10
+  },
+  "schema_version": 1,
+  "semantic_pretraining": {
+    "eligible_seen": {
+      "dose": 21427,
+      "duration": 7143,
+      "frequency": 7143,
+      "other": 35715,
+      "product": 21429
+    },
+    "per_role": 2500,
+    "pretrain_epochs": 12,
+    "pretrain_model_id": "semantic_role_pretrain_v1",
+    "role_counts": {
+      "dose": 2500,
+      "duration": 2500,
+      "frequency": 2500,
+      "other": 2500,
+      "product": 2500
+    },
+    "samples_path": "/source-work/synth-100k-v5/samples.jsonl",
+    "seed": 112,
+    "selected_fingerprint": "42f1961ded451bb0b9e9f9bcc9c8276f9f939df3d01ddbf960fb11ebce7224f6"
+  }
+}

@@ -12,6 +12,7 @@ from browser_ocr.document_parsing.learned_layout import (
     assemble_rows,
     load_model,
     node_features,
+    node_role_scores,
     predict_rows,
     pretrain_node_model,
     save_model,
@@ -60,6 +61,35 @@ def _document(index: int) -> LabeledDocument:
     )
 
 
+def _same_text_context_document(index: int, *, label_context: bool) -> LabeledDocument:
+    dy = float(index % 3)
+    target_role = "other" if label_context else "duration"
+    target_group = None if label_context else "med-a"
+    if label_context:
+        nodes = (
+            _node(f"target-{index}", "1일", 400, 50 + dy, target_role, target_group),
+            _node(f"freq-{index}", "3회", 500, 50 + dy, "frequency", "med-a"),
+            _node(f"dose-{index}", "1정", 500, 90 + dy, "dose", "med-a"),
+            _node(f"days-{index}", "5일", 500, 130 + dy, "duration", "med-a"),
+            _node(f"product-{index}", "가나다정", 250, 170 + dy, "product", "med-a"),
+        )
+    else:
+        nodes = (
+            _node(f"product-{index}", "가나다정", 10, 50 + dy, "product", "med-a"),
+            _node(f"dose-{index}", "1정", 180, 50 + dy, "dose", "med-a"),
+            _node(f"freq-{index}", "3회", 290, 50 + dy, "frequency", "med-a"),
+            _node(f"target-{index}", "1일", 400, 50 + dy, target_role, target_group),
+        )
+    return LabeledDocument(
+        sample_id=f"context-{index}-{'label' if label_context else 'value'}",
+        width=640,
+        height=220,
+        nodes=nodes,
+        layout_family="contextual",
+        capture_profile="clean",
+    )
+
+
 class LearnedLayoutTest(unittest.TestCase):
     def test_node_features_are_fixed_size_and_deterministic(self) -> None:
         node = _node("dose", "0.5정", 100, 50, "dose", "med-a")
@@ -83,6 +113,23 @@ class LearnedLayoutTest(unittest.TestCase):
         self.assertEqual(rows[1]["draft"]["prescription_days"], 7)
         self.assertIn("p1-101", rows[0]["evidence"]["product_query"])
         self.assertIn("d1-101", rows[0]["evidence"]["dose_amount"])
+
+    def test_context_head_assigns_same_text_differently_from_neighbor_structure(self) -> None:
+        training = []
+        for index in range(20):
+            training.append(_same_text_context_document(index, label_context=False))
+            training.append(_same_text_context_document(index + 100, label_context=True))
+        model = train_model(training, epochs=100, seed=41)
+
+        value_doc = _same_text_context_document(1001, label_context=False)
+        label_doc = _same_text_context_document(1002, label_context=True)
+        value_scores = node_role_scores(model, value_doc)["target-1001"]
+        label_scores = node_role_scores(model, label_doc)["target-1002"]
+
+        self.assertEqual(max(value_scores, key=value_scores.get), "duration")
+        self.assertEqual(max(label_scores, key=label_scores.get), "other")
+        self.assertGreater(value_scores["duration"], 0.8)
+        self.assertGreater(label_scores["other"], 0.8)
 
     def test_relation_head_generalizes_from_rows_to_repeated_vertical_blocks(self) -> None:
         model = train_model([_document(index) for index in range(24)], epochs=80, seed=29)
@@ -117,7 +164,7 @@ class LearnedLayoutTest(unittest.TestCase):
             reloaded = load_model(path)
             self.assertEqual(reloaded, model)
             payload = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["model_id"], "hashed_layout_linear_v2")
+            self.assertEqual(payload["model_id"], "hashed_layout_context_v3")
 
     def test_semantic_pretraining_can_seed_full_document_node_training(self) -> None:
         examples = []

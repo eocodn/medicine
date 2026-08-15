@@ -7,6 +7,7 @@ from pathlib import Path
 
 from browser_ocr.document_parsing.learned_experiment import (
     aggregate_samples,
+    document_from_detection_sample,
     document_from_sample_result,
     evaluate_learned_result,
     load_semantic_examples,
@@ -47,6 +48,17 @@ class LearnedExperimentTest(unittest.TestCase):
             ],
             "medications": [],
         }
+
+    def test_detection_gt_document_preserves_full_layout_context(self) -> None:
+        document = document_from_detection_sample(self.sample)
+        self.assertEqual(document.sample_id, "sample-1")
+        self.assertEqual(len(document.nodes), 5)
+        by_text = {node.text: node for node in document.nodes}
+        self.assertEqual(by_text["가나다정"].role, "product")
+        self.assertEqual(by_text["1정"].role, "dose")
+        self.assertEqual(by_text["처방전"].role, "other")
+        self.assertEqual(by_text["처방전"].group, None)
+        self.assertEqual(by_text["가나다정"].confidence, 1.0)
 
     def test_document_maps_ocr_regions_to_gt_roles_and_marks_unmatched_as_other(self) -> None:
         document = document_from_sample_result(self.sample, self.result)

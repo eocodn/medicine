@@ -130,3 +130,58 @@ coverage or introduce a small contextual node encoder; threshold tuning or
 hard-coded OCR substitutions are not justified by this result. These numbers
 remain synthetic-only research evidence and are not a real-photo or production
 release result.
+## Contextual learned layout v3
+
+`hashed_layout_context_v3` keeps the small learned relation model but replaces
+single-box role classification with a two-stage contextual node encoder. Stage 1
+is the semantic-pretrained local role head. Stage 2 applies a learned residual
+correction using the six nearest OCR boxes, relative `dx`/`dy`/distance, visual
+row/column overlap, directional neighborhood role distributions, and document
+role context. The contextual features are built only from OCR text/confidence,
+box geometry, and Stage-1 predictions; GT roles are never fed to inference.
+
+The training/evaluation boundary is now seed-disjoint. A separate 360-document
+full-document corpus (`seed=911`) supplies contextual training labels, with 60
+samples for every layout family and 60 for every capture profile (13,140 text
+regions / 6,000 critical medication regions). The original 36-document corpus
+(`seed=153`) remains evaluation-only and is passed through the actual
+`PP-OCRv5_mobile_det@640` detector plus the selected 100k recognizer before the
+learned parser sees it. The semantic Stage-1 initializer still uses the balanced
+12,500-example sample from the retained 100k recognition corpus.
+
+The tracked model is
+`browser_ocr/document_parsing/models/hashed-layout-context-v3.json`. It is 38,140
+bytes with SHA-256
+`742f2f7004a8561d3e93fd4d6c136309c04dc9bc3508c9ffb48f33549ce74a05`.
+Two independent runs with the same seed/corpora produced byte-identical model
+JSON. On the separate 36-document detector+OCR holdout it exactly matches
+`geometry_rule_v2`: 145/168 medication rows, 580/672 critical fields, 31/36
+quality-pass documents, 36/36 safety-pass documents, zero false exact fields,
+zero cross-medication associations, and relation precision/recall/F1 of 1.0.
+All five non-quality documents are the already gated severe motion/JPEG cases;
+all other capture profiles are 6/6 exact. The legacy preprinted medication-bag
+family is 5/6 exact, with its motion/JPEG sample failing closed, so the earlier
+`1일`/`1회` label confusion is no longer present.
+
+A representative research run is:
+
+```sh
+docker compose run --rm \
+  -v /path/to/ocr-finetune-work:/source-work:ro \
+  ocr-document-learned benchmark \
+  --corpus browser_ocr/detection/corpus/manifest.json \
+  --results-root /source-work/full-document-e2e-v2 \
+  --output-dir browser_ocr/finetune/work/learned-layout-context-v3 \
+  --semantic-samples /source-work/synth-100k-v5/samples.jsonl \
+  --semantic-per-role 2500 --semantic-epochs 12 \
+  --context-train-corpus browser_ocr/finetune/work/layout-context-train-360/manifest.json \
+  --epochs 8 --seed 112 --skip-cross-validation --json
+```
+
+`results/learned-layout-context-v3-summary.json` is the tracked comparison.
+This is now a viable synthetic learned-parser candidate, but it is deliberately
+**not** made the default parser yet: no real deidentified full-document corpus or
+Android handset benchmark has been evaluated. A host-Python parser-only probe
+was about 14 ms/document and the model is only ~38 KiB, so OCR remains the likely
+mobile bottleneck, but handset measurements are still required before product
+integration.

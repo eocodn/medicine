@@ -20,6 +20,8 @@ class LearnedCliTest(unittest.TestCase):
         )
         self.assertEqual(args.epochs, 60)
         self.assertEqual(args.seed, 112)
+        self.assertIsNone(args.context_train_corpus)
+        self.assertFalse(args.skip_cross_validation)
         self.assertEqual(args.semantic_per_role, 2500)
         self.assertEqual(args.semantic_epochs, 12)
 

@@ -102,6 +102,49 @@ def document_from_sample_result(sample: Mapping[str, Any], result: Mapping[str, 
     )
 
 
+def document_from_detection_sample(sample: Mapping[str, Any]) -> LabeledDocument:
+    width = float(sample.get("width") or 0)
+    height = float(sample.get("height") or 0)
+    if width <= 0 or height <= 0:
+        raise ValueError("detection sample has invalid image dimensions")
+    regions = sample.get("regions")
+    if not isinstance(regions, list):
+        raise ValueError("detection sample regions must be a list")
+
+    nodes: list[LayoutNode] = []
+    seen_ids: set[str] = set()
+    for index, region in enumerate(regions, start=1):
+        if not isinstance(region, Mapping):
+            raise ValueError("detection sample region must be an object")
+        box_id = str(region.get("region_id") or f"gt-{index:04d}")
+        if box_id in seen_ids:
+            raise ValueError(f"duplicate detection region id: {box_id}")
+        seen_ids.add(box_id)
+        raw_role = str(region.get("semantic_role") or "other")
+        role = raw_role if raw_role in _LEARNED_ROLES else "other"
+        raw_group = str(region.get("association_group") or "")
+        group = raw_group if role in _LEARNED_ROLES and raw_group and raw_group != "document" else None
+        raw_polygon = region.get("natural_text_polygon") or region.get("polygon")
+        nodes.append(
+            LayoutNode(
+                box_id=box_id,
+                text=str(region.get("text") or ""),
+                confidence=1.0,
+                polygon=_polygon(raw_polygon),
+                role=role,
+                group=group,
+            )
+        )
+    return LabeledDocument(
+        sample_id=str(sample.get("id") or ""),
+        width=width,
+        height=height,
+        nodes=tuple(nodes),
+        layout_family=str(sample.get("layout_family") or "unknown"),
+        capture_profile=str(sample.get("capture_profile") or "unknown"),
+    )
+
+
 def learned_rows_for_result(
     sample: Mapping[str, Any],
     result: Mapping[str, Any],
@@ -301,6 +344,26 @@ def load_records(corpus_path: str | Path, results_root: str | Path) -> list[dict
     return records
 
 
+def load_detection_documents(corpus_path: str | Path) -> tuple[list[LabeledDocument], dict[str, Any]]:
+    path = Path(corpus_path)
+    corpus = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(corpus, Mapping) or not isinstance(corpus.get("samples"), list):
+        raise ValueError("detection training corpus must contain samples")
+    documents = [document_from_detection_sample(sample) for sample in corpus["samples"]]
+    layout_counts = Counter(document.layout_family for document in documents)
+    capture_counts = Counter(document.capture_profile for document in documents)
+    generator = corpus.get("generator") if isinstance(corpus.get("generator"), Mapping) else {}
+    return documents, {
+        "corpus_path": str(path),
+        "corpus_id": str(corpus.get("corpus_id") or ""),
+        "sample_count": len(documents),
+        "layout_counts": dict(sorted(layout_counts.items())),
+        "capture_counts": dict(sorted(capture_counts.items())),
+        "generator_fingerprint": str(generator.get("fingerprint") or ""),
+        "seed": generator.get("seed"),
+    }
+
+
 def _evaluate_records(model: Mapping[str, object], records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     learned_samples = [evaluate_learned_result(record["sample"], record["result"], model) for record in records]
     baseline_samples = [evaluate_sample(record["sample"], record["result"]) for record in records]
@@ -378,10 +441,17 @@ def run_benchmark(
     semantic_samples_path: str | Path | None = None,
     semantic_per_role: int = 2500,
     semantic_epochs: int = 12,
+    context_train_corpus_path: str | Path | None = None,
+    run_cross_validation: bool = True,
 ) -> dict[str, Any]:
     records = load_records(corpus_path, results_root)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    context_training_metadata: dict[str, Any] | None = None
+    if context_train_corpus_path is not None:
+        final_training_documents, context_training_metadata = load_detection_documents(context_train_corpus_path)
+    else:
+        final_training_documents = [record["document"] for record in records]
     semantic_metadata: dict[str, Any] | None = None
     node_initializer: Mapping[str, object] | None = None
     if semantic_samples_path is not None:
@@ -400,22 +470,25 @@ def run_benchmark(
             "pretrain_epochs": semantic_epochs,
             "pretrain_model_id": node_initializer["model_id"],
         }
-    capture_cv = cross_validate(
-        records,
-        axis="capture_profile",
-        epochs=epochs,
-        seed=seed,
-        node_initializer=node_initializer,
-    )
-    layout_cv = cross_validate(
-        records,
-        axis="layout_family",
-        epochs=epochs,
-        seed=seed + 1000,
-        node_initializer=node_initializer,
-    )
+    capture_cv = None
+    layout_cv = None
+    if run_cross_validation:
+        capture_cv = cross_validate(
+            records,
+            axis="capture_profile",
+            epochs=epochs,
+            seed=seed,
+            node_initializer=node_initializer,
+        )
+        layout_cv = cross_validate(
+            records,
+            axis="layout_family",
+            epochs=epochs,
+            seed=seed + 1000,
+            node_initializer=node_initializer,
+        )
     final_model = train_model(
-        [record["document"] for record in records],
+        final_training_documents,
         epochs=epochs,
         seed=seed + 2000,
         node_initializer=node_initializer,
@@ -428,14 +501,16 @@ def run_benchmark(
     report = {
         "schema_version": 1,
         "model_id": final_model["model_id"],
-        "training_samples": len(records),
+        "training_samples": len(final_training_documents),
+        "evaluation_samples": len(records),
+        "context_training": context_training_metadata,
         "epochs": epochs,
         "seed": seed,
         "model_bytes": model_path.stat().st_size,
         "semantic_pretraining": semantic_metadata,
         "capture_profile_cv": capture_cv,
         "layout_family_cv": layout_cv,
-        "in_sample": in_sample,
+        "heldout_evaluation" if context_training_metadata is not None else "in_sample": in_sample,
     }
     report_path = output / "report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -445,9 +520,11 @@ def run_benchmark(
 __all__ = [
     "aggregate_samples",
     "cross_validate",
+    "document_from_detection_sample",
     "document_from_sample_result",
     "evaluate_learned_result",
     "learned_rows_for_result",
+    "load_detection_documents",
     "load_records",
     "load_semantic_examples",
     "run_benchmark",

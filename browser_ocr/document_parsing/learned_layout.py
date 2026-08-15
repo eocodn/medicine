@@ -3,29 +3,25 @@ from __future__ import annotations
 import json
 import math
 import random
-import re
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from .learned_context import context_feature_dim as _context_feature_dim, contextual_node_features
+from .learned_decode import assemble_rows
 from .learned_features import (
-    DOSE_VALUE as _DOSE_VALUE,
-    DURATION_VALUE as _DURATION_VALUE,
-    FREQUENCY_VALUE as _FREQUENCY_VALUE,
     NODE_FEATURE_DIM,
-    PACKET_TABLET as _PACKET_TABLET,
     LayoutNode,
     LabeledDocument,
     SemanticExample,
-    center as _center,
-    compact as _compact,
     edge_features as _edge_features,
     node_features,
 )
 
 
-MODEL_ID = "hashed_layout_linear_v2"
+MODEL_ID = "hashed_layout_context_v3"
 ROLE_LABELS = ("product", "dose", "frequency", "duration", "other")
 _ROLE_INDEX = {label: index for index, label in enumerate(ROLE_LABELS)}
+CONTEXT_FEATURE_DIM = _context_feature_dim(len(ROLE_LABELS))
 
 
 def _softmax(scores: Sequence[float]) -> list[float]:
@@ -45,6 +41,32 @@ def _sigmoid(value: float) -> float:
 
 def _dot(weights: Sequence[float], features: Sequence[float]) -> float:
     return sum(weight * feature for weight, feature in zip(weights, features, strict=True))
+
+
+def _class_probabilities(
+    weights: Sequence[Sequence[float]],
+    bias: Sequence[float],
+    features: Sequence[float],
+) -> list[float]:
+    return _softmax(
+        [
+            _dot(class_weights, features) + float(class_bias)
+            for class_weights, class_bias in zip(weights, bias, strict=True)
+        ]
+    )
+
+
+def _local_node_role_scores(
+    weights: Sequence[Sequence[float]],
+    bias: Sequence[float],
+    document: LabeledDocument,
+) -> dict[str, dict[str, float]]:
+    result: dict[str, dict[str, float]] = {}
+    for node in document.nodes:
+        features = node_features(node, width=document.width, height=document.height)
+        probabilities = _class_probabilities(weights, bias, features)
+        result[node.box_id] = {role: probabilities[index] for index, role in enumerate(ROLE_LABELS)}
+    return result
 
 
 def _node_examples(documents: Sequence[LabeledDocument]) -> list[tuple[list[float], int]]:
@@ -106,6 +128,57 @@ def _fit_node_classifier(
                 for feature_index, feature in enumerate(features):
                     row[feature_index] -= rate * (delta * feature + l2 * row[feature_index])
                 bias[class_index] -= rate * delta
+
+
+def _fit_context_classifier(
+    examples: list[tuple[list[float], int, list[float]]],
+    *,
+    weights: list[list[float]],
+    bias: list[float],
+    epochs: int,
+    rng: random.Random,
+    learning_rate: float,
+    l2: float,
+) -> None:
+    class_counts = [0] * len(ROLE_LABELS)
+    for _, label, _ in examples:
+        class_counts[label] += 1
+    class_weights = [
+        len(examples) / (len(ROLE_LABELS) * count) if count else 0.0
+        for count in class_counts
+    ]
+    for epoch in range(epochs):
+        rng.shuffle(examples)
+        rate = learning_rate / math.sqrt(epoch + 1.0)
+        for features, label, local_probabilities in examples:
+            base_logits = [math.log(max(probability, 1e-9)) for probability in local_probabilities]
+            scores = [
+                base_logits[index] + _dot(row, features) + float(bias[index])
+                for index, row in enumerate(weights)
+            ]
+            probabilities = _softmax(scores)
+            sample_weight = min(class_weights[label], 4.0)
+            for class_index in range(len(ROLE_LABELS)):
+                delta = (probabilities[class_index] - (1.0 if class_index == label else 0.0)) * sample_weight
+                row = weights[class_index]
+                for feature_index, feature in enumerate(features):
+                    row[feature_index] -= rate * (delta * feature + l2 * row[feature_index])
+                bias[class_index] -= rate * delta
+
+
+def _context_probabilities(
+    weights: Sequence[Sequence[float]],
+    bias: Sequence[float],
+    features: Sequence[float],
+    local_probabilities: Sequence[float],
+) -> list[float]:
+    base_logits = [math.log(max(probability, 1e-9)) for probability in local_probabilities]
+    return _softmax(
+        [
+            base_logits[index] + _dot(row, features) + float(bias[index])
+            for index, row in enumerate(weights)
+        ]
+    )
 
 
 def pretrain_node_model(
@@ -210,6 +283,30 @@ def train_model(
         l2=l2,
     )
 
+    context_examples: list[tuple[list[float], int, list[float]]] = []
+    for document in documents:
+        local_scores = _local_node_role_scores(node_weights, node_bias, document)
+        for node in document.nodes:
+            role = node.role if node.role in _ROLE_INDEX else "other"
+            context_examples.append(
+                (
+                    contextual_node_features(document, node, local_scores, ROLE_LABELS),
+                    _ROLE_INDEX[role],
+                    [local_scores[node.box_id][label] for label in ROLE_LABELS],
+                )
+            )
+    context_weights = [[0.0] * CONTEXT_FEATURE_DIM for _ in ROLE_LABELS]
+    context_bias = [0.0] * len(ROLE_LABELS)
+    _fit_context_classifier(
+        context_examples,
+        weights=context_weights,
+        bias=context_bias,
+        epochs=epochs,
+        rng=rng,
+        learning_rate=learning_rate,
+        l2=l2,
+    )
+
     edge_dim = len(edge_examples[0][0])
     edge_weights = [0.0] * edge_dim
     edge_bias = 0.0
@@ -229,9 +326,8 @@ def train_model(
             edge_bias -= rate * delta
 
     false_critical_confidences: list[float] = []
-    for features, label in node_examples:
-        scores = [_dot(weights, features) + bias for weights, bias in zip(node_weights, node_bias, strict=True)]
-        probabilities = _softmax(scores)
+    for features, label, local_probabilities in context_examples:
+        probabilities = _context_probabilities(context_weights, context_bias, features, local_probabilities)
         predicted = max(range(len(ROLE_LABELS)), key=lambda index: probabilities[index])
         if predicted != label and ROLE_LABELS[predicted] != "other":
             false_critical_confidences.append(probabilities[predicted])
@@ -259,6 +355,9 @@ def train_model(
         "node_feature_dim": NODE_FEATURE_DIM,
         "node_weights": node_weights,
         "node_bias": node_bias,
+        "context_feature_dim": CONTEXT_FEATURE_DIM,
+        "context_weights": context_weights,
+        "context_bias": context_bias,
         "edge_feature_dim": edge_dim,
         "edge_weights": edge_weights,
         "edge_bias": edge_bias,
@@ -275,6 +374,7 @@ def train_model(
         "training": {
             "documents": len(documents),
             "node_examples": len(node_examples),
+            "context_examples": len(context_examples),
             "edge_examples": len(edge_examples),
             "epochs": epochs,
             "seed": seed,
@@ -295,25 +395,29 @@ def load_model(path: str | Path) -> dict[str, object]:
     value = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("model_id") != MODEL_ID:
         raise ValueError("unsupported learned layout model")
-    if value.get("roles") != list(ROLE_LABELS) or value.get("node_feature_dim") != NODE_FEATURE_DIM:
+    if (
+        value.get("roles") != list(ROLE_LABELS)
+        or value.get("node_feature_dim") != NODE_FEATURE_DIM
+        or value.get("context_feature_dim") != CONTEXT_FEATURE_DIM
+    ):
         raise ValueError("learned layout model feature contract mismatch")
     return value
 
 
 def node_role_scores(model: Mapping[str, object], document: LabeledDocument) -> dict[str, dict[str, float]]:
-    weights = model["node_weights"]
-    bias = model["node_bias"]
-    if not isinstance(weights, list) or not isinstance(bias, list):
-        raise ValueError("invalid node model weights")
+    node_weights = model["node_weights"]
+    node_bias = model["node_bias"]
+    context_weights = model["context_weights"]
+    context_bias = model["context_bias"]
+    if not all(isinstance(value, list) for value in (node_weights, node_bias, context_weights, context_bias)):
+        raise ValueError("invalid contextual node model weights")
+    local_scores = _local_node_role_scores(node_weights, node_bias, document)
     result: dict[str, dict[str, float]] = {}
     for node in document.nodes:
-        features = node_features(node, width=document.width, height=document.height)
-        scores = [
-            _dot(class_weights, features) + float(class_bias)
-            for class_weights, class_bias in zip(weights, bias, strict=True)
-        ]
-        probs = _softmax(scores)
-        result[node.box_id] = {role: probs[index] for index, role in enumerate(ROLE_LABELS)}
+        features = contextual_node_features(document, node, local_scores, ROLE_LABELS)
+        local_probabilities = [local_scores[node.box_id][role] for role in ROLE_LABELS]
+        probabilities = _context_probabilities(context_weights, context_bias, features, local_probabilities)
+        result[node.box_id] = {role: probabilities[index] for index, role in enumerate(ROLE_LABELS)}
     return result
 
 
@@ -342,107 +446,6 @@ def edge_score(
     if not isinstance(weights, list):
         raise ValueError("invalid edge model weights")
     return _sigmoid(_dot(weights, features) + float(model["edge_bias"]))
-
-
-def _unit(raw: str) -> str:
-    lowered = raw.lower()
-    if lowered in {"정", "tablet"}:
-        return "tablet"
-    if lowered in {"캡슐", "capsule"}:
-        return "capsule"
-    if lowered == "포":
-        return "packet"
-    if lowered == "ml":
-        return "mL"
-    return raw
-
-
-def _field_values(role: str, text: str) -> dict[str, object]:
-    compact = _compact(text)
-    if role == "dose":
-        packet_tablet = _PACKET_TABLET.fullmatch(compact)
-        if packet_tablet:
-            amount = float(packet_tablet.group(1))
-            return {
-                "dose_amount": int(amount) if amount.is_integer() else amount,
-                "dosage_text": compact,
-            }
-        match = _DOSE_VALUE.fullmatch(compact)
-        if match:
-            amount = float(match.group(1))
-            return {
-                "dose_amount": int(amount) if amount.is_integer() else amount,
-                "dose_unit": _unit(match.group(2)),
-            }
-    if role == "frequency" and (match := _FREQUENCY_VALUE.fullmatch(compact)):
-        return {"frequency_per_day": int(match.group(1))}
-    if role == "duration" and (match := _DURATION_VALUE.fullmatch(compact)):
-        return {"prescription_days": int(match.group(1))}
-    return {}
-
-
-def _clean_product(text: str) -> str:
-    value = _compact(text)
-    return re.sub(r"^(?:약명|제품명|약품명|의약품명)[:：]?", "", value).strip()
-
-
-def assemble_rows(
-    *,
-    products: Sequence[LayoutNode],
-    fields: Sequence[tuple[str, LayoutNode]],
-    edge_scores: Mapping[tuple[str, str], float],
-    edge_threshold: float,
-    edge_margin: float,
-) -> list[dict[str, object]]:
-    ordered_products = sorted(products, key=lambda node: (_center(node)[1], _center(node)[0], node.box_id))
-    rows: list[dict[str, object]] = []
-    row_by_product: dict[str, dict[str, object]] = {}
-    for product in ordered_products:
-        product_query = _clean_product(product.text)
-        if not product_query:
-            continue
-        row = {
-            "row_id": product.box_id,
-            "product_query": product_query,
-            "draft": {},
-            "uncertainty_codes": [],
-            "evidence": {"product_query": [product.box_id]},
-        }
-        rows.append(row)
-        row_by_product[product.box_id] = row
-
-    selected: dict[tuple[str, str], tuple[float, LayoutNode]] = {}
-    for role, field in fields:
-        ranked = sorted(
-            ((float(edge_scores.get((product.box_id, field.box_id), 0.0)), product) for product in ordered_products),
-            key=lambda item: (item[0], item[1].box_id),
-            reverse=True,
-        )
-        if not ranked:
-            continue
-        best_score, best_product = ranked[0]
-        second_score = ranked[1][0] if len(ranked) > 1 else 0.0
-        if best_score < edge_threshold or best_score - second_score < edge_margin:
-            continue
-        key = (best_product.box_id, role)
-        previous = selected.get(key)
-        if previous is None or best_score > previous[0]:
-            selected[key] = (best_score, field)
-
-    for (product_id, role), (_, field) in selected.items():
-        row = row_by_product.get(product_id)
-        if row is None:
-            continue
-        values = _field_values(role, field.text)
-        if not values:
-            continue
-        draft = row["draft"]
-        evidence = row["evidence"]
-        assert isinstance(draft, dict) and isinstance(evidence, dict)
-        for name, value in values.items():
-            draft[name] = value
-            evidence[name] = [field.box_id]
-    return rows
 
 
 def predict_rows(model: Mapping[str, object], document: LabeledDocument) -> list[dict[str, object]]:

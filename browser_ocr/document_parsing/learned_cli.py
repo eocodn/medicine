@@ -36,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--semantic-samples")
     benchmark.add_argument("--semantic-per-role", type=int, default=2500)
     benchmark.add_argument("--semantic-epochs", type=int, default=12)
+    benchmark.add_argument("--context-train-corpus")
+    benchmark.add_argument("--skip-cross-validation", action="store_true")
     benchmark.add_argument("--json", action="store_true")
 
     predict = subparsers.add_parser("predict-result")
@@ -61,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
                 semantic_samples_path=args.semantic_samples,
                 semantic_per_role=args.semantic_per_role,
                 semantic_epochs=args.semantic_epochs,
+                context_train_corpus_path=args.context_train_corpus,
+                run_cross_validation=not args.skip_cross_validation,
             )
             _emit(report, json_output)
             return 0
