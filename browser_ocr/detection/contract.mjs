@@ -52,13 +52,48 @@ function validateGates(gates) {
   }
 }
 
+function validateGenerator(generator) {
+  if (!generator || typeof generator !== "object" || Array.isArray(generator)) fail("generator must be an object");
+  if (generator.id !== "medicine_full_document_synthetic") fail("generator.id is unsupported");
+  if (generator.version !== 2) fail("generator.version must be 2");
+  if (!Number.isInteger(generator.revision) || generator.revision <= 0) fail("generator.revision must be a positive integer");
+  if (!Number.isInteger(generator.seed)) fail("generator.seed must be an integer");
+  if (!Number.isInteger(generator.count) || generator.count <= 0) fail("generator.count must be a positive integer");
+  if (!SHA256.test(generator.fingerprint)) fail("generator.fingerprint must be lowercase SHA-256");
+}
+
+function validateCapture(capture, sampleId, captureProfile) {
+  if (!capture || typeof capture !== "object" || Array.isArray(capture)) fail(`${sampleId}.capture must be an object`);
+  if (capture.profile !== captureProfile) fail(`${sampleId}.capture.profile must match capture_profile`);
+  for (const key of ["scale", "angle_degrees", "shear_x", "shear_y", "blur_px", "contrast", "brightness", "glare_opacity", "shadow_opacity"]) {
+    finiteNumber(capture[key], `${sampleId}.capture.${key}`);
+  }
+  if (!Array.isArray(capture.matrix) || capture.matrix.length !== 6) fail(`${sampleId}.capture.matrix must have six coefficients`);
+  for (const [index, value] of capture.matrix.entries()) finiteNumber(value, `${sampleId}.capture.matrix[${index}]`);
+  if (capture.scale <= 0 || capture.scale > 1.2) fail(`${sampleId}.capture.scale is out of range`);
+  if (capture.blur_px < 0 || capture.blur_px > 3) fail(`${sampleId}.capture.blur_px is out of range`);
+  if (capture.contrast <= 0 || capture.contrast > 2) fail(`${sampleId}.capture.contrast is out of range`);
+  if (capture.brightness <= 0 || capture.brightness > 2) fail(`${sampleId}.capture.brightness is out of range`);
+  if (capture.glare_opacity < 0 || capture.glare_opacity > 1) fail(`${sampleId}.capture.glare_opacity is out of range`);
+  if (capture.shadow_opacity < 0 || capture.shadow_opacity > 1) fail(`${sampleId}.capture.shadow_opacity is out of range`);
+}
+
 export function validateCorpus(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) fail("root must be an object");
-  if (input.schema_version !== 1) fail("schema_version must be 1");
+  if (![1, 2].includes(input.schema_version)) fail("schema_version must be 1 or 2");
+  const enhancedSynthetic = input.schema_version === 2;
   if (typeof input.corpus_id !== "string" || !input.corpus_id.trim()) fail("corpus_id is required");
   if (typeof input.synthetic_only !== "boolean") fail("synthetic_only must be boolean");
+  if (enhancedSynthetic) {
+    if (!input.synthetic_only) fail("schema v2 is reserved for procedural synthetic corpora");
+    validateGenerator(input.generator);
+    if (!input.provenance || input.provenance.kind !== "procedural_synthetic" || input.provenance.patient_data !== false) {
+      fail("provenance must declare procedural_synthetic with patient_data=false");
+    }
+  }
   validateGates(input.gates);
   if (!Array.isArray(input.samples) || input.samples.length === 0) fail("samples must be non-empty");
+  if (enhancedSynthetic && input.generator.count !== input.samples.length) fail("generator.count must equal samples.length");
 
   const sampleIds = new Set();
   for (const sample of input.samples) {
@@ -72,6 +107,12 @@ export function validateCorpus(input) {
     if (!SHA256.test(sample.image_sha256)) fail(`${sample.id}.image_sha256 must be lowercase SHA-256`);
     if (!Number.isInteger(sample.width) || sample.width <= 0) fail(`${sample.id}.width must be a positive integer`);
     if (!Number.isInteger(sample.height) || sample.height <= 0) fail(`${sample.id}.height must be a positive integer`);
+    if (enhancedSynthetic) {
+      if (typeof sample.layout_family !== "string" || !sample.layout_family.trim()) fail(`${sample.id}.layout_family is required`);
+      if (typeof sample.capture_profile !== "string" || !sample.capture_profile.trim()) fail(`${sample.id}.capture_profile is required`);
+      if (!Number.isInteger(sample.sample_index) || sample.sample_index < 0) fail(`${sample.id}.sample_index must be a non-negative integer`);
+      validateCapture(sample.capture, sample.id, sample.capture_profile);
+    }
     uniqueStrings(sample.scenario_tags, `${sample.id}.scenario_tags`);
     uniqueStrings(sample.risk_tags, `${sample.id}.risk_tags`);
     if (!Array.isArray(sample.regions) || sample.regions.length === 0) fail(`${sample.id}.regions must be non-empty`);
@@ -83,6 +124,7 @@ export function validateCorpus(input) {
       if (regionIds.has(region.region_id)) fail(`${sample.id} has duplicate region ${region.region_id}`);
       regionIds.add(region.region_id);
       if (typeof region.text !== "string" || !region.text.trim()) fail(`${sample.id}.${region.region_id}.text is required`);
+      if (enhancedSynthetic) validatePolygon(region.source_polygon, sample.width, sample.height, `${sample.id}.${region.region_id}.source_polygon`);
       validatePolygon(region.polygon, sample.width, sample.height, `${sample.id}.${region.region_id}.polygon`);
       if (typeof region.critical !== "boolean") fail(`${sample.id}.${region.region_id}.critical must be boolean`);
       if (typeof region.association_group !== "string" || !region.association_group.trim()) {
@@ -90,6 +132,14 @@ export function validateCorpus(input) {
       }
       if (typeof region.semantic_role !== "string" || !region.semantic_role.trim()) {
         fail(`${sample.id}.${region.region_id}.semantic_role is required`);
+      }
+      if (enhancedSynthetic) {
+        if (!["medication", "context", "distractor"].includes(region.region_class)) {
+          fail(`${sample.id}.${region.region_id}.region_class is invalid`);
+        }
+        if (!Number.isInteger(region.font_size_px) || region.font_size_px <= 0) {
+          fail(`${sample.id}.${region.region_id}.font_size_px must be a positive integer`);
+        }
       }
     }
   }

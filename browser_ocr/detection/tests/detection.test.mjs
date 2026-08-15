@@ -9,10 +9,31 @@ import { evaluateDetections } from "../evaluation.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
 
 function tinyCorpus() {
+  const identityCapture = {
+    profile: "flat_clean",
+    scale: 1,
+    angle_degrees: 0,
+    shear_x: 0,
+    shear_y: 0,
+    blur_px: 0,
+    contrast: 1,
+    brightness: 1,
+    glare_opacity: 0,
+    shadow_opacity: 0,
+    matrix: [1, 0, 0, 1, 0, 0],
+  };
+  const taggedRegion = (value) => ({
+    ...value,
+    source_polygon: value.polygon.map((point) => [...point]),
+    region_class: value.critical ? "medication" : "context",
+    font_size_px: 24,
+  });
   return {
-    schema_version: 1,
+    schema_version: 2,
     corpus_id: "tiny",
     synthetic_only: true,
+    generator: { id: "medicine_full_document_synthetic", version: 2, revision: 1, seed: 1, count: 1, fingerprint: "b".repeat(64) },
+    provenance: { kind: "procedural_synthetic", patient_data: false },
     gates: {
       min_recall: 1,
       min_precision: 1,
@@ -27,12 +48,16 @@ function tinyCorpus() {
       image_sha256: "a".repeat(64),
       width: 200,
       height: 100,
+      sample_index: 0,
+      layout_family: "prescription_table",
+      capture_profile: "flat_clean",
+      capture: identityCapture,
       scenario_tags: ["prescription_table"],
       risk_tags: ["row_association"],
       regions: [
-        { region_id: "a", text: "약A", polygon: [[10, 10], [80, 10], [80, 35], [10, 35]], critical: true, association_group: "row-a", semantic_role: "product" },
-        { region_id: "b", text: "1정", polygon: [[100, 10], [150, 10], [150, 35], [100, 35]], critical: true, association_group: "row-a", semantic_role: "dose" },
-        { region_id: "c", text: "약B", polygon: [[10, 55], [80, 55], [80, 80], [10, 80]], critical: true, association_group: "row-b", semantic_role: "product" },
+        taggedRegion({ region_id: "a", text: "약A", polygon: [[10, 10], [80, 10], [80, 35], [10, 35]], critical: true, association_group: "row-a", semantic_role: "product" }),
+        taggedRegion({ region_id: "b", text: "1정", polygon: [[100, 10], [150, 10], [150, 35], [100, 35]], critical: true, association_group: "row-a", semantic_role: "dose" }),
+        taggedRegion({ region_id: "c", text: "약B", polygon: [[10, 55], [80, 55], [80, 80], [10, 80]], critical: true, association_group: "row-b", semantic_role: "product" }),
       ],
     }],
   };
@@ -44,6 +69,24 @@ test("contract validates strict full-document quadrilateral corpus", () => {
   const broken = tinyCorpus();
   broken.samples[0].regions[0].polygon[0] = [-1, 10];
   assert.throws(() => validateCorpus(broken), /outside image bounds/);
+
+  const genericV1 = tinyCorpus();
+  genericV1.schema_version = 1;
+  genericV1.synthetic_only = false;
+  delete genericV1.generator;
+  delete genericV1.provenance;
+  for (const sample of genericV1.samples) {
+    delete sample.sample_index;
+    delete sample.layout_family;
+    delete sample.capture_profile;
+    delete sample.capture;
+    for (const region of sample.regions) {
+      delete region.source_polygon;
+      delete region.region_class;
+      delete region.font_size_px;
+    }
+  }
+  assert.equal(validateCorpus(genericV1).schema_version, 1);
 });
 
 test("synthetic generator is deterministic and emits valid full documents", async () => {

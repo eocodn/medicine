@@ -51,7 +51,7 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace
-    command: ["sh", "-lc", "node --test browser_ocr/detection/tests/*.test.mjs && node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json"]
+    command: ["sh", "-lc", "node --test browser_ocr/detection/tests/*.test.mjs && node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json && node browser_ocr/detection/cli.mjs audit --corpus browser_ocr/detection/corpus/manifest.json --json"]
 
   ocr-eval:
     build:

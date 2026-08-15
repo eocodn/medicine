@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1600" viewBox="0 0 1280 1600">
+<defs>
+  <filter id="capture-filter" x="-10%" y="-10%" width="120%" height="120%">
+    <feComponentTransfer>
+      <feFuncR type="linear" slope="1" intercept="0"/>
+      <feFuncG type="linear" slope="1" intercept="0"/>
+      <feFuncB type="linear" slope="1" intercept="0"/>
+    </feComponentTransfer>
+  </filter>
+  <radialGradient id="capture-glare" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+    <stop offset="55%" stop-color="#ffffff" stop-opacity="0.45"/>
+    <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+<rect width="1280" height="1600" fill="#d8d6d0"/>
+<g id="capture-flat_clean" transform="matrix(1 0 0 1 0 0)" filter="url(#capture-filter)">
+<rect x="42" y="35" width="1195" height="1515" rx="24" fill="#ffffff" stroke="#c7c7c7" stroke-width="2"/>
+<rect x="60" y="270" width="1160" height="690" fill="#fbfbfb" stroke="#dedede"/>
+<rect x="900" y="1265" width="210" height="210" fill="#f0f0f0" stroke="#555"/>
+<path d="M920 1290 h45 v45 h-45z M995 1290 h70 v30 h-70z M920 1360 h30 v65 h-30z M980 1350 h80 v80 h-80z" fill="#333"/>
+<text x="70" y="108" textLength="420" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="46" fill="#202020">우리동네약국</text>
+<text x="760" y="111" textLength="330" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="44" fill="#202020">복 약 안 내</text>
+<text x="80" y="204" textLength="300" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="29" fill="#202020">복약자 홍○○</text>
+<text x="420" y="204" textLength="330" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="29" fill="#202020">처방 온누리소아청소년과</text>
+<text x="820" y="204" textLength="300" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="29" fill="#202020">조제 2026-08-12</text>
+<text x="75" y="338" textLength="290" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">타이레놀정</text>
+<text x="430" y="338" textLength="120" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">1정</text>
+<text x="660" y="338" textLength="110" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">2회</text>
+<text x="875" y="338" textLength="110" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">3일</text>
+<text x="1020" y="335" textLength="180" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="30" fill="#202020">아침 저녁</text>
+<text x="75" y="488" textLength="290" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">아목시실린캡슐</text>
+<text x="430" y="488" textLength="120" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">2정</text>
+<text x="660" y="488" textLength="110" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">3회</text>
+<text x="875" y="488" textLength="110" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">4일</text>
+<text x="1020" y="485" textLength="180" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="30" fill="#202020">식후 30분</text>
+<text x="75" y="638" textLength="290" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">알마게이트정</text>
+<text x="430" y="638" textLength="120" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">0.5정</text>
+<text x="660" y="638" textLength="110" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">2회</text>
+<text x="875" y="638" textLength="110" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">5일</text>
+<text x="1020" y="635" textLength="180" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="30" fill="#202020">아침 저녁</text>
+<text x="75" y="788" textLength="290" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">이부프로펜정</text>
+<text x="430" y="788" textLength="120" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">2정</text>
+<text x="660" y="788" textLength="110" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">3회</text>
+<text x="875" y="788" textLength="110" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">6일</text>
+<text x="1020" y="785" textLength="180" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="30" fill="#202020">식후 30분</text>
+<text x="80" y="998" textLength="180" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="34" fill="#202020">주의사항</text>
+<text x="80" y="1061" textLength="760" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="26" fill="#202020">운전 또는 위험한 기계 조작 전 졸림 여부를 확인하세요.</text>
+<text x="80" y="1121" textLength="850" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="26" fill="#202020">이상반응이 지속되면 복용을 중단하지 말고 의료진과 상의하세요.</text>
+<text x="80" y="1206" textLength="500" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="26" fill="#202020">보관방법  실온 / 직사광선 피함</text>
+<text x="80" y="1351" textLength="610" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="25" fill="#202020">조제번호 000123   본인부담금 12,300원</text>
+<text x="925" y="1345" textLength="180" lengthAdjust="spacingAndGlyphs" font-family="Noto Sans CJK KR, sans-serif" font-size="24" fill="#202020">복약정보 QR</text>
+</g>
+
+</svg>

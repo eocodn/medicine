@@ -14,13 +14,28 @@ It intentionally does not depend on the recognition fine-tuning or document-pars
 - Evaluation reports conventional recall/precision/Hmean, plus medicine-specific `critical_box_recall`, `merge_errors`, `cross_association_merges`, and `split_errors`.
 - The tracked seed corpus is synthetic only. It is a harness fixture, not evidence of real-photo generalization.
 
+## Full-document synthetic pipeline
+
+Generator v2 is designed to scale beyond the original six-document harness while keeping the ground truth authoritative and resumable.
+
+- Four procedural layout families: prescription table, classic medication bag, counseling/information-dense medication bag, and pharmacy information sheet.
+- Four capture profiles: clean flat scan, oblique affine phone capture, low-contrast blur, and glare/shadow/plastic-reflection stress.
+- Every visible synthetic text item is annotated. Medication fields, contextual fields, and distractor text are separate `region_class` values.
+- Each text region stores both its local `source_polygon` and the final transformed `polygon`, so geometry remains exact after the deterministic capture transform.
+- Generation is deterministic per sample index, uses an exclusive output lock, atomically writes images/checkpoints/manifests, verifies checkpoint image hashes on resume, and rejects seed/count/config drift. The generator revision is part of the fingerprint so implementation changes cannot silently reuse an older completed corpus.
+- Long runs emit progress on stderr while JSON results remain clean on stdout.
+- Coverage auditing fails closed if required layout, capture, risk, or critical medication-field strata disappear.
+
+The current capture transform is affine. It covers rotation, scale, bounded shear, blur, contrast/brightness shifts, glare, shadow, and crease-like reflection artifacts. True projective/perspective warping is intentionally left as a later raster-rendering extension rather than approximated with incorrect ground-truth geometry.
+
 ## Agent Control CLI
 
 All commands support machine-readable JSON output.
 
 ```sh
-node browser_ocr/detection/cli.mjs generate --output /tmp/detection-corpus --count 30 --seed 153 --json
+node browser_ocr/detection/cli.mjs generate --output /tmp/detection-corpus --count 1600 --seed 153 --json
 node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json
+node browser_ocr/detection/cli.mjs audit --corpus browser_ocr/detection/corpus/manifest.json --json
 node browser_ocr/detection/cli.mjs matrix --json
 node browser_ocr/detection/cli.mjs evaluate --corpus /path/to/manifest.json --predictions /path/to/predictions.json --json
 ```
