@@ -18,7 +18,7 @@ from .product_flags import apply_product_flag_fallbacks, build_product_flag_chec
 from .safety import age_years
 
 
-EVALUATOR_VERSION = "7-canonical"
+EVALUATOR_VERSION = "8-canonical"
 
 
 def _fallback_product(medication: Mapping[str, Any]) -> dict[str, Any]:
@@ -158,7 +158,10 @@ def assess_medication(
         as_of=as_of,
     )
     dur_checks.extend(build_product_flag_checks(product))
-    requires_review = any(item.get("status") in {"hit", "unknown"} for item in dur_checks)
+    requires_review = any(
+        item.get("status") in {"hit", "conditional", "unknown"}
+        for item in dur_checks
+    )
     return {
         "evaluator_version": EVALUATOR_VERSION,
         "dataset": dataset,
@@ -209,13 +212,13 @@ def has_dur_alert(assessment: Mapping[str, Any]) -> bool:
     """Return whether an assessment contains an actual current DUR finding.
 
     Generic review-only states such as pediatric dosing uncertainty or incomplete
-    coverage are intentionally excluded: the persistent medication-list marker
-    means that a DUR danger/warning matched or a quantitative DUR limit was
-    exceeded, not merely that the evaluator could not conclude something.
+    coverage are intentionally excluded. A rule-specific conditional finding is
+    retained because an authoritative DUR rule is known to apply subject to a
+    condition that still needs review.
     """
     dur_checks = assessment.get("dur_checks") or []
     if dur_checks:
-        return any(item.get("status") == "hit" for item in dur_checks)
+        return any(item.get("status") in {"hit", "conditional"} for item in dur_checks)
     return (
         any(
             risk.get("severity") in {"danger", "warning"}

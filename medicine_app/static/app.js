@@ -362,17 +362,20 @@ function renderRiskSheet(preview, medication = null) {
   const root = $("#risk-sheet-content");
   const durChecks = preview.dur_checks || [];
   const hitCount = durChecks.filter((item) => item.status === "hit").length;
+  const conditionalCount = durChecks.filter((item) => item.status === "conditional").length;
   const unknownCount = durChecks.filter((item) => item.status === "unknown").length;
   const clearDurCoverage = hasClearDurCoverage(preview);
   const statusHeading = medication
     ? "처방 정보를 수정합니다"
     : hitCount
       ? `DUR 주의사항 ${hitCount}건이 있어요`
-      : unknownCount
-        ? `확인이 필요한 DUR 항목 ${unknownCount}건이 있어요`
-        : clearDurCoverage
-          ? "DUR 주의사항 없음"
-          : "DUR 판정 결과를 확인할 수 없어요";
+      : conditionalCount
+        ? `조건 확인이 필요한 DUR 항목 ${conditionalCount}건이 있어요`
+        : unknownCount
+          ? `확인이 필요한 DUR 항목 ${unknownCount}건이 있어요`
+          : clearDurCoverage
+            ? "DUR 주의사항 없음"
+            : "DUR 판정 결과를 확인할 수 없어요";
   root.innerHTML = `
     <div class="sheet-header">
       <div><p class="eyebrow">DUR CHECK</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>

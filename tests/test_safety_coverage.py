@@ -24,6 +24,11 @@ def make_canonical_db(path: Path) -> None:
     add_product(con, "MFDS-M", "정량비교졸피뎀", "Zolpidem", dosage_form="정제", edi="P-LINK")
     add_product(con, "MFDS-AGE-T", "세티리진정", "Cetirizine", dosage_form=None)
     add_product(con, "MFDS-AGE-U", "세티리진제형미상", "Cetirizine", dosage_form=None)
+    add_product(con, "MFDS-P1", "임부1등급제품", "PregnancyGradeOne", dosage_form="정제")
+    add_product(con, "MFDS-P2", "임부2등급제품", "PregnancyGradeTwo", dosage_form="정제")
+    add_product(con, "MFDS-PC", "조건부임부금기제품", "PregnancyConditional", dosage_form="정제")
+    add_product(con, "MFDS-CW", "중단조건약", "ConditionalWashout", dosage_form="정제")
+    add_product(con, "MFDS-CT", "중단조건대상약", "ConditionalTarget", dosage_form="정제")
     add_linked_rule(
         con, category="duration_caution", item_seq="MFDS-Z", ingredient="Zolpidem",
         rule_value="28일", details="최대 투여기간 28일", dosage_form="정제",
@@ -53,6 +58,25 @@ def make_canonical_db(path: Path) -> None:
         rule_value="액제: 2세 미만, 정제, 캡슐제: 6세 미만",
         product_dosage_form=None,
         criterion_dosage_form="액제, 정제, 캡슐제",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-P1",
+        ingredient="PregnancyGradeOne", rule_value="1등급", details="임부금기 1등급",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-P2",
+        ingredient="PregnancyGradeTwo", rule_value="2", details="임부금기 2등급",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-PC",
+        ingredient="PregnancyConditional", rule_value="2등급(말라리아 치료시 제외)",
+        details="말라리아 치료 목적이면 예외가 될 수 있음",
+    )
+    add_linked_rule(
+        con, category="combination_contraindication", item_seq="MFDS-CW",
+        ingredient="ConditionalWashout", paired_item_seq="MFDS-CT",
+        paired_ingredient="ConditionalTarget",
+        details="ConditionalWashout 중단한 직후에는 ConditionalTarget 시작할 수 없음",
     )
     add_unlinked_rule(
         con, category="duration_caution", item_seq="MFDS-ZU", ingredient="Zolpidem",
@@ -106,6 +130,71 @@ class SafetyCoverageV2Test(unittest.TestCase):
         preview = self.app.preview_medication(pregnant["id"], {"product_ref": "MFDS-U"})
         pregnancy = next(row for row in preview["dur_checks"] if row["category"] == "pregnancy_contraindication")
         self.assertEqual(pregnancy["status"], "unknown")
+        self.assertTrue(preview["warning_token"])
+
+    def test_unconditional_pregnancy_grades_are_distinct_definitive_hits(self) -> None:
+        pregnant = self.app.create_person(
+            "임부등급", "1990-01-01", "female", "pregnant", lactation_status="not_breastfeeding"
+        )
+
+        grade_one = self.app.preview_medication(pregnant["id"], {"product_ref": "MFDS-P1"})
+        grade_two = self.app.preview_medication(pregnant["id"], {"product_ref": "MFDS-P2"})
+
+        one = next(row for row in grade_one["dur_checks"] if row["category"] == "pregnancy_contraindication")
+        two = next(row for row in grade_two["dur_checks"] if row["category"] == "pregnancy_contraindication")
+        self.assertEqual(one["status"], "hit")
+        self.assertEqual(two["status"], "hit")
+        self.assertIn("1등급", one["summary"])
+        self.assertIn("2등급", two["summary"])
+        self.assertTrue(grade_one["warning_token"])
+        self.assertTrue(grade_two["warning_token"])
+
+    def test_exception_bearing_pregnancy_rule_is_conditional_not_unknown(self) -> None:
+        pregnant = self.app.create_person(
+            "조건부임부", "1990-01-01", "female", "pregnant", lactation_status="not_breastfeeding"
+        )
+
+        preview = self.app.preview_medication(pregnant["id"], {"product_ref": "MFDS-PC"})
+
+        pregnancy = next(row for row in preview["dur_checks"] if row["category"] == "pregnancy_contraindication")
+        self.assertEqual(pregnancy["status"], "conditional")
+        self.assertIn("2등급", pregnancy["summary"])
+        self.assertIn("말라리아 치료시 제외", pregnancy["summary"])
+        self.assertEqual(pregnancy["findings"][0]["evaluation_status"], "conditional")
+        self.assertTrue(preview["warning_token"])
+
+        medication = self.app.add_medication(
+            pregnant["id"], product_ref="MFDS-PC", acknowledge_warnings=True,
+            warning_token=preview["warning_token"],
+        )
+        current = next(
+            row for row in self.app.list_medications(pregnant["id"])
+            if row["id"] == medication["id"]
+        )
+        current_pregnancy = next(
+            row for row in current["current_assessment"]["dur_checks"]
+            if row["category"] == "pregnancy_contraindication"
+        )
+        self.assertTrue(current["dur_alert"])
+        self.assertEqual(current_pregnancy["status"], "conditional")
+
+    def test_known_interaction_with_unresolved_timing_is_conditional(self) -> None:
+        person = self.app.create_person(
+            "병용조건", "1990-01-01", "male", "not_applicable", lactation_status="not_applicable"
+        )
+        self.app.add_medication(
+            person["id"], product_ref="MFDS-CW", start_date="2026-08-01", prescription_days=3,
+        )
+
+        preview = self.app.preview_medication(
+            person["id"],
+            {"product_ref": "MFDS-CT", "start_date": "2026-08-10", "prescription_days": 3},
+        )
+
+        interaction = next(row for row in preview["dur_checks"] if row["category"] == "combination_contraindication")
+        self.assertEqual(interaction["status"], "conditional")
+        self.assertEqual(interaction["findings"][0]["evaluation_status"], "conditional")
+        self.assertEqual(interaction["findings"][0]["timing"]["status"], "not_evaluable")
         self.assertTrue(preview["warning_token"])
 
     def test_multi_form_age_rule_uses_the_threshold_for_the_product_form(self) -> None:
