@@ -22,7 +22,7 @@ class GenerationError(DatasetError):
     pass
 
 
-_GENERATOR_VERSION = "3"
+_GENERATOR_VERSION = "4"
 _LICENSE_ID = "data-go-kr-unrestricted-use"
 _MAX_PRODUCT_LENGTH = 18
 _SOURCE_DATASET_KEY = "mfds_permit:products"
@@ -59,7 +59,7 @@ def _canonical_json(value: object) -> str:
 def _clean_text(value: object, *, limit: int) -> str | None:
     if not isinstance(value, str):
         return None
-    text = unicodedata.normalize("NFC", value).strip()
+    text = unicodedata.normalize("NFC", unicodedata.normalize("NFKC", value)).strip()
     if not text or len(text) > limit or any(char in text for char in "\t\r\n\x00"):
         return None
     return text

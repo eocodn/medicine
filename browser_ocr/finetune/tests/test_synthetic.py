@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image
 
 from browser_ocr.finetune.dataset import dataset_stats, load_dataset
-from browser_ocr.finetune.synthetic import GenerationError, generate_dataset, synthetic_assignments
+from browser_ocr.finetune.synthetic import GenerationError, generate_dataset, load_product_lexicon, synthetic_assignments
 
 
 class SyntheticDatasetTest(unittest.TestCase):
@@ -57,6 +57,19 @@ class SyntheticDatasetTest(unittest.TestCase):
             if candidate.is_file():
                 return candidate
         self.fail("Noto CJK font is not installed in the fine-tune container")
+
+    def test_product_lexicon_normalizes_unicode_compatibility_forms(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            canonical = Path(raw) / "canonical.sqlite"
+            self.make_canonical(canonical)
+            con = sqlite3.connect(canonical)
+            con.execute("update products set product_name = ? where item_seq = ?", ("테스트정50％ 1㎍", "100"))
+            con.commit()
+            con.close()
+
+            products, _ = load_product_lexicon(canonical)
+            product = next(product for product in products if product.item_seq == "100")
+            self.assertEqual(product.product_name, "테스트정50% 1μg")
 
     def test_generation_is_deterministic_valid_and_covers_safety_strata(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
