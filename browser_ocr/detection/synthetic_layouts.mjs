@@ -15,6 +15,26 @@ function quad(x, y, width, height) {
   return [[x, y], [x + width, y], [x + width, y + height], [x, y + height]];
 }
 
+function glyphWidthEm(character) {
+  if (/\s/u.test(character)) return 0.28;
+  if (/[\u1100-\u11ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/u.test(character)) return 1;
+  if (/[○□◇△▽※]/u.test(character)) return 1;
+  if (/[0-9]/u.test(character)) return 0.56;
+  if (/[A-Z]/u.test(character)) return 0.65;
+  if (/[a-z]/u.test(character)) return 0.55;
+  if (/[.,:;\-_/·]/u.test(character)) return 0.34;
+  if (/[()[\]{}]/u.test(character)) return 0.42;
+  return 0.72;
+}
+
+export function estimateRenderedTextBox(text, fontSize) {
+  const widthEm = [...String(text)].reduce((sum, character) => sum + glyphWidthEm(character), 0);
+  return {
+    width: Math.max(1, Math.round(widthEm * fontSize)),
+    height: Math.max(1, Math.round(fontSize * 1.08)),
+  };
+}
+
 function region(regionId, text, x, y, width, height, {
   critical = false,
   associationGroup = "document",
@@ -22,10 +42,20 @@ function region(regionId, text, x, y, width, height, {
   regionClass = "context",
   fontSize = 38,
 } = {}) {
+  const rendered = estimateRenderedTextBox(text, fontSize);
+  const paddingX = Math.round(fontSize * 0.45);
+  const paddingY = Math.round(fontSize * 0.55);
+  const left = Math.max(0, x - paddingX);
+  const top = Math.max(0, y - paddingY);
+  const right = Math.min(DOCUMENT_WIDTH - 1, x + rendered.width + paddingX);
+  const bottom = Math.min(DOCUMENT_HEIGHT - 1, y + rendered.height + paddingY);
   return {
     region_id: regionId,
     text,
-    polygon: quad(x, y, width, height),
+    polygon: quad(left, top, right - left, bottom - top),
+    text_origin: [x, y],
+    natural_text_box: quad(x, y, rendered.width, rendered.height),
+    layout_slot: quad(x, y, width, height),
     critical,
     association_group: associationGroup,
     semantic_role: semanticRole,
@@ -135,15 +165,15 @@ function legacyPreprintedMedicationBag(index, random) {
     region("patient", pick(CONTEXT_TEXT.patients, random), 205, 165, 260, 36, { semanticRole: "patient", fontSize: 29 }),
     region("age-sex", "나이 ___  성별 □남 □여", 520, 165, 360, 36, { semanticRole: "patient", regionClass: "distractor", fontSize: 26 }),
     region("dispense-date", `조제일 2026.08.${String(10 + index % 18).padStart(2, "0")}`, 890, 165, 300, 36, { semanticRole: "date", regionClass: "distractor", fontSize: 25 }),
-    region("daily", "1일", 90, 290, 90, 46, { semanticRole: "label", fontSize: 34 }),
+    region("daily", "1일", 90, 290, 90, 46, { associationGroup: "bag-regimen", semanticRole: "label", fontSize: 34 }),
     region("frequency", "3회", 205, 290, 100, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "frequency", regionClass: "medication", fontSize: 35 }),
-    region("each", "1회", 355, 290, 90, 46, { semanticRole: "label", fontSize: 34 }),
+    region("each", "1회", 355, 290, 90, 46, { associationGroup: "bag-regimen", semanticRole: "label", fontSize: 34 }),
     region("dose", "1포(정)", 475, 290, 150, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "dose", regionClass: "medication", fontSize: 35 }),
-    region("days-label", "총", 680, 290, 60, 46, { semanticRole: "label", fontSize: 34 }),
+    region("days-label", "총", 680, 290, 60, 46, { associationGroup: "bag-regimen", semanticRole: "label", fontSize: 34 }),
     region("days", "5일분", 760, 290, 130, 46, { critical: true, associationGroup: "bag-regimen", semanticRole: "duration", regionClass: "medication", fontSize: 35 }),
-    region("meal", "□ 식전  □ 식후 30분  □ 취침전", 90, 390, 650, 42, { semanticRole: "schedule", fontSize: 29 }),
-    region("directions", "□ 아침   □ 점심   □ 저녁   □ 필요시", 90, 465, 690, 42, { semanticRole: "schedule", fontSize: 29 }),
-    region("product-label", "약품명", 85, 600, 115, 34, { semanticRole: "header", fontSize: 27 }),
+    region("meal", "□ 식전  □ 식후 30분  □ 취침전", 90, 390, 650, 42, { associationGroup: "bag-regimen", semanticRole: "schedule", fontSize: 29 }),
+    region("directions", "□ 아침   □ 점심   □ 저녁   □ 필요시", 90, 465, 690, 42, { associationGroup: "bag-regimen", semanticRole: "schedule", fontSize: 29 }),
+    region("product-label", "약품명", 85, 600, 115, 34, { associationGroup: "bag-regimen", semanticRole: "header", fontSize: 27 }),
     region("product", pick(PRODUCTS, random), 225, 600, 390, 38, { critical: true, associationGroup: "bag-regimen", semanticRole: "product", regionClass: "medication", fontSize: 29 }),
     region("caution-title", "복약시 주의사항", 85, 735, 220, 36, { semanticRole: "header", fontSize: 28 }),
     region("caution-1", "정해진 용법과 용량을 지켜 복용하십시오.", 85, 800, 670, 34, { semanticRole: "instruction", regionClass: "distractor", fontSize: 24 }),
@@ -297,11 +327,10 @@ export function renderLayoutRegions(regions, printer = { profile: "laser_clean" 
     : "Noto Sans CJK KR, sans-serif";
   const fill = printer.profile === "low_toner" ? "#666" : "#202020";
   return regions.map((item) => {
-    const [[x, y], [rightX, rightY]] = item.polygon;
-    const width = Math.hypot(rightX - x, rightY - y);
+    const [x, y] = item.text_origin || item.polygon[0];
     const baseline = y + Math.round(item.font_size_px * 0.82);
-    const primary = `<text x="${x}" y="${baseline}" textLength="${width}" lengthAdjust="spacingAndGlyphs" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="${fill}">${escapeXml(item.text)}</text>`;
+    const primary = `<text x="${x}" y="${baseline}" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="${fill}">${escapeXml(item.text)}</text>`;
     if (printer.profile !== "ink_bleed") return primary;
-    return `${primary}\n<text x="${x + 1.2}" y="${baseline + 0.7}" textLength="${width}" lengthAdjust="spacingAndGlyphs" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="#303030" opacity="0.24">${escapeXml(item.text)}</text>`;
+    return `${primary}\n<text x="${x + 1.2}" y="${baseline + 0.7}" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="#303030" opacity="0.24">${escapeXml(item.text)}</text>`;
   }).join("\n");
 }

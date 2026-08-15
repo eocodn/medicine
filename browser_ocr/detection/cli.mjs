@@ -3,8 +3,11 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
 import { auditCoverage } from "./coverage.mjs";
+import { runDetectorBenchmarkMatrix } from "./benchmark.mjs";
 import { validateCorpus } from "./contract.mjs";
+import { benchmarkMatrix, loadDetectorModelManifest } from "./detector_models.mjs";
 import { evaluateDetections } from "./evaluation.mjs";
+import { fetchDetectorAssets } from "./fetch_detector_assets.mjs";
 import { generateSyntheticCorpus } from "./synthetic.mjs";
 
 function option(args, name, fallback = null) {
@@ -39,19 +42,6 @@ async function validateFiles(corpus, corpusPath) {
     const digest = createHash("sha256").update(await readFile(path)).digest("hex");
     if (digest !== sample.image_sha256) throw new Error(`${sample.id} image SHA-256 mismatch`);
   }
-}
-
-function benchmarkMatrix() {
-  const models = ["PP-OCRv5_mobile_det", "PP-OCRv6_tiny_det", "PP-OCRv6_small_det"];
-  const detector_edges = [640, 960, 1280];
-  return {
-    schema_version: 1,
-    models,
-    detector_edges,
-    runs: models.flatMap((model) => detector_edges.map((detector_edge) => ({ model, detector_edge }))),
-    required_mobile_metrics: ["latency_ms", "peak_memory_bytes", "model_bytes"],
-    required_quality_metrics: ["recall", "precision", "critical_box_recall", "merge_errors", "cross_association_merges", "split_errors"],
-  };
 }
 
 async function main(argv) {
@@ -102,9 +92,26 @@ async function main(argv) {
     result = evaluateDetections(corpus, predictions);
     if (result.status !== "pass") process.exitCode = 1;
   } else if (command === "matrix") {
-    result = benchmarkMatrix();
+    result = benchmarkMatrix(await loadDetectorModelManifest());
+  } else if (command === "assets") {
+    const outputDir = option(args, "--output", "browser_ocr/detection/.cache/models");
+    result = await fetchDetectorAssets({ outputDir: resolve(outputDir) });
+  } else if (command === "benchmark") {
+    const corpusPath = option(args, "--corpus", "browser_ocr/detection/corpus/manifest.json");
+    const cacheDir = option(args, "--cache", "browser_ocr/detection/.cache/models");
+    const outputDir = option(args, "--output", "browser_ocr/detection/results/zero-shot");
+    const model = option(args, "--model");
+    const edge = option(args, "--edge");
+    result = await runDetectorBenchmarkMatrix({
+      corpusPath: resolve(corpusPath),
+      cacheDir: resolve(cacheDir),
+      outputDir: resolve(outputDir),
+      models: model ? [model] : null,
+      detectorEdges: edge ? [integerOption(args, "--edge", 0)] : null,
+      threads: integerOption(args, "--threads", 1),
+    });
   } else {
-    throw new Error("usage: cli.mjs <generate|validate|audit|evaluate|matrix> [options] [--json]");
+    throw new Error("usage: cli.mjs <generate|validate|audit|evaluate|matrix|assets|benchmark> [options] [--json]");
   }
   process.stdout.write(json ? `${JSON.stringify(result)}\n` : `${JSON.stringify(result, null, 2)}\n`);
 }

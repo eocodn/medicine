@@ -15,6 +15,7 @@ import {
   PRINTER_PROFILES,
 } from "../synthetic_catalog.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
+import { estimateRenderedTextBox } from "../synthetic_layouts.mjs";
 
 test("homography maps all four source controls to the exact camera-plane controls", () => {
   const source = [[0, 0], [1280, 0], [1280, 1600], [0, 1600]];
@@ -24,6 +25,31 @@ test("homography maps all four source controls to the exact camera-plane control
     const mapped = transformPoint(homography, source[index]);
     assert.ok(Math.abs(mapped[0] - destination[index][0]) < 1e-4);
     assert.ok(Math.abs(mapped[1] - destination[index][1]) < 1e-4);
+  }
+});
+
+test("synthetic GT tracks rendered text extents rather than layout slot widths", () => {
+  const korean = estimateRenderedTextBox("약품명", 34);
+  assert.ok(korean.width >= 95 && korean.width <= 115);
+  assert.ok(korean.height >= 34 && korean.height <= 42);
+  const mixed = estimateRenderedTextBox("1회 투약량", 34);
+  assert.ok(mixed.width > korean.width);
+  assert.ok(mixed.width < 210);
+});
+
+test("legacy bag labels share the regimen association group with their values", async () => {
+  const root = await mkdtemp(join(tmpdir(), "medicine-det-legacy-association-"));
+  try {
+    const corpus = await generateSyntheticCorpus({ outputDir: root, count: 3, seed: 153 });
+    const legacy = corpus.samples.find((sample) => sample.layout_family === "legacy_preprinted_medication_bag");
+    assert.ok(legacy);
+    const groups = new Map(legacy.regions.map((region) => [region.region_id, region.association_group]));
+    for (const id of ["daily", "frequency", "each", "dose", "days-label", "days", "product-label", "product"]) {
+      assert.equal(groups.get(id), "bag-regimen");
+    }
+    assert.ok(legacy.regions.every((region) => region.natural_text_polygon?.length === 4));
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

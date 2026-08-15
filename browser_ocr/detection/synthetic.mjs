@@ -17,7 +17,7 @@ import { rasterizerIdentity, renderRasterJpeg } from "./synthetic_raster.mjs";
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 2;
-const GENERATOR_REVISION = 4;
+const GENERATOR_REVISION = 8;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -91,11 +91,23 @@ function buildSamplePlan(index, seed) {
   const appearance = appearanceForIndex(index);
   const id = `synthetic-${String(index + 1).padStart(6, "0")}`;
   const image = `images/${id}.jpg`;
-  const regions = layout.regions.map((item) => ({
-    ...item,
-    source_polygon: item.polygon.map((point) => [...point]),
-    polygon: transformPolygon(capture.homography, item.polygon),
-  }));
+  const regions = layout.regions.map((item) => {
+    const {
+      natural_text_box: naturalTextBox,
+      layout_slot: layoutSlot,
+      text_origin: textOrigin,
+      ...rest
+    } = item;
+    return {
+      ...rest,
+      source_text_origin: [...textOrigin],
+      source_layout_slot: layoutSlot.map((point) => [...point]),
+      source_natural_text_polygon: naturalTextBox.map((point) => [...point]),
+      natural_text_polygon: transformPolygon(capture.homography, naturalTextBox),
+      source_polygon: item.polygon.map((point) => [...point]),
+      polygon: transformPolygon(capture.homography, item.polygon),
+    };
+  });
   return {
     sample: {
       id,

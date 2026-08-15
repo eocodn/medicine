@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { runDetectorBenchmarkMatrix } from "../benchmark.mjs";
 import { validateCorpus } from "../contract.mjs";
+import { benchmarkMatrix, loadDetectorModelManifest } from "../detector_models.mjs";
 import { evaluateDetections } from "../evaluation.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
 
@@ -29,6 +31,8 @@ function tinyCorpus() {
   const taggedRegion = (value) => ({
     ...value,
     source_polygon: value.polygon.map((point) => [...point]),
+    source_natural_text_polygon: value.polygon.map((point) => [...point]),
+    natural_text_polygon: value.polygon.map((point) => [...point]),
     region_class: value.critical ? "medication" : "context",
     font_size_px: 24,
   });
@@ -100,11 +104,77 @@ test("contract validates strict full-document quadrilateral corpus", () => {
     delete sample.capture;
     for (const region of sample.regions) {
       delete region.source_polygon;
+      delete region.source_natural_text_polygon;
+      delete region.natural_text_polygon;
       delete region.region_class;
       delete region.font_size_px;
     }
   }
   assert.equal(validateCorpus(genericV1).schema_version, 1);
+});
+
+test("detector candidates are official pinned ONNX assets with model-specific DB settings", async () => {
+  const manifest = await loadDetectorModelManifest();
+  assert.equal(manifest.schema_version, 1);
+  assert.deepEqual(Object.keys(manifest.models), [
+    "PP-OCRv5_mobile_det",
+    "PP-OCRv6_tiny_det",
+    "PP-OCRv6_small_det",
+  ]);
+  assert.deepEqual(manifest.models["PP-OCRv5_mobile_det"].postprocess, {
+    threshold: 0.3,
+    box_threshold: 0.6,
+    max_candidates: 1000,
+    unclip_ratio: 1.5,
+  });
+  assert.deepEqual(manifest.models["PP-OCRv6_tiny_det"].postprocess, {
+    threshold: 0.2,
+    box_threshold: 0.4,
+    max_candidates: 3000,
+    unclip_ratio: 1.4,
+  });
+  assert.deepEqual(manifest.models["PP-OCRv6_small_det"].postprocess, {
+    threshold: 0.2,
+    box_threshold: 0.45,
+    max_candidates: 3000,
+    unclip_ratio: 1.4,
+  });
+  for (const model of Object.values(manifest.models)) {
+    assert.match(model.url, /^https:\/\/paddle-model-ecology\.bj\.bcebos\.com\//);
+    assert.match(model.archive, /_onnx_infer\.tar$/);
+    assert.match(model.sha256, /^[0-9a-f]{64}$/);
+    assert.equal(model.preprocess.color_mode, "BGR");
+    assert.deepEqual(model.preprocess.mean, [0.485, 0.456, 0.406]);
+    assert.deepEqual(model.preprocess.std, [0.229, 0.224, 0.225]);
+  }
+
+  const matrix = benchmarkMatrix(manifest);
+  assert.equal(matrix.runs.length, 9);
+  assert.deepEqual(matrix.detector_edges, [640, 960, 1280]);
+  assert.ok(matrix.runs.every((run) => run.postprocess && run.asset_sha256));
+});
+
+test("detector benchmark refuses concurrent writers for the same output", async () => {
+  const root = await mkdtemp(join(tmpdir(), "medicine-det-benchmark-lock-"));
+  try {
+    const outputDir = join(root, "output");
+    await mkdir(join(outputDir, "runs"), { recursive: true });
+    await writeFile(join(outputDir, ".benchmark.lock"), "occupied\n");
+    const corpusPath = join(root, "corpus.json");
+    await writeFile(corpusPath, `${JSON.stringify(tinyCorpus())}\n`);
+    await assert.rejects(
+      runDetectorBenchmarkMatrix({
+        corpusPath,
+        cacheDir: join(root, "cache"),
+        outputDir,
+        models: ["PP-OCRv5_mobile_det"],
+        detectorEdges: [640],
+      }),
+      /already running/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("synthetic generator is deterministic and emits valid full documents", async () => {
@@ -151,4 +221,33 @@ test("evaluation distinguishes perfect detections, merges, and critical misses",
   const badRecall = evaluateDetections(corpus, missed);
   assert.equal(badRecall.status, "fail");
   assert.ok(badRecall.metrics.critical_box_recall < 1);
+});
+
+test("evaluation matches by visible text coverage while still rejecting merged regions", () => {
+  const corpus = validateCorpus(tinyCorpus());
+  const padded = {
+    schema_version: 1,
+    corpus_id: "tiny",
+    samples: [{
+      id: "sample",
+      predictions: corpus.samples[0].regions.map((region) => {
+        const [[x1, y1], [x2], [, y2]] = region.natural_text_polygon;
+        return {
+          polygon: [[x1 - 8, y1 - 8], [x2 + 8, y1 - 8], [x2 + 8, y2 + 8], [x1 - 8, y2 + 8]],
+          score: 0.99,
+        };
+      }),
+    }],
+  };
+  const good = evaluateDetections(corpus, padded);
+  assert.equal(good.metrics.recall, 1);
+  assert.equal(good.metrics.critical_box_recall, 1);
+
+  const merged = structuredClone(padded);
+  merged.samples[0].predictions = [
+    { polygon: [[5, 5], [155, 5], [155, 85], [5, 85]], score: 0.99 },
+  ];
+  const unsafe = evaluateDetections(corpus, merged);
+  assert.ok(unsafe.metrics.merge_errors >= 1);
+  assert.ok(unsafe.metrics.cross_association_merges >= 1);
 });

@@ -144,7 +144,11 @@ export function validateCorpus(input) {
       if (regionIds.has(region.region_id)) fail(`${sample.id} has duplicate region ${region.region_id}`);
       regionIds.add(region.region_id);
       if (typeof region.text !== "string" || !region.text.trim()) fail(`${sample.id}.${region.region_id}.text is required`);
-      if (enhancedSynthetic) validatePolygon(region.source_polygon, sample.width, sample.height, `${sample.id}.${region.region_id}.source_polygon`);
+      if (enhancedSynthetic) {
+        validatePolygon(region.source_polygon, sample.width, sample.height, `${sample.id}.${region.region_id}.source_polygon`);
+        validatePolygon(region.source_natural_text_polygon, sample.width, sample.height, `${sample.id}.${region.region_id}.source_natural_text_polygon`);
+        validatePolygon(region.natural_text_polygon, sample.width, sample.height, `${sample.id}.${region.region_id}.natural_text_polygon`);
+      }
       validatePolygon(region.polygon, sample.width, sample.height, `${sample.id}.${region.region_id}.polygon`);
       if (typeof region.critical !== "boolean") fail(`${sample.id}.${region.region_id}.critical must be boolean`);
       if (typeof region.association_group !== "string" || !region.association_group.trim()) {

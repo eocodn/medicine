@@ -75,15 +75,32 @@ function overlap(a, b) {
   };
 }
 
-function greedyMatches(regions, predictions, threshold = 0.5) {
+const MATCH_CORE_COVERAGE = 0.8;
+const MERGE_CORE_COVERAGE = 0.6;
+
+function corePolygon(region) {
+  return region.natural_text_polygon || region.polygon;
+}
+
+function greedyMatches(regions, predictions, threshold = MATCH_CORE_COVERAGE) {
   const candidates = [];
   for (let gtIndex = 0; gtIndex < regions.length; gtIndex += 1) {
     for (let predIndex = 0; predIndex < predictions.length; predIndex += 1) {
-      const { iou } = overlap(regions[gtIndex].polygon, predictions[predIndex].polygon);
-      if (iou >= threshold) candidates.push({ gtIndex, predIndex, iou });
+      const item = overlap(corePolygon(regions[gtIndex]), predictions[predIndex].polygon);
+      if (item.fractionA >= threshold) {
+        candidates.push({
+          gtIndex,
+          predIndex,
+          iou: item.iou,
+          coreCoverage: item.fractionA,
+          predictionCoverage: item.fractionB,
+        });
+      }
     }
   }
-  candidates.sort((a, b) => b.iou - a.iou);
+  candidates.sort((a, b) => b.coreCoverage - a.coreCoverage
+    || b.predictionCoverage - a.predictionCoverage
+    || b.iou - a.iou);
   const gtUsed = new Set();
   const predUsed = new Set();
   const matches = [];
@@ -105,7 +122,9 @@ function evaluateSample(sample, predictionSample) {
   let mergeErrors = 0;
   let crossAssociationMerges = 0;
   for (const prediction of predictions) {
-    const covered = sample.regions.filter((region) => overlap(region.polygon, prediction.polygon).fractionA >= 0.6);
+    const covered = sample.regions.filter((region) => (
+      overlap(corePolygon(region), prediction.polygon).fractionA >= MERGE_CORE_COVERAGE
+    ));
     if (covered.length >= 2) {
       mergeErrors += 1;
       if (new Set(covered.map((region) => region.association_group)).size >= 2) crossAssociationMerges += 1;
@@ -115,7 +134,7 @@ function evaluateSample(sample, predictionSample) {
   let splitErrors = 0;
   for (const region of sample.regions) {
     const parts = predictions.filter((prediction) => {
-      const item = overlap(region.polygon, prediction.polygon);
+      const item = overlap(corePolygon(region), prediction.polygon);
       return item.fractionA >= 0.2 && item.fractionB >= 0.5;
     });
     if (parts.length >= 2) splitErrors += 1;
@@ -126,6 +145,10 @@ function evaluateSample(sample, predictionSample) {
     .filter(({ region }) => region.critical)
     .map(({ index }) => index);
   const criticalMatched = criticalIndices.filter((index) => matchedGt.has(index)).length;
+  const meanCoreCoverage = matches.length
+    ? matches.reduce((sum, match) => sum + match.coreCoverage, 0) / matches.length : 0;
+  const meanMatchedIou = matches.length
+    ? matches.reduce((sum, match) => sum + match.iou, 0) / matches.length : 0;
 
   return {
     id: sample.id,
@@ -138,6 +161,8 @@ function evaluateSample(sample, predictionSample) {
     unmatched_predictions: predictions.length - matchedPred.size,
     critical_boxes: criticalIndices.length,
     critical_matched: criticalMatched,
+    mean_core_coverage: meanCoreCoverage,
+    mean_matched_iou: meanMatchedIou,
     merge_errors: mergeErrors,
     cross_association_merges: crossAssociationMerges,
     split_errors: splitErrors,
@@ -161,6 +186,8 @@ export function evaluateDetections(corpus, predictionInput) {
     merge_errors: sum.merge_errors + sample.merge_errors,
     cross_association_merges: sum.cross_association_merges + sample.cross_association_merges,
     split_errors: sum.split_errors + sample.split_errors,
+    weighted_core_coverage: sum.weighted_core_coverage + sample.mean_core_coverage * sample.matched_boxes,
+    weighted_matched_iou: sum.weighted_matched_iou + sample.mean_matched_iou * sample.matched_boxes,
   }), {
     ground_truth_boxes: 0,
     predicted_boxes: 0,
@@ -170,6 +197,8 @@ export function evaluateDetections(corpus, predictionInput) {
     merge_errors: 0,
     cross_association_merges: 0,
     split_errors: 0,
+    weighted_core_coverage: 0,
+    weighted_matched_iou: 0,
   });
   const recall = ratio(totals.matched_boxes, totals.ground_truth_boxes);
   const precision = ratio(totals.matched_boxes, totals.predicted_boxes);
@@ -185,6 +214,8 @@ export function evaluateDetections(corpus, predictionInput) {
     ground_truth_boxes: totals.ground_truth_boxes,
     predicted_boxes: totals.predicted_boxes,
     matched_boxes: totals.matched_boxes,
+    mean_core_coverage: ratio(totals.weighted_core_coverage, totals.matched_boxes),
+    mean_matched_iou: ratio(totals.weighted_matched_iou, totals.matched_boxes),
   };
   const gates = corpus.gates;
   const pass = recall >= gates.min_recall
@@ -193,7 +224,15 @@ export function evaluateDetections(corpus, predictionInput) {
     && totals.merge_errors <= gates.max_merge_errors
     && totals.cross_association_merges <= gates.max_cross_association_merges
     && totals.split_errors <= gates.max_split_errors;
-  return { schema_version: 1, corpus_id: corpus.corpus_id, status: pass ? "pass" : "fail", gates, metrics, samples };
+  return {
+    schema_version: 1,
+    corpus_id: corpus.corpus_id,
+    status: pass ? "pass" : "fail",
+    matching: { criterion: "visible_text_core_coverage", min_core_coverage: MATCH_CORE_COVERAGE },
+    gates,
+    metrics,
+    samples,
+  };
 }
 
 export const geometry = { polygonArea, overlap };
