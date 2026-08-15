@@ -19,7 +19,7 @@ product-evidence box id, so repeated identical product text remains representabl
 as distinct document rows. Canonical product identity remains outside this layer.
 
 The first benchmark is intentionally model-free. The tracked
-`geometry_rule_v1` baseline deskews OCR polygons, groups them into lines,
+`geometry_rule_v2` baseline deskews OCR polygons, groups them into lines,
 reconstructs split table headers and medication labels, parses table columns and
 repeated medication-bag blocks, and only propagates an explicitly labeled common
 regimen to a contiguous group whose scope is structurally proven. Unassociated

@@ -74,6 +74,25 @@ class FineTuneProjectContractTest(unittest.TestCase):
         privacy = schema["$defs"]["sample"]["properties"]["privacy"]["properties"]
         self.assertFalse(privacy["contains_patient_data"]["const"])
 
+    def test_recorded_full_document_e2e_result_fails_closed_on_severe_motion(self) -> None:
+        result = json.loads(
+            (FINETUNE / "results" / "full-document-e2e-v2-summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(result["corpus"]["sample_count"], 36)
+        self.assertEqual(result["pipeline"]["detector_model"], "PP-OCRv5_mobile_det")
+        self.assertEqual(result["pipeline"]["detector_edge"], 640)
+        self.assertEqual(result["pipeline"]["parser"], "geometry_rule_v2")
+        self.assertEqual(result["result"]["totals"]["critical_detection_matched"], 600)
+        self.assertEqual(result["result"]["totals"]["critical_detection_total"], 600)
+        self.assertEqual(result["result"]["totals"]["cross_medication_associations"], 0)
+        self.assertEqual(result["result"]["totals"]["false_exact_fields"], 0)
+        self.assertEqual(result["result"]["safety_pass_samples"], 36)
+        self.assertEqual(result["result"]["quality_pass_samples"], 31)
+        self.assertEqual(result["result"]["by_capture_profile"]["motion_jpeg"]["quality_pass"], 1)
+        for profile, metrics in result["result"]["by_capture_profile"].items():
+            if profile != "motion_jpeg":
+                self.assertEqual(metrics["quality_pass"], metrics["samples"])
+
 
 if __name__ == "__main__":
     unittest.main()

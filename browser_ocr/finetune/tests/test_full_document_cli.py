@@ -7,10 +7,25 @@ import unittest
 from pathlib import Path
 
 from browser_ocr.finetune.dataset import DatasetError
-from browser_ocr.finetune.full_document_cli import build_parser, load_selected_recognizer
+from browser_ocr.finetune.full_document_cli import _implementation_profile, build_parser, load_selected_recognizer
 
 
 class FullDocumentCliContractTest(unittest.TestCase):
+    def test_output_profile_pins_pipeline_and_parser_implementation(self) -> None:
+        profile = _implementation_profile()
+        self.assertEqual(
+            set(profile),
+            {
+                "full_document",
+                "full_document_cli",
+                "parser",
+                "parser_contract",
+                "detector_runtime",
+                "detector_benchmark",
+            },
+        )
+        self.assertTrue(all(len(value) == 64 for value in profile.values()))
+
     def test_parser_defaults_to_selected_mobile_detector(self) -> None:
         args = build_parser().parse_args([
             "--image", "/data/doc.jpg",

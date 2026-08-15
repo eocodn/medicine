@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-import math
 import re
-from dataclasses import dataclass
-from statistics import median
 from typing import Any, Iterable, Sequence
 
 from .contract import SCHEMA_VERSION, Corpus, OcrBox
 from .evaluation import evaluate_corpus
+from .geometry import _Line, _Token, _document_lines
 
 
-BASELINE_ID = "geometry_rule_v1"
-_STRUCTURED_CONFIDENCE_FLOOR = 0.05
+BASELINE_ID = "geometry_rule_v2"
 _HEADER_PRODUCT = re.compile(r"^(?:약품명|의약품명|제품명|처방의약품명|약명)$")
 _HEADER_DOSE = re.compile(r"(?:1회.*(?:투약|투여|복용).*(?:량|용량)|1회량)")
 _HEADER_FREQUENCY = re.compile(r"(?:1일.*(?:투약|투여|복용).*(?:횟수|회수)|1일횟수)")
 _HEADER_DAYS = re.compile(r"(?:총.*(?:투약|투여|복용).*일수|(?:투약|투여|복용)일수)")
 _PRODUCT_PREFIX = re.compile(r"^(?:약명|제품명|약품명|의약품명)[:：](.+)$")
+_PRODUCT_LABEL = re.compile(r"^(?:약명|제품명|약품명|의약품명)[:：]?$")
 _COMMON_REGIMEN = re.compile(r"^공통(?:복용법|용법|복약방법)[:：]")
 _EXPLICIT_REGIMEN = re.compile(
     r"(?:복용법|용법|복약방법|복용량|투약량|투여량|복용횟수|투약횟수|투여횟수|복용일수|투약일수|투여일수)[:：]"
@@ -26,118 +24,8 @@ _FREQUENCY = re.compile(r"(?:1\s*일|하루)\s*(\d+)\s*회")
 _DURATION = re.compile(r"(\d+)\s*일(?!\s*\d+\s*회)")
 _TABLE_DOSE = re.compile(r"^(\d+(?:\.\d+)?)\s*(정|tablet|캡슐|capsule|포|mL|ml)$", re.I)
 _TABLE_FREQUENCY = re.compile(r"^(\d+)\s*회$")
-_TABLE_DAYS = re.compile(r"^(\d+)\s*일$")
-
-
-@dataclass(frozen=True)
-class _Token:
-    box_id: str
-    text: str
-    confidence: float
-    points: tuple[tuple[float, float], ...]
-    x1: float
-    x2: float
-    cx: float
-    cy: float
-    height: float
-
-
-@dataclass
-class _Line:
-    items: list[_Token]
-    cy: float
-    height: float
-
-    @property
-    def text(self) -> str:
-        return " ".join(item.text for item in self.items)
-
-    @property
-    def compact(self) -> str:
-        return "".join(item.text.replace(" ", "") for item in self.items)
-
-
-def _raw_token(box: OcrBox) -> _Token | None:
-    points = tuple((float(x), float(y)) for x, y in box.polygon)
-    if len(points) != 4 or any(not math.isfinite(value) for point in points for value in point):
-        return None
-    xs = [point[0] for point in points]
-    ys = [point[1] for point in points]
-    x1, x2 = min(xs), max(xs)
-    y1, y2 = min(ys), max(ys)
-    if x2 <= x1 or y2 <= y1:
-        return None
-    return _Token(
-        box_id=box.box_id,
-        text=box.text.strip(),
-        confidence=box.confidence,
-        points=points,
-        x1=x1,
-        x2=x2,
-        cx=(x1 + x2) / 2,
-        cy=(y1 + y2) / 2,
-        height=y2 - y1,
-    )
-
-
-def _estimated_page_slope(tokens: Sequence[_Token]) -> float:
-    slopes: list[float] = []
-    for token in tokens:
-        for left_index, right_index in ((0, 1), (3, 2)):
-            left = token.points[left_index]
-            right = token.points[right_index]
-            dx = right[0] - left[0]
-            if abs(dx) < 1:
-                continue
-            slope = (right[1] - left[1]) / dx
-            if math.isfinite(slope) and abs(slope) <= 0.35:
-                slopes.append(slope)
-    return float(median(slopes)) if len(slopes) >= 2 else 0.0
-
-
-def _document_lines(boxes: Iterable[OcrBox]) -> tuple[list[_Line], float, bool]:
-    raw = [token for box in boxes if (token := _raw_token(box)) is not None and token.text]
-    low_confidence = any(token.confidence < _STRUCTURED_CONFIDENCE_FLOOR for token in raw)
-    raw = [token for token in raw if token.confidence >= _STRUCTURED_CONFIDENCE_FLOOR]
-    slope = _estimated_page_slope(raw)
-    tokens: list[_Token] = []
-    for token in raw:
-        deskewed_y = [y - slope * x for x, y in token.points]
-        y1, y2 = min(deskewed_y), max(deskewed_y)
-        tokens.append(
-            _Token(
-                box_id=token.box_id,
-                text=token.text,
-                confidence=token.confidence,
-                points=token.points,
-                x1=token.x1,
-                x2=token.x2,
-                cx=token.cx,
-                cy=(y1 + y2) / 2,
-                height=y2 - y1,
-            )
-        )
-    tokens.sort(key=lambda item: (item.cy, item.x1))
-    median_height = float(median([token.height for token in tokens])) if tokens else 20.0
-    lines: list[_Line] = []
-    for token in tokens:
-        target = next(
-            (
-                line
-                for line in lines
-                if abs(line.cy - token.cy) <= max(median_height * 0.65, min(line.height, token.height) * 0.7)
-            ),
-            None,
-        )
-        if target is None:
-            target = _Line(items=[], cy=token.cy, height=token.height)
-            lines.append(target)
-        target.items.append(token)
-        target.items.sort(key=lambda item: item.x1)
-        target.cy = sum(item.cy for item in target.items) / len(target.items)
-        target.height = max(item.height for item in target.items)
-    lines.sort(key=lambda line: line.cy)
-    return lines, median_height, low_confidence
+_TABLE_DAYS = re.compile(r"^(\d+)\s*일(?:분)?$")
+_AMBIGUOUS_PACKET_TABLET_DOSE = re.compile(r"^(\d+(?:\.\d+)?)\s*포\(정\)$")
 
 
 def _header_key(value: str) -> str | None:
@@ -217,6 +105,84 @@ def _table_value(key: str, value: str) -> dict[str, Any]:
     return {}
 
 
+def _typed_item(item: _Token) -> tuple[str, dict[str, Any]] | None:
+    compact = item.text.replace(" ", "")
+    if match := _AMBIGUOUS_PACKET_TABLET_DOSE.fullmatch(compact):
+        amount = float(match.group(1))
+        return "dose", {
+            "dose_amount": int(amount) if amount.is_integer() else amount,
+            "dosage_text": compact,
+        }
+    for key in ("dose", "frequency", "days"):
+        parsed = _table_value(key, item.text)
+        if parsed:
+            return key, parsed
+    return None
+
+
+def _structural_table_row(line: _Line) -> dict[str, Any] | None:
+    typed: list[tuple[_Token, str, dict[str, Any]]] = []
+    for item in line.items:
+        classified = _typed_item(item)
+        if classified is not None:
+            typed.append((item, classified[0], classified[1]))
+    if len({key for _, key, _ in typed}) < 2:
+        return None
+
+    first_structured_x = min(item.x1 for item, _, _ in typed)
+    product_items = [item for item in line.items if item.x2 < first_structured_x and _typed_item(item) is None]
+    product = _clean_product("".join(item.text for item in product_items))
+    if not product:
+        return None
+
+    row = _new_row(product, [item.box_id for item in product_items])
+    seen_keys: set[str] = set()
+    for item, key, parsed in typed:
+        if key in seen_keys:
+            return None
+        seen_keys.add(key)
+        row["draft"].update(parsed)
+        for field in parsed:
+            row["evidence"][field] = [item.box_id]
+    return row
+
+
+def _structural_table_rows(lines: Sequence[_Line], header_index: int) -> tuple[list[dict[str, Any]], set[int]]:
+    # Header OCR may be imperfect, but medication rows expose strongly typed values
+    # (dose/frequency/duration) in stable columns. Infer rows from those observed
+    # value types instead of maintaining typo-specific substitutions.
+    rows: list[dict[str, Any]] = []
+    consumed = {header_index}
+    last_row_index = header_index
+    for line_index in range(header_index + 1, len(lines)):
+        line = lines[line_index]
+        if _header_anchors(line):
+            break
+        row = _structural_table_row(line)
+        if row is None:
+            if rows and line.cy - lines[last_row_index].cy > max(90.0, line.height * 3.5):
+                break
+            continue
+        rows.append(row)
+        consumed.add(line_index)
+        last_row_index = line_index
+    return rows, consumed
+
+
+def _unheaded_table_rows(lines: Sequence[_Line]) -> tuple[list[dict[str, Any]], set[int]]:
+    candidates: list[tuple[int, dict[str, Any]]] = []
+    for line_index, line in enumerate(lines):
+        row = _structural_table_row(line)
+        if row is not None:
+            candidates.append((line_index, row))
+    # Without a header, require a repeated row pattern before treating arbitrary
+    # document text as a medication table. A single numeric-looking line is not
+    # enough evidence to create a medication record.
+    if len(candidates) < 2:
+        return [], set()
+    return [row for _, row in candidates], {index for index, _ in candidates}
+
+
 def _clean_product(value: str) -> str:
     compact = value.replace(" ", "").strip()
     compact = re.sub(r"^(?:약명|제품명|약품명|의약품명)[:：]", "", compact)
@@ -240,7 +206,12 @@ def _table_rows(lines: Sequence[_Line]) -> tuple[list[dict[str, Any]], set[int]]
     for header_index, header in enumerate(lines):
         anchors = _header_anchors(header)
         keys = {key for key, _ in anchors}
-        if "product" not in keys or len(keys) < 3:
+        if "product" not in keys:
+            continue
+        if not {"product", "dose", "frequency", "days"}.issubset(keys):
+            rows, consumed = _structural_table_rows(lines, header_index)
+            if rows:
+                return rows, consumed
             continue
         anchors.sort(key=lambda item: item[1])
         boundaries = [(anchors[index][1] + anchors[index + 1][1]) / 2 for index in range(len(anchors) - 1)]
@@ -277,10 +248,22 @@ def _table_rows(lines: Sequence[_Line]) -> tuple[list[dict[str, Any]], set[int]]
 
 def _labeled_product(line: _Line) -> tuple[str, list[str]] | None:
     match = _PRODUCT_PREFIX.fullmatch(line.compact)
-    if match is None:
-        return None
-    product = _clean_product(match.group(1))
-    return (product, [item.box_id for item in line.items]) if product else None
+    if match is not None:
+        product = _clean_product(match.group(1))
+        return (product, [item.box_id for item in line.items]) if product else None
+
+    # Real detector output often separates the printed field label and value into
+    # distinct boxes. Reconstruct the label from the left edge of the line and
+    # bind only the boxes to its right as the product value.
+    for width in range(1, min(3, len(line.items)) + 1):
+        label = "".join(item.text.replace(" ", "") for item in line.items[:width])
+        if _PRODUCT_LABEL.fullmatch(label) is None:
+            continue
+        product_items = line.items[width:]
+        product = _clean_product("".join(item.text for item in product_items))
+        if product:
+            return product, [item.box_id for item in line.items[:width] + product_items]
+    return None
 
 
 def _is_common_regimen(line: _Line) -> bool:
@@ -289,6 +272,120 @@ def _is_common_regimen(line: _Line) -> bool:
 
 def _is_explicit_regimen(line: _Line) -> bool:
     return _EXPLICIT_REGIMEN.search(line.compact) is not None and not _is_common_regimen(line)
+
+
+def _preprinted_regimen_fields(line: _Line) -> tuple[dict[str, Any], dict[str, list[str]]] | None:
+    items = line.items
+    fields: dict[str, Any] = {}
+    evidence: dict[str, list[str]] = {}
+    paired_labels = 0
+    consumed_values: set[int] = set()
+
+    for index in range(len(items) - 1):
+        label = items[index].text.replace(" ", "")
+        value_item = items[index + 1]
+        if label == "1일":
+            parsed = _table_value("frequency", value_item.text)
+        elif label == "1회":
+            classified = _typed_item(value_item)
+            parsed = classified[1] if classified is not None and classified[0] == "dose" else {}
+        else:
+            continue
+        if not parsed:
+            continue
+        paired_labels += 1
+        consumed_values.add(index + 1)
+        for field, value in parsed.items():
+            fields[field] = value
+            evidence[field] = [items[index].box_id, value_item.box_id]
+
+    if paired_labels == 0:
+        return None
+
+    # Printed duration labels are especially vulnerable to OCR errors (and vary
+    # by pharmacy), so the value token is identified by its numeric form rather
+    # than by maintaining a vocabulary of label spellings.
+    duration_candidates: list[tuple[int, dict[str, Any]]] = []
+    for index, item in enumerate(items):
+        if index in consumed_values:
+            continue
+        parsed = _table_value("days", item.text)
+        if parsed:
+            duration_candidates.append((index, parsed))
+    if duration_candidates:
+        index, parsed = duration_candidates[-1]
+        for field, value in parsed.items():
+            fields[field] = value
+            evidence[field] = [items[index].box_id]
+    return fields, evidence
+
+
+def _line_structured_fields(line: _Line) -> tuple[dict[str, Any], dict[str, list[str]]] | None:
+    preprinted = _preprinted_regimen_fields(line)
+    if preprinted is not None:
+        return preprinted
+    fields = _parse_regimen(line.text)
+    evidence: dict[str, list[str]] = {}
+    if fields:
+        line_ids = [item.box_id for item in line.items]
+        for field in fields:
+            evidence[field] = line_ids
+
+    for item in line.items:
+        classified = _typed_item(item)
+        if classified is None:
+            continue
+        _, parsed = classified
+        for field, value in parsed.items():
+            if field in fields and fields[field] != value:
+                return None
+            fields[field] = value
+            evidence[field] = [item.box_id]
+    return fields, evidence
+
+
+def _block_fields(
+    lines: Sequence[_Line],
+    product_line_index: int,
+    end_index: int,
+    median_height: float,
+    common_indexes: set[int],
+) -> tuple[dict[str, Any], dict[str, list[str]], set[int]] | None:
+    fields: dict[str, Any] = {}
+    evidence: dict[str, list[str]] = {}
+    consumed: set[int] = set()
+    previous_cy = lines[product_line_index].cy
+    for candidate_index in range(product_line_index + 1, end_index):
+        if candidate_index in common_indexes:
+            break
+        line = lines[candidate_index]
+        if line.cy - previous_cy > max(90.0, median_height * 3.2):
+            break
+        previous_cy = line.cy
+        parsed = _line_structured_fields(line)
+        if parsed is None:
+            return None
+        line_fields, line_evidence = parsed
+        if not line_fields:
+            continue
+        for field, value in line_fields.items():
+            if field in fields and fields[field] != value:
+                return None
+            fields[field] = value
+            evidence[field] = line_evidence[field]
+        consumed.add(candidate_index)
+    families = {
+        name
+        for name, members in {
+            "dose": {"dose_amount", "dose_unit"},
+            "frequency": {"frequency_per_day"},
+            "days": {"prescription_days"},
+        }.items()
+        if members & fields.keys()
+    }
+    if len(families) < 2:
+        return None
+    return fields, evidence, consumed
 
 
 def _labeled_rows(lines: Sequence[_Line], median_height: float) -> tuple[list[dict[str, Any]], set[int]]:
@@ -304,12 +401,61 @@ def _labeled_rows(lines: Sequence[_Line], median_height: float) -> tuple[list[di
     consumed: set[int] = {line_index for line_index, _, _ in product_lines}
     common_indexes = {index for index, line in enumerate(lines) if _is_common_regimen(line)}
 
+    structural_blocks = []
+    for row_index, (line_index, _, _) in enumerate(product_lines):
+        next_product = product_lines[row_index + 1][0] if row_index + 1 < len(product_lines) else len(lines)
+        structural_blocks.append(
+            _block_fields(lines, line_index, next_product, median_height, common_indexes)
+        )
+    # A repeated bag pattern is only trusted when every medication block proves
+    # its own structured regimen. This prevents a lone trailing regimen from
+    # being attached to the nearest of several products by proximity alone.
+    if structural_blocks and all(block is not None for block in structural_blocks):
+        for row, block in zip(rows, structural_blocks, strict=True):
+            assert block is not None
+            fields, evidence, block_consumed = block
+            row["draft"].update(fields)
+            row["evidence"].update(evidence)
+            consumed.update(block_consumed)
+    elif len(product_lines) == 1:
+        product_line_index = product_lines[0][0]
+        prior_candidates: list[tuple[int, dict[str, Any], dict[str, list[str]]]] = []
+        for candidate_index in range(product_line_index - 1, -1, -1):
+            line = lines[candidate_index]
+            if lines[product_line_index].cy - line.cy > max(420.0, median_height * 10.0):
+                break
+            parsed = _line_structured_fields(line)
+            if parsed is None:
+                continue
+            fields, evidence = parsed
+            families = {
+                name
+                for name, members in {
+                    "dose": {"dose_amount", "dose_unit", "dosage_text"},
+                    "frequency": {"frequency_per_day"},
+                    "days": {"prescription_days"},
+                }.items()
+                if members & fields.keys()
+            }
+            if len(families) >= 2:
+                prior_candidates.append((candidate_index, fields, evidence))
+        # A sole product cannot suffer cross-medication association. Still
+        # require exactly one structurally valid prior regimen rather than
+        # selecting among multiple plausible instructions.
+        if len(prior_candidates) == 1:
+            candidate_index, fields, evidence = prior_candidates[0]
+            rows[0]["draft"].update(fields)
+            rows[0]["evidence"].update(evidence)
+            consumed.add(candidate_index)
+
     for row_index, (line_index, _, _) in enumerate(product_lines):
         next_product = product_lines[row_index + 1][0] if row_index + 1 < len(product_lines) else len(lines)
         previous_cy = lines[line_index].cy
         for candidate_index in range(line_index + 1, next_product):
             if candidate_index in common_indexes:
                 break
+            if candidate_index in consumed:
+                continue
             line = lines[candidate_index]
             if line.cy - previous_cy > max(55.0, median_height * 2.8):
                 break
@@ -371,6 +517,8 @@ def _labeled_rows(lines: Sequence[_Line], median_height: float) -> tuple[list[di
 def parse_boxes(boxes: Iterable[OcrBox]) -> list[dict[str, Any]]:
     lines, median_height, low_confidence = _document_lines(boxes)
     rows, _ = _table_rows(lines)
+    if not rows:
+        rows, _ = _unheaded_table_rows(lines)
     if not rows:
         rows, _ = _labeled_rows(lines, median_height)
     if low_confidence:

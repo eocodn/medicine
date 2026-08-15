@@ -13,8 +13,16 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from browser_ocr.document_parsing.baseline import BASELINE_ID
+
 from .dataset import DatasetError
-from .full_document import build_document_regions, parse_recognition_rows, sort_text_predictions
+from .full_document import (
+    build_document_regions,
+    parse_document_regions,
+    parse_recognition_rows,
+    recognition_quality,
+    sort_text_predictions,
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -23,6 +31,19 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _implementation_profile() -> dict[str, str]:
+    browser_root = Path(__file__).resolve().parents[1]
+    sources = {
+        "full_document": browser_root / "finetune" / "full_document.py",
+        "full_document_cli": Path(__file__).resolve(),
+        "parser": browser_root / "document_parsing" / "baseline.py",
+        "parser_contract": browser_root / "document_parsing" / "contract.py",
+        "detector_runtime": browser_root / "detection" / "runtime.py",
+        "detector_benchmark": browser_root / "detection" / "detector_benchmark.py",
+    }
+    return {name: _sha256_file(path) for name, path in sources.items()}
 
 
 def _read_json_object(path: Path, label: str) -> dict:
@@ -152,7 +173,7 @@ def _profile(args: argparse.Namespace, image: Path, recognizer: dict[str, object
     if args.detector_threads <= 0:
         raise DatasetError("detector threads must be positive")
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "image_sha256": _sha256_file(image),
         "baseline_result_sha256": _sha256_file(recognizer["result_path"]),
         "recognizer_checkpoint_sha256": recognizer["checkpoint_sha256"],
@@ -163,6 +184,8 @@ def _profile(args: argparse.Namespace, image: Path, recognizer: dict[str, object
         "detector_edge": args.detector_edge,
         "detector_threads": args.detector_threads,
         "detector_asset_sha256": detector["asset_sha256"],
+        "parser": BASELINE_ID,
+        "implementation": _implementation_profile(),
     }
 
 
@@ -219,7 +242,7 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
         elif any(path.name != ".pipeline.lock" for path in output_dir.iterdir()):
             raise DatasetError("full-document output directory is non-empty without authoritative state")
 
-        state = {"schema_version": 1, "status": "running", "profile": profile}
+        state = {"schema_version": 2, "status": "running", "profile": profile}
         _write_json_atomic(state_path, state)
         crop_dir = output_dir / "crops"
         shutil.rmtree(crop_dir, ignore_errors=True)
@@ -274,9 +297,26 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
                 regions = []
                 recognition_status = "skipped_no_detections"
 
+            quality = recognition_quality(regions)
+            parser_input_regions = sum(bool(str(region.get("text") or "").strip()) for region in regions)
+            parsing_started = time.perf_counter()
+            if not regions:
+                medications = []
+                parsing_status = "skipped_no_regions"
+            elif not quality["safe_for_structured_parsing"]:
+                # A document-level confidence collapse is not recoverable by
+                # geometry rules. Abstain rather than emitting exact medication
+                # values from a recognizer that is broadly signaling uncertainty.
+                medications = []
+                parsing_status = "abstained_low_ocr_quality"
+            else:
+                medications = parse_document_regions(regions)
+                parsing_status = "ok"
+            parsing_ms = (time.perf_counter() - parsing_started) * 1000.0
+
             height, width = image.shape[:2]
             result = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "status": "ok",
                 "profile": profile,
                 "image": {
@@ -302,17 +342,27 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
                         "latency_ms": round(recognition_ms, 3),
                         "device": args.recognizer_device,
                     },
+                    "parsing": {
+                        "status": parsing_status,
+                        "parser": BASELINE_ID,
+                        "input_regions": parser_input_regions,
+                        "skipped_empty_text_regions": len(regions) - parser_input_regions,
+                        "recognition_quality": quality,
+                        "rows": len(medications),
+                        "latency_ms": round(parsing_ms, 3),
+                    },
                 },
                 "regions": regions,
+                "medications": medications,
                 "text_lines": [region["text"] for region in regions],
             }
             _write_json_atomic(result_path, result)
-            _write_json_atomic(state_path, {"schema_version": 1, "status": "completed", "profile": profile})
+            _write_json_atomic(state_path, {"schema_version": 2, "status": "completed", "profile": profile})
             return result
         except Exception as exc:
             _write_json_atomic(
                 state_path,
-                {"schema_version": 1, "status": "failed", "profile": profile, "error": str(exc)},
+                {"schema_version": 2, "status": "failed", "profile": profile, "error": str(exc)},
             )
             raise
 

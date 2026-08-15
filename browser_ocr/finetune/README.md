@@ -138,7 +138,11 @@ The recorded synthetic-only result is in `results/synth-5k-drug-baseline.json`: 
 
 `ocr-full-document` composes the mobile detector research pipeline with a completed fine-tune baseline. The default detector is the selected `PP-OCRv5_mobile_det` candidate at edge 640. Its official ONNX archive is verified against `browser_ocr/detection/detector-models.json`; the recognizer is loaded directly from the `best_checkpoint` recorded by the supplied baseline result and its SHA-256 is verified before inference.
 
-The command performs full-document detection, perspective-normalizes each quadrilateral into a recognition crop, runs the selected Korean recognizer, and emits a JSON region list containing both detection and recognition scores. It is an Agent Control / research interface, not a layout parser: the current region order is deterministic top-to-bottom/left-to-right and does not infer medication row associations.
+The command performs full-document detection, perspective-normalizes each quadrilateral into a recognition crop, runs the selected Korean recognizer, then passes the recognized quadrilaterals through the evidence-backed `geometry_rule_v2` document parser. The schema-v2 result contains both the raw `regions` and structured `medications`; every exact medication field carries the originating `region-NNNN` evidence ids so repeated products and cross-medication associations remain distinguishable even when their printed values are equal.
+
+The parser does not maintain OCR-typo substitution tables. Table rows are recovered from geometry plus typed medication values when headers are damaged, repeated medication-bag blocks are accepted only when each block proves its own regimen structure, and ambiguous associations remain unresolved. The output profile pins the hashes of the detector, recognizer, parser, parser contract, and full-document implementation, so changing pipeline code cannot silently reuse a result produced by an older implementation.
+
+Structured parsing also has a document-level OCR quality gate. Empty recognitions are retained in the raw region output but excluded from parser tokens, and the parser abstains entirely when more than 20% of detected regions have recognition confidence below 0.8 (empty text counts as low confidence). This is a fail-closed guard against broad blur/compression failures; it does not rewrite low-confidence text or guess medication values.
 
 Detector assets must already be present under the detection cache (the detection pipeline's `assets` command populates that cache). Generated crops, logs, state, and results should remain under ignored `browser_ocr/finetune/work/` paths.
 
@@ -152,4 +156,4 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
   --json
 ```
 
-The output directory is stateful and strict. Re-running exactly the same image/model profile returns the completed result; changing an input or model hash for the same directory fails rather than mixing artifacts. A crashed/failed run can resume by re-running the identical profile after the process lock is released. No-detection is reported explicitly as `skipped_no_detections` for recognition rather than silently substituting another OCR path.
+The output directory is stateful and strict. Re-running exactly the same image/model/implementation profile returns the completed result; changing an input, model, or implementation hash for the same directory fails rather than mixing artifacts. A crashed/failed run can resume by re-running the identical profile after the process lock is released. No-detection is reported explicitly as `skipped_no_detections` for recognition and `skipped_no_regions` for parsing rather than silently substituting another OCR or parser path.

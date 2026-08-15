@@ -139,7 +139,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         result = json.loads(completed.stdout)
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["baseline"], "geometry_rule_v1")
+        self.assertEqual(result["baseline"], "geometry_rule_v2")
         self.assertEqual(len(result["predictions"]["predictions"]), 7)
         self.assertTrue(result["evaluation"]["safety_pass"])
 
