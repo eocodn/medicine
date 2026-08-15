@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from decimal import Decimal
 from pathlib import Path
 
 from .dataset import DatasetError
+
+
+def format_paddle_override(value: object) -> str:
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, list):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, float):
+        return format(Decimal(str(value)), "f")
+    return str(value)
 
 
 def _sha256_file(path: Path) -> str:

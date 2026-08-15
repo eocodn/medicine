@@ -217,6 +217,11 @@ class BaselineTrainingPlanTest(unittest.TestCase):
             self.assertNotEqual(first, third)
 
 class TrainingCommandStreamingTest(unittest.TestCase):
+    def test_float_override_uses_plain_decimal_not_scientific_notation(self) -> None:
+        from browser_ocr.finetune.train_cli import _format_override
+
+        self.assertEqual(_format_override(0.00005), "0.00005")
+
     def test_stream_command_can_avoid_memory_capture_and_append_log(self) -> None:
         import sys
         from tempfile import TemporaryDirectory

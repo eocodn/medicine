@@ -18,6 +18,7 @@ from .training import (
     build_smoke_overrides,
     export_identity,
     find_resume_checkpoint,
+    format_paddle_override as _format_override,
     parse_eval_metrics,
     probe_paddle_runtime,
     subset_label_file,
@@ -55,14 +56,6 @@ def _verify_sha(path: Path, expected: str, label: str) -> None:
     actual = _sha256_file(path)
     if actual != expected:
         raise DatasetError(f"{label} SHA-256 mismatch: expected {expected}, got {actual}")
-
-
-def _format_override(value: object) -> str:
-    if isinstance(value, bool):
-        return "True" if value else "False"
-    if isinstance(value, list):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    return str(value)
 
 
 def run_probe() -> dict:
