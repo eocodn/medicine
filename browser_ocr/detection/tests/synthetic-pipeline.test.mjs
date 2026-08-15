@@ -18,6 +18,13 @@ import {
 } from "../synthetic_catalog.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
 import { estimateRenderedTextBox } from "../synthetic_layouts.mjs";
+import { testDrugCatalog } from "../../corpus/tests/fixtures.mjs";
+
+const TEST_DRUG_CATALOG = testDrugCatalog();
+
+function generateCorpus(options) {
+  return generateSyntheticCorpus({ ...options, drugCatalog: TEST_DRUG_CATALOG });
+}
 
 test("homography maps all four source controls to the exact camera-plane controls", () => {
   const source = [[0, 0], [1280, 0], [1280, 1600], [0, 1600]];
@@ -42,7 +49,7 @@ test("synthetic GT tracks rendered text extents rather than layout slot widths",
 test("legacy bag labels share the regimen association group with their values", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-det-legacy-association-"));
   try {
-    const corpus = await generateSyntheticCorpus({ outputDir: root, count: 3, seed: 153 });
+    const corpus = await generateCorpus({ outputDir: root, count: 3, seed: 153 });
     const legacy = corpus.samples.find((sample) => sample.layout_family === "legacy_preprinted_medication_bag");
     assert.ok(legacy);
     const groups = new Map(legacy.regions.map((region) => [region.region_id, region.association_group]));
@@ -58,9 +65,9 @@ test("legacy bag labels share the regimen association group with their values", 
 test("scaled generator covers realistic layout/camera/material strata with rasterized projective GT", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-det-v2-"));
   try {
-    const corpus = await generateSyntheticCorpus({ outputDir: root, count: 36, seed: 153 });
+    const corpus = await generateCorpus({ outputDir: root, count: 36, seed: 153 });
     assert.equal(corpus.schema_version, 3);
-    assert.equal(corpus.generator.version, 4);
+    assert.equal(corpus.generator.version, 5);
     assert.ok(corpus.generator.revision >= 1);
     assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
     assert.ok(corpus.samples.every((sample) => ["train", "val", "test"].includes(sample.split)));
@@ -100,7 +107,7 @@ test("generation resumes exactly after interruption and rejects config drift", a
   let completed = 0;
   try {
     await assert.rejects(
-      generateSyntheticCorpus({
+      generateCorpus({
         outputDir: root,
         count: 12,
         seed: 901,
@@ -116,19 +123,19 @@ test("generation resumes exactly after interruption and rejects config drift", a
     assert.equal(state.completed, 4);
 
     await assert.rejects(
-      generateSyntheticCorpus({ outputDir: root, count: 12, seed: 902 }),
+      generateCorpus({ outputDir: root, count: 12, seed: 902 }),
       /generation configuration mismatch/,
     );
 
-    const resumed = await generateSyntheticCorpus({ outputDir: root, count: 12, seed: 901 });
+    const resumed = await generateCorpus({ outputDir: root, count: 12, seed: 901 });
     const freshRoot = join(root, "fresh");
-    const fresh = await generateSyntheticCorpus({ outputDir: freshRoot, count: 12, seed: 901 });
+    const fresh = await generateCorpus({ outputDir: freshRoot, count: 12, seed: 901 });
     assert.deepEqual(resumed, fresh);
     await assert.rejects(readFile(join(root, ".generation-state.json"), "utf8"), /ENOENT/);
 
     await writeFile(join(root, resumed.samples[0].image), "corrupted");
     await assert.rejects(
-      generateSyntheticCorpus({ outputDir: root, count: 12, seed: 901 }),
+      generateCorpus({ outputDir: root, count: 12, seed: 901 }),
       /image SHA-256 mismatch/,
     );
   } finally {
@@ -142,7 +149,7 @@ test("generation refuses orphaned output without authoritative state", async () 
     await mkdir(join(root, "images"), { recursive: true });
     await writeFile(join(root, "images/orphan.svg"), "<svg/>");
     await assert.rejects(
-      generateSyntheticCorpus({ outputDir: root, count: 16, seed: 153 }),
+      generateCorpus({ outputDir: root, count: 16, seed: 153 }),
       /non-empty without a generation checkpoint/,
     );
   } finally {
@@ -153,7 +160,7 @@ test("generation refuses orphaned output without authoritative state", async () 
 test("coverage audit fails closed when a required synthetic stratum disappears", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-det-coverage-"));
   try {
-    const corpus = await generateSyntheticCorpus({ outputDir: root, count: 36, seed: 153 });
+    const corpus = await generateCorpus({ outputDir: root, count: 36, seed: 153 });
     const report = auditCoverage(corpus);
     assert.equal(report.status, "pass");
     assert.equal(report.layout_families.length, LAYOUT_FAMILIES.length);

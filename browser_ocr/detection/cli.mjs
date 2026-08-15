@@ -50,11 +50,13 @@ async function main(argv) {
   let result;
   if (command === "generate") {
     const outputDir = option(args, "--output");
-    if (!outputDir) throw new Error("generate requires --output DIR");
+    const canonicalDb = option(args, "--canonical-db");
+    if (!outputDir || !canonicalDb) throw new Error("generate requires --output DIR --canonical-db FILE");
     result = await generateSyntheticCorpus({
       outputDir: resolve(outputDir),
       count: integerOption(args, "--count", 36),
       seed: integerOption(args, "--seed", 153),
+      canonicalDb: resolve(canonicalDb),
     });
   } else if (command === "validate") {
     const corpusPath = option(args, "--corpus");

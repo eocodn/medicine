@@ -1,3 +1,5 @@
+import { DRUG_NAME_POLICY_ID, drugExposure, observedDrugLeakageReport } from "./drug_holdout.mjs";
+
 const SHA256 = /^[0-9a-f]{64}$/;
 const TASKS = ["detection", "recognition", "parsing", "e2e"];
 const SPLITS = new Set(["train", "val", "test"]);
@@ -58,8 +60,11 @@ function validateGates(gates) {
 function validateGenerator(generator, schemaVersion) {
   if (!generator || typeof generator !== "object" || Array.isArray(generator)) fail("generator must be an object");
   if (generator.id !== "medicine_full_document_synthetic") fail("generator.id is unsupported");
-  const expectedVersion = schemaVersion === 3 ? 4 : 2;
-  if (generator.version !== expectedVersion) fail(`generator.version must be ${expectedVersion}`);
+  if (schemaVersion === 3) {
+    if (![4, 5].includes(generator.version)) fail("generator.version must be 4 or 5");
+  } else if (generator.version !== 2) {
+    fail("generator.version must be 2");
+  }
   if (!Number.isInteger(generator.revision) || generator.revision <= 0) fail("generator.revision must be a positive integer");
   if (!Number.isInteger(generator.seed)) fail("generator.seed must be an integer");
   if (!Number.isInteger(generator.count) || generator.count <= 0) fail("generator.count must be a positive integer");
@@ -87,6 +92,51 @@ function validateSplitPolicy(policy, seed) {
     total += ratios[name];
   }
   if (Math.abs(total - 1) > 1e-9) fail("split_policy.ratios must sum to 1");
+}
+
+function validateDrugNamePolicy(policy, splitPolicy) {
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) fail("drug_name_policy must be an object");
+  if (policy.id !== DRUG_NAME_POLICY_ID) fail(`drug_name_policy.id must be ${DRUG_NAME_POLICY_ID}`);
+  if (!Number.isInteger(policy.assignment_seed)) fail("drug_name_policy.assignment_seed must be an integer");
+  if (policy.assignment_seed !== splitPolicy.seed) fail("drug_name_policy.assignment_seed must match split_policy.seed");
+  const ratios = policy.ratios;
+  if (!ratios || typeof ratios !== "object" || Array.isArray(ratios)) fail("drug_name_policy.ratios must be an object");
+  if (JSON.stringify(Object.keys(ratios).sort()) !== JSON.stringify(["test", "train", "val"])) {
+    fail("drug_name_policy.ratios must contain train, val and test");
+  }
+  for (const name of ["train", "val", "test"]) {
+    finiteNumber(ratios[name], `drug_name_policy.ratios.${name}`);
+    if (Math.abs(ratios[name] - splitPolicy.ratios[name]) > 1e-12) fail(`drug_name_policy.ratios.${name} must match split_policy`);
+  }
+  if (typeof policy.family_rule !== "string" || !policy.family_rule.trim()) fail("drug_name_policy.family_rule is required");
+  if (!Number.isInteger(policy.eligible_product_count) || policy.eligible_product_count < 3) fail("drug_name_policy.eligible_product_count must be at least 3");
+  if (!Number.isInteger(policy.eligible_family_count) || policy.eligible_family_count < 3) fail("drug_name_policy.eligible_family_count must be at least 3");
+  if (!SHA256.test(policy.assignment_sha256)) fail("drug_name_policy.assignment_sha256 must be lowercase SHA-256");
+  const source = policy.source;
+  if (!source || typeof source !== "object" || Array.isArray(source)) fail("drug_name_policy.source must be an object");
+  for (const key of ["dataset_key", "source_family", "source_locator"]) {
+    if (typeof source[key] !== "string" || !source[key].trim()) fail(`drug_name_policy.source.${key} is required`);
+  }
+  for (const key of ["sha256", "canonical_db_sha256"]) {
+    if (!SHA256.test(source[key])) fail(`drug_name_policy.source.${key} must be lowercase SHA-256`);
+  }
+  const pools = policy.pools;
+  if (!pools || typeof pools !== "object" || Array.isArray(pools)
+    || JSON.stringify(Object.keys(pools).sort()) !== JSON.stringify(["test", "train", "val"])) {
+    fail("drug_name_policy.pools must contain train, val and test");
+  }
+  let productTotal = 0;
+  for (const name of ["train", "val", "test"]) {
+    const pool = pools[name];
+    if (!pool || typeof pool !== "object" || Array.isArray(pool)) fail(`drug_name_policy.pools.${name} must be an object`);
+    for (const key of ["product_count", "family_count"]) {
+      if (!Number.isInteger(pool[key]) || pool[key] <= 0) fail(`drug_name_policy.pools.${name}.${key} must be positive`);
+    }
+    if (!SHA256.test(pool.product_names_sha256)) fail(`drug_name_policy.pools.${name}.product_names_sha256 must be lowercase SHA-256`);
+    if (!SHA256.test(pool.families_sha256)) fail(`drug_name_policy.pools.${name}.families_sha256 must be lowercase SHA-256`);
+    productTotal += pool.product_count;
+  }
+  if (productTotal !== policy.eligible_product_count) fail("drug_name_policy pool product counts must sum to eligible_product_count");
 }
 
 function validateCapture(capture, sampleId, captureProfile, requireComposableAugmentation = false) {
@@ -143,6 +193,7 @@ export function validateUnifiedCorpus(input) {
       fail(`tasks must be exactly ${TASKS.join(", ")}`);
     }
     validateSplitPolicy(input.split_policy, input.generator.seed);
+    if (input.generator.version >= 5) validateDrugNamePolicy(input.drug_name_policy, input.split_policy);
   }
   validateGates(input.gates);
   if (!Array.isArray(input.samples) || input.samples.length === 0) fail("samples must be non-empty");
@@ -174,6 +225,13 @@ export function validateUnifiedCorpus(input) {
       if (!DOCUMENT_TYPES.has(sample.document_type)) fail(`${sample.id}.document_type is unsupported`);
       if (!["clean", "medium", "hard"].includes(sample.augmentation_difficulty)) fail(`${sample.id}.augmentation_difficulty is invalid`);
       if (sample.capture.difficulty !== sample.augmentation_difficulty) fail(`${sample.id}.augmentation_difficulty must match capture.difficulty`);
+      if (input.generator.version >= 5) {
+        if (!SPLITS.has(sample.drug_name_split)) fail(`${sample.id}.drug_name_split must be train, val or test`);
+        if (sample.drug_name_split !== sample.split) fail(`${sample.id}.drug_name_split must match split`);
+        if (sample.drug_name_exposure !== drugExposure(sample.drug_name_split)) {
+          fail(`${sample.id}.drug_name_exposure does not match drug_name_split`);
+        }
+      }
     }
     uniqueStrings(sample.scenario_tags, `${sample.id}.scenario_tags`);
     uniqueStrings(sample.risk_tags, `${sample.id}.risk_tags`);
@@ -199,7 +257,17 @@ export function validateUnifiedCorpus(input) {
         if (!["medication", "context", "distractor"].includes(region.region_class)) fail(`${sample.id}.${region.region_id}.region_class is invalid`);
         if (!Number.isInteger(region.font_size_px) || region.font_size_px <= 0) fail(`${sample.id}.${region.region_id}.font_size_px must be a positive integer`);
       }
+      if (unified && input.generator.version >= 5 && region.semantic_role === "product") {
+        if (region.drug_name_split !== sample.drug_name_split) fail(`${sample.id}.${region.region_id}.drug_name_split must match parent document`);
+        if (typeof region.drug_family !== "string" || !/^family-[0-9a-f]{20}$/u.test(region.drug_family)) {
+          fail(`${sample.id}.${region.region_id}.drug_family is invalid`);
+        }
+      }
     }
+  }
+  if (unified && input.generator.version >= 5) {
+    const leakage = observedDrugLeakageReport(input.samples);
+    if (leakage.status !== "pass") fail(leakage.failures[0] || "drug-name leakage detected");
   }
   return structuredClone(input);
 }

@@ -9,6 +9,7 @@ import {
 } from "../../detection/synthetic_catalog.mjs";
 import { captureForSample } from "../../detection/synthetic_capture.mjs";
 import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH } from "../../detection/synthetic_layouts.mjs";
+import { testDrugCatalog } from "./fixtures.mjs";
 
 function seeded(seed) {
   let state = seed >>> 0 || 1;
@@ -51,10 +52,11 @@ test("v4 capture augmentation composes multiple bounded effects across difficult
 });
 
 test("v4 layout generation varies medication density and typography within each layout family", () => {
+  const products = testDrugCatalog();
   for (let familyIndex = 0; familyIndex < LAYOUT_FAMILIES.length; familyIndex += 1) {
     const layouts = Array.from({ length: 6 }, (_, variant) => {
       const index = familyIndex + variant * LAYOUT_FAMILIES.length;
-      return buildLayout(index, seeded(5000 + index));
+      return buildLayout(index, seeded(5000 + index), { products: products.map((item) => item.product_name) });
     });
     const productCounts = new Set(layouts.map((layout) => (
       layout.regions.filter((region) => region.semantic_role === "product").length
@@ -63,5 +65,20 @@ test("v4 layout generation varies medication density and typography within each 
       layout.regions.filter((region) => region.region_class === "medication").map((region) => region.font_size_px)
     )));
     assert.ok(productCounts.size > 1 || medicationFonts.size > 1, LAYOUT_FAMILIES[familyIndex]);
+  }
+});
+
+test("canonical product names are fitted inside their declared product slots", () => {
+  const longProduct = "팔로녹시주(팔로노세트론염산염)";
+  for (let familyIndex = 0; familyIndex < LAYOUT_FAMILIES.length; familyIndex += 1) {
+    const layout = buildLayout(familyIndex, seeded(9100 + familyIndex), { products: [longProduct] });
+    for (const product of layout.regions.filter((region) => region.semantic_role === "product")) {
+      const naturalWidth = product.natural_text_box[1][0] - product.natural_text_box[0][0];
+      const slotWidth = product.layout_slot[1][0] - product.layout_slot[0][0];
+      assert.ok(
+        naturalWidth <= slotWidth,
+        `${layout.layout_family}/${product.region_id}: ${naturalWidth} > ${slotWidth}`,
+      );
+    }
   }
 });

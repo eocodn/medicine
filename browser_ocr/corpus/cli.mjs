@@ -4,6 +4,7 @@ import { dirname, resolve, sep } from "node:path";
 
 import { auditCoverage } from "../detection/coverage.mjs";
 import { validateUnifiedCorpus } from "./contract.mjs";
+import { observedDrugLeakageReport } from "./drug_holdout.mjs";
 import { generateUnifiedCorpus } from "./generator.mjs";
 import { materializeUnifiedViews } from "./materialize.mjs";
 
@@ -52,6 +53,11 @@ function summary(corpus) {
     regions: corpus.samples.reduce((sum, sample) => sum + sample.regions.length, 0),
     critical_regions: corpus.samples.reduce((sum, sample) => sum + sample.regions.filter((region) => region.critical).length, 0),
     splits: Object.fromEntries(["train", "val", "test"].map((name) => [name, corpus.samples.filter((sample) => sample.split === name).length])),
+    ...(corpus.drug_name_policy ? {
+      drug_name_policy: corpus.drug_name_policy,
+      drug_name_splits: Object.fromEntries(["train", "val", "test"].map((name) => [name, corpus.samples.filter((sample) => sample.drug_name_split === name).length])),
+      drug_name_exposure: Object.fromEntries(["seen", "unseen"].map((name) => [name, corpus.samples.filter((sample) => sample.drug_name_exposure === name).length])),
+    } : {}),
   };
 }
 
@@ -61,11 +67,13 @@ async function main(argv) {
   let result;
   if (command === "generate") {
     const outputDir = option(args, "--output");
-    if (!outputDir) throw new Error("generate requires --output DIR");
+    const canonicalDb = option(args, "--canonical-db");
+    if (!outputDir || !canonicalDb) throw new Error("generate requires --output DIR --canonical-db FILE");
     const corpus = await generateUnifiedCorpus({
       outputDir: resolve(outputDir),
       count: integerOption(args, "--count", 36),
       seed: integerOption(args, "--seed", 153),
+      canonicalDb: resolve(canonicalDb),
     });
     if (args.includes("--materialize")) {
       const views = await materializeUnifiedViews({
@@ -106,10 +114,11 @@ async function main(argv) {
       minimumPerRisk: integerOption(args, "--min-risk", 1),
       minimumCriticalPerRole: integerOption(args, "--min-critical-role", 1),
     });
+    result.drug_names = corpus.drug_name_policy ? observedDrugLeakageReport(corpus.samples) : null;
     result.corpus_id = corpus.corpus_id;
     result.tasks = corpus.tasks;
     result.splits = summary(corpus).splits;
-    if (result.status !== "pass") process.exitCode = 1;
+    if (result.status !== "pass" || result.drug_names?.status === "fail") process.exitCode = 1;
   } else {
     throw new Error("usage: cli.mjs <generate|validate|materialize|audit> [options] [--json]");
   }

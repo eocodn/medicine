@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import test from "node:test";
 
+import { buildDrugCatalog, normalizeDrugName } from "../drug_holdout.mjs";
 import { generateUnifiedCorpus } from "../generator.mjs";
 import { materializeUnifiedViews } from "../materialize.mjs";
 import { validateUnifiedCorpus } from "../contract.mjs";
@@ -13,20 +14,60 @@ function lines(text) {
   return text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
 
+function drugCatalog(count = 240) {
+  return buildDrugCatalog(Array.from({ length: count }, (_, index) => ({
+    item_seq: String(700000000 + index),
+    product_name: `검증약${String(index).padStart(3, "0")}정`,
+  })));
+}
+
 test("one document corpus materializes aligned detection recognition parsing and e2e views", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-unified-ocr-"));
   try {
     const corpusRoot = join(root, "corpus");
     const viewsRoot = join(corpusRoot, "views");
-    const corpus = await generateUnifiedCorpus({ outputDir: corpusRoot, count: 12, seed: 311 });
+    const corpus = await generateUnifiedCorpus({
+      outputDir: corpusRoot,
+      count: 12,
+      seed: 311,
+      drugCatalog: drugCatalog(),
+    });
     validateUnifiedCorpus(corpus);
 
     assert.equal(corpus.schema_version, 3);
     assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
-    assert.equal(corpus.generator.version, 4);
+    assert.equal(corpus.generator.version, 5);
+    assert.equal(corpus.drug_name_policy.id, "canonical-product-family-holdout-v1");
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.augmentation_difficulty)), new Set(["clean", "medium", "hard"]));
     assert.ok(corpus.samples.every((sample) => ["train", "val", "test"].includes(sample.split)));
+    assert.ok(corpus.samples.every((sample) => sample.drug_name_split === sample.split));
+    assert.ok(corpus.samples.every((sample) => sample.drug_name_exposure === (sample.split === "train" ? "seen" : "unseen")));
     assert.ok(corpus.samples.every((sample) => ["prescription", "medication_bag"].includes(sample.document_type)));
+
+    const productOwners = new Map();
+    const familyOwners = new Map();
+    for (const sample of corpus.samples) {
+      for (const region of sample.regions.filter((item) => item.semantic_role === "product")) {
+        assert.equal(region.drug_name_split, sample.split);
+        assert.match(region.drug_family, /^family-[0-9a-f]{20}$/);
+        const normalized = normalizeDrugName(region.text);
+        const productOwner = productOwners.get(normalized);
+        if (productOwner) assert.equal(productOwner, sample.split);
+        productOwners.set(normalized, sample.split);
+        const familyOwner = familyOwners.get(region.drug_family);
+        if (familyOwner) assert.equal(familyOwner, sample.split);
+        familyOwners.set(region.drug_family, sample.split);
+      }
+    }
+
+    const leaked = structuredClone(corpus);
+    const trainProduct = leaked.samples.find((sample) => sample.split === "train")
+      .regions.find((region) => region.semantic_role === "product");
+    const testProduct = leaked.samples.find((sample) => sample.split === "test")
+      .regions.find((region) => region.semantic_role === "product");
+    testProduct.text = trainProduct.text;
+    testProduct.drug_family = trainProduct.drug_family;
+    assert.throws(() => validateUnifiedCorpus(leaked), /leaks across/);
 
     const report = await materializeUnifiedViews({
       corpusPath: join(corpusRoot, "manifest.json"),
@@ -65,9 +106,12 @@ test("one document corpus materializes aligned detection recognition parsing and
     }]));
     for (const item of [...detection, ...recognition, ...parsing, ...e2e]) {
       assert.equal(item.split, splitByDocument.get(item.document_id));
+      assert.equal(item.drug_name_split, splitByDocument.get(item.document_id));
+      assert.equal(item.drug_name_exposure, item.split === "train" ? "seen" : "unseen");
       assert.equal(item.augmentation_difficulty, augmentationByDocument.get(item.document_id).difficulty);
       assert.deepEqual(item.augmentation_components, augmentationByDocument.get(item.document_id).components);
     }
+    assert.ok(recognition.filter((item) => item.semantic_role === "product").every((item) => /^family-[0-9a-f]{20}$/.test(item.drug_family)));
 
     const cropState = JSON.parse(await readFile(join(viewsRoot, "recognition", ".crop-state.json"), "utf8"));
     assert.equal(cropState.status, "completed");
@@ -110,8 +154,9 @@ test("one document corpus materializes aligned detection recognition parsing and
 test("unified sample split is stable as corpus scale grows", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-unified-scale-"));
   try {
-    const small = await generateUnifiedCorpus({ outputDir: join(root, "small"), count: 12, seed: 719 });
-    const large = await generateUnifiedCorpus({ outputDir: join(root, "large"), count: 24, seed: 719 });
+    const catalog = drugCatalog();
+    const small = await generateUnifiedCorpus({ outputDir: join(root, "small"), count: 12, seed: 719, drugCatalog: catalog });
+    const large = await generateUnifiedCorpus({ outputDir: join(root, "large"), count: 24, seed: 719, drugCatalog: catalog });
     const largeByIndex = new Map(large.samples.map((sample) => [sample.sample_index, sample]));
     for (const sample of small.samples) {
       assert.equal(sample.split, largeByIndex.get(sample.sample_index).split);
@@ -119,6 +164,11 @@ test("unified sample split is stable as corpus scale grows", async () => {
       assert.equal(sample.capture_profile, largeByIndex.get(sample.sample_index).capture_profile);
       assert.equal(sample.augmentation_difficulty, largeByIndex.get(sample.sample_index).augmentation_difficulty);
       assert.deepEqual(sample.capture.augmentation_components, largeByIndex.get(sample.sample_index).capture.augmentation_components);
+      assert.equal(sample.drug_name_split, largeByIndex.get(sample.sample_index).drug_name_split);
+      assert.deepEqual(
+        sample.regions.filter((region) => region.semantic_role === "product").map((region) => [region.text, region.drug_family]),
+        largeByIndex.get(sample.sample_index).regions.filter((region) => region.semantic_role === "product").map((region) => [region.text, region.drug_family]),
+      );
     }
   } finally {
     await rm(root, { recursive: true, force: true });

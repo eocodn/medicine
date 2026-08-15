@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 
 import { validateUnifiedCorpus } from "./contract.mjs";
 
-const MATERIALIZER_VERSION = 5;
+const MATERIALIZER_VERSION = 6;
 const STAGES = ["detection", "recognition", "parsing", "e2e"];
 const STATE_FILE = ".materialize-state.json";
 const LOCK_FILE = ".materialize.lock";
@@ -36,6 +36,18 @@ function slug(value) {
 function roleValue(text) {
   const match = String(text).match(/\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : null;
+}
+
+function drugFamilyByAssociation(sample) {
+  return new Map(sample.regions
+    .filter((region) => region.semantic_role === "product" && region.drug_family)
+    .map((region) => [region.association_group, region.drug_family]));
+}
+
+function recognitionDrugFamily(sample, region, families) {
+  const family = region.drug_family || families.get(region.association_group);
+  if (family) return family;
+  return `context-${sha256(sample.id).slice(0, 12)}`;
 }
 
 function expectedRows(sample) {
@@ -187,6 +199,8 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
     const detectionItems = corpus.samples.map((sample) => ({
       document_id: sample.id,
       split: sample.split,
+      drug_name_split: sample.drug_name_split,
+      drug_name_exposure: sample.drug_name_exposure,
       image: sample.image,
       width: sample.width,
       height: sample.height,
@@ -201,6 +215,10 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
         critical: region.critical,
         semantic_role: region.semantic_role,
         association_group: region.association_group,
+        ...(region.drug_family ? {
+          drug_family: region.drug_family,
+          drug_name_split: region.drug_name_split,
+        } : {}),
       })),
     }));
     await writeFile(join(detectionDir, "samples.jsonl"), jsonl(detectionItems));
@@ -247,6 +265,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
     const assignments = { train: [], val: [], test: [] };
     const cropJobs = [];
     for (const sample of corpus.samples) {
+      const drugFamilies = drugFamilyByAssociation(sample);
       for (const [regionIndex, region] of sample.regions.entries()) {
         const id = `rec-${String(sample.sample_index + 1).padStart(6, "0")}-${String(regionIndex + 1).padStart(4, "0")}`;
         const imageRel = `images/${sample.id}/region-${String(regionIndex + 1).padStart(4, "0")}.png`;
@@ -254,6 +273,9 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
         cropJobs.push({ image: join(corpusRoot, sample.image), polygon: region.polygon, output: outputPath });
         recognitionIndex.push({
           id, document_id: sample.id, region_id: region.region_id, split: sample.split,
+          drug_name_split: sample.drug_name_split,
+          drug_name_exposure: sample.drug_name_exposure,
+          drug_family: recognitionDrugFamily(sample, region, drugFamilies),
           image: imageRel, text: region.text, semantic_role: region.semantic_role,
           association_group: region.association_group, region_class: region.region_class,
           critical: region.critical, layout_family: sample.layout_family,
@@ -278,7 +300,6 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       const sample = corpus.samples.find((candidate) => candidate.id === item.document_id);
       const imageHash = await fileSha256(join(recognitionDir, item.image));
       item.image_sha256 = imageHash;
-      const associationHash = sha256(region.association_group).slice(0, 12);
       recognitionSamples.push({
         id: item.id,
         image: item.image,
@@ -290,7 +311,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
         groups: {
           layout_family: slug(sample.layout_family),
           source_family: slug(`capture-${sample.capture_profile}`),
-          drug_family: `assoc-${associationHash}`,
+          drug_family: item.drug_family,
         },
         semantic_tags: [slug(region.semantic_role)],
         risk_tags: [...new Set([
@@ -298,6 +319,8 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
           `difficulty-${slug(sample.augmentation_difficulty)}`,
           ...sample.capture.augmentation_components.map((component) => `augmentation-${slug(component)}`),
           `region-${slug(region.region_class)}`,
+          ...(sample.drug_name_split ? [`drug-split-${slug(sample.drug_name_split)}`] : []),
+          ...(sample.drug_name_exposure ? [`drug-exposure-${slug(sample.drug_name_exposure)}`] : []),
         ])],
         privacy: { contains_patient_data: false, deidentified: true },
         provenance: {
@@ -325,6 +348,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
         parent_corpus_sha256: profile.corpus_sha256,
         crop_polygon_kind: "region_polygon",
         document_split_policy: corpus.split_policy,
+        ...(corpus.drug_name_policy ? { drug_name_policy: corpus.drug_name_policy } : {}),
       },
     });
     const assignmentPath = join(recognitionDir, ".split-assignments.json");
@@ -347,6 +371,8 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
     const parsingItems = corpus.samples.map((sample) => ({
       document_id: sample.id,
       split: sample.split,
+      drug_name_split: sample.drug_name_split,
+      drug_name_exposure: sample.drug_name_exposure,
       layout_family: sample.layout_family,
       capture_profile: sample.capture_profile,
       augmentation_difficulty: sample.augmentation_difficulty,
@@ -358,6 +384,10 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
         polygon: region.polygon,
         semantic_role: region.semantic_role,
         association_group: region.association_group,
+        ...(region.drug_family ? {
+          drug_family: region.drug_family,
+          drug_name_split: region.drug_name_split,
+        } : {}),
         region_class: region.region_class,
         critical: region.critical,
       })),
@@ -398,6 +428,8 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
     const e2eItems = corpus.samples.map((sample) => ({
       document_id: sample.id,
       split: sample.split,
+      drug_name_split: sample.drug_name_split,
+      drug_name_exposure: sample.drug_name_exposure,
       image: sample.image,
       layout_family: sample.layout_family,
       capture_profile: sample.capture_profile,
@@ -425,6 +457,14 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       documents: corpus.samples.length,
       regions: recognitionSamples.length,
       splits: Object.fromEntries(["train", "val", "test"].map((name) => [name, corpus.samples.filter((sample) => sample.split === name).length])),
+      drug_name_splits: Object.fromEntries(["train", "val", "test"].map((name) => [
+        name,
+        corpus.samples.filter((sample) => sample.drug_name_split === name).length,
+      ])),
+      drug_name_exposure: Object.fromEntries(["seen", "unseen"].map((name) => [
+        name,
+        corpus.samples.filter((sample) => sample.drug_name_exposure === name).length,
+      ])),
       recognition: {
         samples: recognitionSamples.length,
         manifest: "recognition/manifest.json",
