@@ -14,7 +14,7 @@ import { testDrugCatalog } from "../../corpus/tests/fixtures.mjs";
 const TEST_DRUG_CATALOG = testDrugCatalog();
 
 function generateCorpus(options) {
-  return generateSyntheticCorpus({ ...options, drugCatalog: TEST_DRUG_CATALOG });
+  return generateSyntheticCorpus({ ...options, drugSplitSeed: 161, drugCatalog: TEST_DRUG_CATALOG });
 }
 
 function tinyCorpus() {

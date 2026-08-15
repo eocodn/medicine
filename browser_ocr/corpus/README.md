@@ -26,6 +26,8 @@ Generator v5 keeps the v4 image-degradation behavior and replaces the small buil
 
 Families are assigned to train/validation/test drug pools with an 80/10/10 deterministic hash split. Every document samples product names only from the pool matching its parent-document split. Product regions carry `drug_family` and `drug_name_split`; documents carry `drug_name_split` plus `drug_name_exposure` (`seen` for train, `unseen` for validation/test). Validation fails closed if either an exact normalized product name or a drug family is observed in more than one pool.
 
+The drug partition seed is intentionally independent from the document-generation seed. Keep `--drug-split-seed` fixed across training and evaluation corpora so the meaning of seen/unseen medication identity remains stable while `--seed` changes document layouts, captures, and sample identities.
+
 The root `drug_name_policy` binds the corpus to the canonical database SHA-256, MFDS source-snapshot SHA-256, assignment seed, pool counts, family counts, and per-pool content hashes. Product typography is fitted to the declared layout slot so longer canonical names remain readable without colliding with adjacent regimen columns.
 
 ## Materialized views
@@ -48,6 +50,7 @@ COMPOSE_PROJECT_NAME=medicine_ocr_corpus \
   docker compose run --rm ocr-corpus generate \
   --output /workspace/browser_ocr/finetune/work/unified-360 \
   --canonical-db /data/canonical.sqlite \
+  --drug-split-seed 161 \
   --count 360 --seed 153 --materialize --json
 ```
 

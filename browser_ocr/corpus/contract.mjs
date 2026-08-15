@@ -98,7 +98,6 @@ function validateDrugNamePolicy(policy, splitPolicy) {
   if (!policy || typeof policy !== "object" || Array.isArray(policy)) fail("drug_name_policy must be an object");
   if (policy.id !== DRUG_NAME_POLICY_ID) fail(`drug_name_policy.id must be ${DRUG_NAME_POLICY_ID}`);
   if (!Number.isInteger(policy.assignment_seed)) fail("drug_name_policy.assignment_seed must be an integer");
-  if (policy.assignment_seed !== splitPolicy.seed) fail("drug_name_policy.assignment_seed must match split_policy.seed");
   const ratios = policy.ratios;
   if (!ratios || typeof ratios !== "object" || Array.isArray(ratios)) fail("drug_name_policy.ratios must be an object");
   if (JSON.stringify(Object.keys(ratios).sort()) !== JSON.stringify(["test", "train", "val"])) {

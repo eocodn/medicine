@@ -68,11 +68,17 @@ async function main(argv) {
   if (command === "generate") {
     const outputDir = option(args, "--output");
     const canonicalDb = option(args, "--canonical-db");
-    if (!outputDir || !canonicalDb) throw new Error("generate requires --output DIR --canonical-db FILE");
+    const drugSplitSeed = option(args, "--drug-split-seed");
+    if (!outputDir || !canonicalDb || drugSplitSeed === null) {
+      throw new Error("generate requires --output DIR --canonical-db FILE --drug-split-seed INTEGER");
+    }
+    const parsedDrugSplitSeed = Number(drugSplitSeed);
+    if (!Number.isInteger(parsedDrugSplitSeed)) throw new Error("--drug-split-seed must be an integer");
     const corpus = await generateUnifiedCorpus({
       outputDir: resolve(outputDir),
       count: integerOption(args, "--count", 36),
       seed: integerOption(args, "--seed", 153),
+      drugSplitSeed: parsedDrugSplitSeed,
       canonicalDb: resolve(canonicalDb),
     });
     if (args.includes("--materialize")) {

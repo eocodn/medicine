@@ -30,6 +30,7 @@ test("one document corpus materializes aligned detection recognition parsing and
       outputDir: corpusRoot,
       count: 12,
       seed: 311,
+      drugSplitSeed: 161,
       drugCatalog: drugCatalog(),
     });
     validateUnifiedCorpus(corpus);
@@ -155,8 +156,8 @@ test("unified sample split is stable as corpus scale grows", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-unified-scale-"));
   try {
     const catalog = drugCatalog();
-    const small = await generateUnifiedCorpus({ outputDir: join(root, "small"), count: 12, seed: 719, drugCatalog: catalog });
-    const large = await generateUnifiedCorpus({ outputDir: join(root, "large"), count: 24, seed: 719, drugCatalog: catalog });
+    const small = await generateUnifiedCorpus({ outputDir: join(root, "small"), count: 12, seed: 719, drugSplitSeed: 161, drugCatalog: catalog });
+    const large = await generateUnifiedCorpus({ outputDir: join(root, "large"), count: 24, seed: 719, drugSplitSeed: 161, drugCatalog: catalog });
     const largeByIndex = new Map(large.samples.map((sample) => [sample.sample_index, sample]));
     for (const sample of small.samples) {
       assert.equal(sample.split, largeByIndex.get(sample.sample_index).split);
@@ -170,6 +171,26 @@ test("unified sample split is stable as corpus scale grows", async () => {
         largeByIndex.get(sample.sample_index).regions.filter((region) => region.semantic_role === "product").map((region) => [region.text, region.drug_family]),
       );
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("drug split seed stays stable across different document generation seeds", async () => {
+  const root = await mkdtemp(join(tmpdir(), "medicine-unified-drug-seed-"));
+  try {
+    const catalog = drugCatalog();
+    const first = await generateUnifiedCorpus({
+      outputDir: join(root, "first"), count: 1, seed: 811, drugSplitSeed: 161, drugCatalog: catalog,
+    });
+    const second = await generateUnifiedCorpus({
+      outputDir: join(root, "second"), count: 1, seed: 812, drugSplitSeed: 161, drugCatalog: catalog,
+    });
+    assert.equal(first.drug_name_policy.assignment_seed, 161);
+    assert.equal(second.drug_name_policy.assignment_seed, 161);
+    assert.equal(first.drug_name_policy.assignment_sha256, second.drug_name_policy.assignment_sha256);
+    assert.deepEqual(first.drug_name_policy.pools, second.drug_name_policy.pools);
+    assert.notEqual(first.generator.fingerprint, second.generator.fingerprint);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

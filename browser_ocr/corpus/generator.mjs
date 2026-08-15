@@ -26,7 +26,7 @@ import { rasterizerIdentity, renderRasterJpeg } from "../detection/synthetic_ras
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 5;
-const GENERATOR_REVISION = 2;
+const GENERATOR_REVISION = 3;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -208,7 +208,7 @@ async function renderSample(index, seed, outputDir, drugAssignment) {
 function buildCorpus({ seed, count, fingerprint, rasterizer, drugNamePolicy, samples }) {
   return validateCorpus({
     schema_version: 3,
-    corpus_id: `synthetic-medicine-document-v5-seed-${seed}-n-${count}`,
+    corpus_id: `synthetic-medicine-document-v5-seed-${seed}-drug-seed-${drugNamePolicy.assignment_seed}-n-${count}`,
     synthetic_only: true,
     tasks: [...TASKS],
     split_policy: {
@@ -335,13 +335,14 @@ function injectedDrugSource(catalog) {
   };
 }
 
-async function drugConfiguration({ canonicalDb, drugCatalog, seed }) {
+async function drugConfiguration({ canonicalDb, drugCatalog, drugSplitSeed }) {
   if (canonicalDb && drugCatalog) throw new Error("provide either canonicalDb or drugCatalog, not both");
   if (!canonicalDb && !drugCatalog) throw new Error("canonicalDb is required unless an explicit drugCatalog is provided");
+  if (!Number.isInteger(drugSplitSeed)) throw new Error("drugSplitSeed must be an integer");
   const loaded = drugCatalog
     ? injectedDrugSource(buildDrugCatalog(drugCatalog))
     : await loadCanonicalDrugCatalog(canonicalDb);
-  const assignment = assignDrugPools(loaded.products, { seed });
+  const assignment = assignDrugPools(loaded.products, { seed: drugSplitSeed });
   const policy = buildDrugNamePolicy({
     catalog: loaded.products,
     assignment,
@@ -355,6 +356,7 @@ export async function generateUnifiedCorpus({
   outputDir,
   count = 36,
   seed = 153,
+  drugSplitSeed = null,
   canonicalDb = null,
   drugCatalog = null,
   onProgress = null,
@@ -363,7 +365,7 @@ export async function generateUnifiedCorpus({
   if (!Number.isInteger(seed)) throw new Error("seed must be an integer");
   await mkdir(join(outputDir, "images"), { recursive: true });
 
-  const { assignment: drugAssignment, policy: drugNamePolicy } = await drugConfiguration({ canonicalDb, drugCatalog, seed });
+  const { assignment: drugAssignment, policy: drugNamePolicy } = await drugConfiguration({ canonicalDb, drugCatalog, drugSplitSeed });
   const { fingerprint, rasterizer } = await configurationFingerprint({ seed, count, drugNamePolicy });
   const manifestPath = join(outputDir, "manifest.json");
   const statePath = join(outputDir, STATE_FILE);

@@ -25,7 +25,7 @@ test("ocr corpus CLI generates and validates the canonical multi-stage corpus", 
     const canonicalDb = join(root, "canonical.sqlite");
     await createCanonicalDrugDb(canonicalDb);
     const generated = await run([
-      "generate", "--output", root, "--canonical-db", canonicalDb,
+      "generate", "--output", root, "--canonical-db", canonicalDb, "--drug-split-seed", "161",
       "--count", "6", "--seed", "501", "--json",
     ]);
     assert.equal(generated.code, 0, generated.stderr);
