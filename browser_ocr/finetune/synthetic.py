@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .dataset import DatasetError, dataset_stats, load_dataset
 
@@ -22,7 +22,7 @@ class GenerationError(DatasetError):
     pass
 
 
-_GENERATOR_VERSION = "4"
+_GENERATOR_VERSION = "5"
 _LICENSE_ID = "data-go-kr-unrestricted-use"
 _MAX_PRODUCT_LENGTH = 18
 _SOURCE_DATASET_KEY = "mfds_permit:products"
@@ -204,6 +204,28 @@ def _text_case(case: int, product: Product, rng: random.Random) -> tuple[str, li
     return "1~2정 복용", ["dose"], ["exact_numeric", "ambiguous_range"]
 
 
+def _apply_plastic_reflection(image: Image.Image, rng: random.Random) -> Image.Image:
+    """Blend a soft glare band without replacing the underlying glyph pixels."""
+    width, height = image.size
+    band_width = max(12, round(width * rng.uniform(0.08, 0.16)))
+    center = rng.randrange(max(1, width // 5), max(2, width * 4 // 5))
+    slant = round(height * rng.uniform(0.35, 0.9)) * rng.choice((-1, 1))
+    left = center - band_width // 2
+    right = left + band_width
+
+    mask = Image.new("L", image.size, 0)
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(
+        [(left, 0), (right, 0), (right + slant, height), (left + slant, height)],
+        fill=255,
+    )
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(2.0, min(6.0, height * 0.08))))
+    opacity = rng.uniform(0.14, 0.28)
+    mask = mask.point(lambda value: round(value * opacity))
+    glare = Image.new("L", image.size, 255)
+    return Image.composite(glare, image, mask)
+
+
 def _render_line(
     text: str,
     target: Path,
@@ -241,11 +263,9 @@ def _render_line(
     draw = ImageDraw.Draw(image)
     draw.text((margin_x - left, margin_y - top), text, fill=foreground, font=font)
     if "plastic_reflection" in capture_tags:
-        stripe_x = max(1, image.width // 3)
-        draw.polygon(
-            [(stripe_x, 0), (stripe_x + 10, 0), (stripe_x + 40, image.height), (stripe_x + 28, image.height)],
-            fill=min(252, background + 7),
-        )
+        reflection_rng = random.Random()
+        reflection_rng.setstate(rng.getstate())
+        image = _apply_plastic_reflection(image, reflection_rng)
     if "rotation" in capture_tags:
         angle = rng.choice([-2.0, -1.25, 1.25, 2.0])
         image = image.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=background)

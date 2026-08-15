@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import sqlite3
 import tempfile
 import unittest
@@ -10,7 +11,13 @@ from pathlib import Path
 from PIL import Image
 
 from browser_ocr.finetune.dataset import dataset_stats, load_dataset
-from browser_ocr.finetune.synthetic import GenerationError, generate_dataset, load_product_lexicon, synthetic_assignments
+from browser_ocr.finetune.synthetic import (
+    GenerationError,
+    _apply_plastic_reflection,
+    generate_dataset,
+    load_product_lexicon,
+    synthetic_assignments,
+)
 
 
 class SyntheticDatasetTest(unittest.TestCase):
@@ -70,6 +77,27 @@ class SyntheticDatasetTest(unittest.TestCase):
             products, _ = load_product_lexicon(canonical)
             product = next(product for product in products if product.item_seq == "100")
             self.assertEqual(product.product_name, "테스트정50% 1μg")
+
+    def test_plastic_reflection_softens_contrast_without_erasing_dark_strokes(self) -> None:
+        image = Image.new("L", (240, 64), 248)
+        for x in range(20, 220, 16):
+            for y in range(16, 48):
+                image.putpixel((x, y), 40)
+                image.putpixel((x + 1, y), 40)
+
+        reflected = _apply_plastic_reflection(image, random.Random(112))
+        self.assertEqual(reflected.size, image.size)
+        deltas = [after - before for before, after in zip(image.getdata(), reflected.getdata())]
+        self.assertGreater(sum(delta > 0 for delta in deltas), 0)
+        self.assertGreater(len({delta for delta in deltas if delta > 0}), 5)
+
+        dark_after = [
+            after
+            for before, after in zip(image.getdata(), reflected.getdata())
+            if before <= 40
+        ]
+        self.assertTrue(dark_after)
+        self.assertLess(max(dark_after), 160)
 
     def test_generation_is_deterministic_valid_and_covers_safety_strata(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
