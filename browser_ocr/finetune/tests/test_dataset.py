@@ -174,6 +174,17 @@ class FineTuneDatasetTest(unittest.TestCase):
             self.assertEqual(sample_split["a1"], sample_split["a2"])
             self.assertEqual(sample_split["a1"], sample_split["b1"])
 
+    def test_union_find_handles_more_than_recursion_limit_in_one_group(self) -> None:
+        from browser_ocr.finetune.dataset import _UnionFind
+
+        groups = _UnionFind()
+        for index in range(1500):
+            groups.union(f"document:{index}", "source:shared")
+
+        expected_root = groups.find("document:1499")
+        self.assertEqual(groups.find("source:shared"), expected_root)
+        self.assertEqual(groups.find("document:0"), expected_root)
+
     def test_paddle_export_is_atomic_machine_readable_and_tab_separated(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

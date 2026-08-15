@@ -47,18 +47,31 @@ class Dataset:
 class _UnionFind:
     def __init__(self) -> None:
         self.parent: dict[str, str] = {}
+        self.size: dict[str, int] = {}
 
     def find(self, value: str) -> str:
-        self.parent.setdefault(value, value)
-        if self.parent[value] != value:
-            self.parent[value] = self.find(self.parent[value])
-        return self.parent[value]
+        if value not in self.parent:
+            self.parent[value] = value
+            self.size[value] = 1
+            return value
+        root = value
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[value] != value:
+            parent = self.parent[value]
+            self.parent[value] = root
+            value = parent
+        return root
 
     def union(self, left: str, right: str) -> None:
         left_root = self.find(left)
         right_root = self.find(right)
-        if left_root != right_root:
-            self.parent[right_root] = left_root
+        if left_root == right_root:
+            return
+        if self.size[left_root] < self.size[right_root]:
+            left_root, right_root = right_root, left_root
+        self.parent[right_root] = left_root
+        self.size[left_root] += self.size[right_root]
 
 
 def _require_object(value: object, label: str) -> dict:
