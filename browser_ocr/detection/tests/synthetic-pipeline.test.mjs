@@ -17,6 +17,7 @@ import {
   REQUIRED_AUGMENTATION_COMPONENTS,
 } from "../synthetic_catalog.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
+import { generationCheckpointInterval } from "../../corpus/generator.mjs";
 import { estimateRenderedTextBox } from "../synthetic_layouts.mjs";
 import { testDrugCatalog, testHistoricalDrugExposure } from "../../corpus/tests/fixtures.mjs";
 
@@ -36,6 +37,12 @@ test("homography maps all four source controls to the exact camera-plane control
     assert.ok(Math.abs(mapped[0] - destination[index][0]) < 1e-4);
     assert.ok(Math.abs(mapped[1] - destination[index][1]) < 1e-4);
   }
+});
+
+test("large corpus generation batches resumable checkpoints without unbounded redo", () => {
+  assert.equal(generationCheckpointInterval(12), 1);
+  assert.equal(generationCheckpointInterval(480), 24);
+  assert.equal(generationCheckpointInterval(3600), 50);
 });
 
 test("visible transformed quads stay inside the raster when partial crop moves paper off-canvas", () => {

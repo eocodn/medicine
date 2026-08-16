@@ -314,6 +314,13 @@ function shouldReport(completed, count) {
   return completed === count || completed === 1 || completed % interval === 0;
 }
 
+export function generationCheckpointInterval(count) {
+  // The checkpoint embeds every completed sample, so rewriting it per image
+  // becomes quadratic at scale. A crash may redo only this bounded tail; the
+  // deterministic image paths are safely overwritten during resume.
+  return Math.min(50, Math.max(1, Math.floor(count / 20)));
+}
+
 async function acquireLock(path) {
   try {
     return await open(path, "wx");
@@ -402,11 +409,14 @@ export async function generateUnifiedCorpus({
       await atomicWrite(statePath, `${JSON.stringify(state, null, 2)}\n`);
     }
 
+    const checkpointInterval = generationCheckpointInterval(count);
     for (let index = state.completed; index < count; index += 1) {
       const sample = await renderSample(index, seed, outputDir, drugAssignment);
       state.samples.push(sample);
       state.completed = state.samples.length;
-      await atomicWrite(statePath, `${JSON.stringify(state, null, 2)}\n`);
+      if (state.completed === count || state.completed % checkpointInterval === 0) {
+        await atomicWrite(statePath, `${JSON.stringify(state, null, 2)}\n`);
+      }
 
       const event = {
         completed: state.completed,
