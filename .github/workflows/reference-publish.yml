@@ -94,7 +94,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          medicine-canonical sync --json
+          for attempt in 1 2 3; do
+            echo "MFDS sync attempt ${attempt}/3"
+            if medicine-canonical sync --json; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          exit 1
 
       - name: Save refreshed source snapshot
         if: ${{ steps.source-state.outputs.sync == 'true' }}

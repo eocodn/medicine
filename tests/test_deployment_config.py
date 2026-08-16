@@ -25,6 +25,8 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("kids-sync", workflow)
         self.assertIn("substance-sync", workflow)
         self.assertIn("medicine-canonical sync", workflow)
+        self.assertIn("MFDS sync attempt ${attempt}/3", workflow)
+        self.assertIn("for attempt in 1 2 3", workflow)
         self.assertIn("integrated-build", workflow)
         self.assertNotIn("integrated-rebuild", workflow)
         self.assertLess(workflow.index("kids-sync"), workflow.index("substance-sync"))
