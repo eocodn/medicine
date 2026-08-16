@@ -74,6 +74,29 @@ function prescriptionPayloadFromForm() {
   };
 }
 
+
+function applyOcrDraftToForm(draft) {
+  if (!draft || typeof draft !== "object") return;
+  const root = $("#risk-sheet-content");
+  const unit = { tablet: "정", capsule: "캡슐", packet: "포" }[draft.dose_unit] || draft.dose_unit || "";
+  if (draft.dose_amount != null) $("#pending-dose-amount", root).value = draft.dose_amount;
+  if (unit) $("#pending-dose-unit", root).value = unit;
+  if (draft.frequency_per_day != null) $("#pending-frequency", root).value = draft.frequency_per_day;
+  if (draft.prescription_days != null) $("#pending-days", root).value = draft.prescription_days;
+  if (Array.isArray(draft.schedule_times)) $("#pending-times", root).value = draft.schedule_times.join(", ");
+  if (draft.meal_relation && $("#pending-meal", root).querySelector(`option[value="${CSS.escape(draft.meal_relation)}"]`)) {
+    $("#pending-meal", root).value = draft.meal_relation;
+  }
+  if (draft.administration_route && $("#pending-route", root).querySelector(`option[value="${CSS.escape(draft.administration_route)}"]`)) {
+    $("#pending-route", root).value = draft.administration_route;
+  }
+  if (draft.as_needed === true) $("#pending-prn", root).checked = true;
+  state.warningToken = null;
+  state.reviewedDraftKey = null;
+  syncPrnFields(root);
+  syncLongTermFields(root);
+}
+
 function interactionTimingHtml(timing) {
   if (!timing || timing.status !== "structured") return "";
   const amount = timing.amount ?? "";

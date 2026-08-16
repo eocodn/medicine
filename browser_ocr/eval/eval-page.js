@@ -121,7 +121,7 @@ async function prepareForWorker(blob, transform = null, seedText = "") {
         clearTimeout(timeout);
         reject(new Error(`${sample.id}: OCR worker crashed`));
       };
-      worker.postMessage({ type: "recognize", image });
+      worker.postMessage({ type: "recognize", image, include_items: true });
     }).finally(() => worker.terminate());
     state.samples.push({ id: sample.id, wall_ms: Math.round(performance.now() - started), items: result });
     state.completed = state.samples.length;
