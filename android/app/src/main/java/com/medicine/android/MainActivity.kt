@@ -2,10 +2,15 @@ package com.medicine.android
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.app.Activity
+import android.content.Intent
 import android.net.Uri
+import android.provider.MediaStore
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -15,6 +20,8 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -26,7 +33,26 @@ import javax.crypto.SecretKey
 
 class MainActivity : ComponentActivity() {
     private var webView: WebView? = null
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingCaptureUri: Uri? = null
+    private var pendingCaptureFile: File? = null
     private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val callback = fileChooserCallback
+        fileChooserCallback = null
+        val captureUri = pendingCaptureUri
+        val captureFile = pendingCaptureFile
+        pendingCaptureUri = null
+        pendingCaptureFile = null
+        val picked = if (result.resultCode == Activity.RESULT_OK) {
+            WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+        } else {
+            null
+        }
+        val usedCamera = result.resultCode == Activity.RESULT_OK && picked.isNullOrEmpty() && captureUri != null
+        if (!usedCamera) captureFile?.delete()
+        callback?.onReceiveValue(if (usedCamera) arrayOf(captureUri!!) else picked)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,6 +103,7 @@ class MainActivity : ComponentActivity() {
         val assetLoader = WebViewAssetLoader.Builder()
             .setDomain(APP_ASSET_DOMAIN)
             .addPathHandler("/static/", WebViewAssetLoader.AssetsPathHandler(this))
+            .addPathHandler("/ocr-assets/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
 
         val view = WebView(this).apply {
@@ -88,6 +115,34 @@ class MainActivity : ComponentActivity() {
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
 
             addJavascriptInterface(bridge, "MedicineNative")
+            webChromeClient = object : WebChromeClient() {
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>,
+                    fileChooserParams: FileChooserParams,
+                ): Boolean {
+                    fileChooserCallback?.onReceiveValue(null)
+                    pendingCaptureFile?.delete()
+                    pendingCaptureFile = null
+                    pendingCaptureUri = null
+                    fileChooserCallback = filePathCallback
+                    return try {
+                        val cameraIntent = createCameraCaptureIntent()
+                        val chooser = Intent.createChooser(fileChooserParams.createIntent(), "처방전 사진 선택").apply {
+                            putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
+                        }
+                        fileChooserLauncher.launch(chooser)
+                        true
+                    } catch (error: Exception) {
+                        pendingCaptureFile?.delete()
+                        pendingCaptureFile = null
+                        pendingCaptureUri = null
+                        fileChooserCallback = null
+                        filePathCallback.onReceiveValue(null)
+                        false
+                    }
+                }
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView,
@@ -125,6 +180,19 @@ class MainActivity : ComponentActivity() {
         setContentView(view)
     }
 
+    private fun createCameraCaptureIntent(): Intent {
+        val directory = File(cacheDir, "ocr-capture").apply { mkdirs() }
+        directory.listFiles()?.forEach { file -> file.delete() }
+        val captureFile = File.createTempFile("prescription-", ".jpg", directory)
+        val captureUri = FileProvider.getUriForFile(this, "$packageName.fileprovider", captureFile)
+        pendingCaptureFile = captureFile
+        pendingCaptureUri = captureUri
+        return Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, captureUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+    }
+
     private fun isAllowedOrigin(uri: Uri): Boolean =
         uri.scheme == "https" && uri.host == APP_ASSET_DOMAIN
 
@@ -149,6 +217,11 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = null
+        pendingCaptureFile?.delete()
+        pendingCaptureFile = null
+        pendingCaptureUri = null
         startupExecutor.shutdownNow()
         webView?.let { view ->
             view.stopLoading()

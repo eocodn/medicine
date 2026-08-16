@@ -6,6 +6,7 @@ const state = {
   fullCatalog: false,
   pendingProduct: null,
   pendingRequestId: null,
+  pendingOcrDraft: null,
   warningToken: null,
   reviewedDraftKey: null,
   editingMedicationId: null,
@@ -332,10 +333,10 @@ async function runDrugSearch() {
 }
 
 function selectProductResult(card) {
-  previewProduct(card.dataset.productSelect);
+  previewProduct(card.dataset.productSelect, state.pendingOcrDraft);
 }
 
-async function previewProduct(productRef) {
+async function previewProduct(productRef, ocrDraft = null) {
   if (!state.currentPersonId) {
     toast("먼저 관리 대상을 추가해주세요");
     openSheet("#person-sheet");
@@ -351,6 +352,8 @@ async function previewProduct(productRef) {
     state.reviewedDraftKey = null;
     state.editingMedicationId = null;
     renderRiskSheet(preview);
+    if (ocrDraft) applyOcrDraftToForm(ocrDraft);
+    state.pendingOcrDraft = null;
     openSheet("#risk-sheet");
   } catch (error) { toast(error.message); }
 }
@@ -534,6 +537,7 @@ async function confirmAddMedication() {
     });
     state.pendingProduct = null;
     state.pendingRequestId = null;
+    state.pendingOcrDraft = null;
     state.warningToken = null;
     state.reviewedDraftKey = null;
     closeSheets();
@@ -562,8 +566,16 @@ function bindEvents() {
   $("#sheet-backdrop").addEventListener("click", closeSheets);
   $$('[data-close-sheet]').forEach((button) => button.addEventListener("click", closeSheets));
   $("#drug-query").addEventListener("input", () => {
+    state.pendingOcrDraft = null;
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runDrugSearch, 280);
+  });
+  window.addEventListener("medicine:ocr-select", (event) => {
+    const row = event.detail;
+    if (!row || typeof row.product_query !== "string" || !row.product_query.trim()) return;
+    state.pendingOcrDraft = row.draft && typeof row.draft === "object" ? { ...row.draft } : {};
+    $("#drug-query").value = row.product_query.trim();
+    void runDrugSearch();
   });
   $("#include-inactive").addEventListener("change", runDrugSearch);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });

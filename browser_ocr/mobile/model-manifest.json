@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "model_id": "medicine-ppocrv5-full-document-only-e4-onnx-2026-08-16",
+  "runtime": {
+    "backend": "onnxruntime-web-wasm",
+    "onnxruntime_web": "1.27.0",
+    "detector": "PP-OCRv5_mobile_det",
+    "recognizer": "korean_PP-OCRv5_mobile_rec_finetuned_full_document_only_e4",
+    "recognition_precision": "fp32"
+  },
+  "selected_recognizer": {
+    "checkpoint_sha256": "804a57a050096ed34feda8cfa584b1e335685c2703494341cc74ce933c1ee12f",
+    "training_config_sha256": "da919baf105e28e401917b1adc5e69d4aa251c41e063c97fc31fb79bd2b38e80",
+    "onnx_sha256": "da0dd1e1b6d25fbc41cab5334d176cf06c34dfc6a9123735f535c37804b5f0eb",
+    "onnx_size_bytes": 13435395,
+    "dictionary_sha256": "6b04c646985f4bf27b79d488cbdc4e99e2d06973cbd36c8cc4d68da510687f30",
+    "fixed_eval_dataset_fingerprint": "6c635578e643c78132665c85ba7f8c94f9a13fe7f88169910334f48ffae255c3",
+    "fixed_eval_exact": { "correct": 16635, "total": 17520 },
+    "fixed_eval_critical_exact": { "correct": 8493, "total": 8548 },
+    "fixed_eval_product_exact": { "correct": 2082, "total": 2137 },
+    "fixed_eval_product_unseen_exact": { "correct": 422, "total": 434 },
+    "fixed_eval_unseen_hard_ood_exact": { "correct": 168, "total": 172 }
+  },
+  "export_provenance": {
+    "paddleocr_commit": "b03f46425e8ff4442b268ce449e3eef758146cd4",
+    "paddlepaddle": "3.2.0",
+    "paddle2onnx": "2.1.0",
+    "onnx_opset": 17
+  },
+  "detector_source": {
+    "archive": "PP-OCRv5_mobile_det_onnx_infer.tar",
+    "sha256": "781056046c9ed77a15c94681605db6a0f62317c2e9cce6931c71da2478d4bc30"
+  },
+  "optimization_decision": {
+    "selected": "fp32",
+    "reason": "MatMul/Gemm INT8 reduced recognizer size but changed medication-name predictions; retain exact validated FP32 behavior for the first product integration."
+  }
+}

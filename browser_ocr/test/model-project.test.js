@@ -97,12 +97,14 @@ test("independent OCR Docker pipeline exposes separate eval and trimmed runtime 
   assert.match(compose, /target: eval/);
 });
 
-test("product builders are detached from the OCR research runtime", () => {
+test("web product builder stays detached while Android packages only the approved OCR runtime", () => {
   assert.equal(fs.existsSync(path.join(OCR, "prepare_models.mjs")), false);
-  for (const name of ["Dockerfile", "Dockerfile.android"]) {
-    const source = fs.readFileSync(path.join(ROOT, name), "utf8");
-    assert.doesNotMatch(source, /browser_ocr|browser-ocr|medicine-browser-ocr|export_runtime/);
-  }
+  const webDockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
+  assert.doesNotMatch(webDockerfile, /browser_ocr|browser-ocr|medicine-browser-ocr|export_runtime/);
+  const androidDockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile.android"), "utf8");
+  assert.match(androidDockerfile, /mobile\/export_runtime\.mjs/);
+  assert.match(androidDockerfile, /COPY --from=ocr-assets \/out \/opt\/medicine-ocr-assets/);
+  assert.doesNotMatch(androidDockerfile, /browser_ocr\/eval|finetune\/work|ocr-eval/);
   const compose = fs.readFileSync(path.join(ROOT, "compose.yaml"), "utf8");
   assert.doesNotMatch(compose, /MEDICINE_BROWSER_OCR_ASSETS/);
   assert.doesNotMatch(compose, /\n  browser-ocr:/);
@@ -116,9 +118,18 @@ test("model archive names remain confined to the independent OCR project", () =>
   assert.match(source, /export_runtime\.mjs \/downloads \/out/);
 });
 
-test("Android product packaging contains no OCR runtime source", () => {
+test("Android product packaging exposes only generated on-device OCR assets", () => {
   const build = fs.readFileSync(path.join(ROOT, "android/app/build.gradle.kts"), "utf8");
   const activity = fs.readFileSync(path.join(ROOT, "android/app/src/main/java/com/medicine/android/MainActivity.kt"), "utf8");
-  assert.doesNotMatch(build, /PrepareOcrAssets|ocrAssets|MEDICINE_BROWSER_OCR/);
-  assert.doesNotMatch(activity, /\/ocr-assets\//);
+  assert.match(build, /PrepareOcrAssets/);
+  assert.match(build, /MEDICINE_OCR_ASSETS_DIR/);
+  assert.match(activity, /\/ocr-assets\//);
+  assert.doesNotMatch(build, /browser_ocr\/eval|finetune\/work/);
+});
+
+test("Android OCR builder downloads only the detector archive it actually packages", () => {
+  const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile.android"), "utf8");
+  const fetcher = fs.readFileSync(path.join(OCR, "fetch_assets.mjs"), "utf8");
+  assert.match(dockerfile, /fetch_assets\.mjs \/downloads detection/);
+  assert.match(fetcher, /requestedSourceNames/);
 });

@@ -26,6 +26,124 @@ function rgbaToChw(rgba, width, height, mean, standardDeviation) {
   return output;
 }
 
+function foregroundColumnInk(image) {
+  const { data, width, height } = image;
+  if (!data || !Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
+      || data.length !== width * height * 4) throw new Error("invalid RGBA image data");
+  const histogram = new Uint32Array(256);
+  const gray = new Uint8Array(width * height);
+  for (let index = 0; index < gray.length; index += 1) {
+    const offset = index * 4;
+    const value = Math.max(0, Math.min(255, Math.round(
+      data[offset] * 0.299 + data[offset + 1] * 0.587 + data[offset + 2] * 0.114,
+    )));
+    gray[index] = value;
+    histogram[value] += 1;
+  }
+  const total = gray.length;
+  let weightedTotal = 0;
+  for (let level = 0; level < 256; level += 1) weightedTotal += level * histogram[level];
+  let backgroundWeight = 0;
+  let backgroundSum = 0;
+  let bestVariance = -1;
+  let threshold = 0;
+  for (let level = 0; level < 256; level += 1) {
+    backgroundWeight += histogram[level];
+    if (!backgroundWeight) continue;
+    const foregroundWeight = total - backgroundWeight;
+    if (!foregroundWeight) break;
+    backgroundSum += level * histogram[level];
+    const meanBackground = backgroundSum / backgroundWeight;
+    const meanForeground = (weightedTotal - backgroundSum) / foregroundWeight;
+    const variance = backgroundWeight * foregroundWeight * (meanBackground - meanForeground) ** 2;
+    if (variance > bestVariance) {
+      bestVariance = variance;
+      threshold = level;
+    }
+  }
+  const mask = new Uint8Array(total);
+  for (let index = 0; index < total; index += 1) mask[index] = gray[index] <= threshold ? 1 : 0;
+
+  // Match the 2x2 morphological opening used by the validated desktop crop refiner.
+  const eroded = new Uint8Array(total);
+  for (let y = 0; y < height - 1; y += 1) {
+    for (let x = 0; x < width - 1; x += 1) {
+      const i = y * width + x;
+      if (mask[i] && mask[i + 1] && mask[i + width] && mask[i + width + 1]) eroded[i] = 1;
+    }
+  }
+  const opened = new Uint8Array(total);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = y * width + x;
+      if (!eroded[i]) continue;
+      opened[i] = 1;
+      if (x + 1 < width) opened[i + 1] = 1;
+      if (y + 1 < height) opened[i + width] = 1;
+      if (x + 1 < width && y + 1 < height) opened[i + width + 1] = 1;
+    }
+  }
+  const columns = Array(width).fill(0);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) columns[x] += opened[y * width + x];
+  }
+  return columns;
+}
+
+function splitHorizontalInkRanges(columnInk, cropHeight) {
+  if (!Number.isInteger(cropHeight) || cropHeight <= 0) throw new Error("cropHeight must be positive");
+  const width = columnInk.length;
+  if (width <= 1) return [[0, width]];
+  const blankLimit = Math.max(1, Math.round(cropHeight * 0.02));
+  const minimumGap = Math.max(1, Math.ceil(cropHeight * 0.5));
+  const minimumContent = Math.max(1, Math.ceil(cropHeight * 0.25));
+  const gaps = [];
+  let start = null;
+  for (let index = 0; index < width; index += 1) {
+    const blank = columnInk[index] <= blankLimit;
+    if (blank && start === null) start = index;
+    else if (!blank && start !== null) {
+      if (start > 0 && index < width && index - start >= minimumGap) gaps.push([start, index]);
+      start = null;
+    }
+  }
+  if (!gaps.length) return [[0, width]];
+  const boundaries = [0, ...gaps.map(([left, right]) => Math.floor((left + right) / 2)), width];
+  const ranges = [];
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const left = boundaries[index];
+    const right = boundaries[index + 1];
+    let first = -1;
+    let last = -1;
+    for (let x = left; x < right; x += 1) {
+      if (columnInk[x] > blankLimit) {
+        if (first < 0) first = x;
+        last = x;
+      }
+    }
+    if (first >= 0 && last - first + 1 >= minimumContent) ranges.push([left, right]);
+  }
+  return ranges.length ? ranges : [[0, width]];
+}
+
+function horizontalSubpolygon(polygon, start, end, cropWidth) {
+  if (!Array.isArray(polygon) || polygon.length !== 4 || cropWidth <= 0
+      || start < 0 || end <= start || end > cropWidth) throw new Error("invalid horizontal crop range");
+  const [topLeft, topRight, bottomRight, bottomLeft] = polygon;
+  const interpolate = (left, right, fraction) => [
+    left[0] + (right[0] - left[0]) * fraction,
+    left[1] + (right[1] - left[1]) * fraction,
+  ];
+  const startFraction = start / cropWidth;
+  const endFraction = end / cropWidth;
+  return [
+    interpolate(topLeft, topRight, startFraction),
+    interpolate(topLeft, topRight, endFraction),
+    interpolate(bottomLeft, bottomRight, endFraction),
+    interpolate(bottomLeft, bottomRight, startFraction),
+  ];
+}
+
 function cross(origin, a, b) {
   return (a[0] - origin[0]) * (b[1] - origin[1])
     - (a[1] - origin[1]) * (b[0] - origin[0]);
@@ -259,7 +377,10 @@ module.exports = {
   decodeCtc,
   decodeDetectionMap,
   distance,
+  foregroundColumnInk,
+  horizontalSubpolygon,
   resizeWithin,
   rgbaToChw,
+  splitHorizontalInkRanges,
   sortReadingOrder,
 };

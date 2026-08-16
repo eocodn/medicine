@@ -25,19 +25,25 @@ class ManifestContractTest {
         assertTrue(activity.contains("WebViewAssetLoader"))
         assertTrue(activity.contains("MedicineNative"))
         assertTrue(activity.contains("addJavascriptInterface"))
-        assertFalse(activity.contains("onShowFileChooser"))
+        assertTrue(activity.contains("onShowFileChooser"))
+        assertTrue(activity.contains("WebChromeClient"))
+        assertTrue(activity.contains("MediaStore.ACTION_IMAGE_CAPTURE"))
+        assertTrue(activity.contains("FileProvider.getUriForFile"))
+        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
+        assertTrue(manifest.contains("androidx.core.content.FileProvider"))
+        assertTrue(manifest.contains("@xml/file_paths"))
     }
 
     @Test
-    fun productShellDoesNotPackageOrRouteOcrAssets() {
+    fun productShellPackagesAndRoutesOnDeviceOcrAssets() {
         val build = java.io.File("build.gradle.kts").readText()
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
         val index = java.io.File("../../medicine_app/static/index.html").readText()
-        assertFalse(build.contains("PrepareOcrAssets"))
-        assertFalse(build.contains("MEDICINE_BROWSER_OCR"))
-        assertFalse(activity.contains("/ocr-assets/"))
-        assertFalse(index.contains("ocr-scan-button"))
-        assertFalse(index.contains("browser-ocr.js"))
+        assertTrue(build.contains("PrepareOcrAssets"))
+        assertTrue(build.contains("MEDICINE_OCR_ASSETS_DIR"))
+        assertTrue(activity.contains("/ocr-assets/"))
+        assertTrue(index.contains("ocr-image-input"))
+        assertTrue(index.contains("ocr-review.js"))
     }
 
     @Test

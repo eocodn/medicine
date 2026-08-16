@@ -4,11 +4,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const outputDirectory = process.argv[2];
-if (!outputDirectory) throw new Error("usage: node fetch_assets.mjs OUTPUT_DIRECTORY");
+const requestedSourceNames = process.argv.slice(3);
+if (!outputDirectory) throw new Error("usage: node fetch_assets.mjs OUTPUT_DIRECTORY [SOURCE_NAME ...]");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const manifest = JSON.parse(await readFile(join(here, "model-manifest.json"), "utf8"));
-const assets = Object.values(manifest.sources || {});
+const sources = manifest.sources || {};
+const sourceNames = requestedSourceNames.length ? requestedSourceNames : Object.keys(sources);
+const unknownSourceNames = sourceNames.filter((name) => !Object.hasOwn(sources, name));
+if (unknownSourceNames.length) throw new Error(`unknown model source: ${unknownSourceNames.join(", ")}`);
+const assets = sourceNames.map((name) => sources[name]);
 if (manifest.schema_version !== 1 || assets.length === 0) {
   throw new Error("model-manifest.json is missing supported pinned sources");
 }
