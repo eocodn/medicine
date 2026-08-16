@@ -20,6 +20,8 @@ from .training import (
 )
 from .training_view import TRAINING_VIEW_POLICY_ID
 
+SELECTED_EVAL_BATCH_STEP = 1000
+
 
 def _label_row(sample: dict) -> str:
     return f"{sample['image']}\t{sample['text']}\n"
@@ -114,7 +116,7 @@ def build_selected_training_overrides(
     learning_rate: float,
     warmup_epochs: int,
 ) -> dict[str, object]:
-    return build_baseline_overrides(
+    overrides = build_baseline_overrides(
         dataset_root=str(dataset_root),
         train_labels=str(export_dir / "train.txt"),
         val_labels=str(export_dir / "val.txt"),
@@ -126,6 +128,11 @@ def build_selected_training_overrides(
         learning_rate=learning_rate,
         warmup_epochs=warmup_epochs,
     )
+    # Unified/mixed validation is large enough that evaluating every 100 steps
+    # dominates wall time. Both #161 candidates use the same slower-changing
+    # cadence while retaining the mandatory evaluation at step zero.
+    overrides["Global.eval_batch_step"] = [0, SELECTED_EVAL_BATCH_STEP]
+    return overrides
 
 
 def _evaluate_model(
@@ -215,6 +222,7 @@ def run_selected_finetune(args: argparse.Namespace) -> dict:
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
         "warmup_epochs": args.warmup_epochs,
+        "eval_batch_step": SELECTED_EVAL_BATCH_STEP,
     }
     state_path = run_dir / "selected-finetune-state.json"
     result_path = run_dir / "baseline-result.json"

@@ -123,6 +123,7 @@ class SelectedCheckpointFineTuneTest(unittest.TestCase):
         )
         self.assertEqual(initial["Global.pretrained_model"], "/selected/best_accuracy.pdparams")
         self.assertNotIn("Global.checkpoints", initial)
+        self.assertEqual(initial["Global.eval_batch_step"], [0, 1000])
 
         resumed = build_selected_training_overrides(
             dataset_root=Path("/dataset"),
@@ -137,6 +138,7 @@ class SelectedCheckpointFineTuneTest(unittest.TestCase):
         )
         self.assertEqual(resumed["Global.pretrained_model"], "/selected/best_accuracy.pdparams")
         self.assertEqual(resumed["Global.checkpoints"], "/run/model/iter_epoch_2")
+        self.assertEqual(resumed["Global.eval_batch_step"], [0, 1000])
 
 
 if __name__ == "__main__":
