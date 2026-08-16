@@ -106,3 +106,10 @@ test("main content is not one giant live region", () => {
   const index = source("index.html");
   assert.doesNotMatch(index, /id="app-main"[^>]*aria-live/);
 });
+
+test("bottom-sheet close controls meet the 44px touch target", () => {
+  const styles = source("styles.css");
+  const block = styles.match(/(?:^|\n)\.icon-button\s*\{([^}]*)\}/)?.[1] || "";
+  assert.match(block, /width:\s*44px/);
+  assert.match(block, /height:\s*44px/);
+});

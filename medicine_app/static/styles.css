@@ -418,7 +418,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .sheet-handle { width: 45px; height: 5px; margin: 2px auto 17px; border-radius: 99px; background: #d3d9d4; }
 .sheet-header { margin-bottom: 16px; }
 .sheet-header h2 { margin: 0; }
-.icon-button { width: 42px; height: 42px; border-radius: 14px; background: var(--surface-soft); font-size: 25px; font-weight: 500; }
+.icon-button { width: 44px; height: 44px; border-radius: 14px; background: var(--surface-soft); font-size: 25px; font-weight: 500; }
 .hidden { display: none !important; }
 
 .risk-summary { padding: 18px 0 8px; }
