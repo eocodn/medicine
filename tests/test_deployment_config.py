@@ -3,6 +3,22 @@ import unittest
 
 
 class DeploymentConfigTest(unittest.TestCase):
+    def test_r2_smoke_workflow_verifies_private_bucket_write_path(self) -> None:
+        workflow = Path(".github/workflows/r2-smoke.yml").read_text()
+
+        self.assertIn("workflow_dispatch:", workflow)
+        for secret in (
+            "R2_ACCESS_KEY_ID",
+            "R2_SECRET_ACCESS_KEY",
+            "R2_ENDPOINT",
+            "R2_BUCKET",
+        ):
+            self.assertIn(f"secrets.{secret}", workflow)
+        self.assertIn("put_object", workflow)
+        self.assertIn("head_object", workflow)
+        self.assertIn("delete_object", workflow)
+        self.assertIn("medicine-r2-smoke/", workflow)
+
     def test_android_build_packages_canonical_snapshot_without_alias_refresh(self) -> None:
         compose = Path("compose.yaml").read_text()
         gradle = Path("android/app/build.gradle.kts").read_text()
