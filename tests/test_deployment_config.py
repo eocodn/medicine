@@ -1,4 +1,5 @@
 from pathlib import Path
+import tomllib
 import unittest
 
 
@@ -14,11 +15,21 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("R2_SECRET_ACCESS_KEY", workflow)
         self.assertIn("R2_ENDPOINT", workflow)
         self.assertIn("R2_BUCKET", workflow)
+        self.assertIn("refresh_sources", workflow)
+        self.assertIn("actions/cache/restore@v5", workflow)
+        self.assertIn("actions/cache/save@v5", workflow)
+        self.assertIn("data/canonical/raw", workflow)
+        self.assertIn("data/canonical/substances", workflow)
+        self.assertIn("data/kids", workflow)
+        self.assertIn("cache-matched-key", workflow)
         self.assertIn("kids-sync", workflow)
         self.assertIn("substance-sync", workflow)
-        self.assertIn("integrated-rebuild", workflow)
+        self.assertIn("medicine-canonical sync", workflow)
+        self.assertIn("integrated-build", workflow)
+        self.assertNotIn("integrated-rebuild", workflow)
         self.assertLess(workflow.index("kids-sync"), workflow.index("substance-sync"))
-        self.assertLess(workflow.index("substance-sync"), workflow.index("integrated-rebuild"))
+        self.assertLess(workflow.index("substance-sync"), workflow.index("medicine-canonical sync"))
+        self.assertLess(workflow.index("medicine-canonical sync"), workflow.index("integrated-build"))
         self.assertIn("canonical verify", workflow)
         self.assertIn("canonical substance-verify", workflow)
         self.assertIn("canonical mobile-build", workflow)
@@ -27,6 +38,12 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertNotIn("kids_source_key", workflow)
         self.assertNotIn("kids_source_sha256", workflow)
         self.assertNotIn("kids-extract", workflow)
+
+    def test_canonical_reviewed_corpora_are_included_in_built_package(self) -> None:
+        config = tomllib.loads(Path("pyproject.toml").read_text())
+        package_data = config["tool"]["setuptools"]["package-data"]
+        self.assertIn("medicine_canonical", package_data)
+        self.assertIn("data/*.tsv", package_data["medicine_canonical"])
 
     def test_r2_smoke_workflow_verifies_private_bucket_write_path(self) -> None:
         workflow = Path(".github/workflows/r2-smoke.yml").read_text()

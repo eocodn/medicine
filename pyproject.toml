@@ -23,3 +23,4 @@ include = ["medicine_app*", "medicine_canonical*"]
 
 [tool.setuptools.package-data]
 medicine_app = ["static/*.html", "static/*.css", "static/*.js"]
+medicine_canonical = ["data/*.tsv"]

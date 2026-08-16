@@ -2,6 +2,12 @@ name: Reference DB publish
 
 on:
   workflow_dispatch:
+    inputs:
+      refresh_sources:
+        description: Fetch fresh KIDS/MFDS/FDA source snapshots instead of reusing the latest cached snapshot
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -11,11 +17,100 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+    outputs:
+      cache_key: ${{ steps.source-state.outputs.key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Validate source prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DATA_GO_KR_SERVICE_KEY:-}" ]]; then
+            echo "::error::DATA_GO_KR_SERVICE_KEY is not configured"
+            exit 1
+          fi
+
+      - name: Install source tooling
+        run: python -m pip install --disable-pip-version-check --no-cache-dir .
+
+      - name: Restore latest verified source snapshot
+        id: source-cache-restore
+        if: ${{ inputs.refresh_sources != true }}
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            data/kids
+            data/canonical/raw
+            data/canonical/substances
+          key: reference-sources-v2-reuse-${{ github.run_id }}
+          restore-keys: |
+            reference-sources-v2-
+
+      - name: Resolve source snapshot state
+        id: source-state
+        shell: bash
+        env:
+          REFRESH_SOURCES: ${{ inputs.refresh_sources }}
+          MATCHED_KEY: ${{ steps.source-cache-restore.outputs.cache-matched-key }}
+        run: |
+          set -euo pipefail
+          if [[ "$REFRESH_SOURCES" == "true" || -z "$MATCHED_KEY" ]]; then
+            echo "sync=true" >> "$GITHUB_OUTPUT"
+            echo "key=reference-sources-v2-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+            echo "key=$MATCHED_KEY" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync current official KIDS XLSX sources
+        if: ${{ steps.source-state.outputs.sync == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          medicine-canonical kids-sync --output-dir data/kids --json
+
+      - name: Sync official substance identity snapshots
+        if: ${{ steps.source-state.outputs.sync == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          medicine-canonical substance-sync --json
+
+      - name: Sync current MFDS permit and DUR snapshots
+        if: ${{ steps.source-state.outputs.sync == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          medicine-canonical sync --json
+
+      - name: Save refreshed source snapshot
+        if: ${{ steps.source-state.outputs.sync == 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            data/kids
+            data/canonical/raw
+            data/canonical/substances
+          key: ${{ steps.source-state.outputs.key }}
+
   publish:
+    needs: sources
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
@@ -34,7 +129,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in DATA_GO_KR_SERVICE_KEY R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
+          for name in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::$name is not configured"
               exit 1
@@ -44,23 +139,21 @@ jobs:
       - name: Install publisher dependencies
         run: python -m pip install --disable-pip-version-check --no-cache-dir . 'boto3>=1.34,<2'
 
-      - name: Sync current official KIDS XLSX sources
-        shell: bash
-        run: |
-          set -euo pipefail
-          medicine-canonical kids-sync --output-dir data/kids --json
+      - name: Restore exact source snapshot
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            data/kids
+            data/canonical/raw
+            data/canonical/substances
+          key: ${{ needs.sources.outputs.cache_key }}
+          fail-on-cache-miss: true
 
-      - name: Sync official substance identity snapshots
+      - name: Build authoritative reference databases from preserved snapshots
         shell: bash
         run: |
           set -euo pipefail
-          medicine-canonical substance-sync --json
-
-      - name: Rebuild authoritative reference databases
-        shell: bash
-        run: |
-          set -euo pipefail
-          medicine-canonical integrated-rebuild --json
+          medicine-canonical integrated-build --json
 
       - name: Verify canonical release gates
         shell: bash
