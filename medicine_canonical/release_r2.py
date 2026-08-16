@@ -11,6 +11,10 @@ from .release import RELEASE_PREFIX, decompress_snapshot, prepare_release, sha25
 
 LATEST_KEY = f"{RELEASE_PREFIX}/latest.json"
 MAX_PATCH_BASES = 3
+# Current full + at most two history fulls. Older clients fall back to the current full gzip.
+FULL_SNAPSHOT_RETENTION = 3
+FULL_PREFIX = f"{RELEASE_PREFIX}/full/"
+PATCH_PREFIX = f"{RELEASE_PREFIX}/patch/"
 
 
 def _not_found(exc: Exception) -> bool:
@@ -170,6 +174,92 @@ def _put_latest(
         raise RuntimeError("remote latest manifest hash metadata does not match")
 
 
+def _list_prefix_keys(client, bucket: str, prefix: str) -> set[str]:
+    keys: set[str] = set()
+    continuation_token: str | None = None
+    while True:
+        kwargs = {"Bucket": bucket, "Prefix": prefix}
+        if continuation_token:
+            kwargs["ContinuationToken"] = continuation_token
+        response = client.list_objects_v2(**kwargs)
+        for item in response.get("Contents") or []:
+            key = item.get("Key")
+            if isinstance(key, str) and key.startswith(prefix):
+                keys.add(key)
+        if not response.get("IsTruncated"):
+            return keys
+        continuation_token = response.get("NextContinuationToken")
+        if not isinstance(continuation_token, str) or not continuation_token:
+            raise RuntimeError(f"remote object listing for {prefix} is truncated without continuation token")
+
+
+def _release_artifact_inventory(client, bucket: str) -> set[str]:
+    return _list_prefix_keys(client, bucket, FULL_PREFIX) | _list_prefix_keys(
+        client, bucket, PATCH_PREFIX
+    )
+
+
+def _manifest_release_keys(manifest: dict) -> set[str]:
+    keys: set[str] = set()
+    full = manifest.get("full")
+    if not isinstance(full, dict) or not isinstance(full.get("key"), str):
+        raise ValueError("release manifest is missing current full snapshot key")
+    keys.add(full["key"])
+
+    history = manifest.get("history") or []
+    if not isinstance(history, list):
+        raise ValueError("release manifest history must be a list")
+    for entry in history:
+        if not isinstance(entry, dict):
+            raise ValueError("release manifest history entry is invalid")
+        history_full = entry.get("full")
+        if not isinstance(history_full, dict) or not isinstance(history_full.get("key"), str):
+            raise ValueError("release manifest history is missing full snapshot key")
+        keys.add(history_full["key"])
+
+    patches = manifest.get("patches") or []
+    if not isinstance(patches, list):
+        raise ValueError("release manifest patches must be a list")
+    for patch in patches:
+        if not isinstance(patch, dict) or not isinstance(patch.get("key"), str):
+            raise ValueError("release manifest patch entry is invalid")
+        keys.add(patch["key"])
+    return keys
+
+
+def _cleanup_release_artifacts(
+    client,
+    bucket: str,
+    *,
+    manifest: dict,
+    initial_inventory: set[str],
+    expected_latest_raw: bytes,
+    latest_key: str,
+) -> dict:
+    # Retention is post-commit only. Re-read authoritative latest before deleting any
+    # pre-existing artifact so a competing state transition cannot be cleaned against.
+    current_raw, _, _ = _read_latest(client, bucket, latest_key)
+    if current_raw != expected_latest_raw:
+        raise RuntimeError("remote latest manifest changed before retention cleanup")
+
+    keep = _manifest_release_keys(manifest)
+    stale = sorted(initial_inventory - keep)
+    deleted: list[str] = []
+    for key in stale:
+        try:
+            client.delete_object(Bucket=bucket, Key=key)
+        except Exception as exc:
+            raise RuntimeError(f"remote retention cleanup failed deleting {key}") from exc
+        if _head_optional(client, bucket, key) is not None:
+            raise RuntimeError(f"remote retention cleanup did not delete {key}")
+        deleted.append(key)
+    return {
+        "deleted": deleted,
+        "retained_full": sum(1 for key in keep if key.startswith(FULL_PREFIX)),
+        "retained_patches": sum(1 for key in keep if key.startswith(PATCH_PREFIX)),
+    }
+
+
 def _history_entry(release: dict) -> dict:
     return {
         "dataset_id": release["dataset_id"],
@@ -212,8 +302,24 @@ def publish_release(
         raise ValueError("mobile manifest dataset_id is required")
 
     initial_raw, initial_etag, previous_latest = _read_latest(client, bucket, latest_key)
+    # Snapshot only pre-existing objects so cleanup can never delete artifacts uploaded
+    # concurrently after this publisher began.
+    initial_inventory = _release_artifact_inventory(client, bucket)
     if previous_latest is not None and previous_latest.get("dataset_id") == dataset_id:
-        return {"status": "unchanged", "dataset_id": dataset_id, "manifest": previous_latest}
+        cleanup = _cleanup_release_artifacts(
+            client,
+            bucket,
+            manifest=previous_latest,
+            initial_inventory=initial_inventory,
+            expected_latest_raw=initial_raw,
+            latest_key=latest_key,
+        )
+        return {
+            "status": "unchanged",
+            "dataset_id": dataset_id,
+            "manifest": previous_latest,
+            "cleanup": cleanup,
+        }
 
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -222,7 +328,7 @@ def publish_release(
         new_history: list[dict] = []
         if previous_latest is not None:
             release_bases = _recent_release_bases(previous_latest)
-            new_history = release_bases[:MAX_PATCH_BASES]
+            new_history = release_bases[: FULL_SNAPSHOT_RETENTION - 1]
             for index, release_base in enumerate(release_bases):
                 base_dir = Path(temporary_dir) / f"base-{index}"
                 base_dir.mkdir(parents=True, exist_ok=True)
@@ -270,7 +376,20 @@ def publish_release(
         manifest_body,
         previous_etag=initial_etag,
     )
-    return {"status": "published", "dataset_id": dataset_id, "manifest": manifest}
+    cleanup = _cleanup_release_artifacts(
+        client,
+        bucket,
+        manifest=manifest,
+        initial_inventory=initial_inventory,
+        expected_latest_raw=manifest_body,
+        latest_key=latest_key,
+    )
+    return {
+        "status": "published",
+        "dataset_id": dataset_id,
+        "manifest": manifest,
+        "cleanup": cleanup,
+    }
 
 
 def configure_conditional_put_headers(client) -> None:
@@ -346,6 +465,7 @@ def publish_release_from_env(
 
 
 __all__ = [
+    "FULL_SNAPSHOT_RETENTION",
     "LATEST_KEY",
     "MAX_PATCH_BASES",
     "client_from_env",

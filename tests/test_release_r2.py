@@ -24,6 +24,8 @@ class FakeS3:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], dict] = {}
         self.put_order: list[str] = []
+        self.delete_order: list[str] = []
+        self.fail_delete_once: str | None = None
         self.before_latest_put = None
 
     @staticmethod
@@ -72,6 +74,25 @@ class FakeS3:
             "ContentType": ContentType,
         }
         self.put_order.append(Key)
+        return {}
+
+    def list_objects_v2(self, *, Bucket: str, Prefix: str, ContinuationToken=None) -> dict:
+        keys = sorted(
+            key
+            for bucket, key in self.objects
+            if bucket == Bucket and key.startswith(Prefix)
+        )
+        return {
+            "Contents": [{"Key": key} for key in keys],
+            "IsTruncated": False,
+        }
+
+    def delete_object(self, *, Bucket: str, Key: str) -> dict:
+        if self.fail_delete_once == Key:
+            self.fail_delete_once = None
+            raise RuntimeError("simulated delete failure")
+        self.objects.pop((Bucket, Key), None)
+        self.delete_order.append(Key)
         return {}
 
 
@@ -185,6 +206,136 @@ class R2ReleasePublisherTest(unittest.TestCase):
             ["sha256:two-history", "sha256:one-history"],
         )
 
+    def test_fourth_publish_retains_three_full_snapshots_and_only_current_patches(self) -> None:
+        base = bytearray(os.urandom(1_000_000))
+        manifests = []
+        for index, label in enumerate(("one", "two", "three", "four"), start=1):
+            if index > 1:
+                offset = index * 100_000
+                base[offset:offset + 4_096] = bytes([64 + index]) * 4_096
+            db, mobile_manifest = self.mobile(
+                f"retention-{label}",
+                bytes(base),
+                f"sha256:retention-{label}",
+            )
+            result = publish_release(
+                self.client,
+                self.bucket,
+                db,
+                mobile_manifest,
+                self.root / f"dist-retention-{label}",
+                created_at=f"2026-08-16T{9 + index:02d}:00:00Z",
+            )
+            manifests.append(result["manifest"])
+
+        latest = manifests[-1]
+        self.assertEqual(
+            [entry["dataset_id"] for entry in latest["history"]],
+            ["sha256:retention-three", "sha256:retention-two"],
+        )
+
+        full_prefix = "reference/v1/full/"
+        full_keys = {
+            key
+            for bucket, key in self.client.objects
+            if bucket == self.bucket and key.startswith(full_prefix)
+        }
+        expected_full_keys = {latest["full"]["key"]} | {
+            entry["full"]["key"] for entry in latest["history"]
+        }
+        self.assertEqual(full_keys, expected_full_keys)
+        self.assertEqual(len(full_keys), 3)
+
+        patch_prefix = "reference/v1/patch/"
+        patch_keys = {
+            key
+            for bucket, key in self.client.objects
+            if bucket == self.bucket and key.startswith(patch_prefix)
+        }
+        self.assertEqual(patch_keys, {patch["key"] for patch in latest["patches"]})
+        self.assertTrue(
+            any(key.startswith(full_prefix) for key in self.client.delete_order),
+            self.client.delete_order,
+        )
+        self.assertTrue(
+            any(key.startswith(patch_prefix) for key in self.client.delete_order),
+            self.client.delete_order,
+        )
+
+    def test_client_older_than_retained_full_window_has_no_direct_patch(self) -> None:
+        base = bytearray(os.urandom(1_000_000))
+        latest = None
+        first_sha = None
+        for index, label in enumerate(("one", "two", "three", "four", "five"), start=1):
+            if index > 1:
+                offset = index * 120_000
+                base[offset:offset + 4_096] = bytes([70 + index]) * 4_096
+            db, mobile_manifest = self.mobile(
+                f"fallback-{label}",
+                bytes(base),
+                f"sha256:fallback-{label}",
+            )
+            if first_sha is None:
+                first_sha = sha256_file(db)
+            latest = publish_release(
+                self.client,
+                self.bucket,
+                db,
+                mobile_manifest,
+                self.root / f"dist-fallback-{label}",
+                created_at=f"2026-08-16T{8 + index:02d}:00:00Z",
+            )["manifest"]
+
+        self.assertIsNotNone(latest)
+        self.assertNotIn(first_sha, {patch["from_sha256"] for patch in latest["patches"]})
+        self.assertEqual(
+            {patch["from_dataset_id"] for patch in latest["patches"]},
+            {
+                "sha256:fallback-two",
+                "sha256:fallback-three",
+                "sha256:fallback-four",
+            },
+        )
+
+    def test_same_dataset_retry_repairs_retention_after_post_publish_cleanup_failure(self) -> None:
+        base = bytearray(os.urandom(1_000_000))
+        one_db, one_manifest = self.mobile("cleanup-one", bytes(base), "sha256:cleanup-one")
+        publish_release(
+            self.client, self.bucket, one_db, one_manifest, self.root / "dist-cleanup-one",
+            created_at="2026-08-16T10:00:00Z",
+        )
+
+        base[100_000:104_096] = b"2" * 4_096
+        two_db, two_manifest = self.mobile("cleanup-two", bytes(base), "sha256:cleanup-two")
+        second = publish_release(
+            self.client, self.bucket, two_db, two_manifest, self.root / "dist-cleanup-two",
+            created_at="2026-08-16T11:00:00Z",
+        )
+        stale_patch = second["manifest"]["patches"][0]["key"]
+        self.client.fail_delete_once = stale_patch
+
+        base[200_000:204_096] = b"3" * 4_096
+        three_db, three_manifest = self.mobile("cleanup-three", bytes(base), "sha256:cleanup-three")
+        with self.assertRaisesRegex(RuntimeError, "retention cleanup failed"):
+            publish_release(
+                self.client, self.bucket, three_db, three_manifest, self.root / "dist-cleanup-three",
+                created_at="2026-08-16T12:00:00Z",
+            )
+
+        latest = json.loads(
+            self.client.objects[(self.bucket, "reference/v1/latest.json")]["Body"]
+        )
+        self.assertEqual(latest["dataset_id"], "sha256:cleanup-three")
+        self.assertIn((self.bucket, stale_patch), self.client.objects)
+
+        retried = publish_release(
+            self.client, self.bucket, three_db, three_manifest, self.root / "dist-cleanup-three-retry",
+            created_at="2026-08-16T12:30:00Z",
+        )
+        self.assertEqual(retried["status"], "unchanged")
+        self.assertEqual(retried["cleanup"]["deleted"], [stale_patch])
+        self.assertNotIn((self.bucket, stale_patch), self.client.objects)
+
     def test_same_dataset_id_is_idempotent_and_uploads_nothing(self) -> None:
         db, manifest = self.mobile("one", b"A" * 100_000, "sha256:one")
         publish_release(
@@ -226,6 +377,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
             self.client.objects[key] = current
 
         self.client.before_latest_put = mutate_latest
+        self.client.delete_order.clear()
         with self.assertRaisesRegex(RuntimeError, "latest manifest changed"):
             publish_release(
                 self.client,
@@ -235,6 +387,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
                 self.root / "dist-two",
                 created_at="2026-08-16T12:00:00Z",
             )
+        self.assertEqual(self.client.delete_order, [])
 
 
 if __name__ == "__main__":
