@@ -34,6 +34,9 @@ services:
 
   test:
     build: .
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
     working_dir: /app
     volumes:
       - .:/app
@@ -66,11 +69,95 @@ services:
     user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
     command: ["node", "browser_ocr/detection/cli.mjs", "benchmark", "--json"]
 
+  ocr-corpus:
+    build:
+      context: .
+      dockerfile: browser_ocr/detection/Dockerfile
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
+    entrypoint: ["node", "browser_ocr/corpus/cli.mjs"]
+
   ocr-eval:
     build:
       context: .
       dockerfile: browser_ocr/Dockerfile
       target: eval
+
+  ocr-document-parse:
+    image: python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - .:/workspace:ro
+    entrypoint: ["python", "-m", "browser_ocr.document_parsing.cli"]
+
+  ocr-document-parse-test:
+    image: python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - .:/workspace:ro
+    command: ["python", "-m", "unittest", "discover", "-s", "browser_ocr/document_parsing/tests", "-v"]
+
+  ocr-finetune:
+    build:
+      context: .
+      dockerfile: browser_ocr/finetune/Dockerfile
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - .:/workspace
+    entrypoint: ["python", "-m", "browser_ocr.finetune.cli"]
+
+  ocr-finetune-test:
+    build:
+      context: .
+      dockerfile: browser_ocr/finetune/Dockerfile
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - .:/workspace:ro
+    command: ["python", "-m", "unittest", "discover", "-s", "browser_ocr/finetune/tests", "-v"]
+
+  ocr-finetune-train:
+    build:
+      context: .
+      dockerfile: browser_ocr/finetune/Dockerfile.train
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      CUDA_VISIBLE_DEVICES: "${OCR_FINETUNE_GPU:-0}"
+    volumes:
+      - .:/workspace
+    gpus: all
+    shm_size: "4gb"
+    entrypoint: ["python", "-m", "browser_ocr.finetune.train_cli"]
+
+  ocr-full-document:
+    build:
+      context: .
+      dockerfile: browser_ocr/finetune/Dockerfile.train
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      CUDA_VISIBLE_DEVICES: "${OCR_FINETUNE_GPU:-0}"
+    volumes:
+      - .:/workspace
+    gpus: all
+    shm_size: "4gb"
+    entrypoint: ["python", "-m", "browser_ocr.finetune.full_document_cli"]
 
   android:
     build:

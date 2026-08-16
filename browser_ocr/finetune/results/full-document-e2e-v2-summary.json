@@ -1,0 +1,122 @@
+{
+  "chronicle": 112,
+  "corpus": {
+    "capture_profiles": [
+      "cropped_clutter",
+      "flat_scan",
+      "glare_shadow",
+      "low_contrast_defocus",
+      "motion_jpeg",
+      "perspective_phone"
+    ],
+    "corpus_id": "synthetic-prescription-detection-v2-seed-153-n-36",
+    "generator_fingerprint": "cf8e03e45f33616611ce523512e8dd22e44666caa9a950d42a6764b3a0076281",
+    "layout_families": [
+      "classic_medication_bag",
+      "compact_prescription_form",
+      "counseling_medication_bag",
+      "legacy_preprinted_medication_bag",
+      "pharmacy_information_sheet",
+      "prescription_table"
+    ],
+    "sample_count": 36
+  },
+  "evaluation": "full_document_detection_recognition_parsing_v2",
+  "interpretation": {
+    "cross_medication_associations": 0,
+    "detector_critical_box_recall": "600/600",
+    "false_exact_fields_after_gate": 0,
+    "motion_jpeg": "1/6 quality pass; 5/6 fail closed via document OCR quality abstention",
+    "non_motion_capture_profiles": "all 30/30 samples quality+safe pass"
+  },
+  "pipeline": {
+    "detector_asset_sha256": "781056046c9ed77a15c94681605db6a0f62317c2e9cce6931c71da2478d4bc30",
+    "detector_edge": 640,
+    "detector_model": "PP-OCRv5_mobile_det",
+    "parser": "geometry_rule_v2",
+    "parser_quality_gate": {
+      "confidence_floor": 0.8,
+      "max_low_confidence_fraction": 0.2
+    },
+    "recognizer_checkpoint_sha256": "dbb42982b44f10d2f2711dc7e5dcc88943241b51b00059485e9297cac0005826",
+    "recognizer_model": "korean_PP-OCRv5_mobile_rec"
+  },
+  "real_data_evaluated": false,
+  "result": {
+    "abstained_samples": [
+      "synthetic-000026",
+      "synthetic-000027",
+      "synthetic-000028",
+      "synthetic-000029",
+      "synthetic-000030"
+    ],
+    "benchmark_status": "fail",
+    "by_capture_profile": {
+      "cropped_clutter": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "quality_pass": 6,
+        "safety_pass": 6,
+        "samples": 6
+      },
+      "flat_scan": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "quality_pass": 6,
+        "safety_pass": 6,
+        "samples": 6
+      },
+      "glare_shadow": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "quality_pass": 6,
+        "safety_pass": 6,
+        "samples": 6
+      },
+      "low_contrast_defocus": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "quality_pass": 6,
+        "safety_pass": 6,
+        "samples": 6
+      },
+      "motion_jpeg": {
+        "critical_field_exact": 20,
+        "critical_field_total": 112,
+        "quality_pass": 1,
+        "safety_pass": 6,
+        "samples": 6
+      },
+      "perspective_phone": {
+        "critical_field_exact": 112,
+        "critical_field_total": 112,
+        "quality_pass": 6,
+        "safety_pass": 6,
+        "samples": 6
+      }
+    },
+    "metrics": {
+      "critical_detection_recall": 1.0,
+      "critical_field_exact_accuracy": 0.8630952380952381,
+      "row_recall": 0.8630952380952381
+    },
+    "quality_pass_samples": 31,
+    "safety_pass_samples": 36,
+    "totals": {
+      "critical_detection_matched": 600,
+      "critical_detection_total": 600,
+      "critical_field_exact": 580,
+      "critical_field_total": 672,
+      "cross_medication_associations": 0,
+      "expected_rows": 168,
+      "false_exact_fields": 0,
+      "matched_rows": 145,
+      "missing_rows": 23,
+      "predicted_rows": 145,
+      "unexpected_rows": 0,
+      "unproven_associations": 0,
+      "unresolved_fields": 0
+    }
+  },
+  "schema_version": 1
+}

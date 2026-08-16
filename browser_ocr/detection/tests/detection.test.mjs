@@ -9,6 +9,14 @@ import { validateCorpus } from "../contract.mjs";
 import { benchmarkMatrix, loadDetectorModelManifest } from "../detector_models.mjs";
 import { evaluateDetections } from "../evaluation.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
+import { testDrugCatalog, testHistoricalDrugExposure } from "../../corpus/tests/fixtures.mjs";
+
+const TEST_DRUG_CATALOG = testDrugCatalog();
+const TEST_HISTORICAL_EXPOSURE = testHistoricalDrugExposure();
+
+function generateCorpus(options) {
+  return generateSyntheticCorpus({ ...options, drugSplitSeed: 161, historicalDrugExposure: TEST_HISTORICAL_EXPOSURE, drugCatalog: TEST_DRUG_CATALOG });
+}
 
 function tinyCorpus() {
   const identityCapture = {
@@ -182,8 +190,8 @@ test("synthetic generator is deterministic and emits valid full documents", asyn
   try {
     const first = join(root, "a");
     const second = join(root, "b");
-    const a = await generateSyntheticCorpus({ outputDir: first, count: 6, seed: 153 });
-    const b = await generateSyntheticCorpus({ outputDir: second, count: 6, seed: 153 });
+    const a = await generateCorpus({ outputDir: first, count: 6, seed: 153 });
+    const b = await generateCorpus({ outputDir: second, count: 6, seed: 153 });
     assert.deepEqual(a, b);
     assert.equal(a.samples.length, 6);
     assert.ok(a.samples.every((sample) => sample.width === 1280 && sample.height === 1600));
