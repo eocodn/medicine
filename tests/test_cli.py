@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+import medicine_app.cli as cli_module
 from medicine_app.cli import build_parser, main
 from medicine_app.core import MedicationApp
 from tests.test_prescription_safety import make_canonical_db
@@ -131,6 +134,40 @@ class PrescriptionCliTest(unittest.TestCase):
     def test_screenshot_can_target_the_medication_screen(self) -> None:
         args = build_parser().parse_args(["screenshot", "--screen", "meds"])
         self.assertEqual(args.screen, "meds")
+
+    def test_screenshot_command_does_not_initialize_the_source_personal_database(self) -> None:
+        payload = {"path": "/tmp/screenshot.png", "width": 390, "height": 844, "screen": "home", "size_bytes": 1}
+        stdout = io.StringIO()
+        arguments = [
+            "--canonical-db", str(self.canonical_db),
+            "--personal-db", str(self.personal_db),
+            "screenshot", "--json",
+        ]
+
+        with (
+            patch("medicine_app.cli.MedicationApp", side_effect=AssertionError("source DB must stay untouched")),
+            patch("medicine_app.cli.capture_screenshot", return_value=payload) as screenshot,
+            redirect_stdout(stdout),
+        ):
+            status = main(arguments)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), payload)
+        screenshot.assert_called_once()
+
+    def test_personal_database_snapshot_reads_a_read_only_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "snapshot.sqlite"
+            self.personal_db.chmod(0o444)
+            try:
+                cli_module._snapshot_personal_database(self.personal_db, destination)
+            finally:
+                self.personal_db.chmod(0o644)
+
+            with sqlite3.connect(destination) as con:
+                person = con.execute("SELECT name FROM people WHERE id = ?", (self.person["id"],)).fetchone()
+
+        self.assertEqual(person, ("CLI",))
 
 
 if __name__ == "__main__":

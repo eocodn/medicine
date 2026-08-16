@@ -5,8 +5,10 @@ import json
 import os
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -28,6 +30,17 @@ def emit(payload, as_json: bool) -> None:
         print(json.dumps(payload, ensure_ascii=False))
 
 
+def _snapshot_personal_database(source: Path, destination: Path) -> None:
+    # Screenshot rendering is observational: never migrate or lock the user's
+    # source DB, including legacy files still owned by a root-run container.
+    if not source.exists():
+        return
+    uri = f"file:{source.resolve()}?mode=ro"
+    with sqlite3.connect(uri, uri=True, timeout=10) as source_con:
+        with sqlite3.connect(destination) as destination_con:
+            source_con.backup(destination_con)
+
+
 def capture_screenshot(
     canonical_db: Path,
     personal_db: Path,
@@ -46,65 +59,68 @@ def capture_screenshot(
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
 
-    env = os.environ.copy()
-    env["MEDICINE_CANONICAL_DB"] = str(canonical_db.resolve())
-    env["MEDICINE_PERSONAL_DB"] = str(personal_db.resolve())
-    server = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "medicine_app.web:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--log-level",
-            "warning",
-        ],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    url = f"http://127.0.0.1:{port}/?screen={screen}"
-    try:
-        deadline = time.monotonic() + 10
-        while True:
-            if server.poll() is not None:
-                raise RuntimeError("temporary web server exited before screenshot")
-            try:
-                with urllib.request.urlopen(f"{url}/api/health", timeout=0.5) as response:
-                    if response.status == 200:
-                        break
-            except OSError:
-                pass
-            if time.monotonic() >= deadline:
-                raise RuntimeError("temporary web server did not become ready")
-            time.sleep(0.1)
-
-        subprocess.run(
+    with tempfile.TemporaryDirectory(prefix="medicine-screenshot-") as temp_dir:
+        snapshot_db = Path(temp_dir) / "personal.sqlite"
+        _snapshot_personal_database(personal_db, snapshot_db)
+        env = os.environ.copy()
+        env["MEDICINE_CANONICAL_DB"] = str(canonical_db.resolve())
+        env["MEDICINE_PERSONAL_DB"] = str(snapshot_db)
+        server = subprocess.Popen(
             [
-                browser,
-                "--headless",
-                "--no-sandbox",
-                "--disable-gpu",
-                "--hide-scrollbars",
-                "--virtual-time-budget=2000",
-                f"--window-size={width},{height}",
-                f"--screenshot={output}",
-                url,
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "medicine_app.web:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--log-level",
+                "warning",
             ],
-            check=True,
+            env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    finally:
-        server.terminate()
+        url = f"http://127.0.0.1:{port}/?screen={screen}"
         try:
-            server.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            server.kill()
-            server.wait(timeout=5)
+            deadline = time.monotonic() + 10
+            while True:
+                if server.poll() is not None:
+                    raise RuntimeError("temporary web server exited before screenshot")
+                try:
+                    with urllib.request.urlopen(f"{url}/api/health", timeout=0.5) as response:
+                        if response.status == 200:
+                            break
+                except OSError:
+                    pass
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("temporary web server did not become ready")
+                time.sleep(0.1)
+
+            subprocess.run(
+                [
+                    browser,
+                    "--headless",
+                    "--no-sandbox",
+                    "--disable-gpu",
+                    "--hide-scrollbars",
+                    "--virtual-time-budget=2000",
+                    f"--window-size={width},{height}",
+                    f"--screenshot={output}",
+                    url,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        finally:
+            server.terminate()
+            try:
+                server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=5)
 
     return {"path": str(output), "width": width, "height": height, "screen": screen, "size_bytes": output.stat().st_size}
 
@@ -331,13 +347,6 @@ def _dispatch(args, app: MedicationApp):
         payload = app.cancel_dose_instance(args.instance)
     elif args.command == "prn-intake":
         payload = app.record_prn_dose(args.medication, args.at, args.note)
-    elif args.command == "screenshot":
-        if args.width < 320 or args.height < 480:
-            raise SystemExit("screenshot dimensions are too small")
-        payload = capture_screenshot(
-            args.canonical_db, args.personal_db, args.output,
-            args.width, args.height, args.screen,
-        )
     else:
         raise AssertionError(args.command)
 
@@ -346,9 +355,17 @@ def _dispatch(args, app: MedicationApp):
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    app = MedicationApp(args.canonical_db, args.personal_db)
     try:
-        payload = _dispatch(args, app)
+        if args.command == "screenshot":
+            if args.width < 320 or args.height < 480:
+                raise SystemExit("screenshot dimensions are too small")
+            payload = capture_screenshot(
+                args.canonical_db, args.personal_db, args.output,
+                args.width, args.height, args.screen,
+            )
+        else:
+            app = MedicationApp(args.canonical_db, args.personal_db)
+            payload = _dispatch(args, app)
     except ConfirmationRequired as exc:
         emit({
             "confirmation_required": True,
