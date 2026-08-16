@@ -167,17 +167,15 @@ docker compose run --rm canonical ingredient-criteria --item-seq 198600630 --jso
 # Android용 compact canonical snapshot 생성
 docker compose run --rm canonical mobile-build --json
 
-# GitHub Actions용 KIDS XLSX private source bundle 생성
-docker compose run --rm canonical kids-bundle \
-  --output data/private/kids-current.zip \
-  --json
+# KIDS 공식 DUR 페이지에서 최신 8종 XLSX를 직접 동기화
+docker compose run --rm canonical kids-sync --json
 ```
 
-Reference DB 배포 workflow는 KIDS XLSX를 Git에 넣지 않습니다. 위 bundle을 private R2 object
-`reference-source/kids/current.zip`에 업로드하고, workflow 실행 시 출력된 SHA-256을
-`kids_source_sha256` 입력으로 지정합니다. GitHub Actions에는 기존 R2 4개 secret 외에
-`DATA_GO_KR_SERVICE_KEY`가 필요합니다. source bundle 및 API credential이 준비되기 전에는
-실패하는 정기 job을 만들지 않도록 배포 workflow를 수동 실행으로 유지합니다.
+Reference DB 배포 workflow는 KIDS XLSX를 Git이나 R2 source bundle에 보관하지 않습니다.
+실행 시 한국의약품안전관리원 공식 DUR 8개 페이지에서 현재 attachment를 찾아 XLSX를 직접 다운로드하고,
+각 파일의 카테고리별 header/effective date/SHA-256을 검증한 뒤 canonical build에 사용합니다. GitHub Actions에는
+기존 R2 4개 secret 외에 `DATA_GO_KR_SERVICE_KEY`가 필요합니다. API credential이 준비되기 전에는 실패하는
+정기 job을 만들지 않도록 배포 workflow를 수동 실행으로 유지합니다.
 
 `canonical verify`가 실패하거나 runtime manifest에 unresolved product-link ambiguity가 남아 있으면 앱은
 데이터셋을 verified로 취급하지 않습니다. Android 빌드는 `canonical mobile-build`를 먼저 실행해

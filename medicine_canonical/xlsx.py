@@ -78,6 +78,26 @@ def _effective_date(title: str | None) -> str | None:
     return f"{year:04d}-{month:02d}-{day:02d}"
 
 
+def inspect_xlsx_source(path: str | Path, category: str) -> dict:
+    source = Path(path)
+    workbook = load_workbook(source, read_only=True, data_only=True)
+    try:
+        worksheet = workbook.active
+        rows = list(worksheet.iter_rows(values_only=True, max_row=10))
+        header_idx = _find_header(rows, category)
+        headers = _dedupe_headers(rows[header_idx])
+        title = _text(rows[0][0]) if rows and rows[0] else None
+        return {
+            "sheet": worksheet.title,
+            "header_row": header_idx + 1,
+            "header": headers,
+            "title": title,
+            "effective_date": _effective_date(title),
+        }
+    finally:
+        workbook.close()
+
+
 def _canonical_rule(category: str, row: dict[str, object]) -> dict:
     result = {
         "category": category,

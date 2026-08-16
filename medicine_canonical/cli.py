@@ -9,10 +9,10 @@ from pathlib import Path
 from .build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
 from .inspection import canonical_product_criteria, canonical_product_ingredient_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
+from .kids_sources import sync_kids_xlsx_sources
 from .mobile import build_mobile_database
 from .release import apply_chunk_patch, prepare_release
 from .release_r2 import download_object_from_env, publish_release_from_env
-from .source_bundle import extract_kids_bundle, pack_kids_bundle
 from .sources import sync_canonical_api_sources
 from .substance_build import (
     assemble_substance_database,
@@ -166,15 +166,9 @@ def build_parser() -> argparse.ArgumentParser:
     substance_verify.add_argument("--db", type=Path, default=DEFAULT_SUBSTANCE_DB)
     substance_verify.add_argument("--json", action="store_true")
 
-    kids_bundle = sub.add_parser("kids-bundle", help="Pack the exact KIDS XLSX source set for private distribution")
-    kids_bundle.add_argument("--kids-dir", type=Path, default=DEFAULT_KIDS)
-    kids_bundle.add_argument("--output", type=Path, required=True)
-    kids_bundle.add_argument("--json", action="store_true")
-
-    kids_extract = sub.add_parser("kids-extract", help="Validate and extract a private KIDS XLSX source bundle")
-    kids_extract.add_argument("--bundle", type=Path, required=True)
-    kids_extract.add_argument("--output-dir", type=Path, default=DEFAULT_KIDS)
-    kids_extract.add_argument("--json", action="store_true")
+    kids_sync = sub.add_parser("kids-sync", help="Download and validate the current official KIDS DUR XLSX sources")
+    kids_sync.add_argument("--output-dir", type=Path, default=DEFAULT_KIDS)
+    kids_sync.add_argument("--json", action="store_true")
 
     release_create = sub.add_parser("release-create", help="Build verified full and exact-byte delta mobile DB artifacts")
     release_create.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
@@ -293,10 +287,8 @@ def main(argv=None) -> int:
         payload = verify_substance_database(args.db)
         _emit(payload, args.json)
         return 0 if payload["status"] == "verified" else 2
-    elif args.command == "kids-bundle":
-        payload = pack_kids_bundle(args.kids_dir, args.output)
-    elif args.command == "kids-extract":
-        payload = extract_kids_bundle(args.bundle, args.output_dir)
+    elif args.command == "kids-sync":
+        payload = sync_kids_xlsx_sources(args.output_dir)
     elif args.command == "release-create":
         created_at = args.created_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         payload = prepare_release(
