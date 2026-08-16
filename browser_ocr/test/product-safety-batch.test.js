@@ -29,8 +29,8 @@ test("profile form only offers male/female and binary female reproductive states
 
 
 test("shared UI exposes long-term and PRN maximum-use fields and treats PRN as a separate regimen mode", () => {
-  assert.match(app, /pending-long-term/);
-  assert.match(app, /pending-prn-max/);
+  assert.match(prescription, /pending-long-term/);
+  assert.match(prescription, /pending-prn-max/);
   assert.match(prescription, /long_term:/);
   assert.match(prescription, /prn_max_per_day:/);
   assert.match(prescription, /syncPrnFields/);

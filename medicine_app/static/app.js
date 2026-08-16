@@ -18,7 +18,6 @@ const titles = {
   meds: "복용 관리",
   search: "약 검색",
   people: "함께 관리",
-  settings: "설정",
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -75,7 +74,12 @@ function toast(message) {
 
 function showScreen(name) {
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
-  $$(".nav-item").forEach((node) => node.classList.toggle("active", node.dataset.nav === name));
+  $$(".nav-item").forEach((node) => {
+    const active = node.dataset.nav === name;
+    node.classList.toggle("active", active);
+    if (active) node.setAttribute("aria-current", "page");
+    else node.removeAttribute("aria-current");
+  });
   $("#page-title").textContent = titles[name] || "약봄";
   if (name === "search") setTimeout(() => $("#drug-query").focus(), 80);
 }
@@ -203,7 +207,7 @@ function scheduleHtml(item) {
       <span class="schedule-time">${escapeHtml(item.scheduled_time || item.slot_label || "시간 미정")}</span>
       <div class="schedule-name"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(doseMeta)}</span></div>
       ${item.status === "taken"
-        ? `<button class="mini-action" data-instance-cancel="${item.id}" type="button">취소</button>`
+        ? `<div class="dose-actions"><span class="dose-status taken">사용 완료</span><button class="mini-action" data-instance-cancel="${item.id}" type="button">되돌리기</button></div>`
         : item.status === "skipped"
           ? `<div class="dose-actions"><span class="dose-status skipped">건너뜀</span><button class="mini-action" data-instance-cancel="${item.id}" type="button">되돌리기</button></div>`
           : `<div class="dose-actions">
@@ -239,9 +243,11 @@ function renderMedications() {
         ${med.source === "manual" ? `<span class="chip caution-chip">직접 입력 · DUR 제한</span>` : ""}
       </div>
       <div class="med-actions">
-        ${med.as_needed ? `<button class="primary-button" data-prn-taken="${med.id}" type="button">지금 복용 기록</button>` : ""}
-        <button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>
-        <button class="danger-ghost" data-stop="${med.id}" type="button">삭제</button>
+        ${med.as_needed ? `<button class="primary-button wide" data-prn-taken="${med.id}" type="button">지금 복용 기록</button>` : ""}
+        <div class="med-secondary-actions">
+          <button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>
+          <button class="stop-button" data-stop="${med.id}" type="button">복용 종료</button>
+        </div>
       </div>
     </article>`).join("") : `<div class="empty-state"><strong>복용 중인 약이 없어요</strong>약 검색 탭에서 추가해보세요.</div>`;
 
@@ -249,11 +255,10 @@ function renderMedications() {
     <div class="history-row">
       <span class="history-icon">${log.status === "taken" ? "✓" : "–"}</span>
       <div><strong>${escapeHtml(log.product_name)}</strong><div class="history-time">${escapeHtml(log.status === "taken" ? "사용 완료" : "건너뜀")}</div></div>
-      <span class="history-time">${escapeHtml(formatTime(log.occurred_at))}</span>
-      ${log.dose_instance_id ? `<button class="mini-action" data-log-cancel="${escapeHtml(log.dose_instance_id)}" type="button">되돌리기</button>` : ""}
+      <div class="history-controls"><span class="history-time">${escapeHtml(formatTime(log.occurred_at))}</span>${log.dose_instance_id ? `<button class="mini-action" data-log-cancel="${escapeHtml(log.dose_instance_id)}" type="button">되돌리기</button>` : ""}</div>
     </div>`).join("") : `<div class="empty-state"><strong>기록이 아직 없어요</strong>약을 복용한 뒤 완료 버튼을 눌러보세요.</div>`;
 
-  $$('[data-dur-alert]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.durAlert)));
+  $$('[data-dur-alert]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationSafety(button.dataset.durAlert)));
   $$('[data-prn-taken]', medsRoot).forEach((button) => button.addEventListener("click", () => recordPrnIntake(button.dataset.prnTaken)));
   $$('[data-edit]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.edit)));
   $$('[data-stop]', medsRoot).forEach((button) => button.addEventListener("click", () => stopMedication(button.dataset.stop)));
@@ -280,13 +285,14 @@ async function cancelDoseInstance(instanceId) {
 }
 
 async function stopMedication(medicationId) {
-  if (!confirm("복용약 목록에서 삭제할까요? 기존 복용 기록은 남습니다.")) return;
+  if (!confirm("이 약의 복용을 종료할까요? 기존 복용 기록은 그대로 남습니다.")) return;
   try {
     const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
     const query = medication ? `?expected_revision=${medication.revision}` : "";
     await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
     await loadDashboard();
     renderAll();
+    toast("복용을 종료했어요");
   } catch (error) { toast(error.message); }
 }
 
@@ -296,17 +302,17 @@ function formatTime(value) {
   } catch (_) { return value; }
 }
 
-async function runDrugSearch() {
+async function runDrugSearch(successMessage = "") {
   const term = $("#drug-query").value.trim();
   const status = $("#search-status");
   const root = $("#drug-results");
-  if (!term) { status.textContent = ""; root.innerHTML = ""; return; }
+  if (!term) { status.textContent = ""; root.innerHTML = ""; return false; }
   status.textContent = "";
   try {
     const includeInactive = $("#include-inactive").checked;
     const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30&include_inactive=${includeInactive}`);
     state.fullCatalog = true;
-    status.textContent = "";
+    status.textContent = successMessage;
     root.innerHTML = results.length ? results.map((item) => `
       <article class="card result-card" data-product-select="${escapeHtml(item.product_ref)}" role="button" tabindex="0">
         <div class="result-row">
@@ -326,9 +332,11 @@ async function runDrugSearch() {
         selectProductResult(card);
       });
     });
+    return true;
   } catch (error) {
     status.textContent = friendlyErrorMessage(error.message);
     root.innerHTML = "";
+    return false;
   }
 }
 
@@ -356,12 +364,15 @@ function bindEvents() {
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runDrugSearch, 280);
   });
-  window.addEventListener("medicine:ocr-select", (event) => {
+  window.addEventListener("medicine:ocr-select", async (event) => {
     const row = event.detail;
     if (!row || typeof row.product_query !== "string" || !row.product_query.trim()) return;
     state.pendingOcrDraft = row.draft && typeof row.draft === "object" ? { ...row.draft } : {};
-    $("#drug-query").value = row.product_query.trim();
-    void runDrugSearch();
+    const query = row.product_query.trim();
+    $("#drug-query").value = query;
+    $("#ocr-review-panel").classList.add("hidden");
+    const found = await runDrugSearch(`“${query}” 제품 후보를 확인하고 맞는 품목을 선택해주세요.`);
+    if (found) $("#drug-results").scrollIntoView({ behavior: "smooth", block: "start" });
   });
   $("#include-inactive").addEventListener("change", runDrugSearch);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });

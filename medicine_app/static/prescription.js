@@ -4,18 +4,18 @@ function syncPrnFields(root = document) {
   const frequency = $("#pending-frequency", root);
   const times = $("#pending-times", root);
   const maximum = $("#pending-prn-max", root);
-  if (prn) { frequency.value = ""; times.value = ""; }
   frequency.disabled = prn;
   times.disabled = prn;
   maximum.disabled = !prn;
-  if (!prn) maximum.value = "";
+  $("#fixed-schedule-fields", root)?.classList.toggle("is-disabled", prn);
+  $("#prn-limit-field", root)?.classList.toggle("is-disabled", !prn);
 }
 
 function syncLongTermFields(root = document) {
   const longTerm = $("#pending-long-term", root).checked;
   const days = $("#pending-days", root);
-  if (longTerm) days.value = "";
   days.disabled = longTerm;
+  $("#duration-days-field", root)?.classList.toggle("is-disabled", longTerm);
 }
 
 async function recordPrnIntake(medicationId) {
@@ -58,17 +58,20 @@ function friendlyErrorMessage(message) {
 }
 
 function prescriptionPayloadFromForm() {
-  const times = $("#pending-times").value.split(",").map((value) => value.trim()).filter(Boolean);
+  const asNeeded = $("#pending-prn").checked;
+  const longTerm = $("#pending-long-term").checked;
+  const preservedTimes = $("#pending-times").value.split(",").map((value) => value.trim()).filter(Boolean);
+  const times = asNeeded ? [] : preservedTimes;
   return {
     dose_amount: $("#pending-dose-amount").value ? Number($("#pending-dose-amount").value) : null,
     dose_unit: $("#pending-dose-unit").value.trim() || null,
-    frequency_per_day: $("#pending-frequency").value ? Number($("#pending-frequency").value) : (times.length || null),
+    frequency_per_day: asNeeded ? null : ($("#pending-frequency").value ? Number($("#pending-frequency").value) : (times.length || null)),
     meal_relation: $("#pending-meal").value,
     administration_route: $("#pending-route").value,
-    as_needed: $("#pending-prn").checked,
-    prn_max_per_day: $("#pending-prn-max").value ? Number($("#pending-prn-max").value) : null,
-    prescription_days: $("#pending-days").value ? Number($("#pending-days").value) : null,
-    long_term: $("#pending-long-term").checked,
+    as_needed: asNeeded,
+    prn_max_per_day: asNeeded && $("#pending-prn-max").value ? Number($("#pending-prn-max").value) : null,
+    prescription_days: longTerm ? null : ($("#pending-days").value ? Number($("#pending-days").value) : null),
+    long_term: longTerm,
     start_date: $("#pending-start-date").value || null,
     schedule_times: times,
   };
@@ -109,70 +112,92 @@ async function previewProduct(productRef, ocrDraft = null) {
     });
     state.pendingProduct = preview.product;
     state.pendingRequestId = crypto.randomUUID();
+    state.pendingOcrDraft = ocrDraft && typeof ocrDraft === "object" ? { ...ocrDraft } : null;
     state.warningToken = null;
     state.reviewedDraftKey = null;
     state.editingMedicationId = null;
     renderRiskSheet(preview);
-    if (ocrDraft) applyOcrDraftToForm(ocrDraft);
-    state.pendingOcrDraft = null;
     openSheet("#risk-sheet");
   } catch (error) { toast(error.message); }
 }
 
-function renderRiskSheet(preview, medication = null) {
-  const root = $("#risk-sheet-content");
+function durReviewOverviewHtml(items) {
+  const attention = (items || []).filter((item) => ["hit", "conditional", "unknown"].includes(item.status || "unknown"));
+  const clear = (items || []).filter((item) => !["hit", "conditional", "unknown"].includes(item.status || "unknown"));
+  return `
+    ${attention.length ? durStatusHtml(attention) : ""}
+    ${clear.length ? `<details class="dur-clear-details"><summary>문제없이 확인된 DUR 항목 ${clear.length}개</summary><div class="dur-clear-list">${durStatusHtml(clear)}</div></details>` : ""}`;
+}
+
+function riskStatusHeading(preview) {
   const durChecks = preview.dur_checks || [];
   const hitCount = durChecks.filter((item) => item.status === "hit").length;
   const conditionalCount = durChecks.filter((item) => item.status === "conditional").length;
   const unknownCount = durChecks.filter((item) => item.status === "unknown").length;
-  const clearDurCoverage = hasClearDurCoverage(preview);
+  if (hitCount) return `DUR 주의사항 ${hitCount}건이 있어요`;
+  if (conditionalCount) return `조건 확인이 필요한 DUR 항목 ${conditionalCount}건이 있어요`;
+  if (unknownCount) return `확인이 필요한 DUR 항목 ${unknownCount}건이 있어요`;
+  if (hasClearDurCoverage(preview)) return "DUR 주의사항 없음";
+  return "DUR 판정 결과를 확인할 수 없어요";
+}
+
+function renderRiskSheet(preview, medication = null) {
+  const root = $("#risk-sheet-content");
   const permitBlocked = !medication && preview.product.permit_status && preview.product.permit_status !== "active";
-  const statusHeading = medication
-    ? "처방 정보를 수정합니다"
-    : hitCount
-      ? `DUR 주의사항 ${hitCount}건이 있어요`
-      : conditionalCount
-        ? `조건 확인이 필요한 DUR 항목 ${conditionalCount}건이 있어요`
-        : unknownCount
-          ? `확인이 필요한 DUR 항목 ${unknownCount}건이 있어요`
-          : clearDurCoverage
-            ? "DUR 주의사항 없음"
-            : "DUR 판정 결과를 확인할 수 없어요";
+  const entryLabel = medication ? "처방 정보 수정" : "복용정보 입력";
   root.innerHTML = `
     <div class="sheet-header">
-      <div><p class="eyebrow">DUR CHECK</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>
+      <div><p class="eyebrow">DUR CHECK · 1/2</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>
       <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
     </div>
     <div class="risk-summary">
-      <h2>${statusHeading}</h2>
+      <span class="sheet-step">안전성 확인</span>
+      <h2>${riskStatusHeading(preview)}</h2>
       <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필, 현재 복용약 ${preview.current_medication_count}개와 중단 이력을 기준으로 확인했습니다.</p>
     </div>
     ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 현재 허가가 유효하지 않아 복용약으로 추가할 수 없습니다.</div>` : ""}
-    <div>${durStatusHtml(durChecks)}</div>
-    <div class="coverage-note"><strong>DUR 자동 확인에 포함되지 않는 정보</strong><br>알레르기, 신장·간 기능, 체중·적응증, 등록하지 않은 일반약·건강기능식품은 현재 판정에 반영하지 않습니다.</div>
-    ${!medication && (preview.product.suggested_administration_route || "unknown") === "unknown" ? `<div class="coverage-note limited"><strong>투여 경로를 확인해주세요</strong><br>제품 제형만으로 사용 방법을 확정하지 못했습니다. 처방전의 투여 경로를 확인해 선택해주세요.</div>` : ""}
+    ${reviewItemsHtml(preview.review_items || [])}
+    <div>${durReviewOverviewHtml(preview.dur_checks || [])}</div>
+    <div class="safety-notice">
+      <strong>DUR 결과는 확인 신호예요</strong>
+      <p>금기·주의 결과가 있어도 처방약을 임의로 중단하거나 변경하지 말고 의사·약사와 확인하세요.</p>
+    </div>
+    <div class="coverage-note"><strong>자동 확인에 포함되지 않는 정보</strong><br>알레르기, 신장·간 기능, 체중·적응증, 등록하지 않은 일반약·건강기능식품은 현재 판정에 반영하지 않습니다.</div>
+    ${!medication && (preview.product.suggested_administration_route || "unknown") === "unknown" ? `<div class="coverage-note limited"><strong>투여 경로를 확인해주세요</strong><br>제품 제형만으로 사용 방법을 확정하지 못했습니다. 다음 단계에서 처방전의 투여 경로를 확인해 선택해주세요.</div>` : ""}
+    <div class="risk-actions">
+      <button class="secondary-button" data-close-sheet type="button">닫기</button>
+      <button class="primary-button" data-open-prescription type="button" ${permitBlocked ? "disabled" : ""}>${permitBlocked ? "추가할 수 없는 품목" : entryLabel}</button>
+    </div>
+    <p class="risk-disclaimer">용량·투여기간은 단일 기준과 단위를 정확히 비교할 수 있을 때만 자동 판정하며, 그 밖에는 판정 불가 사유를 표시합니다.</p>`;
+  $$('[data-close-sheet]', root).forEach((button) => button.addEventListener("click", closeSheets));
+  $("[data-open-prescription]", root)?.addEventListener("click", () => {
+    renderPrescriptionForm(preview, medication);
+    if (!medication && state.pendingOcrDraft) {
+      applyOcrDraftToForm(state.pendingOcrDraft);
+      state.pendingOcrDraft = null;
+    }
+  });
+}
+
+function renderPrescriptionForm(preview, medication = null) {
+  const root = $("#risk-sheet-content");
+  root.innerHTML = `
+    <div class="sheet-header">
+      <div><p class="eyebrow">MEDICATION DETAILS · 2/2</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>
+      <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
+    </div>
+    <div class="entry-intro">
+      <span class="sheet-step">복용정보 입력</span>
+      <strong>${escapeHtml(preview.person.name)}님의 복용 방법을 확인해주세요.</strong>
+      <p>처방전 또는 약 봉투에 적힌 내용을 기준으로 입력하면 오늘 일정과 DUR 정량 확인에 사용합니다.</p>
+    </div>
     <div class="prescription-form">
-      <div class="form-grid two">
-        <label>1회 복용량<input id="pending-dose-amount" type="number" min="0" step="0.1" placeholder="1"></label>
-        <label>단위<input id="pending-dose-unit" placeholder="정, mL, 포"></label>
-      </div>
-      <div class="form-grid two">
-        <label>1일 횟수<input id="pending-frequency" type="number" min="1" max="24" placeholder="3"></label>
-        <label>처방 일수<input id="pending-days" type="number" min="1" max="3650" placeholder="7"></label>
-      </div>
-      <label class="checkbox-row"><input id="pending-long-term" type="checkbox"><span><strong>장기복용 · 종료일 없음</strong><small>처방 종료일이 없는 경우에만 선택하세요.</small></span></label>
-      <label>복용 시간<input id="pending-times" placeholder="예: 08:00, 13:00, 19:00"></label>
-      <div class="form-grid two">
-        <label>식사 관계
-          <select id="pending-meal">
-            <option value="unspecified">미지정</option>
-            <option value="after_meal">식후</option>
-            <option value="before_meal">식전</option>
-            <option value="with_meal">식사와 함께</option>
-            <option value="empty_stomach">공복</option>
-            <option value="regardless">식사 무관</option>
-          </select>
-        </label>
+      <section class="prescription-section">
+        <div class="prescription-section-heading"><span>1</span><div><strong>복용 방법</strong><small>한 번에 사용하는 양과 투여 경로</small></div></div>
+        <div class="form-grid two dose-grid">
+          <label>1회 복용량<input id="pending-dose-amount" type="number" min="0" step="0.1" placeholder="1"></label>
+          <label>단위<input id="pending-dose-unit" placeholder="정, mL, 포"></label>
+        </div>
         <label>투여 경로
           <select id="pending-route">
             <option value="unknown">확인 필요</option>
@@ -186,18 +211,50 @@ function renderRiskSheet(preview, medication = null) {
             <option value="other">기타</option>
           </select>
         </label>
-      </div>
-      <label>복용 시작일<input id="pending-start-date" type="date"></label>
-      <label class="checkbox-row"><input id="pending-prn" type="checkbox"><span><strong>필요할 때만 복용</strong><small>고정 복용시간과 함께 사용할 수 없어요.</small></span></label>
-      <label>필요시 1일 최대 횟수<input id="pending-prn-max" type="number" min="1" max="24" placeholder="선택"></label>
+      </section>
+
+      <section class="prescription-section">
+        <div class="prescription-section-heading"><span>2</span><div><strong>복용 일정</strong><small>고정 일정 또는 필요시 복용 중 하나를 선택</small></div></div>
+        <label class="choice-card"><input id="pending-prn" type="checkbox"><span><strong>필요할 때만 복용</strong><small>증상이 있을 때만 사용하는 약이면 선택하세요.</small></span></label>
+        <div id="fixed-schedule-fields" class="dependent-fields">
+          <div class="form-grid two">
+            <label>하루 횟수<input id="pending-frequency" type="number" min="1" max="24" placeholder="3"></label>
+            <label>식사 관계
+              <select id="pending-meal">
+                <option value="unspecified">미지정</option>
+                <option value="after_meal">식후</option>
+                <option value="before_meal">식전</option>
+                <option value="with_meal">식사와 함께</option>
+                <option value="empty_stomach">공복</option>
+                <option value="regardless">식사 무관</option>
+              </select>
+            </label>
+          </div>
+          <label>복용 시간<input id="pending-times" placeholder="08:00, 13:00, 19:00"><small class="field-help">시간이 정해져 있다면 쉼표로 구분해 입력하세요.</small></label>
+        </div>
+        <div id="prn-limit-field" class="dependent-fields is-disabled">
+          <label>필요시 1일 최대 횟수<input id="pending-prn-max" type="number" min="1" max="24" placeholder="예: 3"><small class="field-help">처방에 최대 횟수가 있을 때만 입력하세요.</small></label>
+        </div>
+      </section>
+
+      <section class="prescription-section">
+        <div class="prescription-section-heading"><span>3</span><div><strong>복용 기간</strong><small>시작일과 처방 기간</small></div></div>
+        <label>복용 시작일<input id="pending-start-date" type="date"></label>
+        <label class="choice-card"><input id="pending-long-term" type="checkbox"><span><strong>장기복용 · 종료일 없음</strong><small>처방 종료일이 없는 약에만 선택하세요.</small></span></label>
+        <div id="duration-days-field" class="dependent-fields">
+          <label>처방 일수<input id="pending-days" type="number" min="1" max="3650" placeholder="7"></label>
+        </div>
+      </section>
     </div>
     <div id="quantitative-warning"></div>
-    <div class="risk-actions">
-      <button class="secondary-button" data-close-sheet type="button">취소</button>
-      <button class="primary-button" id="${medication ? "confirm-edit-med" : "confirm-add-med"}" type="button" ${permitBlocked ? "disabled" : ""}>${medication ? "수정 내용 저장" : permitBlocked ? "추가할 수 없는 품목" : "복용약에 추가"}</button>
+    <div class="risk-actions entry-actions">
+      <button class="secondary-button" data-back-risk type="button">DUR 다시 보기</button>
+      <button class="primary-button" id="${medication ? "confirm-edit-med" : "confirm-add-med"}" type="button">${medication ? "수정 내용 저장" : "복용약에 추가"}</button>
     </div>
-    <p class="risk-disclaimer">DUR 금기·주의는 의료진 확인을 위한 안전 신호입니다. 결과를 근거로 처방약을 임의 중단하거나 변경하지 마세요.</p>`;
+    <p class="risk-disclaimer">입력값을 바꾸면 저장 시 DUR 용량·투여기간 기준을 다시 확인합니다.</p>`;
+
   $$('[data-close-sheet]', root).forEach((button) => button.addEventListener("click", closeSheets));
+  $("[data-back-risk]", root)?.addEventListener("click", () => renderRiskSheet(preview, medication));
   if (medication) {
     $("#pending-dose-amount", root).value = medication.dose_amount ?? "";
     $("#pending-dose-unit", root).value = medication.dose_unit ?? "";
@@ -222,19 +279,14 @@ function renderRiskSheet(preview, medication = null) {
   syncLongTermFields(root);
 }
 
-function openMedicationEdit(medicationId) {
-  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
-  if (!medication) return;
-  state.editingMedicationId = medicationId;
-  state.warningToken = null;
-  state.reviewedDraftKey = null;
-  state.pendingProduct = {
-    product_ref: medication.catalog_item_seq || medication.product_code,
-    product_name: medication.product_name,
-  };
+function medicationSafetyPreview(medication) {
   const currentAssessment = medication.current_assessment || {};
-  renderRiskSheet({
-    product: { product_name: medication.product_name }, person: currentPerson(),
+  return {
+    product: {
+      product_name: medication.product_name,
+      suggested_administration_route: medication.administration_route || "unknown",
+    },
+    person: currentPerson(),
     current_medication_count: Math.max((state.dashboard?.medications || []).length - 1, 0),
     risks: currentAssessment.risks || [],
     review_items: currentAssessment.review_items || [],
@@ -244,7 +296,32 @@ function openMedicationEdit(medicationId) {
       duration: currentAssessment.duration,
       dose: currentAssessment.dose,
     },
-  }, medication);
+  };
+}
+
+function prepareMedicationEdit(medication) {
+  state.editingMedicationId = medication.id;
+  state.warningToken = null;
+  state.reviewedDraftKey = null;
+  state.pendingProduct = {
+    product_ref: medication.catalog_item_seq || medication.product_code,
+    product_name: medication.product_name,
+  };
+}
+
+function openMedicationSafety(medicationId) {
+  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  if (!medication) return;
+  prepareMedicationEdit(medication);
+  renderRiskSheet(medicationSafetyPreview(medication), medication);
+  openSheet("#risk-sheet");
+}
+
+function openMedicationEdit(medicationId) {
+  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  if (!medication) return;
+  prepareMedicationEdit(medication);
+  renderPrescriptionForm(medicationSafetyPreview(medication), medication);
   openSheet("#risk-sheet");
 }
 

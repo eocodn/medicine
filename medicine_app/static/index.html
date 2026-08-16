@@ -6,7 +6,8 @@
   <meta name="theme-color" content="#f6f7f4">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
   <title>약봄</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260814c">
+  <link rel="stylesheet" href="/static/styles.css?v=20260817ux1">
+  <link rel="stylesheet" href="/static/prescription.css?v=20260817ux1">
 </head>
 <body>
   <div class="app-shell">
@@ -15,10 +16,14 @@
         <p class="eyebrow">MEDICINE</p>
         <h1 id="page-title">오늘의 복약</h1>
       </div>
-      <button class="avatar-button" id="profile-shortcut" type="button" aria-label="관리 대상 선택">+</button>
+      <button class="profile-switcher" id="profile-shortcut" type="button" aria-label="관리 대상 선택">
+        <span class="profile-switcher-avatar" id="profile-shortcut-avatar" aria-hidden="true">+</span>
+        <span class="profile-switcher-copy"><small>관리 대상</small><strong id="profile-shortcut-name">선택</strong></span>
+        <span class="profile-switcher-chevron" aria-hidden="true">⌄</span>
+      </button>
     </header>
 
-    <main id="app-main" class="main-content" aria-live="polite">
+    <main id="app-main" class="main-content">
       <section class="screen active" data-screen="home">
         <div id="home-content"></div>
       </section>
@@ -70,22 +75,13 @@
         <div id="people-list" class="stack"></div>
         <button id="open-person-form" class="primary-button wide" type="button">+ 관리 대상 추가</button>
       </section>
-
-      <section class="screen" data-screen="settings">
-        <div class="settings-card caution-card">
-          <p class="eyebrow">NOTICE</p>
-          <h2>DUR 결과는 확인 신호예요</h2>
-          <p>금기·주의 결과가 떠도 임의로 처방약을 중단하지 말고 의사·약사와 확인하세요. 용량·투여기간은 단일 기준과 단위를 정확히 비교할 수 있을 때만 자동 판정하며, 그 밖에는 판정 불가 사유를 표시합니다.</p>
-        </div>
-      </section>
     </main>
 
     <nav class="bottom-nav" aria-label="주 메뉴">
-      <button class="nav-item active" data-nav="home" type="button"><span>⌂</span><small>홈</small></button>
-      <button class="nav-item" data-nav="meds" type="button"><span>◉</span><small>복용</small></button>
-      <button class="nav-item nav-search" data-nav="search" type="button"><span>＋</span><small>약 검색</small></button>
-      <button class="nav-item" data-nav="people" type="button"><span>♙</span><small>가족</small></button>
-      <button class="nav-item" data-nav="settings" type="button"><span>⚙</span><small>설정</small></button>
+      <button class="nav-item active" data-nav="home" type="button" aria-current="page"><span aria-hidden="true">⌂</span><small>홈</small></button>
+      <button class="nav-item" data-nav="meds" type="button"><span aria-hidden="true">◉</span><small>복용</small></button>
+      <button class="nav-item nav-search" data-nav="search" type="button"><span aria-hidden="true">＋</span><small>약 검색</small></button>
+      <button class="nav-item" data-nav="people" type="button"><span aria-hidden="true">♙</span><small>가족</small></button>
     </nav>
   </div>
 
@@ -133,10 +129,10 @@
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/static/native-api.js?v=20260811k" defer></script>
   <script src="/static/dialog.js?v=20260815a" defer></script>
-  <script src="/static/prescription.js?v=20260811e" defer></script>
-  <script src="/static/people.js?v=20260811k" defer></script>
+  <script src="/static/prescription.js?v=20260817ux1" defer></script>
+  <script src="/static/people.js?v=20260817ux1" defer></script>
   <script src="/static/timeline.js?v=20260811b" defer></script>
-  <script src="/static/app.js?v=20260816ocr1" defer></script>
-  <script src="/static/ocr-review.js?v=20260816a" defer></script>
+  <script src="/static/app.js?v=20260817ux1" defer></script>
+  <script src="/static/ocr-review.js?v=20260817ux1" defer></script>
 </body>
 </html>

@@ -58,6 +58,19 @@
     return { tablet: "정", capsule: "캡슐", packet: "포" }[value] || value || "";
   }
 
+  function uncertaintyText(codes) {
+    const labels = {
+      LOW_CONFIDENCE_OCR: "인식 정확도가 낮아 제품명과 복용 정보를 다시 확인해주세요.",
+      UNRESOLVED_REGIMEN_ASSOCIATION: "약 이름과 복용 정보의 연결이 불확실해 직접 확인해주세요.",
+      AMBIGUOUS_PRODUCT: "제품명이 여러 방식으로 읽혀 정확한 제품명을 확인해주세요.",
+      MISSING_PRODUCT: "제품명을 충분히 읽지 못해 직접 수정해주세요.",
+      UNSUPPORTED_AS_NEEDED: "필요시 복용 표현은 자동 확정하지 못해 처방 내용을 확인해주세요.",
+      UNSUPPORTED_ROUTE: "투여 경로는 자동 확정하지 못해 처방 내용을 확인해주세요.",
+    };
+    const messages = [...new Set((codes || []).map((code) => labels[code] || "인식 결과를 직접 확인해주세요."))];
+    return messages.join(" ");
+  }
+
   function readRow(card, base) {
     const value = (field) => card.querySelector(`[data-ocr-field="${field}"]`)?.value?.trim() || "";
     const number = (field) => {
@@ -94,7 +107,7 @@
           <label>1일 횟수<input data-ocr-field="frequency_per_day" type="number" min="1" max="24" value="${escapeHtml(row.draft.frequency_per_day ?? "")}"></label>
           <label>처방 일수<input data-ocr-field="prescription_days" type="number" min="1" max="3650" value="${escapeHtml(row.draft.prescription_days ?? "")}"></label>
         </div>
-        ${row.uncertainty_codes.length ? `<p class="muted small">OCR 확인 항목: ${escapeHtml(row.uncertainty_codes.join(" · "))}</p>` : ""}
+        ${row.uncertainty_codes.length ? `<p class="muted small ocr-review-note">${escapeHtml(uncertaintyText(row.uncertainty_codes))}</p>` : ""}
         <button class="secondary-button wide" type="button" data-ocr-select="${index}">제품 검색해서 확인</button>
       </article>`).join("") : `<div class="empty-state"><strong>약 정보를 찾지 못했어요</strong>사진을 다시 찍거나 직접 검색해주세요.</div>`;
     list.querySelectorAll("[data-ocr-select]").forEach((button) => {

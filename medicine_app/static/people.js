@@ -32,7 +32,9 @@ function profileMeta(person) {
 
 function renderProfileShortcut() {
   const person = currentPerson();
-  $("#profile-shortcut").textContent = person ? person.name.slice(0, 1) : "+";
+  $("#profile-shortcut-avatar").textContent = person ? person.name.slice(0, 1) : "+";
+  $("#profile-shortcut-name").textContent = person ? person.name : "선택";
+  $("#profile-shortcut").setAttribute("aria-label", person ? `관리 대상 변경: ${person.name}` : "관리 대상 선택");
 }
 
 function renderPeople() {

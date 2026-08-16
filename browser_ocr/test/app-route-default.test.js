@@ -83,21 +83,33 @@ function preview(route) {
   };
 }
 
-test("new medication uses an authoritative route hint", () => {
-  const { context, risk, nodes } = appContext();
+test("new medication reviews DUR before showing prescription fields", () => {
+  const { context, risk } = appContext();
 
   context.renderRiskSheet(preview("injection"));
 
-  assert.equal(nodes.get("#pending-route").value, "injection");
+  assert.match(risk.innerHTML, /복용정보 입력/);
+  assert.doesNotMatch(risk.innerHTML, /id="pending-dose-amount"/);
   assert.doesNotMatch(risk.innerHTML, /투여 경로를 확인해주세요/);
 });
 
-test("new medication stays unknown when route evidence is unavailable", () => {
+test("prescription entry uses the authoritative route hint in a grouped form", () => {
   const { context, risk, nodes } = appContext();
+
+  context.renderPrescriptionForm(preview("injection"));
+
+  assert.equal(nodes.get("#pending-route").value, "injection");
+  assert.match(risk.innerHTML, /prescription-section/);
+  assert.match(risk.innerHTML, /복용 방법/);
+  assert.match(risk.innerHTML, /복용 일정/);
+  assert.match(risk.innerHTML, /복용 기간/);
+});
+
+test("unknown route warning stays in the DUR review before entry", () => {
+  const { context, risk } = appContext();
 
   context.renderRiskSheet(preview("unknown"));
 
-  assert.equal(nodes.get("#pending-route").value, "unknown");
   assert.match(risk.innerHTML, /투여 경로를 확인해주세요/);
 });
 
