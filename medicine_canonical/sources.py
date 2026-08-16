@@ -94,6 +94,11 @@ def _request_json(url: str, *, label: str, timeout: int = 45, attempts: int = 4)
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = exc
         if attempt + 1 < attempts:
+            print(
+                f"{label}: retry {attempt + 2}/{attempts} after {type(last_error).__name__}",
+                file=sys.stderr,
+                flush=True,
+            )
             time.sleep(0.5 * (2**attempt))
     raise RuntimeError(f"{label} failed after {attempts} attempts: {last_error}") from last_error
 
@@ -173,6 +178,12 @@ def _sync_paginated_jsonl(
     if not resumed:
         shutil.rmtree(pages_dir, ignore_errors=True)
         pages_dir.mkdir(parents=True, exist_ok=True)
+        if progress:
+            print(
+                f"[canonical-sync] {dataset_key}: fetch first page",
+                file=sys.stderr,
+                flush=True,
+            )
         first_rows, total = fetch_page(1, page_size)
         total_pages = max(1, math.ceil(total / page_size)) if total else (1 if first_rows else 0)
         state = {

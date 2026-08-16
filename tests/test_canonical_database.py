@@ -5,14 +5,23 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import closing, redirect_stdout
+import urllib.error
+from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from openpyxl import Workbook
 
 from medicine_canonical.build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
 from medicine_canonical.cli import main as canonical_main
-from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY, PERMIT_PAGE_SIZE_MAX, sync_canonical_api_sources
+from medicine_canonical.sources import (
+    DUR_ENDPOINTS,
+    PERMIT_DATASET_KEY,
+    PERMIT_PAGE_SIZE_MAX,
+    _request_json,
+    _sync_paginated_jsonl,
+    sync_canonical_api_sources,
+)
 from medicine_canonical import linking as canonical_linking
 from medicine_canonical.schema import SCHEMA
 from medicine_canonical.source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_KEYS
@@ -285,6 +294,41 @@ class CanonicalDatabaseTest(unittest.TestCase):
                 permit_fetch_page=self._permit_fetch,
                 dur_fetch_page=self._dur_fetch,
             )
+
+    def test_mfds_request_retry_is_observable_without_leaking_url_or_service_key(self) -> None:
+        stderr = io.StringIO()
+        with (
+            mock.patch(
+                "medicine_canonical.sources.urllib.request.urlopen",
+                side_effect=urllib.error.URLError("timed out"),
+            ),
+            mock.patch("medicine_canonical.sources.time.sleep"),
+            redirect_stderr(stderr),
+            self.assertRaisesRegex(RuntimeError, "MFDS permit API failed after 2 attempts"),
+        ):
+            _request_json(
+                "https://apis.data.go.kr/example?serviceKey=do-not-log-me",
+                label="MFDS permit API",
+                attempts=2,
+            )
+        output = stderr.getvalue()
+        self.assertIn("MFDS permit API: retry 2/2 after URLError", output)
+        self.assertNotIn("do-not-log-me", output)
+
+    def test_paginated_sync_reports_first_page_before_network_fetch(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            _sync_paginated_jsonl(
+                self.root / "progress.jsonl",
+                dataset_key="mfds_permit:products",
+                source_family="mfds_permit_api",
+                source_locator="https://apis.data.go.kr/example",
+                page_size=500,
+                workers=1,
+                fetch_page=lambda page, size: ([{"ITEM_SEQ": "P1"}], 1),
+                progress=True,
+            )
+        self.assertIn("[canonical-sync] mfds_permit:products: fetch first page", stderr.getvalue())
 
     def test_link_code_preprocessing_has_only_four_explicit_equivalences(self) -> None:
         cases = {
