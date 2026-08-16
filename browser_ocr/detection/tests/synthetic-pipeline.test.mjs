@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { auditCoverage } from "../coverage.mjs";
-import { homographyFromQuads, transformPoint } from "../synthetic_capture.mjs";
+import { homographyFromQuads, transformPoint, transformPolygonToImageBounds } from "../synthetic_capture.mjs";
 import { validateCorpus } from "../contract.mjs";
 import {
   AUGMENTATION_DIFFICULTIES,
@@ -36,6 +36,26 @@ test("homography maps all four source controls to the exact camera-plane control
     assert.ok(Math.abs(mapped[0] - destination[index][0]) < 1e-4);
     assert.ok(Math.abs(mapped[1] - destination[index][1]) < 1e-4);
   }
+});
+
+test("visible transformed quads stay inside the raster when partial crop moves paper off-canvas", () => {
+  const homography = [
+    1.0541822067410258,
+    0.011469369720095154,
+    -45.433649585,
+    0.021461017128424985,
+    1.017305602477879,
+    -17.097822573,
+    -1.6315570947216407e-06,
+    6.976176155425931e-06,
+    1,
+  ];
+  const sourcePolygon = [[39, 266], [176, 266], [176, 342], [39, 342]];
+  const visible = transformPolygonToImageBounds(homography, sourcePolygon, 1280, 1600);
+  assert.equal(visible.length, 4);
+  assert.deepEqual(visible[0], [0, 253.887472845]);
+  assert.deepEqual(visible[3], [0, 330.889274948]);
+  assert.ok(visible.every(([x, y]) => x >= 0 && x <= 1280 && y >= 0 && y <= 1600));
 });
 
 test("synthetic GT tracks rendered text extents rather than layout slot widths", () => {

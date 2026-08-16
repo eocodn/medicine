@@ -14,7 +14,7 @@ import {
   validateHistoricalDrugExposure,
 } from "./drug_holdout.mjs";
 import { appearanceForIndex, printerDescriptor, renderMaterialOverlay, renderPrinterOverlay } from "../detection/synthetic_appearance.mjs";
-import { captureForSample, transformPolygon } from "../detection/synthetic_capture.mjs";
+import { captureForSample, transformPolygonToImageBounds } from "../detection/synthetic_capture.mjs";
 import {
   AUGMENTATION_DIFFICULTIES,
   BACKGROUND_PROFILES,
@@ -28,7 +28,7 @@ import { rasterizerIdentity, renderRasterJpeg } from "../detection/synthetic_ras
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 5;
-const GENERATOR_REVISION = 4;
+const GENERATOR_REVISION = 5;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -153,9 +153,9 @@ function buildSamplePlan(index, seed, drugAssignment) {
       source_text_origin: [...textOrigin],
       source_layout_slot: layoutSlot.map((point) => [...point]),
       source_natural_text_polygon: naturalTextBox.map((point) => [...point]),
-      natural_text_polygon: transformPolygon(capture.homography, naturalTextBox),
+      natural_text_polygon: transformPolygonToImageBounds(capture.homography, naturalTextBox, DOCUMENT_WIDTH, DOCUMENT_HEIGHT),
       source_polygon: item.polygon.map((point) => [...point]),
-      polygon: transformPolygon(capture.homography, item.polygon),
+      polygon: transformPolygonToImageBounds(capture.homography, item.polygon, DOCUMENT_WIDTH, DOCUMENT_HEIGHT),
     };
   });
   return {
