@@ -26,3 +26,18 @@ test("mobile runtime keeps FP32 after quantization changed medication prediction
   assert.equal(manifest.optimization_decision.selected, "fp32");
   assert.match(manifest.optimization_decision.reason, /changed medication-name predictions/);
 });
+
+test("mobile recognizer preprocesses only one inference batch at a time", () => {
+  const worker = fs.readFileSync(path.join(root, "src/direct-ocr-worker.js"), "utf8");
+  assert.doesNotMatch(worker, /refinedBoxes\.map\([\s\S]{0,240}prepareRecognitionSample/);
+  assert.match(worker, /const batch = ordered\.slice\([\s\S]{0,240}prepareRecognitionSample/);
+});
+
+test("mobile runtime records rejected width reduction and safe memory cap", () => {
+  assert.equal(manifest.runtime_tuning.recognition_base_width, 320);
+  assert.equal(manifest.runtime_tuning.recognition_max_width, 1280);
+  assert.equal(manifest.runtime_tuning.streaming_preprocessing, true);
+  assert.equal(manifest.runtime_tuning.width_256_evaluation.sample_count, 17520);
+  assert.equal(manifest.runtime_tuning.width_256_evaluation.prediction_changes, 128);
+  assert.equal(manifest.runtime_tuning.width_256_evaluation.selected, false);
+});

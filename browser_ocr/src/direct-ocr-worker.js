@@ -7,6 +7,7 @@ const {
   distance,
   foregroundColumnInk,
   horizontalSubpolygon,
+  recognitionTargetWidth,
   resizeWithin,
   rgbaToChw,
   splitHorizontalInkRanges,
@@ -20,7 +21,7 @@ const MAX_SOURCE_EDGE = 1280;
 const DETECTION_EDGE = 640;
 const RECOGNITION_HEIGHT = 48;
 const RECOGNITION_BASE_WIDTH = 320;
-const RECOGNITION_MAX_WIDTH = 3200;
+const RECOGNITION_MAX_WIDTH = 1280;
 const RECOGNITION_BATCH_SIZE = 4;
 const DETECTION_NORMALIZE = {
   mean: [0.485, 0.456, 0.406],
@@ -157,12 +158,10 @@ function refineDetectedBoxes(sourceCanvas, boxes) {
   return refined;
 }
 
-function prepareRecognitionSample(crop, inputIndex) {
+function prepareRecognitionSample(crop, inputIndex, width = recognitionTargetWidth(
+  crop.width, crop.height, RECOGNITION_HEIGHT, RECOGNITION_BASE_WIDTH, RECOGNITION_MAX_WIDTH,
+)) {
   const ratio = crop.width / Math.max(1, crop.height);
-  const width = Math.min(
-    RECOGNITION_MAX_WIDTH,
-    Math.max(RECOGNITION_BASE_WIDTH, Math.trunc(RECOGNITION_HEIGHT * ratio)),
-  );
   const resizedWidth = Math.min(width, Math.ceil(RECOGNITION_HEIGHT * ratio));
   const canvas = createCanvas(width, RECOGNITION_HEIGHT);
   const context = context2d(canvas);
@@ -247,20 +246,28 @@ async function detect(sourceCanvas) {
 }
 
 async function recognizeBoxes(refinedBoxes, dictionary) {
-  const samples = refinedBoxes.map((box, index) => prepareRecognitionSample(
-    box.crop, index,
-  )).sort((a, b) => a.width - b.width);
+  const ordered = refinedBoxes.map((box, inputIndex) => ({
+    inputIndex,
+    width: recognitionTargetWidth(
+      box.crop.width,
+      box.crop.height,
+      RECOGNITION_HEIGHT,
+      RECOGNITION_BASE_WIDTH,
+      RECOGNITION_MAX_WIDTH,
+    ),
+  })).sort((a, b) => a.width - b.width);
   const decoded = [];
-  for (let start = 0; start < samples.length; start += RECOGNITION_BATCH_SIZE) {
-    const batch = samples.slice(start, start + RECOGNITION_BATCH_SIZE);
+  for (let start = 0; start < ordered.length; start += RECOGNITION_BATCH_SIZE) {
+    const batch = ordered.slice(start, start + RECOGNITION_BATCH_SIZE).map((work) =>
+      prepareRecognitionSample(refinedBoxes[work.inputIndex].crop, work.inputIndex, work.width));
     const output = await runSession(recognitionSession, recognitionBatchTensor(batch));
     for (let index = 0; index < batch.length; index += 1) {
       decoded.push({ inputIndex: batch[index].inputIndex, ...decodeCtc(
         output.data, output.dims, dictionary, index,
       ) });
     }
-    progress(60 + Math.round(30 * Math.min(samples.length, start + batch.length)
-      / Math.max(1, samples.length)));
+    progress(60 + Math.round(30 * Math.min(ordered.length, start + batch.length)
+      / Math.max(1, ordered.length)));
   }
   decoded.sort((a, b) => a.inputIndex - b.inputIndex);
   return decoded.map(({ inputIndex, ...result }) => ({

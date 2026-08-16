@@ -14,6 +14,22 @@ function resizeWithin(width, height, maximumEdge) {
   };
 }
 
+function recognitionTargetWidth(
+  cropWidth,
+  cropHeight,
+  recognitionHeight = 48,
+  baseWidth = 320,
+  maximumWidth = 1280,
+) {
+  if (![cropWidth, cropHeight, recognitionHeight, baseWidth, maximumWidth].every(Number.isFinite)
+      || cropWidth <= 0 || cropHeight <= 0 || recognitionHeight <= 0
+      || baseWidth <= 0 || maximumWidth < baseWidth) {
+    throw new Error("invalid recognition dimensions");
+  }
+  const scaledWidth = Math.trunc(recognitionHeight * cropWidth / cropHeight);
+  return Math.min(maximumWidth, Math.max(baseWidth, scaledWidth));
+}
+
 function rgbaToChw(rgba, width, height, mean, standardDeviation) {
   const pixels = width * height;
   const output = new Float32Array(3 * pixels);
@@ -379,6 +395,7 @@ module.exports = {
   distance,
   foregroundColumnInk,
   horizontalSubpolygon,
+  recognitionTargetWidth,
   resizeWithin,
   rgbaToChw,
   splitHorizontalInkRanges,

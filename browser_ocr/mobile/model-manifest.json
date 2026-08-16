@@ -34,5 +34,17 @@
   "optimization_decision": {
     "selected": "fp32",
     "reason": "MatMul/Gemm INT8 reduced recognizer size but changed medication-name predictions; retain exact validated FP32 behavior for the first product integration."
+  },
+  "runtime_tuning": {
+    "recognition_base_width": 320,
+    "recognition_max_width": 1280,
+    "recognition_batch_size": 4,
+    "streaming_preprocessing": true,
+    "width_256_evaluation": {
+      "sample_count": 17520,
+      "prediction_changes": 128,
+      "selected": false,
+      "reason": "Reducing the minimum width to 256 changed recognition outputs, including medication-name text, so the validated 320-pixel minimum is retained."
+    }
   }
 }

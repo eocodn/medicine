@@ -7,6 +7,7 @@ const {
   decodeDetectionMap,
   foregroundColumnInk,
   horizontalSubpolygon,
+  recognitionTargetWidth,
   resizeWithin,
   rgbaToChw,
   splitHorizontalInkRanges,
@@ -16,6 +17,12 @@ const {
 test("resizes the longest image edge while preserving aspect ratio", () => {
   assert.deepEqual(resizeWithin(1448, 1086, 1280), { width: 1280, height: 960 });
   assert.deepEqual(resizeWithin(960, 640, 1280), { width: 960, height: 640 });
+});
+
+test("recognition width avoids oversized padding and caps pathological crops", () => {
+  assert.equal(recognitionTargetWidth(40, 48), 320);
+  assert.equal(recognitionTargetWidth(800, 48), 800);
+  assert.equal(recognitionTargetWidth(5000, 48), 1280);
 });
 
 test("normalizes RGBA pixels into BGR channel-first tensors", () => {
