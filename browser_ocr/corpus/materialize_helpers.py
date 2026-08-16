@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -25,6 +26,42 @@ def _atomic_json(path: Path, value: object) -> None:
 
 def _jobs_fingerprint(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _ordered_crop_batches(
+    jobs: list[dict],
+    *,
+    start_index: int,
+    worker_count: int,
+) -> list[list[list[tuple[int, dict]]]]:
+    if worker_count <= 0:
+        raise ValueError("recognition crop worker_count must be positive")
+    groups: list[list[tuple[int, dict]]] = []
+    current: list[tuple[int, dict]] = []
+    current_image: str | None = None
+    for offset, job in enumerate(jobs):
+        image = str(job.get("image") or "") if isinstance(job, dict) else ""
+        if current and image != current_image:
+            groups.append(current)
+            current = []
+        current.append((start_index + offset, job))
+        current_image = image
+    if current:
+        groups.append(current)
+    return [groups[index:index + worker_count] for index in range(0, len(groups), worker_count)]
+
+
+def _crop_worker_count() -> int:
+    configured = os.environ.get("OCR_CORPUS_CROP_WORKERS")
+    if configured is not None:
+        try:
+            workers = int(configured)
+        except ValueError as exc:
+            raise ValueError("OCR_CORPUS_CROP_WORKERS must be a positive integer") from exc
+        if workers <= 0:
+            raise ValueError("OCR_CORPUS_CROP_WORKERS must be a positive integer")
+        return workers
+    return min(8, max(1, os.cpu_count() or 1))
 
 
 def crop_jobs(path: Path, state_path: Path) -> dict:
@@ -61,40 +98,62 @@ def crop_jobs(path: Path, state_path: Path) -> dict:
         })
 
     resumed_from = completed
-    current_path: str | None = None
-    image = None
     report_every = max(1, len(jobs) // 20)
-    for index in range(completed, len(jobs)):
-        job = jobs[index]
-        ordinal = index + 1
-        if not isinstance(job, dict):
-            raise ValueError(f"crop job {ordinal} must be an object")
-        image_path = str(job.get("image") or "")
-        output_path = Path(str(job.get("output") or ""))
-        polygon = job.get("polygon")
-        if not image_path or not output_path.name:
-            raise ValueError(f"crop job {ordinal} is missing image/output")
-        if current_path != image_path:
-            image = cv2.imread(image_path, cv2.IMREAD_COLOR)
-            if image is None:
-                raise ValueError(f"could not decode crop source image: {image_path}")
-            current_path = image_path
-        crop = rectify_text_crop(image, polygon)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = output_path.with_name(f"{output_path.stem}.partial-{os.getpid()}{output_path.suffix}")
-        if not cv2.imwrite(str(temporary), crop):
-            raise ValueError(f"could not write recognition crop: {temporary}")
-        os.replace(temporary, output_path)
-        completed = ordinal
-        _atomic_json(state_path, {
-            "schema_version": 1,
-            "status": "running",
-            "jobs_sha256": fingerprint,
-            "total": len(jobs),
-            "completed": completed,
-        })
-        if completed == len(jobs) or completed % report_every == 0:
-            print(f"[ocr-corpus] recognition-crops {completed}/{len(jobs)}", file=sys.stderr, flush=True)
+    next_report = ((completed // report_every) + 1) * report_every
+    worker_count = _crop_worker_count()
+    batches = _ordered_crop_batches(
+        jobs[completed:],
+        start_index=completed + 1,
+        worker_count=worker_count,
+    )
+
+    def process_group(group: list[tuple[int, dict]]) -> None:
+        first_ordinal, first_job = group[0]
+        if not isinstance(first_job, dict):
+            raise ValueError(f"crop job {first_ordinal} must be an object")
+        image_path = str(first_job.get("image") or "")
+        if not image_path:
+            raise ValueError(f"crop job {first_ordinal} is missing image/output")
+        image = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError(f"could not decode crop source image: {image_path}")
+        for ordinal, job in group:
+            if not isinstance(job, dict):
+                raise ValueError(f"crop job {ordinal} must be an object")
+            if str(job.get("image") or "") != image_path:
+                raise ValueError(f"crop job {ordinal} source image grouping mismatch")
+            output_path = Path(str(job.get("output") or ""))
+            polygon = job.get("polygon")
+            if not output_path.name:
+                raise ValueError(f"crop job {ordinal} is missing image/output")
+            crop = rectify_text_crop(image, polygon)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = output_path.with_name(
+                f"{output_path.stem}.partial-{os.getpid()}-{ordinal}{output_path.suffix}"
+            )
+            if not cv2.imwrite(str(temporary), crop):
+                raise ValueError(f"could not write recognition crop: {temporary}")
+            os.replace(temporary, output_path)
+
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="ocr-crop") as executor:
+        for batch in batches:
+            futures = [executor.submit(process_group, group) for group in batch]
+            for future in futures:
+                future.result()
+            completed = batch[-1][-1][0]
+            # Claim only a fully completed ordered prefix. If a worker fails,
+            # retrying may overwrite a bounded tail but cannot skip a crop.
+            _atomic_json(state_path, {
+                "schema_version": 1,
+                "status": "running",
+                "jobs_sha256": fingerprint,
+                "total": len(jobs),
+                "completed": completed,
+            })
+            if completed >= next_report or completed == len(jobs):
+                print(f"[ocr-corpus] recognition-crops {completed}/{len(jobs)}", file=sys.stderr, flush=True)
+                while next_report <= completed:
+                    next_report += report_every
 
     _atomic_json(state_path, {
         "schema_version": 1,
