@@ -21,6 +21,29 @@ def _load_dictionary(path: str | Path, *, use_space_char: bool) -> set[str]:
     return result
 
 
+def classify_model_compatibility(
+    dataset: Dataset,
+    dictionary_path: str | Path,
+    *,
+    max_text_length: int,
+    use_space_char: bool,
+) -> dict[str, tuple[str, ...]]:
+    if not isinstance(max_text_length, int) or max_text_length <= 0:
+        raise DatasetError("max_text_length must be a positive integer")
+    dictionary = _load_dictionary(dictionary_path, use_space_char=use_space_char)
+    issues: dict[str, tuple[str, ...]] = {}
+    for sample in dataset.samples:
+        reasons: list[str] = []
+        text = sample["text"]
+        if len(text) > max_text_length:
+            reasons.append("overlength")
+        if any(character not in dictionary for character in text):
+            reasons.append("unknown_character")
+        if reasons:
+            issues[sample["id"]] = tuple(reasons)
+    return issues
+
+
 def audit_model_compatibility(
     dataset: Dataset,
     dictionary_path: str | Path,

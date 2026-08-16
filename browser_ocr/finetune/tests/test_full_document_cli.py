@@ -18,6 +18,7 @@ class FullDocumentCliContractTest(unittest.TestCase):
             {
                 "full_document",
                 "full_document_cli",
+                "crop_refinement",
                 "parser",
                 "parser_contract",
                 "detector_runtime",

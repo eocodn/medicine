@@ -25,27 +25,33 @@ class ManualOnlyIntakeTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_product_ui_exposes_manual_entry_only(self) -> None:
+    def test_shared_ui_exposes_local_ocr_review_without_changing_product_identity_flow(self) -> None:
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
         self.assertIn("약을 검색하세요", page.text)
         self.assertNotIn("ocr-scan-button", page.text)
-        self.assertNotIn("ocr-image-input", page.text)
+        self.assertIn("ocr-image-input", page.text)
         self.assertNotIn("ocr-review-sheet", page.text)
         self.assertNotIn("browser-ocr", page.text.lower())
         self.assertNotIn("/static/ocr.js", page.text)
+        self.assertIn("/static/ocr-review.js", page.text)
+        self.assertIn("사진은 서버로 전송되지 않고 이 기기에서만 인식", page.text)
 
         app = self.client.get("/static/app.js")
         self.assertEqual(app.status_code, 200)
-        self.assertNotIn("MedicineOcr", app.text)
+        self.assertIn("medicine:ocr-select", app.text)
+        self.assertIn("runDrugSearch", app.text)
         self.assertNotIn("ocr-preview", app.text)
         self.assertNotIn("ocr_review_token", app.text)
 
-    def test_product_does_not_serve_ocr_runtime_or_ocr_static_modules(self) -> None:
+    def test_development_web_does_not_serve_on_device_ocr_runtime(self) -> None:
+        review = self.client.get("/static/ocr-review.js")
+        self.assertEqual(review.status_code, 200)
+        self.assertIn('new Worker("/ocr-assets/direct/ocr-worker.js")', review.text)
+        self.assertNotIn("/api/ocr", review.text)
         for path in [
             "/ocr-assets/runtime-manifest.json",
             "/static/ocr.js",
-            "/static/ocr-review.js",
             "/static/browser-ocr.js",
             "/static/browser-ocr-parser.js",
         ]:

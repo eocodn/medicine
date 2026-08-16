@@ -69,6 +69,16 @@ export function transformPolygon(homography, polygon) {
   return polygon.map((point) => transformPoint(homography, point));
 }
 
+export function transformPolygonToImageBounds(homography, polygon, width, height) {
+  // Partial-crop capture intentionally moves the paper beyond the raster. Source
+  // geometry remains available separately; detector/recognizer consumers need
+  // the visible quadrilateral clipped to the actual image extent.
+  return transformPolygon(homography, polygon).map(([x, y]) => [
+    rounded(clamp(x, 0, width)),
+    rounded(clamp(y, 0, height)),
+  ]);
+}
+
 function jitter(random, magnitude) {
   return (random() * 2 - 1) * magnitude;
 }

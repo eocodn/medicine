@@ -3,8 +3,18 @@ import { mkdir, open, readFile, readdir, rename, rm, unlink, writeFile } from "n
 import { join } from "node:path";
 
 import { validateCorpus } from "./contract.mjs";
+import {
+  assignDrugPools,
+  buildDrugCatalog,
+  buildDrugNamePolicy,
+  drugExposure,
+  loadCanonicalDrugCatalog,
+  loadHistoricalDrugExposure,
+  normalizeDrugName,
+  validateHistoricalDrugExposure,
+} from "./drug_holdout.mjs";
 import { appearanceForIndex, printerDescriptor, renderMaterialOverlay, renderPrinterOverlay } from "../detection/synthetic_appearance.mjs";
-import { captureForSample, transformPolygon } from "../detection/synthetic_capture.mjs";
+import { captureForSample, transformPolygonToImageBounds } from "../detection/synthetic_capture.mjs";
 import {
   AUGMENTATION_DIFFICULTIES,
   BACKGROUND_PROFILES,
@@ -17,8 +27,8 @@ import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH, renderLayoutRegions } fro
 import { rasterizerIdentity, renderRasterJpeg } from "../detection/synthetic_raster.mjs";
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
-const GENERATOR_VERSION = 4;
-const GENERATOR_REVISION = 1;
+const GENERATOR_VERSION = 5;
+const GENERATOR_REVISION = 5;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -61,7 +71,7 @@ function sampleSeed(seed, index) {
   return (seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0;
 }
 
-async function configurationFingerprint({ seed, count }) {
+async function configurationFingerprint({ seed, count, drugNamePolicy }) {
   const rasterizer = await rasterizerIdentity();
   return {
     rasterizer,
@@ -81,6 +91,7 @@ async function configurationFingerprint({ seed, count }) {
       background_profiles: BACKGROUND_PROFILES,
       tasks: TASKS,
       split_policy: { id: SPLIT_POLICY_ID, ratios: SPLIT_RATIOS },
+      drug_name_policy: drugNamePolicy,
       rasterizer_fingerprint: rasterizer.fingerprint,
     })),
   };
@@ -108,12 +119,16 @@ ${materialOverlay}
 </svg>\n`;
 }
 
-function buildSamplePlan(index, seed) {
+function buildSamplePlan(index, seed, drugAssignment) {
   const baseSeed = sampleSeed(seed, index);
   // Independent deterministic streams keep capture severity stable when layout generation evolves.
   const layoutRandom = rng(baseSeed ^ 0xa511e9b3);
   const captureRandom = rng(baseSeed ^ 0x63d83595);
-  const layout = buildLayout(index, layoutRandom);
+  const split = splitForIndex(index, seed);
+  const drugPool = drugAssignment.pools[split];
+  if (!Array.isArray(drugPool) || drugPool.length === 0) throw new Error(`drug pool ${split} is empty`);
+  const productMetadata = new Map(drugPool.map((product) => [normalizeDrugName(product.product_name), product]));
+  const layout = buildLayout(index, layoutRandom, { products: drugPool.map((product) => product.product_name) });
   const captureIndex = Math.floor(index / LAYOUT_FAMILIES.length) % CAPTURE_PROFILES.length;
   const capture = captureForSample(index, captureIndex, captureRandom, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
   const appearance = appearanceForIndex(index);
@@ -126,14 +141,21 @@ function buildSamplePlan(index, seed) {
       text_origin: textOrigin,
       ...rest
     } = item;
+    const drugMetadata = item.semantic_role === "product"
+      ? productMetadata.get(normalizeDrugName(item.text))
+      : null;
+    if (item.semantic_role === "product" && !drugMetadata) {
+      throw new Error(`layout emitted product outside assigned ${split} drug pool: ${item.text}`);
+    }
     return {
       ...rest,
+      ...(drugMetadata ? { drug_name_split: split, drug_family: drugMetadata.drug_family } : {}),
       source_text_origin: [...textOrigin],
       source_layout_slot: layoutSlot.map((point) => [...point]),
       source_natural_text_polygon: naturalTextBox.map((point) => [...point]),
-      natural_text_polygon: transformPolygon(capture.homography, naturalTextBox),
+      natural_text_polygon: transformPolygonToImageBounds(capture.homography, naturalTextBox, DOCUMENT_WIDTH, DOCUMENT_HEIGHT),
       source_polygon: item.polygon.map((point) => [...point]),
-      polygon: transformPolygon(capture.homography, item.polygon),
+      polygon: transformPolygonToImageBounds(capture.homography, item.polygon, DOCUMENT_WIDTH, DOCUMENT_HEIGHT),
     };
   });
   return {
@@ -143,7 +165,9 @@ function buildSamplePlan(index, seed) {
       width: DOCUMENT_WIDTH,
       height: DOCUMENT_HEIGHT,
       sample_index: index,
-      split: splitForIndex(index, seed),
+      split,
+      drug_name_split: split,
+      drug_name_exposure: drugExposure(split),
       document_type: documentType(layout.layout_family),
       layout_family: layout.layout_family,
       capture_profile: capture.profile,
@@ -167,8 +191,8 @@ function comparableSample(sample) {
   return copy;
 }
 
-async function renderSample(index, seed, outputDir) {
-  const plan = buildSamplePlan(index, seed);
+async function renderSample(index, seed, outputDir, drugAssignment) {
+  const plan = buildSamplePlan(index, seed, drugAssignment);
   const outputPath = join(outputDir, plan.sample.image);
   const temporaryOutput = await renderRasterJpeg({
     sourceSvg: plan.sourceSvg,
@@ -183,10 +207,10 @@ async function renderSample(index, seed, outputDir) {
   return plan.sample;
 }
 
-function buildCorpus({ seed, count, fingerprint, rasterizer, samples }) {
+function buildCorpus({ seed, count, fingerprint, rasterizer, drugNamePolicy, samples }) {
   return validateCorpus({
     schema_version: 3,
-    corpus_id: `synthetic-medicine-document-v4-seed-${seed}-n-${count}`,
+    corpus_id: `synthetic-medicine-document-v5-seed-${seed}-drug-seed-${drugNamePolicy.assignment_seed}-hist-${drugNamePolicy.historical_exposure.families_sha256.slice(0, 12)}-n-${count}`,
     synthetic_only: true,
     tasks: [...TASKS],
     split_policy: {
@@ -194,6 +218,7 @@ function buildCorpus({ seed, count, fingerprint, rasterizer, samples }) {
       seed,
       ratios: { ...SPLIT_RATIOS },
     },
+    drug_name_policy: drugNamePolicy,
     generator: {
       id: GENERATOR_ID,
       version: GENERATOR_VERSION,
@@ -274,9 +299,9 @@ async function verifyCheckpointImages(outputDir, samples) {
   }
 }
 
-async function verifyCheckpointState(outputDir, state, seed) {
+async function verifyCheckpointState(outputDir, state, seed, drugAssignment) {
   for (const [index, sample] of state.samples.entries()) {
-    const expected = buildSamplePlan(index, seed).sample;
+    const expected = buildSamplePlan(index, seed, drugAssignment).sample;
     if (JSON.stringify(comparableSample(sample)) !== JSON.stringify(expected)) {
       throw new Error(`checkpoint sample metadata mismatch: ${sample.id || index}`);
     }
@@ -289,6 +314,13 @@ function shouldReport(completed, count) {
   return completed === count || completed === 1 || completed % interval === 0;
 }
 
+export function generationCheckpointInterval(count) {
+  // The checkpoint embeds every completed sample, so rewriting it per image
+  // becomes quadratic at scale. A crash may redo only this bounded tail; the
+  // deterministic image paths are safely overwritten during resume.
+  return Math.min(50, Math.max(1, Math.floor(count / 20)));
+}
+
 async function acquireLock(path) {
   try {
     return await open(path, "wx");
@@ -298,12 +330,59 @@ async function acquireLock(path) {
   }
 }
 
-export async function generateUnifiedCorpus({ outputDir, count = 36, seed = 153, onProgress = null }) {
+function injectedDrugSource(catalog) {
+  const sourceSha = digest(JSON.stringify(catalog.map((product) => [product.item_seq, product.product_name])));
+  return {
+    products: catalog,
+    canonical_db_sha256: sourceSha,
+    source: {
+      dataset_key: "injected:drug-catalog",
+      source_family: "explicit_test_or_experiment_catalog",
+      source_locator: "in-memory",
+      sha256: sourceSha,
+    },
+  };
+}
+
+async function drugConfiguration({ canonicalDb, drugCatalog, drugSplitSeed, historicalDrugExposure }) {
+  if (canonicalDb && drugCatalog) throw new Error("provide either canonicalDb or drugCatalog, not both");
+  if (!canonicalDb && !drugCatalog) throw new Error("canonicalDb is required unless an explicit drugCatalog is provided");
+  if (!Number.isInteger(drugSplitSeed)) throw new Error("drugSplitSeed must be an integer");
+  if (!historicalDrugExposure) throw new Error("historicalDrugExposure is required");
+  const loaded = drugCatalog
+    ? injectedDrugSource(buildDrugCatalog(drugCatalog))
+    : await loadCanonicalDrugCatalog(canonicalDb);
+  const exposure = typeof historicalDrugExposure === "string"
+    ? await loadHistoricalDrugExposure(historicalDrugExposure)
+    : validateHistoricalDrugExposure(historicalDrugExposure);
+  const assignment = assignDrugPools(loaded.products, { seed: drugSplitSeed, historicalExposure: exposure });
+  const policy = buildDrugNamePolicy({
+    catalog: loaded.products,
+    assignment,
+    source: loaded.source,
+    canonicalDbSha256: loaded.canonical_db_sha256,
+  });
+  return { assignment, policy };
+}
+
+export async function generateUnifiedCorpus({
+  outputDir,
+  count = 36,
+  seed = 153,
+  drugSplitSeed = null,
+  historicalDrugExposure = null,
+  canonicalDb = null,
+  drugCatalog = null,
+  onProgress = null,
+}) {
   if (!Number.isInteger(count) || count <= 0) throw new Error("count must be a positive integer");
   if (!Number.isInteger(seed)) throw new Error("seed must be an integer");
   await mkdir(join(outputDir, "images"), { recursive: true });
 
-  const { fingerprint, rasterizer } = await configurationFingerprint({ seed, count });
+  const { assignment: drugAssignment, policy: drugNamePolicy } = await drugConfiguration({
+    canonicalDb, drugCatalog, drugSplitSeed, historicalDrugExposure,
+  });
+  const { fingerprint, rasterizer } = await configurationFingerprint({ seed, count, drugNamePolicy });
   const manifestPath = join(outputDir, "manifest.json");
   const statePath = join(outputDir, STATE_FILE);
   const lockPath = join(outputDir, LOCK_FILE);
@@ -322,7 +401,7 @@ export async function generateUnifiedCorpus({ outputDir, count = 36, seed = 153,
     let state = await maybeReadJson(statePath);
     if (state) {
       assertMatchingState(state, { seed, count, fingerprint, rasterizer });
-      await verifyCheckpointState(outputDir, state, seed);
+      await verifyCheckpointState(outputDir, state, seed, drugAssignment);
     } else {
       const existingImages = await readdir(join(outputDir, "images"));
       if (existingImages.length) throw new Error("output images directory is non-empty without a generation checkpoint");
@@ -330,11 +409,14 @@ export async function generateUnifiedCorpus({ outputDir, count = 36, seed = 153,
       await atomicWrite(statePath, `${JSON.stringify(state, null, 2)}\n`);
     }
 
+    const checkpointInterval = generationCheckpointInterval(count);
     for (let index = state.completed; index < count; index += 1) {
-      const sample = await renderSample(index, seed, outputDir);
+      const sample = await renderSample(index, seed, outputDir, drugAssignment);
       state.samples.push(sample);
       state.completed = state.samples.length;
-      await atomicWrite(statePath, `${JSON.stringify(state, null, 2)}\n`);
+      if (state.completed === count || state.completed % checkpointInterval === 0) {
+        await atomicWrite(statePath, `${JSON.stringify(state, null, 2)}\n`);
+      }
 
       const event = {
         completed: state.completed,
@@ -352,7 +434,7 @@ export async function generateUnifiedCorpus({ outputDir, count = 36, seed = 153,
       if (onProgress) onProgress(event);
     }
 
-    const corpus = buildCorpus({ seed, count, fingerprint, rasterizer, samples: state.samples });
+    const corpus = buildCorpus({ seed, count, fingerprint, rasterizer, drugNamePolicy, samples: state.samples });
     await atomicWrite(manifestPath, `${JSON.stringify(corpus, null, 2)}\n`);
     await rm(statePath, { force: true });
     return corpus;

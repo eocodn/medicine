@@ -50,11 +50,21 @@ async function main(argv) {
   let result;
   if (command === "generate") {
     const outputDir = option(args, "--output");
-    if (!outputDir) throw new Error("generate requires --output DIR");
+    const canonicalDb = option(args, "--canonical-db");
+    const drugSplitSeed = option(args, "--drug-split-seed");
+    const historicalDrugExposure = option(args, "--historical-drug-exposure");
+    if (!outputDir || !canonicalDb || drugSplitSeed === null || !historicalDrugExposure) {
+      throw new Error("generate requires --output DIR --canonical-db FILE --drug-split-seed INTEGER --historical-drug-exposure FILE");
+    }
+    const parsedDrugSplitSeed = Number(drugSplitSeed);
+    if (!Number.isInteger(parsedDrugSplitSeed)) throw new Error("--drug-split-seed must be an integer");
     result = await generateSyntheticCorpus({
       outputDir: resolve(outputDir),
       count: integerOption(args, "--count", 36),
       seed: integerOption(args, "--seed", 153),
+      drugSplitSeed: parsedDrugSplitSeed,
+      historicalDrugExposure: resolve(historicalDrugExposure),
+      canonicalDb: resolve(canonicalDb),
     });
   } else if (command === "validate") {
     const corpusPath = option(args, "--corpus");

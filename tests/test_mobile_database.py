@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from medicine_app.core import MedicationApp
-from medicine_canonical.mobile import build_mobile_database
+from medicine_canonical.mobile import RUNTIME_INDEXES, build_mobile_database
 from medicine_canonical.cli import main as canonical_main
 from tests.test_safety_coverage import make_canonical_db
 
@@ -37,6 +37,13 @@ class MobileDatabaseTest(unittest.TestCase):
             self.assertIn("product_ingredient_criterion_links", tables)
             for legacy in ("product_dur", "ingredient_dur", "product_catalog", "product_code_bridge", "ingredient_aliases"):
                 self.assertNotIn(legacy, tables)
+            runtime_indexes = {
+                row[0]
+                for row in mobile.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
+                )
+            }
+            self.assertEqual(runtime_indexes, set(RUNTIME_INDEXES))
             self.assertEqual(mobile.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         finally:
             mobile.close()
