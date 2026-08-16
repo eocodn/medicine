@@ -40,7 +40,7 @@ class SubstanceNomenclatureCorpusTest(unittest.TestCase):
         self.assertEqual(corpus["doxycycline hydrate"].target_unii, "N12000U13O")
         self.assertEqual(
             corpus["doxycycline hydrate"].external_evidence_name,
-            "DOXYCYCLINE MONOHYDRATE",
+            "Doxycycline monohydrate",
         )
         self.assertEqual(corpus["sitagliptin hydrochloride hydrate"].target_unii, "6DH2XG35TG")
         self.assertEqual(corpus["norepinephrine tartrate hydrate"].target_unii, "IFY5PE3ZRW")
@@ -53,6 +53,20 @@ class SubstanceNomenclatureCorpusTest(unittest.TestCase):
         self.assertEqual(corpus["s-amlodipine besylate dihydrate"].target_unii, "6WFN2P6FAQ")
         self.assertEqual(corpus["glutathione (reduced)"].target_unii, "GAN16C9B8O")
         self.assertEqual(corpus["precipitated calcium carbonate"].target_unii, "H0G9379FGK")
+        current_gsrs_names = {
+            "zoledronic acid monohydrate": "Zoledronic acid monohydrate [WHO-DD]",
+            "levothyroxine sodium hydrate": "Levothyroxine sodium hydrate [WHO-DD]",
+            "calcium gluconate hydrate": "Calcium gluconate hydrate [JAN]",
+            "zabofloxacin d-aspartate hydrate": "Zabofloxacin d-aspartate hydrate [WHO-DD]",
+            "doxycycline hydrate": "Doxycycline monohydrate",
+            "norepinephrine tartrate hydrate": "Norepinephrine hydrogen tartrate monohydrate",
+            "donepezil hydrochloride hydrate": "Donepezil hydrochloride monohydrate [WHO-DD]",
+            "ketoprofen lysin": "Ketoprofen lysine [WHO-DD]",
+            "s-amlodipine nicotinate": "(S)-Amlodipine Nicotinate",
+            "edoxaban tosylate hydrate": "Edoxaban tosilate hydrate [JAN]",
+        }
+        for observed_name, evidence_name in current_gsrs_names.items():
+            self.assertEqual(corpus[observed_name].external_evidence_name, evidence_name)
         self.assertNotIn("s-amlodipine besylate 2.5 hydrate", corpus)
         self.assertNotIn("anhydrous risedronate sodium", corpus)
         self.assertNotIn("hyaluronidase", corpus)
