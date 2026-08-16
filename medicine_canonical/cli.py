@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -168,6 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     kids_sync = sub.add_parser("kids-sync", help="Download and validate the current official KIDS DUR XLSX sources")
     kids_sync.add_argument("--output-dir", type=Path, default=DEFAULT_KIDS)
+    kids_sync.add_argument("--quiet", action="store_true")
     kids_sync.add_argument("--json", action="store_true")
 
     release_create = sub.add_parser("release-create", help="Build verified full and exact-byte delta mobile DB artifacts")
@@ -288,7 +290,8 @@ def main(argv=None) -> int:
         _emit(payload, args.json)
         return 0 if payload["status"] == "verified" else 2
     elif args.command == "kids-sync":
-        payload = sync_kids_xlsx_sources(args.output_dir)
+        progress = None if args.quiet else lambda message: print(message, file=sys.stderr, flush=True)
+        payload = sync_kids_xlsx_sources(args.output_dir, progress=progress)
     elif args.command == "release-create":
         created_at = args.created_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         payload = prepare_release(

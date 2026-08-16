@@ -73,10 +73,12 @@ class KidsSourceSyncTest(unittest.TestCase):
             return payload_by_id[attachment]
 
         output = self.root / "kids"
+        progress: list[str] = []
         result = sync_kids_xlsx_sources(
             output,
             fetch_page=fetch_page,
             fetch_attachment=fetch_attachment,
+            progress=progress.append,
         )
 
         self.assertEqual(result["status"], "updated")
@@ -91,6 +93,9 @@ class KidsSourceSyncTest(unittest.TestCase):
         manifest = json.loads((output / ".kids-source-manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["schema_version"], 1)
         self.assertEqual(len(manifest["sources"]), 8)
+        self.assertIn("[1/8] combination.xlsx: fetch page", progress)
+        self.assertTrue(any("combination.xlsx: verified" in message for message in progress))
+        self.assertTrue(any("[8/8] lactation.xlsx: verified" in message for message in progress))
 
     def test_same_verified_snapshot_is_idempotent_but_corruption_forces_replacement(self) -> None:
         attachment_by_page: dict[str, str] = {}
@@ -160,7 +165,9 @@ class KidsSourceSyncTest(unittest.TestCase):
         with mock.patch("medicine_canonical.cli.sync_kids_xlsx_sources", return_value=expected) as sync:
             code = canonical_main(["kids-sync", "--output-dir", str(self.root / "kids"), "--json"])
         self.assertEqual(code, 0)
-        sync.assert_called_once_with(self.root / "kids")
+        sync.assert_called_once()
+        self.assertEqual(sync.call_args.args, (self.root / "kids",))
+        self.assertTrue(callable(sync.call_args.kwargs["progress"]))
 
 
 if __name__ == "__main__":

@@ -51,13 +51,22 @@ KIDS_DOWNLOADS: tuple[KidsDownload, ...] = (
 
 FetchPage = Callable[[str], str]
 FetchAttachment = Callable[[str], bytes]
+Progress = Callable[[str], None]
 
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _request_bytes(url: str, *, max_bytes: int, timeout: int = 45, attempts: int = 4) -> bytes:
+def _request_bytes(
+    url: str,
+    *,
+    max_bytes: int,
+    timeout: int = 45,
+    attempts: int = 4,
+    progress: Progress | None = None,
+    label: str = "KIDS request",
+) -> bytes:
     last_error: Exception | None = None
     for attempt in range(attempts):
         request = urllib.request.Request(
@@ -83,16 +92,28 @@ def _request_bytes(url: str, *, max_bytes: int, timeout: int = 45, attempts: int
         except (urllib.error.URLError, TimeoutError) as exc:
             last_error = exc
         if attempt + 1 < attempts:
+            if progress is not None:
+                progress(f"{label}: retry {attempt + 2}/{attempts} after {type(last_error).__name__}")
             time.sleep(0.5 * (2**attempt))
     raise RuntimeError(f"KIDS request failed after {attempts} attempts: {url}: {last_error}") from last_error
 
 
-def _fetch_page(url: str) -> str:
-    return _request_bytes(url, max_bytes=4 * 1024 * 1024).decode("utf-8", "replace")
+def _fetch_page(url: str, *, progress: Progress | None = None, label: str = "KIDS page") -> str:
+    return _request_bytes(
+        url,
+        max_bytes=4 * 1024 * 1024,
+        progress=progress,
+        label=label,
+    ).decode("utf-8", "replace")
 
 
-def _fetch_attachment(url: str) -> bytes:
-    return _request_bytes(url, max_bytes=MAX_XLSX_BYTES)
+def _fetch_attachment(url: str, *, progress: Progress | None = None, label: str = "KIDS XLSX") -> bytes:
+    return _request_bytes(
+        url,
+        max_bytes=MAX_XLSX_BYTES,
+        progress=progress,
+        label=label,
+    )
 
 
 def _current_attachment_id(html: str) -> str:
@@ -182,6 +203,7 @@ def sync_kids_xlsx_sources(
     *,
     fetch_page: FetchPage | None = None,
     fetch_attachment: FetchAttachment | None = None,
+    progress: Progress | None = None,
 ) -> dict:
     output = Path(output_dir)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -190,11 +212,23 @@ def sync_kids_xlsx_sources(
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.sync-", dir=output.parent))
     sources: list[dict] = []
     try:
-        for spec in KIDS_DOWNLOADS:
-            html = page_reader(spec.page_url)
+        total = len(KIDS_DOWNLOADS)
+        for index, spec in enumerate(KIDS_DOWNLOADS, start=1):
+            prefix = f"[{index}/{total}] {spec.filename}"
+            if progress is not None:
+                progress(f"{prefix}: fetch page")
+            if fetch_page is None:
+                html = _fetch_page(spec.page_url, progress=progress, label=f"{prefix} page")
+            else:
+                html = page_reader(spec.page_url)
             attachment_id = _current_attachment_id(html)
             download_url = _attachment_url(attachment_id)
-            data = attachment_reader(download_url)
+            if progress is not None:
+                progress(f"{prefix}: fetch attachment {attachment_id}")
+            if fetch_attachment is None:
+                data = _fetch_attachment(download_url, progress=progress, label=f"{prefix} attachment")
+            else:
+                data = attachment_reader(download_url)
             target = staging / spec.filename
             target.write_bytes(data)
             inspected = _validate_xlsx(target, spec.category)
@@ -213,6 +247,11 @@ def sync_kids_xlsx_sources(
                     "header_row": inspected["header_row"],
                 }
             )
+            if progress is not None:
+                progress(
+                    f"{prefix}: verified effective_date={inspected['effective_date']} "
+                    f"bytes={len(data)} sha256={_sha256_bytes(data)[:12]}"
+                )
 
         manifest_data = _manifest_bytes(sources)
         (staging / KIDS_SOURCE_MANIFEST).write_bytes(manifest_data)
