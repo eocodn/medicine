@@ -1,0 +1,105 @@
+name: Reference DB publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      kids_source_key:
+        description: Private R2 object containing the exact KIDS XLSX source bundle
+        required: true
+        default: reference-source/kids/current.zip
+        type: string
+      kids_source_sha256:
+        description: Pinned SHA-256 of the private KIDS source bundle
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reference-db-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      KIDS_SOURCE_KEY: ${{ inputs.kids_source_key }}
+      KIDS_SOURCE_SHA256: ${{ inputs.kids_source_sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Validate publication prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in DATA_GO_KR_SERVICE_KEY R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET KIDS_SOURCE_KEY KIDS_SOURCE_SHA256; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is not configured"
+              exit 1
+            fi
+          done
+
+      - name: Install publisher dependencies
+        run: python -m pip install --disable-pip-version-check --no-cache-dir . 'boto3>=1.34,<2'
+
+      - name: Restore private KIDS source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p data/private-source data/kids
+          medicine-canonical r2-download \
+            --key "$KIDS_SOURCE_KEY" \
+            --output data/private-source/kids.zip \
+            --json
+          printf '%s  %s\n' "$KIDS_SOURCE_SHA256" data/private-source/kids.zip | sha256sum --check --strict -
+          medicine-canonical kids-extract \
+            --bundle data/private-source/kids.zip \
+            --output-dir data/kids \
+            --json
+
+      - name: Rebuild authoritative reference databases
+        shell: bash
+        run: |
+          set -euo pipefail
+          medicine-canonical integrated-rebuild --json
+
+      - name: Verify canonical release gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          medicine-canonical verify --json
+          medicine-canonical substance-verify --json
+
+      - name: Build verified Android mobile snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          medicine-canonical mobile-build \
+            --db data/db/canonical.sqlite \
+            --output data/db/mobile.sqlite \
+            --manifest data/db/mobile.manifest.json \
+            --json
+
+      - name: Publish immutable release and advance latest last
+        shell: bash
+        run: |
+          set -euo pipefail
+          medicine-canonical release-publish-r2 \
+            --db data/db/mobile.sqlite \
+            --mobile-manifest data/db/mobile.manifest.json \
+            --output-dir artifacts/reference-release \
+            --json
