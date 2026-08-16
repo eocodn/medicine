@@ -3,12 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
 from .inspection import canonical_product_criteria, canonical_product_ingredient_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .mobile import build_mobile_database
+from .release import apply_chunk_patch, prepare_release
+from .release_r2 import download_object_from_env, publish_release_from_env
+from .source_bundle import extract_kids_bundle, pack_kids_bundle
 from .sources import sync_canonical_api_sources
 from .substance_build import (
     assemble_substance_database,
@@ -161,6 +165,43 @@ def build_parser() -> argparse.ArgumentParser:
     substance_verify = sub.add_parser("substance-verify", help="Verify the parallel canonical substance database")
     substance_verify.add_argument("--db", type=Path, default=DEFAULT_SUBSTANCE_DB)
     substance_verify.add_argument("--json", action="store_true")
+
+    kids_bundle = sub.add_parser("kids-bundle", help="Pack the exact KIDS XLSX source set for private distribution")
+    kids_bundle.add_argument("--kids-dir", type=Path, default=DEFAULT_KIDS)
+    kids_bundle.add_argument("--output", type=Path, required=True)
+    kids_bundle.add_argument("--json", action="store_true")
+
+    kids_extract = sub.add_parser("kids-extract", help="Validate and extract a private KIDS XLSX source bundle")
+    kids_extract.add_argument("--bundle", type=Path, required=True)
+    kids_extract.add_argument("--output-dir", type=Path, default=DEFAULT_KIDS)
+    kids_extract.add_argument("--json", action="store_true")
+
+    release_create = sub.add_parser("release-create", help="Build verified full and exact-byte delta mobile DB artifacts")
+    release_create.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
+    release_create.add_argument("--mobile-manifest", type=Path, default=Path("data/db/mobile.manifest.json"))
+    release_create.add_argument("--output-dir", type=Path, default=Path("artifacts/reference-release"))
+    release_create.add_argument("--previous-db", type=Path)
+    release_create.add_argument("--previous-dataset-id")
+    release_create.add_argument("--created-at")
+    release_create.add_argument("--json", action="store_true")
+
+    release_apply = sub.add_parser("release-apply", help="Apply and verify an exact-byte mobile DB delta")
+    release_apply.add_argument("--source", type=Path, required=True)
+    release_apply.add_argument("--patch", type=Path, required=True)
+    release_apply.add_argument("--output", type=Path, required=True)
+    release_apply.add_argument("--json", action="store_true")
+
+    r2_download = sub.add_parser("r2-download", help="Download one private R2 object using configured credentials")
+    r2_download.add_argument("--key", required=True)
+    r2_download.add_argument("--output", type=Path, required=True)
+    r2_download.add_argument("--json", action="store_true")
+
+    release_publish = sub.add_parser("release-publish-r2", help="Prepare and atomically publish a mobile DB release to R2")
+    release_publish.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
+    release_publish.add_argument("--mobile-manifest", type=Path, default=Path("data/db/mobile.manifest.json"))
+    release_publish.add_argument("--output-dir", type=Path, default=Path("artifacts/reference-release"))
+    release_publish.add_argument("--created-at")
+    release_publish.add_argument("--json", action="store_true")
     return parser
 
 
@@ -252,6 +293,28 @@ def main(argv=None) -> int:
         payload = verify_substance_database(args.db)
         _emit(payload, args.json)
         return 0 if payload["status"] == "verified" else 2
+    elif args.command == "kids-bundle":
+        payload = pack_kids_bundle(args.kids_dir, args.output)
+    elif args.command == "kids-extract":
+        payload = extract_kids_bundle(args.bundle, args.output_dir)
+    elif args.command == "release-create":
+        created_at = args.created_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        payload = prepare_release(
+            args.db,
+            args.mobile_manifest,
+            args.output_dir,
+            previous_db=args.previous_db,
+            previous_dataset_id=args.previous_dataset_id,
+            created_at=created_at,
+        )
+    elif args.command == "release-apply":
+        payload = apply_chunk_patch(args.source, args.patch, args.output)
+    elif args.command == "r2-download":
+        payload = download_object_from_env(args.key, args.output)
+    elif args.command == "release-publish-r2":
+        payload = publish_release_from_env(
+            args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at
+        )
     else:
         payload = verify_canonical_database(args.db)
         _emit(payload, args.json)

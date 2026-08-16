@@ -3,6 +3,28 @@ import unittest
 
 
 class DeploymentConfigTest(unittest.TestCase):
+    def test_reference_publish_workflow_builds_verified_mobile_release_before_r2_publish(self) -> None:
+        workflow = Path(".github/workflows/reference-publish.yml").read_text()
+
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("schedule:", workflow)
+        self.assertIn("concurrency:", workflow)
+        self.assertIn("DATA_GO_KR_SERVICE_KEY", workflow)
+        self.assertIn("R2_ACCESS_KEY_ID", workflow)
+        self.assertIn("R2_SECRET_ACCESS_KEY", workflow)
+        self.assertIn("R2_ENDPOINT", workflow)
+        self.assertIn("R2_BUCKET", workflow)
+        self.assertIn("r2-download", workflow)
+        self.assertIn("kids-extract", workflow)
+        self.assertIn("integrated-rebuild", workflow)
+        self.assertIn("canonical verify", workflow)
+        self.assertIn("canonical substance-verify", workflow)
+        self.assertIn("canonical mobile-build", workflow)
+        self.assertIn("release-publish-r2", workflow)
+        self.assertIn("reference-source/kids/current.zip", workflow)
+        self.assertIn("kids_source_sha256", workflow)
+        self.assertIn("sha256sum --check --strict", workflow)
+
     def test_r2_smoke_workflow_verifies_private_bucket_write_path(self) -> None:
         workflow = Path(".github/workflows/r2-smoke.yml").read_text()
 
