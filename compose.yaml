@@ -28,6 +28,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ui
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      HOME: /tmp
     working_dir: /app
     volumes:
       - .:/app

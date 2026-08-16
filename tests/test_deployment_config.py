@@ -79,6 +79,12 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertNotIn("from medicine_canonical", runtime)
         self.assertNotIn("import medicine_canonical", runtime)
 
+    def test_ui_service_runs_as_the_host_user_for_bind_mounted_screenshots(self) -> None:
+        compose = Path("compose.yaml").read_text()
+        ui_service = compose.split("\n  ui:\n", 1)[1].split("\n  test:\n", 1)[0]
+
+        self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', ui_service)
+
     def test_retired_legacy_etl_is_not_packaged_or_exposed(self) -> None:
         compose = Path("compose.yaml").read_text()
         dockerfile = Path("Dockerfile").read_text()
