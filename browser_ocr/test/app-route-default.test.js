@@ -65,10 +65,12 @@ function appContext() {
     fetch: async () => { throw new Error("unexpected fetch"); },
   };
   vm.createContext(context);
-  vm.runInContext(
-    fs.readFileSync(path.join(__dirname, "../../medicine_app/static/app.js"), "utf8"),
-    context,
-  );
+  for (const file of ["prescription.js", "app.js"]) {
+    vm.runInContext(
+      fs.readFileSync(path.join(__dirname, `../../medicine_app/static/${file}`), "utf8"),
+      context,
+    );
+  }
   return { context, risk, nodes };
 }
 
