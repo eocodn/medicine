@@ -69,6 +69,16 @@ services:
     user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
     command: ["node", "browser_ocr/detection/cli.mjs", "benchmark", "--json"]
 
+  ocr-corpus:
+    build:
+      context: .
+      dockerfile: browser_ocr/detection/Dockerfile
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
+    entrypoint: ["node", "browser_ocr/corpus/cli.mjs"]
+
   ocr-eval:
     build:
       context: .

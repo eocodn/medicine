@@ -134,6 +134,73 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
 
 The recorded synthetic-only result is in `results/synth-5k-drug-baseline.json`: pretrained exact accuracy `0.6080` versus validation-best test accuracy `0.9740`, with normalized edit distance improving from `0.9535` to `0.9975`. Validation peaked at epoch 2 and later epochs oscillated, so the 10-epoch final checkpoint is preserved for reproducibility but is not treated as the selected model. These figures are **not** evidence of real-photo or end-to-end prescription safety; real deidentified holdouts and the other layout/source holdouts remain required.
 
+## Unified full-document recognition data
+
+New recognition training/evaluation data should be derived from the canonical full-document corpus rather than a separate line-image generator when the goal is E2E robustness. `ocr-corpus generate --materialize` writes `views/recognition/manifest.json` plus a Paddle-ready `views/recognition/paddle/` export. Each crop is rectified from the final degraded document raster and inherits its parent document train/validation/test split, semantic role, association group, layout, capture anchor, augmentation difficulty/components, and risk tags. Generator v4 composes camera failures, so one crop can simultaneously carry motion blur, JPEG loss, downscale, noise, exposure/color drift, perspective, and glare/shadow rather than belonging to only one degradation bucket. This makes recognition failures directly comparable with detector and E2E results from the same source documents. The older standalone 100k recognition corpus remains a retained historical training artifact, not the canonical source for future full-document robustness experiments.
+
+## Fixed full-document recognizer evaluation
+
+The tracked `results/selected-100k-training-drug-exposure.json` binds the current canonical family holdout to the exact historical train split used by the selected 100k checkpoint. New fixed-eval and full-document training corpora must use that artifact (or a cryptographically equivalent regenerated artifact) so `drug-unseen` means unseen to the model being fine-tuned, not merely held out from the new corpus.
+
+`ocr-finetune-train fixed-eval` evaluates one pinned recognizer checkpoint against a materialized unified recognition dataset with a single `tools/infer_rec.py` pass, then derives all metric slices from the immutable prediction artifact. Fixed-eval policy v2 reports overall and critical exact accuracy plus normalized edit similarity, product/dose/frequency/duration, clean/medium/hard, augmentation components/combinations, critical drug seen/unseen, explicit `product-seen`/`product-unseen`, and the cross-slices `seen-drug-unseen-image`, `unseen-drug-familiar-degradation`, `unseen-drug-hard-in-domain`, and `unseen-drug-hard-ood`. The runner binds dataset/checkpoint/config/source hashes, policy id, the canonical plan hash, and evaluator-core hash in state. Any changed slice contract therefore invalidates an older completed cache instead of silently returning metrics produced under a previous definition.
+
+The evaluation path allows model-incompatible **noncritical** context references to remain in the overall metric so model limitations are visible, but critical medication references must satisfy the pinned recognizer dictionary and maximum text length or evaluation fails closed. This exception applies only to direct fixed inference; training compatibility checks remain strict for every training sample.
+
+```bash
+COMPOSE_PROJECT_NAME=medicine_ocr_fixed_eval \
+  docker compose run --rm ocr-finetune-train fixed-eval \
+  --baseline-result /workspace/path/to/baseline-result.json \
+  --expected-checkpoint-sha256 <sha256> \
+  --manifest /workspace/path/to/views/recognition/manifest.json \
+  --run-dir /workspace/browser_ocr/finetune/work/fixed-eval/run-1 \
+  --minimum-required-count 32 --device gpu --json
+```
+
+## Selected-checkpoint full-document training views
+
+Full-document fine-tuning does not train directly from the raw materialized recognition view. `prepare-training-view` first derives a model-compatible, immutable training view using the pinned recognizer dictionary and `max_text_length`. Model-incompatible references are excluded from every split, while the explicit `degradation-hard-ood` signature is excluded from **train only** and may remain in validation/test for diagnostics. Train/validation/test membership is inherited from the parent document split and is never re-randomized. Retained images are hard-linked inside the current workspace, and the derived manifest records the source fingerprint, source split SHA-256, dictionary/model contract, filtering policy, exclusion counts, and resulting dataset fingerprint.
+
+```bash
+COMPOSE_PROJECT_NAME=medicine_ocr_training_view \
+  docker compose run --rm ocr-finetune-train prepare-training-view \
+  --manifest /workspace/path/to/views/recognition/manifest.json \
+  --split /workspace/path/to/views/recognition/document-split.json \
+  --output-dir /workspace/path/to/training-view \
+  --json
+```
+
+The full-document-only experiment uses `selected-finetune`, which initializes `Global.pretrained_model` from the cryptographically selected 100k `best_accuracy` checkpoint rather than from the original Paddle pretrained model. Resume checkpoints are accepted only from the new run. This runner intentionally does not inherit the old standalone baseline's required semantic/risk slice list; model promotion is decided later on the immutable fixed evaluation corpus. It retains the same strict state, checkpoint, resume, best-validation, and SHA verification behavior.
+
+```bash
+COMPOSE_PROJECT_NAME=medicine_ocr_selected_finetune \
+  docker compose run --rm \
+  -v /absolute/path/to/historical/training:/workspace/browser_ocr/finetune/work/training:ro \
+  ocr-finetune-train selected-finetune \
+  --initial-baseline-result /workspace/browser_ocr/finetune/work/training/baseline-v5-100k-source-stable-e10-b32-lr1e4-w1/baseline-result.json \
+  --expected-initial-checkpoint-sha256 <selected-100k-sha256> \
+  --manifest /workspace/path/to/training-view/manifest.json \
+  --export-dir /workspace/path/to/training-view/paddle \
+  --run-dir /workspace/path/to/full-document-only-run \
+  --epochs 4 --batch-size 32 --learning-rate 0.00005 --warmup-epochs 1 --json
+```
+
+For the mixed experiment, `prepare-mixed-training-view` adds **only the exact historical 100k train split** to the new full-document train split. Validation and test remain exclusively from the new full-document corpus. The command fails unless the new corpus's `historical_exposure` metadata matches the supplied historical dataset fingerprint, train-split SHA-256, and train count. Historical images are copied because the authoritative corpus is normally a read-only Docker bind mount on a separate mount where hard-linking is not possible; new unified images are hard-linked from the current workspace. All ids, documents, and grouping keys are namespaced before combination.
+
+```bash
+COMPOSE_PROJECT_NAME=medicine_ocr_mixed_view \
+  docker compose run --rm \
+  -v /absolute/path/to/synth-100k-v5:/historical:ro \
+  ocr-finetune-train prepare-mixed-training-view \
+  --historical-manifest /historical/manifest.json \
+  --historical-split /historical/paddle-source-stable-v1/split.json \
+  --unified-manifest /workspace/path/to/training-view/manifest.json \
+  --unified-export-dir /workspace/path/to/training-view/paddle \
+  --output-dir /workspace/path/to/mixed-training-view \
+  --json
+```
+
+The mixed output is passed to the same `selected-finetune` runner. This keeps the only experimental difference in the training data composition while evaluation, model initialization, checkpointing, and fixed-eval selection remain identical.
+
 ## Full-document detector → fine-tuned recognizer research path
 
 `ocr-full-document` composes the mobile detector research pipeline with a completed fine-tune baseline. The default detector is the selected `PP-OCRv5_mobile_det` candidate at edge 640. Its official ONNX archive is verified against `browser_ocr/detection/detector-models.json`; the recognizer is loaded directly from the `best_checkpoint` recorded by the supplied baseline result and its SHA-256 is verified before inference.

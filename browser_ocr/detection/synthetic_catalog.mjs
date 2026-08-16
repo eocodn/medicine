@@ -16,6 +16,27 @@ export const CAPTURE_PROFILES = [
   "cropped_clutter",
 ];
 
+export const AUGMENTATION_DIFFICULTIES = [
+  "clean",
+  "medium",
+  "hard",
+];
+
+export const REQUIRED_AUGMENTATION_COMPONENTS = [
+  "perspective",
+  "defocus",
+  "motion_blur",
+  "jpeg_compression",
+  "contrast_exposure",
+  "glare",
+  "shadow",
+  "downscale",
+  "sensor_noise",
+  "white_balance",
+  "partial_crop",
+  "foreground_clutter",
+];
+
 export const MATERIAL_PROFILES = [
   "paper_plain",
   "paper_folded",
@@ -48,6 +69,9 @@ export const REQUIRED_RISK_TAGS = [
   "motion_blur",
   "material_fold",
   "printer_degradation",
+  "downscale",
+  "sensor_noise",
+  "white_balance",
 ];
 
 export const REQUIRED_CRITICAL_SEMANTIC_ROLES = [
@@ -55,17 +79,6 @@ export const REQUIRED_CRITICAL_SEMANTIC_ROLES = [
   "dose",
   "frequency",
   "duration",
-];
-
-export const PRODUCTS = [
-  "타이레놀정",
-  "이부프로펜정",
-  "세트린정",
-  "아목시실린캡슐",
-  "레바미피드정",
-  "메트포르민정",
-  "록소프로펜정",
-  "알마게이트정",
 ];
 
 export const CONTEXT_TEXT = {

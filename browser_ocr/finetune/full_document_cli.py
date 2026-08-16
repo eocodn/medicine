@@ -15,6 +15,7 @@ from typing import Iterator
 
 from browser_ocr.document_parsing.baseline import BASELINE_ID
 
+from .crop_refinement import refine_prediction_crops
 from .dataset import DatasetError
 from .full_document import (
     build_document_regions,
@@ -38,6 +39,7 @@ def _implementation_profile() -> dict[str, str]:
     sources = {
         "full_document": browser_root / "finetune" / "full_document.py",
         "full_document_cli": Path(__file__).resolve(),
+        "crop_refinement": browser_root / "finetune" / "crop_refinement.py",
         "parser": browser_root / "document_parsing" / "baseline.py",
         "parser_contract": browser_root / "document_parsing" / "contract.py",
         "detector_runtime": browser_root / "detection" / "runtime.py",
@@ -253,7 +255,6 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
         try:
             import cv2
 
-            from browser_ocr.detection.detector_benchmark import rectify_text_crop
             from browser_ocr.detection.runtime import load_detector_runtime
 
             image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
@@ -268,11 +269,12 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
                 threads=args.detector_threads,
             )
             predictions = sort_text_predictions(detector.predict(image))
+            prediction_crops = refine_prediction_crops(image, predictions)
+            predictions = [prediction for prediction, _ in prediction_crops]
             detector_ms = (time.perf_counter() - detector_started) * 1000.0
 
             crop_paths: list[str] = []
-            for index, prediction in enumerate(predictions, start=1):
-                crop = rectify_text_crop(image, prediction["polygon"])
+            for index, (_, crop) in enumerate(prediction_crops, start=1):
                 crop_path = crop_dir / f"region-{index:04d}.png"
                 if not cv2.imwrite(str(crop_path), crop):
                     raise DatasetError(f"failed to write recognition crop: {crop_path}")

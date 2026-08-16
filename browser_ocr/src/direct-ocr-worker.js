@@ -5,9 +5,14 @@ const {
   decodeCtc,
   decodeDetectionMap,
   distance,
+  foregroundColumnInk,
+  horizontalSubpolygon,
+  recognitionTargetWidth,
   resizeWithin,
   rgbaToChw,
+  splitHorizontalInkRanges,
 } = require("./direct-ocr-core.js");
+const { parseDocumentItems } = require("./document-parser.js");
 
 const DETECTION_MODEL = "/ocr-assets/models/detection.onnx";
 const RECOGNITION_MODEL = "/ocr-assets/models/korean-recognition.onnx";
@@ -16,7 +21,7 @@ const MAX_SOURCE_EDGE = 1280;
 const DETECTION_EDGE = 640;
 const RECOGNITION_HEIGHT = 48;
 const RECOGNITION_BASE_WIDTH = 320;
-const RECOGNITION_MAX_WIDTH = 3200;
+const RECOGNITION_MAX_WIDTH = 1280;
 const RECOGNITION_BATCH_SIZE = 4;
 const DETECTION_NORMALIZE = {
   mean: [0.485, 0.456, 0.406],
@@ -120,12 +125,43 @@ function cropRotated(source, polygon) {
   return rotated;
 }
 
-function prepareRecognitionSample(crop, inputIndex) {
+function isTallPolygon(polygon) {
+  const width = Math.max(distance(polygon[0], polygon[1]), distance(polygon[2], polygon[3]));
+  const height = Math.max(distance(polygon[0], polygon[3]), distance(polygon[1], polygon[2]));
+  return height / Math.max(width, 1e-9) >= 1.5;
+}
+
+function sliceCrop(crop, start, end) {
+  const width = end - start;
+  const result = createCanvas(width, crop.height);
+  context2d(result).drawImage(crop, start, 0, width, crop.height, 0, 0, width, crop.height);
+  return result;
+}
+
+function refineDetectedBoxes(sourceCanvas, boxes) {
+  const refined = [];
+  for (const box of boxes) {
+    const crop = cropRotated(sourceCanvas, box.poly);
+    let ranges = [[0, crop.width]];
+    if (!isTallPolygon(box.poly) && crop.width > 1) {
+      const image = context2d(crop).getImageData(0, 0, crop.width, crop.height);
+      ranges = splitHorizontalInkRanges(foregroundColumnInk(image), crop.height);
+    }
+    for (const [start, end] of ranges) {
+      const poly = start === 0 && end === crop.width
+        ? box.poly : horizontalSubpolygon(box.poly, start, end, crop.width);
+      refined.push({ poly, score: box.score, crop: sliceCrop(crop, start, end) });
+    }
+    crop.width = 1;
+    crop.height = 1;
+  }
+  return refined;
+}
+
+function prepareRecognitionSample(crop, inputIndex, width = recognitionTargetWidth(
+  crop.width, crop.height, RECOGNITION_HEIGHT, RECOGNITION_BASE_WIDTH, RECOGNITION_MAX_WIDTH,
+)) {
   const ratio = crop.width / Math.max(1, crop.height);
-  const width = Math.min(
-    RECOGNITION_MAX_WIDTH,
-    Math.max(RECOGNITION_BASE_WIDTH, Math.trunc(RECOGNITION_HEIGHT * ratio)),
-  );
   const resizedWidth = Math.min(width, Math.ceil(RECOGNITION_HEIGHT * ratio));
   const canvas = createCanvas(width, RECOGNITION_HEIGHT);
   const context = context2d(canvas);
@@ -209,26 +245,34 @@ async function detect(sourceCanvas) {
   );
 }
 
-async function recognizeBoxes(sourceCanvas, boxes, dictionary) {
-  const samples = boxes.map((box, index) => prepareRecognitionSample(
-    cropRotated(sourceCanvas, box.poly), index,
-  )).sort((a, b) => a.width - b.width);
+async function recognizeBoxes(refinedBoxes, dictionary) {
+  const ordered = refinedBoxes.map((box, inputIndex) => ({
+    inputIndex,
+    width: recognitionTargetWidth(
+      box.crop.width,
+      box.crop.height,
+      RECOGNITION_HEIGHT,
+      RECOGNITION_BASE_WIDTH,
+      RECOGNITION_MAX_WIDTH,
+    ),
+  })).sort((a, b) => a.width - b.width);
   const decoded = [];
-  for (let start = 0; start < samples.length; start += RECOGNITION_BATCH_SIZE) {
-    const batch = samples.slice(start, start + RECOGNITION_BATCH_SIZE);
+  for (let start = 0; start < ordered.length; start += RECOGNITION_BATCH_SIZE) {
+    const batch = ordered.slice(start, start + RECOGNITION_BATCH_SIZE).map((work) =>
+      prepareRecognitionSample(refinedBoxes[work.inputIndex].crop, work.inputIndex, work.width));
     const output = await runSession(recognitionSession, recognitionBatchTensor(batch));
     for (let index = 0; index < batch.length; index += 1) {
       decoded.push({ inputIndex: batch[index].inputIndex, ...decodeCtc(
         output.data, output.dims, dictionary, index,
       ) });
     }
-    progress(60 + Math.round(30 * Math.min(samples.length, start + batch.length)
-      / Math.max(1, samples.length)));
+    progress(60 + Math.round(30 * Math.min(ordered.length, start + batch.length)
+      / Math.max(1, ordered.length)));
   }
   decoded.sort((a, b) => a.inputIndex - b.inputIndex);
   return decoded.map(({ inputIndex, ...result }) => ({
     ...result,
-    poly: boxes[inputIndex].poly,
+    poly: refinedBoxes[inputIndex].poly,
   })).filter((item) => item.text && item.score >= 0.0);
 }
 
@@ -239,7 +283,7 @@ async function dispose() {
   await Promise.all(sessions.map((session) => session?.release()));
 }
 
-async function recognize(image) {
+async function recognize(image, includeItems = false) {
   progress(5);
   const bitmap = await createImageBitmap(image);
   const sourceDimensions = resizeWithin(bitmap.width, bitmap.height, MAX_SOURCE_EDGE);
@@ -249,15 +293,26 @@ async function recognize(image) {
   const dictionary = await initializeDetection();
   progress(35);
   const boxes = await detect(sourceCanvas);
+  const refinedBoxes = refineDetectedBoxes(sourceCanvas, boxes);
   await detectionSession.release();
   detectionSession = null;
   await initializeRecognition();
   progress(60);
-  const items = await recognizeBoxes(sourceCanvas, boxes, dictionary);
+  const items = (await recognizeBoxes(refinedBoxes, dictionary)).map((item, index) => ({
+    ...item,
+    id: `region-${String(index + 1).padStart(4, "0")}`,
+  }));
   sourceCanvas.width = 1;
   sourceCanvas.height = 1;
   await dispose();
-  self.postMessage({ type: "result", items });
+  const parsed = parseDocumentItems(items);
+  self.postMessage({
+    type: "result",
+    rows: parsed.rows,
+    uncertainty_codes: parsed.uncertainty_codes,
+    region_count: items.length,
+    ...(includeItems ? { items } : {}),
+  });
 }
 
 self.onmessage = (event) => {
@@ -267,7 +322,7 @@ self.onmessage = (event) => {
     return;
   }
   running = true;
-  void recognize(event.data.image).catch(async (error) => {
+  void recognize(event.data.image, event.data.include_items === true).catch(async (error) => {
     await dispose().catch(() => null);
     self.postMessage({
       type: "error",

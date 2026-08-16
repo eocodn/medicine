@@ -12,8 +12,8 @@ BASELINE_ID = "geometry_rule_v2"
 _HEADER_PRODUCT = re.compile(r"^(?:약품명|의약품명|제품명|처방의약품명|약명)$")
 _HEADER_DOSE = re.compile(r"(?:1회.*(?:투약|투여|복용).*(?:량|용량)|1회량)")
 _HEADER_FREQUENCY = re.compile(r"(?:1일.*(?:투약|투여|복용).*(?:횟수|회수)|1일횟수)")
-_HEADER_DAYS = re.compile(r"(?:총.*(?:투약|투여|복용).*일수|(?:투약|투여|복용)일수)")
-_PRODUCT_PREFIX = re.compile(r"^(?:약명|제품명|약품명|의약품명)[:：](.+)$")
+_HEADER_DAYS = re.compile(r"(?:총.*일수|(?:투약|투여|복용)일수)")
+_PRODUCT_PREFIX = re.compile(r"^(?:약명|제품명|약품명|의약품명)\s*[:：]\s*(.+)$")
 _PRODUCT_LABEL = re.compile(r"^(?:약명|제품명|약품명|의약품명)[:：]?$")
 _COMMON_REGIMEN = re.compile(r"^공통(?:복용법|용법|복약방법)[:：]")
 _EXPLICIT_REGIMEN = re.compile(
@@ -130,7 +130,7 @@ def _structural_table_row(line: _Line) -> dict[str, Any] | None:
         return None
 
     first_structured_x = min(item.x1 for item, _, _ in typed)
-    product_items = [item for item in line.items if item.x2 < first_structured_x and _typed_item(item) is None]
+    product_items = [item for item in line.items if item.cx < first_structured_x and _typed_item(item) is None]
     product = _clean_product("".join(item.text for item in product_items))
     if not product:
         return None
@@ -184,10 +184,23 @@ def _unheaded_table_rows(lines: Sequence[_Line]) -> tuple[list[dict[str, Any]], 
 
 
 def _clean_product(value: str) -> str:
-    compact = value.replace(" ", "").strip()
-    compact = re.sub(r"^(?:약명|제품명|약품명|의약품명)[:：]", "", compact)
-    compact = re.sub(r"^[0-9]+[.)]", "", compact)
-    return compact.strip()
+    text = value.strip()
+    text = re.sub(r"^(?:약명|제품명|약품명|의약품명)\s*[:：]\s*", "", text)
+    text = re.sub(r"^[0-9]+[.)]\s*", "", text)
+    return text.strip()
+
+
+def _table_cell_value(key: str, items: Sequence[_Token]) -> tuple[dict[str, Any], list[str]]:
+    parsed = _table_value(key, "".join(item.text for item in items))
+    if parsed:
+        return parsed, [item.box_id for item in items]
+
+    candidates = [(item, _table_value(key, item.text)) for item in items]
+    candidates = [(item, value) for item, value in candidates if value]
+    if len(candidates) != 1:
+        return {}, []
+    item, value = candidates[0]
+    return value, [item.box_id]
 
 
 def _new_row(product_query: str, product_evidence: Sequence[str]) -> dict[str, Any]:
@@ -234,9 +247,8 @@ def _table_rows(lines: Sequence[_Line]) -> tuple[list[dict[str, Any]], set[int]]
             for key in ("dose", "frequency", "days"):
                 if key in cells:
                     items = cells[key]
-                    parsed = _table_value(key, "".join(item.text for item in items))
+                    parsed, evidence = _table_cell_value(key, items)
                     row["draft"].update(parsed)
-                    evidence = [item.box_id for item in items]
                     for field in parsed:
                         row["evidence"][field] = evidence
             rows.append(row)
@@ -247,7 +259,7 @@ def _table_rows(lines: Sequence[_Line]) -> tuple[list[dict[str, Any]], set[int]]
 
 
 def _labeled_product(line: _Line) -> tuple[str, list[str]] | None:
-    match = _PRODUCT_PREFIX.fullmatch(line.compact)
+    match = _PRODUCT_PREFIX.fullmatch("".join(item.text for item in line.items).strip())
     if match is not None:
         product = _clean_product(match.group(1))
         return (product, [item.box_id for item in line.items]) if product else None

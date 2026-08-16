@@ -15,6 +15,17 @@ RUNTIME_TABLES = (
     "product_ingredient_criterion_links", "product_ingredient_criterion_unresolved",
 )
 RUNTIME_VIEWS = ("product_rule_criteria", "product_ingredient_criteria")
+# Mobile queries are intentionally narrower than canonical build/linking queries.
+# Keep only indexes that serve runtime lookup paths; copying every canonical
+# builder index adds hundreds of MB without helping on-device reads.
+RUNTIME_INDEXES = (
+    "idx_products_status",
+    "idx_product_rules_item_category",
+    "idx_product_rules_pair",
+    "idx_product_flags_item_category",
+    "idx_product_ingredient_criteria_category_item",
+    "idx_product_ingredient_unresolved_category_item",
+)
 
 
 def _dataset_id(con: sqlite3.Connection) -> str:
@@ -89,14 +100,19 @@ def build_mobile_database(
                 dst.execute(f'INSERT INTO "{table}" SELECT * FROM source_db."{table}"')
             dst.commit()
             dst.execute("DETACH DATABASE source_db")
-            for kind, name, sql in src.execute(
-                "SELECT type,name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
-            ):
-                table = src.execute(
-                    "SELECT tbl_name FROM sqlite_master WHERE type='index' AND name=?", (name,)
-                ).fetchone()[0]
-                if table in RUNTIME_TABLES:
-                    dst.execute(sql)
+            source_indexes = {
+                name: sql
+                for name, sql in src.execute(
+                    "SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
+                )
+            }
+            missing_indexes = [name for name in RUNTIME_INDEXES if name not in source_indexes]
+            if missing_indexes:
+                raise ValueError(
+                    f"canonical runtime index missing: {', '.join(missing_indexes)}"
+                )
+            for name in RUNTIME_INDEXES:
+                dst.execute(source_indexes[name])
             for view in RUNTIME_VIEWS:
                 ddl = objects.get(("view", view))
                 if not ddl:
@@ -131,4 +147,4 @@ def build_mobile_database(
     return {"db_path": str(output), "manifest_path": str(manifest), **payload}
 
 
-__all__ = ["build_mobile_database"]
+__all__ = ["RUNTIME_INDEXES", "build_mobile_database"]

@@ -1,9 +1,11 @@
 import {
+  AUGMENTATION_DIFFICULTIES,
   BACKGROUND_PROFILES,
   CAPTURE_PROFILES,
   LAYOUT_FAMILIES,
   MATERIAL_PROFILES,
   PRINTER_PROFILES,
+  REQUIRED_AUGMENTATION_COMPONENTS,
   REQUIRED_CRITICAL_SEMANTIC_ROLES,
   REQUIRED_RISK_TAGS,
 } from "./synthetic_catalog.mjs";
@@ -26,6 +28,8 @@ export function auditCoverage(corpus, {
 } = {}) {
   const layoutCounts = counts(corpus.samples.map((sample) => sample.layout_family));
   const captureCounts = counts(corpus.samples.map((sample) => sample.capture_profile));
+  const difficultyCounts = counts(corpus.samples.map((sample) => sample.augmentation_difficulty));
+  const augmentationComponentCounts = counts(corpus.samples.flatMap((sample) => sample.capture.augmentation_components || []));
   const materialCounts = counts(corpus.samples.map((sample) => sample.material_profile));
   const printerCounts = counts(corpus.samples.map((sample) => sample.printer_profile));
   const backgroundCounts = counts(corpus.samples.map((sample) => sample.background_profile));
@@ -42,6 +46,12 @@ export function auditCoverage(corpus, {
   }
   for (const profile of CAPTURE_PROFILES) {
     if ((captureCounts[profile] || 0) < minimumPerCapture) failures.push(`capture profile ${profile} < ${minimumPerCapture}`);
+  }
+  for (const difficulty of AUGMENTATION_DIFFICULTIES) {
+    if ((difficultyCounts[difficulty] || 0) < 1) failures.push(`augmentation difficulty ${difficulty} < 1`);
+  }
+  for (const component of REQUIRED_AUGMENTATION_COMPONENTS) {
+    if ((augmentationComponentCounts[component] || 0) < 1) failures.push(`augmentation component ${component} < 1`);
   }
   for (const profile of MATERIAL_PROFILES) {
     if ((materialCounts[profile] || 0) < 1) failures.push(`material profile ${profile} < 1`);
@@ -72,6 +82,8 @@ export function auditCoverage(corpus, {
     critical_regions: corpus.samples.reduce((sum, sample) => sum + sample.regions.filter((region) => region.critical).length, 0),
     layout_families: sortedEntries(layoutCounts),
     capture_profiles: sortedEntries(captureCounts),
+    augmentation_difficulties: sortedEntries(difficultyCounts),
+    augmentation_components: augmentationComponentCounts,
     material_profiles: sortedEntries(materialCounts),
     printer_profiles: sortedEntries(printerCounts),
     background_profiles: sortedEntries(backgroundCounts),

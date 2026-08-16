@@ -493,6 +493,7 @@ def export_paddle(
     output_dir: str | Path,
     *,
     progress: Callable[[int, int], None] | None = None,
+    data_dir_override: str | Path | None = None,
 ) -> dict:
     _validate_split(dataset, split)
     output = Path(output_dir).resolve()
@@ -523,7 +524,7 @@ def export_paddle(
             "counts": split["counts"],
             "group_by": split["group_by"],
             "seed": split["seed"],
-            "data_dir": str(dataset.root),
+            "data_dir": str(Path(data_dir_override).resolve()) if data_dir_override is not None else str(dataset.root),
             "label_files": {name: f"{name}.txt" for name in _SPLIT_NAMES},
             "observed_characters_file": "observed-characters.txt",
             "observed_character_count": len(observed),

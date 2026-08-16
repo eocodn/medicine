@@ -3,6 +3,7 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import javax.inject.Inject
@@ -30,6 +31,25 @@ abstract class PrepareMobileAssets : DefaultTask() {
     }
 }
 
+abstract class PrepareOcrAssets : DefaultTask() {
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
+    @get:InputDirectory
+    abstract val sourceDirectory: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun prepare() {
+        fileSystemOperations.sync {
+            from(sourceDirectory)
+            into(outputDirectory)
+        }
+    }
+}
+
 plugins {
     id("com.android.application")
     id("com.chaquo.python")
@@ -41,6 +61,13 @@ val prepareMobileAssets = tasks.register<PrepareMobileAssets>("prepareMobileAsse
     mobileDatabase.set(layout.file(providers.provider { mobileDatabaseFile }))
     mobileManifest.set(layout.file(providers.provider { mobileManifestFile }))
     outputDirectory.set(layout.buildDirectory.dir("generated/mobileAssets"))
+}
+
+val ocrAssetsDirectory = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
+    .orElse("/opt/medicine-ocr-assets")
+val prepareOcrAssets = tasks.register<PrepareOcrAssets>("prepareOcrAssets") {
+    sourceDirectory.set(layout.dir(ocrAssetsDirectory.map { file(it) }))
+    outputDirectory.set(layout.buildDirectory.dir("generated/ocrAssets"))
 }
 
 android {
@@ -77,6 +104,7 @@ androidComponents {
         }
         assets.addStaticSourceDirectory(rootProject.file("../medicine_app/static").absolutePath)
         assets.addGeneratedSourceDirectory(prepareMobileAssets, PrepareMobileAssets::outputDirectory)
+        assets.addGeneratedSourceDirectory(prepareOcrAssets, PrepareOcrAssets::outputDirectory)
     }
 }
 

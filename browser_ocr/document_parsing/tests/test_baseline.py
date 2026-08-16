@@ -81,6 +81,65 @@ class GeometryRuleBaselineTest(unittest.TestCase):
             {"dose_amount": 2, "dose_unit": "tablet", "frequency_per_day": 2, "prescription_days": 7},
         )
 
+    def test_structural_table_row_tolerates_touching_product_and_dose_boxes(self) -> None:
+        rows = parse_boxes(
+            (
+                _xybox("h1", "약품명", 20, 20, 120),
+                _xybox("h2", "1회 투약량", 220, 20, 130),
+                _xybox("h3", "1일 핏수", 420, 20, 130),
+                _xybox("h4", "종 일수", 620, 20, 120),
+                _xybox("p1", "가나다정", 20, 70, 221),
+                _xybox("d1", "1정", 240, 70, 70),
+                _xybox("f1", "3회", 440, 70, 70),
+                _xybox("t1", "5일", 640, 70, 70),
+                _xybox("p2", "라마바정", 20, 120, 221),
+                _xybox("d2", "2정", 240, 120, 70),
+                _xybox("f2", "2회", 440, 120, 70),
+                _xybox("t2", "7일", 640, 120, 70),
+            )
+        )
+
+        self.assertEqual([row["product_query"] for row in rows], ["가나다정", "라마바정"])
+        self.assertEqual(rows[0]["evidence"]["product_query"], ["p1"])
+        self.assertEqual(rows[1]["draft"]["prescription_days"], 7)
+
+    def test_generic_total_days_header_enables_partial_table_row(self) -> None:
+        rows = parse_boxes(
+            (
+                _xybox("h1", "약품명", 20, 20, 120),
+                _xybox("h2", "1회 투약량", 220, 20, 130),
+                _xybox("h3", "1일 횟수", 420, 20, 130),
+                _xybox("h4", "총 일수", 620, 20, 120),
+                _xybox("p1", "가나다정", 20, 70, 160),
+                _xybox("d1", "1정", 240, 70, 70),
+                _xybox("t1", "5일", 640, 70, 70),
+                _xybox("i1", "식후 30분", 820, 70, 130),
+            )
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["product_query"], "가나다정")
+        self.assertEqual(
+            rows[0]["draft"],
+            {"dose_amount": 1, "dose_unit": "tablet", "prescription_days": 5},
+        )
+
+    def test_product_query_preserves_internal_spaces(self) -> None:
+        rows = parse_boxes(
+            (
+                _xybox("h1", "약품명", 20, 20, 120),
+                _xybox("h2", "1회 투약량", 220, 20, 130),
+                _xybox("h3", "1일 횟수", 420, 20, 130),
+                _xybox("h4", "총 투약일수", 620, 20, 120),
+                _xybox("p1", "타진서방정 10/5mg", 20, 70, 180),
+                _xybox("d1", "1정", 240, 70, 70),
+                _xybox("f1", "2회", 440, 70, 70),
+                _xybox("t1", "7일", 640, 70, 70),
+            )
+        )
+
+        self.assertEqual(rows[0]["product_query"], "타진서방정 10/5mg")
+
     def test_repeated_bag_blocks_use_geometry_when_label_and_product_are_separate_boxes(self) -> None:
         rows = parse_boxes(
             (
