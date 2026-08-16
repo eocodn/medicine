@@ -22,6 +22,7 @@ from medicine_canonical.substance_inspection import (
 from medicine_canonical.substance_sources import (
     FDA_GSRS_UNII_NAMES_FILENAME,
     OPENFDA_UNII_FILENAME,
+    iter_gsrs_unii_names,
     sync_fda_gsrs_unii_names,
     sync_openfda_unii,
 )
@@ -42,10 +43,15 @@ def _zip_unii(records: list[dict[str, str]], *, last_updated: str = "2026-08-12"
     return buffer.getvalue()
 
 
-def _zip_gsrs_names(rows: list[tuple[str, str, str, str]], *, date_token: str = "26Feb2026") -> bytes:
+def _zip_gsrs_names(
+    rows: list[tuple[str, str, str, str]],
+    *,
+    date_token: str = "26Feb2026",
+    header: str = "Name\tTYPE\tUNII\tDisplay Name",
+) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        lines = ["Name\tTYPE\tUNII\tDisplay Name"]
+        lines = [header]
         lines.extend("\t".join(row) for row in rows)
         archive.writestr(f"UNII_Names_{date_token}.txt", "\n".join(lines) + "\n")
         archive.writestr("READ ME UNII Lists.txt", "UNII Names fixture\n")
@@ -408,6 +414,22 @@ class CanonicalSubstanceTest(unittest.TestCase):
         self.assertEqual(result["effective_date"], "2026-02-26")
         self.assertEqual(result["source_family"], "fda_gsrs_unii_names")
         self.assertTrue((self.raw_dir / FDA_GSRS_UNII_NAMES_FILENAME).exists())
+
+    def test_current_fda_gsrs_names_header_is_accepted_without_relaxing_columns(self) -> None:
+        archive = _zip_gsrs_names(
+            [("RIFAMPICIN", "of", "UNIIRIFAMP", "RIFAMPIN")],
+            header="NAME\tTYPE\tUNII\tDISPLAY_NAME",
+        )
+        rows = list(iter_gsrs_unii_names(archive))
+        self.assertEqual(
+            rows,
+            [{
+                "name": "RIFAMPICIN",
+                "name_type": "of",
+                "unii": "UNIIRIFAMP",
+                "display_name": "RIFAMPIN",
+            }],
+        )
 
     def test_gsrs_exact_names_can_release_only_fully_known_permit_composition(self) -> None:
         self._write_unii_snapshot()

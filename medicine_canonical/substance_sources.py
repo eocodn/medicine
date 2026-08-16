@@ -105,17 +105,21 @@ def iter_gsrs_unii_names(data: bytes) -> Iterator[dict[str, str]]:
                 raw, encoding="utf-8-sig", newline=""
             ) as text:
                 reader = csv.DictReader(text, delimiter="\t")
-                expected = {"Name", "TYPE", "UNII", "Display Name"}
-                if set(reader.fieldnames or []) != expected:
+                fieldnames = reader.fieldnames or []
+                legacy = {"Name", "TYPE", "UNII", "Display Name"}
+                current = {"NAME", "TYPE", "UNII", "DISPLAY_NAME"}
+                if len(fieldnames) != 4 or frozenset(fieldnames) not in {frozenset(legacy), frozenset(current)}:
                     raise RuntimeError(
                         "FDA GSRS UNII Names columns mismatch: "
-                        f"expected {sorted(expected)}, got {reader.fieldnames}"
+                        f"expected one of {sorted(legacy)} or {sorted(current)}, got {reader.fieldnames}"
                     )
+                name_column = "NAME" if "NAME" in fieldnames else "Name"
+                display_name_column = "DISPLAY_NAME" if "DISPLAY_NAME" in fieldnames else "Display Name"
                 for index, row in enumerate(reader, start=1):
-                    name = str(row.get("Name") or "").strip()
+                    name = str(row.get(name_column) or "").strip()
                     name_type = str(row.get("TYPE") or "").strip()
                     unii = str(row.get("UNII") or "").strip()
-                    display_name = str(row.get("Display Name") or "").strip()
+                    display_name = str(row.get(display_name_column) or "").strip()
                     if not name or not name_type or not unii or not display_name:
                         raise RuntimeError(
                             f"FDA GSRS UNII Names row {index} has an empty required field"

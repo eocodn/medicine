@@ -50,6 +50,12 @@ jobs:
           set -euo pipefail
           medicine-canonical kids-sync --output-dir data/kids --json
 
+      - name: Sync official substance identity snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          medicine-canonical substance-sync --json
+
       - name: Rebuild authoritative reference databases
         shell: bash
         run: |
