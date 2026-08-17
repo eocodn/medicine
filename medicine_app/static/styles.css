@@ -190,7 +190,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .dose-actions, .dose-result { grid-column: 2; width: 100%; }
 .dose-actions.planned { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
 .dose-primary-action, .dose-skip-action, .dose-cancel-action { min-height: 44px; border: 0; font-weight: 800; }
-.dose-primary-action { padding: 0 16px; border-radius: 12px; background: var(--brand); color: white; }
+.dose-primary-action { padding: 0 16px; border-radius: 12px; background: var(--brand-soft); color: var(--brand); }
 .dose-skip-action, .dose-cancel-action { padding: 0 10px; background: transparent; color: var(--muted); }
 .dose-result { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
