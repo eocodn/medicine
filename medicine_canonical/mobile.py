@@ -9,6 +9,7 @@ from pathlib import Path
 from .inspection import verify_canonical_database
 
 
+MOBILE_DATA_POLICY_VERSION = "2"
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
@@ -30,6 +31,11 @@ RUNTIME_INDEXES = (
 
 def _dataset_id(con: sqlite3.Connection) -> str:
     digest = hashlib.sha256()
+    # The same official source snapshot can produce different runtime rows when
+    # import/filter semantics change. Keep that transformation generation in the
+    # release identity so a semantic data change cannot be mistaken for an
+    # idempotent rebuild of the previous mobile dataset.
+    digest.update(f"mobile-data-policy\0{MOBILE_DATA_POLICY_VERSION}\n".encode("utf-8"))
     rows = con.execute(
         "SELECT dataset_key,sha256,row_count FROM source_snapshots ORDER BY dataset_key"
     ).fetchall()

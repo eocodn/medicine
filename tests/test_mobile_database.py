@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from medicine_app.core import MedicationApp
 from medicine_canonical.mobile import RUNTIME_INDEXES, build_mobile_database
@@ -71,6 +72,19 @@ class MobileDatabaseTest(unittest.TestCase):
             build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
         self.assertFalse(self.mobile_db.exists())
         self.assertFalse(self.manifest.exists())
+
+    def test_dataset_id_changes_when_mobile_data_policy_changes(self) -> None:
+        first = build_mobile_database(
+            self.canonical_db, self.mobile_db, manifest_path=self.manifest
+        )
+        second_db = self.mobile_db.with_name("mobile-next-policy.sqlite")
+        second_manifest = self.manifest.with_name("mobile-next-policy.manifest.json")
+        with mock.patch("medicine_canonical.mobile.MOBILE_DATA_POLICY_VERSION", "next-policy"):
+            second = build_mobile_database(
+                self.canonical_db, second_db, manifest_path=second_manifest
+            )
+
+        self.assertNotEqual(first["dataset_id"], second["dataset_id"])
 
     def test_canonical_cli_builds_mobile_snapshot(self) -> None:
         other = self.mobile_db.with_name("mobile-cli.sqlite")
