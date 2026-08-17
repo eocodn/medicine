@@ -66,6 +66,9 @@ function renderPeople() {
 }
 
 async function selectPerson(personId) {
+  if (personId !== state.currentPersonId && typeof resetOcrTransientState === "function") {
+    resetOcrTransientState({ clearSearch: true });
+  }
   state.currentPersonId = personId;
   localStorage.setItem("medicine.currentPersonId", personId);
   await loadDashboard();
@@ -135,6 +138,7 @@ async function deletePerson(personId) {
   try {
     await api(`/api/people/${personId}`, { method: "DELETE" });
     if (state.currentPersonId === personId) {
+      if (typeof resetOcrTransientState === "function") resetOcrTransientState({ clearSearch: true });
       state.currentPersonId = null;
       localStorage.removeItem("medicine.currentPersonId");
     }
@@ -151,4 +155,10 @@ function bindPeopleEvents() {
   $("#open-person-form").addEventListener("click", () => openPersonForm());
   form.addEventListener("submit", submitPerson);
   form.elements.sex.addEventListener("change", syncReproductiveFields);
+  document.addEventListener("medicine:sheet-closed", (event) => {
+    if (event.detail?.id !== "person-sheet") return;
+    state.editingPersonId = null;
+    form.reset();
+    syncReproductiveFields();
+  });
 }

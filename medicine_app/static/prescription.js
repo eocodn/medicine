@@ -200,6 +200,7 @@ async function previewProduct(productRef, ocrDraft = null) {
     state.pendingProduct = preview.product;
     state.pendingRequestId = crypto.randomUUID();
     state.pendingOcrDraft = ocrDraft && typeof ocrDraft === "object" ? { ...ocrDraft } : null;
+    state.pendingOcrPersonId = state.pendingOcrDraft ? state.currentPersonId : null;
     state.warningToken = null;
     state.reviewedDraftKey = null;
     state.editingMedicationId = null;
@@ -271,6 +272,7 @@ function renderRiskSheet(preview, medication = null) {
     if (!medication && state.pendingOcrDraft) {
       applyOcrDraftToForm(state.pendingOcrDraft);
       state.pendingOcrDraft = null;
+      state.pendingOcrPersonId = null;
     }
   });
 }
@@ -485,6 +487,7 @@ async function confirmAddMedication() {
     state.pendingProduct = null;
     state.pendingRequestId = null;
     state.pendingOcrDraft = null;
+    state.pendingOcrPersonId = null;
     state.warningToken = null;
     state.reviewedDraftKey = null;
     closeSheets();
