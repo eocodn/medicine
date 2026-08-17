@@ -188,7 +188,7 @@ function applyOcrDraftToForm(draft) {
 
 async function previewProduct(productRef, ocrDraft = null) {
   if (!state.currentPersonId) {
-    toast("먼저 관리 대상을 추가해주세요");
+    toast("먼저 프로필을 추가해주세요");
     openSheet("#person-sheet");
     return;
   }

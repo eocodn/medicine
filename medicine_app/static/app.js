@@ -171,7 +171,7 @@ function renderHome() {
         <p class="eyebrow">START HERE</p>
         <h2>누구의 약을<br>관리할까요?</h2>
         <p class="muted">프로필을 먼저 만들면 나이와 건강 관련 정보, 현재 복용약을 함께 확인할 수 있어요.</p>
-        <button class="primary-button wide" id="home-add-person" type="button">관리 대상 추가</button>
+        <button class="primary-button wide" id="home-add-person" type="button">프로필 추가</button>
       </div>`;
     $("#home-add-person").addEventListener("click", () => openSheet("#person-sheet"));
     return;

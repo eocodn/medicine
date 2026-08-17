@@ -34,7 +34,7 @@ function renderProfileShortcut() {
   const person = currentPerson();
   $("#profile-shortcut-avatar").textContent = person ? person.name.slice(0, 1) : "+";
   $("#profile-shortcut-name").textContent = person ? person.name : "선택";
-  $("#profile-shortcut").setAttribute("aria-label", person ? `관리 대상 변경: ${person.name}` : "관리 대상 선택");
+  $("#profile-shortcut").setAttribute("aria-label", person ? `프로필 변경: ${person.name}` : "프로필 선택");
 }
 
 function renderPeople() {
@@ -88,7 +88,7 @@ function openPersonForm(personId = null) {
   const person = state.people.find((item) => item.id === personId) || null;
   state.editingPersonId = person?.id || null;
   form.reset();
-  $("#person-form-title").textContent = person ? "관리 대상 정보 수정" : "관리 대상 추가";
+  $("#person-form-title").textContent = person ? "프로필 정보 수정" : "프로필 추가";
   $("#person-submit").textContent = person ? "변경 내용 저장" : "프로필 저장";
   if (person) {
     form.elements.name.value = person.name;
