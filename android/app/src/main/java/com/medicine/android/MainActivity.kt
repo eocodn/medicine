@@ -61,6 +61,9 @@ class MainActivity : ComponentActivity() {
         startupExecutor.execute {
             runCatching {
                 val reference = ReferenceAssetInstaller(this).install()
+                reference.recoveryReason?.let { reason ->
+                    Log.w(TAG, "Reference store recovery: $reason")
+                }
                 val personalDatabase = File(filesDir, "personal.sqlite")
                 val encryptedPersonalDatabase = File(filesDir, "personal.sqlite.enc")
                 val vault = PersonalDatabaseVault(
@@ -68,11 +71,15 @@ class MainActivity : ComponentActivity() {
                     encryptedPersonalDatabase,
                     ::personalDatabaseKey,
                 )
-                MedicineBridge(reference.database, personalDatabase, vault)
-            }.onSuccess { bridge ->
+                StartupSession(
+                    bridge = MedicineBridge(reference.database, personalDatabase, vault),
+                    reference = reference,
+                )
+            }.onSuccess { session ->
                 runOnUiThread {
-                    if (!isFinishing && !isDestroyed) setupWebView(bridge)
+                    if (!isFinishing && !isDestroyed) setupWebView(session.bridge)
                 }
+                scheduleReferenceUpdate(session.reference)
             }.onFailure { error ->
                 Log.e(TAG, "Application startup failed", error)
                 runOnUiThread {
@@ -80,6 +87,39 @@ class MainActivity : ComponentActivity() {
                         showStartupView("앱 데이터를 준비하지 못했습니다.\n앱을 다시 실행해주세요.")
                     }
                 }
+            }
+        }
+    }
+
+    private fun scheduleReferenceUpdate(reference: InstalledReference) {
+        val baseUrl = BuildConfig.REFERENCE_UPDATE_BASE_URL.trim()
+        if (baseUrl.isEmpty()) {
+            Log.i(TAG, "Reference updater is disabled: no distribution base URL configured")
+            return
+        }
+        startupExecutor.execute {
+            val result = runCatching {
+                val source = HttpsReferenceReleaseSource(
+                    baseUrl,
+                    ReferenceManifestVerifier(ReferenceTrust.trustedPublicKeys),
+                )
+                ReferenceUpdater(
+                    reference.referenceDir,
+                    reference.store,
+                    source,
+                    PythonReferenceArtifactRebuilder(),
+                    ReferenceUpdateLogObserver(),
+                ).checkForUpdate(InstalledReferenceVersion(reference.version, reference.database))
+            }.getOrElse { error ->
+                ReferenceUpdateResult(
+                    status = ReferenceUpdateStatus.FAILED,
+                    detail = error.message ?: error.javaClass.simpleName,
+                )
+            }
+            if (result.status == ReferenceUpdateStatus.FAILED) {
+                Log.e(TAG, "Reference update failed: ${result.detail}")
+            } else {
+                Log.i(TAG, "Reference update result=${result.status} sequence=${result.releaseSequence}")
             }
         }
     }
@@ -235,6 +275,11 @@ class MainActivity : ComponentActivity() {
         webView = null
         super.onDestroy()
     }
+
+    private data class StartupSession(
+        val bridge: MedicineBridge,
+        val reference: InstalledReference,
+    )
 
     companion object {
         private const val TAG = "MainActivity"
