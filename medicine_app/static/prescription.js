@@ -225,6 +225,17 @@ function riskStatusHeading(preview) {
   return "DUR 판정 결과를 확인할 수 없어요";
 }
 
+function permitStatusNoticeHtml(product, existingMedication = false) {
+  if (!product.permit_status || product.permit_status === "active") return "";
+  const label = permitStatusLabel(product.permit_status, product.permit_status_name);
+  const changedAt = product.permit_status_changed_at || product.cancel_date;
+  const dateText = changedAt ? ` · ${escapeHtml(changedAt)}` : "";
+  if (existingMedication) {
+    return `<div class="coverage-note limited"><strong>허가상태 변경 · ${escapeHtml(label)}${dateText}</strong><br>현재 식약처 품목 허가상태가 변경됐어요. 이 상태만으로 복용을 중단하지 말고 의사·약사와 확인하세요.</div>`;
+  }
+  return `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(label)}${dateText}. 현재 허가가 유효하지 않아 복용약으로 추가할 수 없습니다.</div>`;
+}
+
 function renderRiskSheet(preview, medication = null) {
   const root = $("#risk-sheet-content");
   const permitBlocked = !medication && preview.product.permit_status && preview.product.permit_status !== "active";
@@ -239,7 +250,7 @@ function renderRiskSheet(preview, medication = null) {
       <h2>${riskStatusHeading(preview)}</h2>
       <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필, 현재 복용약 ${preview.current_medication_count}개와 중단 이력을 기준으로 확인했습니다.</p>
     </div>
-    ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 현재 허가가 유효하지 않아 복용약으로 추가할 수 없습니다.</div>` : ""}
+    ${permitStatusNoticeHtml(preview.product, Boolean(medication))}
     ${reviewItemsHtml(preview.review_items || [])}
     <div>${durReviewOverviewHtml(preview.dur_checks || [])}</div>
     <div class="safety-notice">
@@ -275,6 +286,7 @@ function renderPrescriptionForm(preview, medication = null) {
       <strong>${escapeHtml(preview.person.name)}님의 복용 방법을 확인해주세요.</strong>
       <p>처방전 또는 약 봉투에 적힌 내용을 기준으로 입력하면 오늘 일정과 DUR 정량 확인에 사용합니다.</p>
     </div>
+    ${permitStatusNoticeHtml(preview.product, Boolean(medication))}
     <div class="prescription-form">
       <section class="prescription-section">
         <div class="prescription-section-heading"><span>1</span><div><strong>복용 방법</strong><small>한 번에 사용하는 양과 투여 경로</small></div></div>
@@ -378,6 +390,9 @@ function medicationSafetyPreview(medication) {
     product: {
       product_name: medication.product_name,
       suggested_administration_route: medication.administration_route || "unknown",
+      permit_status: medication.permit_status,
+      permit_status_name: medication.permit_status_name,
+      permit_status_changed_at: medication.permit_status_changed_at,
     },
     person: currentPerson(),
     current_medication_count: Math.max((state.dashboard?.medications || []).length - 1, 0),

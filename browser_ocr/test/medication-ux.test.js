@@ -150,13 +150,25 @@ test("native schedule controls canonicalize backend-accepted single-digit times"
   assert.equal(context.normalizeScheduleTimeForInput("24:00"), "24:00");
 });
 
-test("search de-emphasizes inactive products and compacts context while querying", () => {
+test("search exposes only normal permit products in the shared UI", () => {
   const index = source("index.html");
   const app = source("app.js");
 
-  assert.match(index, /class="search-options"/);
-  assert.match(index, /<summary>검색 옵션<\/summary>/);
+  assert.doesNotMatch(index, /include-inactive/);
+  assert.doesNotMatch(index, /취소·취하·만료 품목도 검색/);
+  assert.doesNotMatch(app, /include_inactive/);
   assert.match(app, /search-hero[\s\S]{0,300}has-query/);
+});
+
+test("existing medication permit changes render as a non-DUR warning", () => {
+  const app = source("app.js");
+  const prescription = source("prescription.js");
+
+  assert.match(app, /permit-change-badge/);
+  assert.match(app, /허가상태 변경/);
+  assert.match(app, /permit_status_changed_at/);
+  assert.match(prescription, /이 상태만으로 복용을 중단하지 말고/);
+  assert.match(prescription, /의사·약사와 확인/);
 });
 
 test("medication names can wrap to two lines in schedules and search results", () => {
