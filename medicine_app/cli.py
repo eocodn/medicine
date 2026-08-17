@@ -264,7 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot.add_argument("--output", type=Path, default=Path("data/debug/mobile.png"))
     screenshot.add_argument("--width", type=int, default=390)
     screenshot.add_argument("--height", type=int, default=844)
-    screenshot.add_argument("--screen", choices=["home", "meds", "search", "people", "settings"], default="home")
+    screenshot.add_argument("--screen", choices=["home", "meds", "search", "people"], default="home")
     screenshot.add_argument("--json", action="store_true")
 
 

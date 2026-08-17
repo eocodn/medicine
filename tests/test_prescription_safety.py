@@ -397,7 +397,7 @@ class PrescriptionSafetyTest(unittest.TestCase):
         first = self.app.add_medication(self.person["id"], **kwargs)
         retry = self.app.add_medication(self.person["id"], **kwargs)
         self.assertEqual(retry["id"], first["id"])
-        self.assertEqual(len(self.app.list_medications(self.person["id"])), 1)
+        self.assertEqual(len(self.app.list_medications(self.person["id"], active_only=False)), 1)
 
         with self.assertRaisesRegex(ValueError, "request_id|payload"):
             self.app.add_medication(

@@ -135,6 +135,12 @@ class PrescriptionCliTest(unittest.TestCase):
         args = build_parser().parse_args(["screenshot", "--screen", "meds"])
         self.assertEqual(args.screen, "meds")
 
+    def test_screenshot_does_not_offer_removed_settings_screen(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["screenshot"])
+        screen_action = next(action for action in parser._subparsers._group_actions[0].choices["screenshot"]._actions if action.dest == "screen")
+        self.assertNotIn("settings", screen_action.choices)
+
     def test_screenshot_command_does_not_initialize_the_source_personal_database(self) -> None:
         payload = {"path": "/tmp/screenshot.png", "width": 390, "height": 844, "screen": "home", "size_bytes": 1}
         stdout = io.StringIO()

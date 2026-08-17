@@ -18,7 +18,6 @@ const titles = {
   meds: "복용 관리",
   search: "약 검색",
   people: "함께 관리",
-  settings: "설정",
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -75,7 +74,12 @@ function toast(message) {
 
 function showScreen(name) {
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
-  $$(".nav-item").forEach((node) => node.classList.toggle("active", node.dataset.nav === name));
+  $$(".nav-item").forEach((node) => {
+    const active = node.dataset.nav === name;
+    node.classList.toggle("active", active);
+    if (active) node.setAttribute("aria-current", "page");
+    else node.removeAttribute("aria-current");
+  });
   $("#page-title").textContent = titles[name] || "약봄";
   if (name === "search") setTimeout(() => $("#drug-query").focus(), 80);
 }
@@ -203,7 +207,7 @@ function scheduleHtml(item) {
       <span class="schedule-time">${escapeHtml(item.scheduled_time || item.slot_label || "시간 미정")}</span>
       <div class="schedule-name"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(doseMeta)}</span></div>
       ${item.status === "taken"
-        ? `<button class="mini-action" data-instance-cancel="${item.id}" type="button">취소</button>`
+        ? `<div class="dose-actions"><span class="dose-status taken">사용 완료</span><button class="mini-action" data-instance-cancel="${item.id}" type="button">되돌리기</button></div>`
         : item.status === "skipped"
           ? `<div class="dose-actions"><span class="dose-status skipped">건너뜀</span><button class="mini-action" data-instance-cancel="${item.id}" type="button">되돌리기</button></div>`
           : `<div class="dose-actions">
@@ -239,9 +243,11 @@ function renderMedications() {
         ${med.source === "manual" ? `<span class="chip caution-chip">직접 입력 · DUR 제한</span>` : ""}
       </div>
       <div class="med-actions">
-        ${med.as_needed ? `<button class="primary-button" data-prn-taken="${med.id}" type="button">지금 복용 기록</button>` : ""}
-        <button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>
-        <button class="danger-ghost" data-stop="${med.id}" type="button">삭제</button>
+        ${med.as_needed ? `<button class="primary-button wide" data-prn-taken="${med.id}" type="button">지금 복용 기록</button>` : ""}
+        <div class="med-secondary-actions">
+          <button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>
+          <button class="stop-button" data-stop="${med.id}" type="button">복용 종료</button>
+        </div>
       </div>
     </article>`).join("") : `<div class="empty-state"><strong>복용 중인 약이 없어요</strong>약 검색 탭에서 추가해보세요.</div>`;
 
@@ -249,11 +255,10 @@ function renderMedications() {
     <div class="history-row">
       <span class="history-icon">${log.status === "taken" ? "✓" : "–"}</span>
       <div><strong>${escapeHtml(log.product_name)}</strong><div class="history-time">${escapeHtml(log.status === "taken" ? "사용 완료" : "건너뜀")}</div></div>
-      <span class="history-time">${escapeHtml(formatTime(log.occurred_at))}</span>
-      ${log.dose_instance_id ? `<button class="mini-action" data-log-cancel="${escapeHtml(log.dose_instance_id)}" type="button">되돌리기</button>` : ""}
+      <div class="history-controls"><span class="history-time">${escapeHtml(formatTime(log.occurred_at))}</span>${log.dose_instance_id ? `<button class="mini-action" data-log-cancel="${escapeHtml(log.dose_instance_id)}" type="button">되돌리기</button>` : ""}</div>
     </div>`).join("") : `<div class="empty-state"><strong>기록이 아직 없어요</strong>약을 복용한 뒤 완료 버튼을 눌러보세요.</div>`;
 
-  $$('[data-dur-alert]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.durAlert)));
+  $$('[data-dur-alert]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationSafety(button.dataset.durAlert)));
   $$('[data-prn-taken]', medsRoot).forEach((button) => button.addEventListener("click", () => recordPrnIntake(button.dataset.prnTaken)));
   $$('[data-edit]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.edit)));
   $$('[data-stop]', medsRoot).forEach((button) => button.addEventListener("click", () => stopMedication(button.dataset.stop)));
@@ -280,13 +285,14 @@ async function cancelDoseInstance(instanceId) {
 }
 
 async function stopMedication(medicationId) {
-  if (!confirm("복용약 목록에서 삭제할까요? 기존 복용 기록은 남습니다.")) return;
+  if (!confirm("이 약의 복용을 종료할까요? 기존 복용 기록은 그대로 남습니다.")) return;
   try {
     const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
     const query = medication ? `?expected_revision=${medication.revision}` : "";
     await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
     await loadDashboard();
     renderAll();
+    toast("복용을 종료했어요");
   } catch (error) { toast(error.message); }
 }
 
@@ -296,17 +302,17 @@ function formatTime(value) {
   } catch (_) { return value; }
 }
 
-async function runDrugSearch() {
+async function runDrugSearch(successMessage = "") {
   const term = $("#drug-query").value.trim();
   const status = $("#search-status");
   const root = $("#drug-results");
-  if (!term) { status.textContent = ""; root.innerHTML = ""; return; }
+  if (!term) { status.textContent = ""; root.innerHTML = ""; return false; }
   status.textContent = "";
   try {
     const includeInactive = $("#include-inactive").checked;
     const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30&include_inactive=${includeInactive}`);
     state.fullCatalog = true;
-    status.textContent = "";
+    status.textContent = successMessage;
     root.innerHTML = results.length ? results.map((item) => `
       <article class="card result-card" data-product-select="${escapeHtml(item.product_ref)}" role="button" tabindex="0">
         <div class="result-row">
@@ -326,228 +332,16 @@ async function runDrugSearch() {
         selectProductResult(card);
       });
     });
+    return true;
   } catch (error) {
     status.textContent = friendlyErrorMessage(error.message);
     root.innerHTML = "";
+    return false;
   }
 }
 
 function selectProductResult(card) {
   previewProduct(card.dataset.productSelect, state.pendingOcrDraft);
-}
-
-async function previewProduct(productRef, ocrDraft = null) {
-  if (!state.currentPersonId) {
-    toast("먼저 관리 대상을 추가해주세요");
-    openSheet("#person-sheet");
-    return;
-  }
-  try {
-    const preview = await api(`/api/people/${state.currentPersonId}/medications/preview`, {
-      method: "POST", body: JSON.stringify({ product_ref: productRef }),
-    });
-    state.pendingProduct = preview.product;
-    state.pendingRequestId = crypto.randomUUID();
-    state.warningToken = null;
-    state.reviewedDraftKey = null;
-    state.editingMedicationId = null;
-    renderRiskSheet(preview);
-    if (ocrDraft) applyOcrDraftToForm(ocrDraft);
-    state.pendingOcrDraft = null;
-    openSheet("#risk-sheet");
-  } catch (error) { toast(error.message); }
-}
-
-function renderRiskSheet(preview, medication = null) {
-  const root = $("#risk-sheet-content");
-  const durChecks = preview.dur_checks || [];
-  const hitCount = durChecks.filter((item) => item.status === "hit").length;
-  const conditionalCount = durChecks.filter((item) => item.status === "conditional").length;
-  const unknownCount = durChecks.filter((item) => item.status === "unknown").length;
-  const clearDurCoverage = hasClearDurCoverage(preview);
-  const permitBlocked = !medication && preview.product.permit_status && preview.product.permit_status !== "active";
-  const statusHeading = medication
-    ? "처방 정보를 수정합니다"
-    : hitCount
-      ? `DUR 주의사항 ${hitCount}건이 있어요`
-      : conditionalCount
-        ? `조건 확인이 필요한 DUR 항목 ${conditionalCount}건이 있어요`
-        : unknownCount
-          ? `확인이 필요한 DUR 항목 ${unknownCount}건이 있어요`
-          : clearDurCoverage
-            ? "DUR 주의사항 없음"
-            : "DUR 판정 결과를 확인할 수 없어요";
-  root.innerHTML = `
-    <div class="sheet-header">
-      <div><p class="eyebrow">DUR CHECK</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>
-      <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
-    </div>
-    <div class="risk-summary">
-      <h2>${statusHeading}</h2>
-      <p class="muted small">${escapeHtml(preview.person.name)}님의 프로필, 현재 복용약 ${preview.current_medication_count}개와 중단 이력을 기준으로 확인했습니다.</p>
-    </div>
-    ${preview.product.permit_status && preview.product.permit_status !== "active" ? `<div class="coverage-note limited">현재 식약처 허가 상태: ${escapeHtml(permitStatusLabel(preview.product.permit_status, preview.product.permit_status_name))}${preview.product.cancel_date ? ` · ${escapeHtml(preview.product.cancel_date)}` : ""}. 현재 허가가 유효하지 않아 복용약으로 추가할 수 없습니다.</div>` : ""}
-    <div>${durStatusHtml(durChecks)}</div>
-    <div class="coverage-note"><strong>DUR 자동 확인에 포함되지 않는 정보</strong><br>알레르기, 신장·간 기능, 체중·적응증, 등록하지 않은 일반약·건강기능식품은 현재 판정에 반영하지 않습니다.</div>
-    ${!medication && (preview.product.suggested_administration_route || "unknown") === "unknown" ? `<div class="coverage-note limited"><strong>투여 경로를 확인해주세요</strong><br>제품 제형만으로 사용 방법을 확정하지 못했습니다. 처방전의 투여 경로를 확인해 선택해주세요.</div>` : ""}
-    <div class="prescription-form">
-      <div class="form-grid two">
-        <label>1회 복용량<input id="pending-dose-amount" type="number" min="0" step="0.1" placeholder="1"></label>
-        <label>단위<input id="pending-dose-unit" placeholder="정, mL, 포"></label>
-      </div>
-      <div class="form-grid two">
-        <label>1일 횟수<input id="pending-frequency" type="number" min="1" max="24" placeholder="3"></label>
-        <label>처방 일수<input id="pending-days" type="number" min="1" max="3650" placeholder="7"></label>
-      </div>
-      <label class="checkbox-row"><input id="pending-long-term" type="checkbox"><span><strong>장기복용 · 종료일 없음</strong><small>처방 종료일이 없는 경우에만 선택하세요.</small></span></label>
-      <label>복용 시간<input id="pending-times" placeholder="예: 08:00, 13:00, 19:00"></label>
-      <div class="form-grid two">
-        <label>식사 관계
-          <select id="pending-meal">
-            <option value="unspecified">미지정</option>
-            <option value="after_meal">식후</option>
-            <option value="before_meal">식전</option>
-            <option value="with_meal">식사와 함께</option>
-            <option value="empty_stomach">공복</option>
-            <option value="regardless">식사 무관</option>
-          </select>
-        </label>
-        <label>투여 경로
-          <select id="pending-route">
-            <option value="unknown">확인 필요</option>
-            <option value="oral">경구</option>
-            <option value="topical">외용</option>
-            <option value="inhaled">흡입</option>
-            <option value="ophthalmic">점안</option>
-            <option value="otic">점이</option>
-            <option value="nasal">비강</option>
-            <option value="injection">주사</option>
-            <option value="other">기타</option>
-          </select>
-        </label>
-      </div>
-      <label>복용 시작일<input id="pending-start-date" type="date"></label>
-      <label class="checkbox-row"><input id="pending-prn" type="checkbox"><span><strong>필요할 때만 복용</strong><small>고정 복용시간과 함께 사용할 수 없어요.</small></span></label>
-      <label>필요시 1일 최대 횟수<input id="pending-prn-max" type="number" min="1" max="24" placeholder="선택"></label>
-    </div>
-    <div id="quantitative-warning"></div>
-    <div class="risk-actions">
-      <button class="secondary-button" data-close-sheet type="button">취소</button>
-      <button class="primary-button" id="${medication ? "confirm-edit-med" : "confirm-add-med"}" type="button" ${permitBlocked ? "disabled" : ""}>${medication ? "수정 내용 저장" : permitBlocked ? "추가할 수 없는 품목" : "복용약에 추가"}</button>
-    </div>
-    <p class="risk-disclaimer">DUR 금기·주의는 의료진 확인을 위한 안전 신호입니다. 결과를 근거로 처방약을 임의 중단하거나 변경하지 마세요.</p>`;
-  $$('[data-close-sheet]', root).forEach((button) => button.addEventListener("click", closeSheets));
-  if (medication) {
-    $("#pending-dose-amount", root).value = medication.dose_amount ?? "";
-    $("#pending-dose-unit", root).value = medication.dose_unit ?? "";
-    $("#pending-frequency", root).value = medication.frequency_per_day ?? "";
-    $("#pending-days", root).value = medication.prescription_days ?? "";
-    $("#pending-long-term", root).checked = Boolean(medication.long_term);
-    $("#pending-times", root).value = (medication.schedules || []).map((item) => item.time_of_day).join(", ");
-    $("#pending-meal", root).value = medication.meal_relation || "unspecified";
-    $("#pending-route", root).value = medication.administration_route || "unknown";
-    $("#pending-start-date", root).value = medication.start_date || "";
-    $("#pending-prn", root).checked = Boolean(medication.as_needed);
-    $("#pending-prn-max", root).value = medication.prn_max_per_day ?? "";
-    $("#confirm-edit-med", root).addEventListener("click", confirmEditMedication);
-  } else {
-    $("#pending-route", root).value = preview.product.suggested_administration_route || "unknown";
-    $("#pending-start-date", root).value = todayInKorea();
-    $("#confirm-add-med", root).addEventListener("click", confirmAddMedication);
-  }
-  $("#pending-prn", root).addEventListener("change", () => syncPrnFields(root));
-  $("#pending-long-term", root).addEventListener("change", () => syncLongTermFields(root));
-  syncPrnFields(root);
-  syncLongTermFields(root);
-}
-
-function openMedicationEdit(medicationId) {
-  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
-  if (!medication) return;
-  state.editingMedicationId = medicationId;
-  state.warningToken = null;
-  state.reviewedDraftKey = null;
-  state.pendingProduct = {
-    product_ref: medication.catalog_item_seq || medication.product_code,
-    product_name: medication.product_name,
-  };
-  const currentAssessment = medication.current_assessment || {};
-  renderRiskSheet({
-    product: { product_name: medication.product_name }, person: currentPerson(),
-    current_medication_count: Math.max((state.dashboard?.medications || []).length - 1, 0),
-    risks: currentAssessment.risks || [],
-    review_items: currentAssessment.review_items || [],
-    dur_checks: currentAssessment.dur_checks || [],
-    coverage: currentAssessment.coverage || null,
-    quantitative_checks: {
-      duration: currentAssessment.duration,
-      dose: currentAssessment.dose,
-    },
-  }, medication);
-  openSheet("#risk-sheet");
-}
-
-async function confirmEditMedication() {
-  const medication = (state.dashboard?.medications || []).find((item) => item.id === state.editingMedicationId);
-  if (!medication) return;
-  const draft = prescriptionPayloadFromForm();
-  try {
-    await api(`/api/medications/${medication.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        expected_revision: medication.revision,
-        ...draft,
-        acknowledge_warnings: Boolean(state.warningToken),
-        warning_token: state.warningToken,
-      }),
-    });
-    state.editingMedicationId = null;
-    state.warningToken = null;
-    state.reviewedDraftKey = null;
-    closeSheets();
-    await loadDashboard();
-    renderAll();
-  } catch (error) {
-    if (handleConfirmationRequired(error, "confirm-edit-med")) return;
-    toast(error.message);
-  }
-}
-
-async function confirmAddMedication() {
-  if (!state.pendingProduct || !state.currentPersonId) return;
-  const draft = prescriptionPayloadFromForm();
-  const draftKey = JSON.stringify(draft);
-  if (state.reviewedDraftKey !== draftKey) {
-    let reviewRequired;
-    try { reviewRequired = await reviewPrescriptionDraft(state.pendingProduct.product_ref, draft, "confirm-add-med"); }
-    catch (error) { toast(error.message); return; }
-    if (reviewRequired) return;
-  }
-  const payload = {
-    product_ref: state.pendingProduct.product_ref,
-    ...draft,
-    request_id: state.pendingRequestId,
-    acknowledge_warnings: Boolean(state.warningToken),
-    warning_token: state.warningToken,
-  };
-  try {
-    await api(`/api/people/${state.currentPersonId}/medications`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    state.pendingProduct = null;
-    state.pendingRequestId = null;
-    state.pendingOcrDraft = null;
-    state.warningToken = null;
-    state.reviewedDraftKey = null;
-    closeSheets();
-    await loadDashboard();
-    renderAll();
-    showScreen("meds");
-  } catch (error) {
-    if (handleConfirmationRequired(error, "confirm-add-med")) return;
-    toast(error.message);
-  }
 }
 
 async function refreshForDateChange() {
@@ -570,12 +364,15 @@ function bindEvents() {
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runDrugSearch, 280);
   });
-  window.addEventListener("medicine:ocr-select", (event) => {
+  window.addEventListener("medicine:ocr-select", async (event) => {
     const row = event.detail;
     if (!row || typeof row.product_query !== "string" || !row.product_query.trim()) return;
     state.pendingOcrDraft = row.draft && typeof row.draft === "object" ? { ...row.draft } : {};
-    $("#drug-query").value = row.product_query.trim();
-    void runDrugSearch();
+    const query = row.product_query.trim();
+    $("#drug-query").value = query;
+    $("#ocr-review-panel").classList.add("hidden");
+    const found = await runDrugSearch(`“${query}” 제품 후보를 확인하고 맞는 품목을 선택해주세요.`);
+    if (found) $("#drug-results").scrollIntoView({ behavior: "smooth", block: "start" });
   });
   $("#include-inactive").addEventListener("change", runDrugSearch);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });

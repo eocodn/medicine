@@ -38,15 +38,20 @@ test("product shell exposes local-only image review without an OCR backend route
   assert.match(index, /사진은 서버로 전송되지 않/);
   assert.match(index, /ocr-review\.js/);
   assert.match(review, /new Worker\("\/ocr-assets\/direct\/ocr-worker\.js"\)/);
+  assert.match(review, /인식 정확도가 낮아/);
+  assert.doesNotMatch(review, /OCR 확인 항목:/);
   assert.doesNotMatch(review, /fetch\(|\/api\/ocr|MedicineNative/);
 });
 
 test("OCR row selection only seeds canonical search and editable prescription draft", () => {
   const app = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/app.js"), "utf8");
+  const prescription = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/prescription.js"), "utf8");
 
   assert.match(app, /pendingOcrDraft/);
   assert.match(app, /medicine:ocr-select/);
-  assert.match(app, /applyOcrDraftToForm/);
-  assert.match(app, /previewProduct\(productRef, ocrDraft/);
+  assert.match(app, /ocr-review-panel/);
+  assert.match(app, /scrollIntoView/);
+  assert.match(prescription, /applyOcrDraftToForm/);
+  assert.match(prescription, /previewProduct\(productRef, ocrDraft/);
   assert.doesNotMatch(app, /medicine:ocr-select[\s\S]{0,800}confirmAddMedication\(/);
 });
