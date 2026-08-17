@@ -227,6 +227,16 @@ function scheduleHtml(item) {
     </div>`;
 }
 
+function permitChangeCardHtml(medication) {
+  if (!medication.permit_status || medication.permit_status === "active") return "";
+  const label = permitStatusLabel(medication.permit_status, medication.permit_status_name);
+  const changedAt = medication.permit_status_changed_at ? ` · ${escapeHtml(medication.permit_status_changed_at)}` : "";
+  return `<div class="permit-change-note">
+    <div><span class="permit-change-badge">허가상태 변경</span><strong>${escapeHtml(label)}${changedAt}</strong></div>
+    <p>현재 품목 허가상태가 변경됐어요. 이 상태만으로 복용을 중단하지 말고 의사·약사와 확인하세요.</p>
+  </div>`;
+}
+
 function renderMedications() {
   const medsRoot = $("#medications-list");
   const historyRoot = $("#dose-history");
@@ -244,6 +254,7 @@ function renderMedications() {
       </div>
       ${medicationCourseHtml(med.course_progress)}
       ${medicationRegimenSummaryHtml(med)}
+      ${permitChangeCardHtml(med)}
       <div class="med-meta">
         ${med.as_needed ? `<span class="chip prn-chip">필요할 때 복용</span>` : ""}
         ${med.prn_max_per_day ? `<span class="chip">1일 최대 ${escapeHtml(med.prn_max_per_day)}회</span>` : ""}
@@ -324,8 +335,7 @@ async function runDrugSearch(successMessage = "") {
   if (!term) { status.textContent = ""; root.innerHTML = ""; return false; }
   status.textContent = "";
   try {
-    const includeInactive = $("#include-inactive").checked;
-    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30&include_inactive=${includeInactive}`);
+    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`);
     state.fullCatalog = true;
     status.textContent = successMessage;
     root.innerHTML = results.length ? results.map((item) => `
@@ -391,7 +401,6 @@ function bindEvents() {
     const found = await runDrugSearch(`“${query}” 제품 후보를 확인하고 맞는 품목을 선택해주세요.`);
     if (found) $("#drug-results").scrollIntoView({ behavior: "smooth", block: "start" });
   });
-  $("#include-inactive").addEventListener("change", runDrugSearch);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });
   window.addEventListener("focus", refreshForDateChange);
   setInterval(refreshForDateChange, 60000);

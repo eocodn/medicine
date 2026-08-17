@@ -356,6 +356,9 @@ class MedicationApp:
                         as_of=target,
                     )
                     medication["current_assessment"] = current_assessment
+                    medication["permit_status"] = current_assessment.get("permit_status")
+                    medication["permit_status_name"] = current_assessment.get("permit_status_name")
+                    medication["permit_status_changed_at"] = current_assessment.get("permit_status_changed_at")
                     medication["dur_alert"] = has_dur_alert(current_assessment)
                     medication["split_prohibited"] = has_split_prohibition(current_assessment)
                     medication["dur_review_required"] = dur_review_required(current_assessment)

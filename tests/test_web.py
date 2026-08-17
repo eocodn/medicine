@@ -30,7 +30,7 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("복용", response.text)
         self.assertIn("약 검색", response.text)
         self.assertNotIn("nav-search", response.text)
-        self.assertIn('id="include-inactive"', response.text)
+        self.assertNotIn('id="include-inactive"', response.text)
         self.assertIn('src="/static/native-api.js?v=20260811k"', response.text)
         self.assertIn('src="/static/people.js?v=', response.text)
         self.assertIn('href="/static/styles.css?v=', response.text)

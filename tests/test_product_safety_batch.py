@@ -102,6 +102,17 @@ class ProductSafetyBatchTest(unittest.TestCase):
         values.update(changes)
         return self.app.add_medication(self.person["id"], **values)
 
+    def _set_safe_permit_status(self, status: str, cancel_name: str, cancel_date: str) -> None:
+        con = sqlite3.connect(self.canonical)
+        try:
+            con.execute(
+                "UPDATE products SET permit_status=?,cancel_name=?,cancel_date=? WHERE item_seq='SAFE'",
+                (status, cancel_name, cancel_date),
+            )
+            con.commit()
+        finally:
+            con.close()
+
     def test_same_day_schedule_edit_does_not_create_an_extra_dose(self) -> None:
         medication = self._add_safe()
         plan = self.app.get_daily_plan(self.person["id"], "2026-08-15")
@@ -165,6 +176,52 @@ class ProductSafetyBatchTest(unittest.TestCase):
         )
         self.assertFalse(current["dur_alert"])
         self.assertTrue(current["dur_review_required"])
+
+    def test_existing_medication_surfaces_later_permit_change_without_stopping_regimen(self) -> None:
+        medication = self._add_safe(frequency_per_day=1, schedule_times=["08:00"])
+        first_plan = self.app.get_daily_plan(self.person["id"], "2026-08-15")
+        self.app.record_dose_instance(
+            first_plan["doses"][0]["id"], "taken", "2026-08-15T08:05:00+09:00"
+        )
+        self._set_safe_permit_status("expired", "유효기간만료", "2026-08-16")
+
+        current = next(
+            item for item in self.app.list_medications(self.person["id"], as_of="2026-08-16")
+            if item["id"] == medication["id"]
+        )
+        self.assertEqual(current["permit_status"], "expired")
+        self.assertEqual(current["permit_status_name"], "유효기간만료")
+        self.assertEqual(current["permit_status_changed_at"], "2026-08-16")
+
+        second_plan = self.app.get_daily_plan(self.person["id"], "2026-08-16")
+        self.assertEqual(
+            [(item["scheduled_time"], item["status"]) for item in second_plan["doses"]],
+            [("08:00", "planned")],
+        )
+        updated = self.app.update_medication(
+            medication["id"], expected_revision=medication["revision"], dose_amount=2
+        )
+        self.assertEqual(updated["dose_amount"], 2)
+
+        history = self.app.list_dose_logs(self.person["id"])
+        self.assertEqual(len(history), 1)
+        self.assertNotIn("permit_status", history[0])
+        self.assertNotIn("permit_status_changed_at", history[0])
+
+    def test_existing_prn_medication_remains_recordable_after_permit_change(self) -> None:
+        medication = self._add_safe(
+            as_needed=True,
+            frequency_per_day=None,
+            schedule_times=[],
+            prn_max_per_day=2,
+        )
+        self._set_safe_permit_status("withdrawn", "취하", "2026-08-16")
+
+        recorded = self.app.record_prn_dose(
+            medication["id"], "2026-08-16T12:00:00+09:00"
+        )
+
+        self.assertEqual(recorded["status"], "taken")
 
     def test_future_course_uses_age_during_treatment(self) -> None:
         person = self.app.create_person(
