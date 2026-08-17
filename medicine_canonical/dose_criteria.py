@@ -8,10 +8,13 @@ from typing import Any
 
 _NUMBER_RE = re.compile(r"(?<![\d.])([+]?(?:\d+(?:\.\d*)?|\.\d+))")
 _QUANTITY_RE = re.compile(
-    r"(?<![\d.])([+]?(?:\d+(?:\.\d*)?|\.\d+))\s*(mcg|μg|ug|㎍|mg|g|정|캡슐|캡|포)",
+    r"(?<![\d.])([+]?(?:\d+(?:\.\d*)?|\.\d+))\s*(마이크로그램|밀리그램|그램|mcg|μg|ug|㎍|mg|g|정|캡슐|캡|포)",
     re.IGNORECASE,
 )
 _MASS_TO_MG = {
+    "마이크로그램": Decimal("0.001"),
+    "밀리그램": Decimal("1"),
+    "그램": Decimal("1000"),
     "mcg": Decimal("0.001"),
     "μg": Decimal("0.001"),
     "ug": Decimal("0.001"),
