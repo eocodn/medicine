@@ -11,8 +11,13 @@ Docker만 있으면 됩니다.
 
 ```bash
 cd ~/dev/medicine
+export LOCAL_UID="$(id -u)"
+export LOCAL_GID="$(id -g)"
 docker compose up -d --build web
 ```
+
+`LOCAL_UID`/`LOCAL_GID`를 현재 사용자 ID로 설정하면 bind mount에 생성되는 DB, 빌드 산출물,
+스크린샷 등이 root 소유로 남지 않습니다. 같은 셸에서 이후 `docker compose` 명령을 실행합니다.
 
 브라우저에서 `http://127.0.0.1:18787`을 엽니다. 포트 변경:
 
@@ -326,6 +331,18 @@ Docker에서 데이터 release gate, compact DB 생성, Android 단위 테스트
 
 ```bash
 docker compose run --rm android
+```
+
+다른 worktree에서 이미 검증된 `mobile.sqlite`를 재사용해 Android만 확인할 때는 reference 디렉터리를
+`/workspace` 바깥에 읽기 전용으로 mount합니다. 이렇게 하면 Docker가 worktree의 `data/db` 아래에
+중첩 mountpoint를 root 소유로 만들지 않습니다.
+
+```bash
+MEDICINE_MOBILE_DB=/reference/mobile.sqlite \
+MEDICINE_MOBILE_MANIFEST=/reference/mobile.manifest.json \
+docker compose run --rm \
+  -v ~/dev/medicine/data/db:/reference:ro \
+  android
 ```
 
 APK는 `android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. 설치 후에는 PC, LAN, loopback 서버나

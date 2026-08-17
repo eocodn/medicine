@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import tomllib
 import unittest
 
@@ -84,6 +85,59 @@ class DeploymentConfigTest(unittest.TestCase):
         ui_service = compose.split("\n  ui:\n", 1)[1].split("\n  test:\n", 1)[0]
 
         self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', ui_service)
+
+    def test_writable_bind_mount_services_run_as_the_host_user(self) -> None:
+        compose = Path("compose.yaml").read_text()
+        service_names = (
+            "canonical",
+            "app",
+            "ui",
+            "test",
+            "browser-test",
+            "ocr-detection-test",
+            "ocr-detection-benchmark",
+            "ocr-corpus",
+            "ocr-finetune",
+            "ocr-finetune-train",
+            "ocr-full-document",
+            "android",
+        )
+        service_starts = [match.start() for match in re.finditer(r"(?m)^  [a-z0-9-]+:\n", compose)]
+
+        for name in service_names:
+            start = compose.index(f"  {name}:\n")
+            later_starts = [candidate for candidate in service_starts if candidate > start]
+            end = min(later_starts, default=len(compose))
+            service = compose[start:end]
+            self.assertIn(
+                'user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"',
+                service,
+                msg=f"{name} must not write to the repository bind mount as root",
+            )
+
+        self.assertNotIn("${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}", compose)
+
+    def test_android_uses_per_worktree_host_owned_gradle_state(self) -> None:
+        compose = Path("compose.yaml").read_text()
+        android_service = compose.split("\n  android:\n", 1)[1]
+
+        self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', android_service)
+        self.assertIn("HOME: /tmp", android_service)
+        self.assertIn("GRADLE_USER_HOME: /workspace/.android-gradle-cache", android_service)
+        self.assertNotIn("android-gradle-cache:/opt/gradle-cache", android_service)
+        self.assertNotIn("\nvolumes:\n  android-gradle-cache:\n", compose)
+
+    def test_android_accepts_prebuilt_reference_inputs_outside_workspace(self) -> None:
+        compose = Path("compose.yaml").read_text()
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        android_service = compose.split("\n  android:\n", 1)[1]
+
+        self.assertIn("MEDICINE_MOBILE_DB", gradle)
+        self.assertIn("MEDICINE_MOBILE_MANIFEST", gradle)
+        self.assertIn("MEDICINE_MOBILE_DB", android_service)
+        self.assertIn("MEDICINE_MOBILE_MANIFEST", android_service)
+        self.assertIn("Both MEDICINE_MOBILE_DB and MEDICINE_MOBILE_MANIFEST must be set together", android_service)
+        self.assertIn("Skipping mobile database build; using prebuilt reference inputs", android_service)
 
     def test_local_web_packages_the_approved_on_device_ocr_runtime(self) -> None:
         compose = Path("compose.yaml").read_text()
