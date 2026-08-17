@@ -104,6 +104,9 @@ test("medication cards separate DUR review, editing, and regimen completion sema
   assert.match(app, /data-dur-alert[\s\S]{0,300}openMedicationSafety/);
   assert.match(app, />DUR 주의<\/button>/);
   assert.match(app, />DUR 확인 필요<\/button>/);
+  const durBadgeIndex = app.indexOf(`class="dur-alert-badge"`);
+  const splitBadgeIndex = app.indexOf(`class="split-caution-badge"`);
+  assert.ok(durBadgeIndex < splitBadgeIndex);
   assert.match(app, /class="regimen-summary"/);
   assert.match(app, />복용 종료<\/button>/);
   assert.doesNotMatch(app, /data-stop="\$\{med\.id\}"[^>]*>삭제<\/button>/);
@@ -115,8 +118,9 @@ test("home dose actions prioritize normal completion and compact completed state
   const app = source("app.js");
   const styles = source("styles.css");
 
-  assert.match(index, /\/static\/styles\.css\?v=20260817ux5/);
-  assert.match(index, /\/static\/app\.js\?v=20260817ux4/);
+  assert.match(index, /\/static\/styles\.css\?v=20260817ux6/);
+  assert.match(index, /\/static\/prescription\.js\?v=20260817ux4/);
+  assert.match(index, /\/static\/app\.js\?v=20260817ux5/);
   assert.match(app, /class="dose-primary-action"[^>]*data-instance-taken[^>]*>✓ 사용했어요<\/button>/);
   assert.match(app, /class="dose-skip-action"[^>]*data-instance-skipped[^>]*>건너뛰기<\/button>/);
   assert.match(app, /class="dose-status taken"[^>]*>✓ 복용 완료<\/span>/);

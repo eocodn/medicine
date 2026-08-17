@@ -248,8 +248,8 @@ function renderMedications() {
       <div class="med-row">
         <div><p class="eyebrow">${escapeHtml(med.ingredient_name || "MEDICINE")}</p><h3>${escapeHtml(med.product_name)}</h3></div>
         <div class="med-badges">
-          ${med.split_prohibited ? `<button class="split-caution-badge" data-dur-alert="${med.id}" type="button" aria-label="분할불가 주의사항 보기" title="분할불가 주의사항 보기">분할불가</button>` : ""}
           ${med.dur_alert ? `<button class="dur-alert-badge" data-dur-alert="${med.id}" type="button" aria-label="현재 DUR 주의 항목 보기" title="현재 DUR 주의 항목 보기">DUR 주의</button>` : med.dur_review_required ? `<button class="dur-review-badge" data-dur-alert="${med.id}" type="button" aria-label="확인이 필요한 DUR 항목 보기" title="확인이 필요한 DUR 항목 보기">DUR 확인 필요</button>` : ""}
+          ${med.split_prohibited ? `<button class="split-caution-badge" data-dur-alert="${med.id}" type="button" aria-label="분할불가 주의사항 보기" title="분할불가 주의사항 보기">분할불가</button>` : ""}
         </div>
       </div>
       ${medicationCourseHtml(med.course_progress)}

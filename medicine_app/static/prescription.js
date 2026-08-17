@@ -510,9 +510,15 @@ function interactionTimingHtml(timing) {
   return "";
 }
 
+function durDetailText(item, finding = {}) {
+  const title = String(finding.title || item.summary || "").trim(), raw = String(finding.details ?? item.details ?? "").trim();
+  if (raw && raw !== "-" && raw.replace(/\s+/g, "") !== title.replace(/\s+/g, "")) return raw;
+  if (item.category === "split_caution") return "분할 복용이 필요한 경우 약사에게 확인해 주세요.";
+  return item.category === "lactation_caution" ? "DUR 데이터에 상세 설명이 제공되지 않았어요. 수유 중 복용에 대해서는 약사 또는 처방 의료진에게 확인해 주세요." : "DUR 데이터에 상세 설명이 제공되지 않았어요. 복용 시 주의사항은 약사 또는 처방 의료진에게 확인해 주세요.";
+}
 
 function durStatusHtml(items) {
-  return (items || []).map((item) => {
+  return [...(items || [])].sort((a, b) => Number(a.category === "split_caution") - Number(b.category === "split_caution")).map((item) => {
     const status = item.status || "unknown";
     const label = escapeHtml(item.label || item.category || "DUR 항목");
     const summary = escapeHtml(item.summary || "확인 필요");
@@ -522,11 +528,11 @@ function durStatusHtml(items) {
         ? findings.map((finding) => `
           <div class="dur-finding">
             <strong>${escapeHtml(finding.title || item.summary || "DUR 주의사항")}</strong>
-            <p>${escapeHtml(finding.details || item.details || "상세 설명 없음")}</p>
+            <p>${escapeHtml(durDetailText(item, finding))}</p>
             ${interactionTimingHtml(finding.timing)}
           </div>`).join("")
-        : `<div class="dur-finding"><strong>${summary}</strong>${item.details ? `<p>${escapeHtml(item.details)}</p>` : ""}</div>`;
-      return `<section class="dur-check hit">${detailHtml}</section>`;
+        : `<div class="dur-finding"><strong>${summary}</strong><p>${escapeHtml(durDetailText(item))}</p></div>`;
+      return `<section class="dur-check hit${item.category === "split_caution" ? " split-caution" : ""}">${detailHtml}</section>`;
     }
     if (status === "conditional") {
       const detailHtml = findings.length
