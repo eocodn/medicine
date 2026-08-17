@@ -96,6 +96,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn('LOCAL_UID: "${LOCAL_UID:-1000}"', web_service)
         self.assertIn('LOCAL_GID: "${LOCAL_GID:-1000}"', web_service)
         self.assertIn("HOME: /tmp", web_service)
+        self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', web_service)
         self.assertIn("AS ocr-assets", dockerfile)
         self.assertIn("mobile/export_runtime.mjs /downloads /out", dockerfile)
         self.assertIn("COPY --from=ocr-assets /out /opt/medicine-ocr-assets", dockerfile)
