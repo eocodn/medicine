@@ -58,8 +58,11 @@ test("top bar exposes the active person's name instead of only an initial", () =
 
   assert.match(index, /id="profile-shortcut-name"/);
   assert.match(index, /id="profile-shortcut-avatar"/);
+  assert.match(index, /\/static\/people\.js\?v=20260817ux4/);
   assert.match(people, /profile-shortcut-name/);
   assert.match(people, /person\.name/);
+  assert.match(people, /class="selected-badge">선택됨<\/span>/);
+  assert.doesNotMatch(people, /class="selected-badge">관리 중<\/span>/);
 });
 
 test("PRN and long-term toggles preserve values while disabling incompatible fields", () => {
