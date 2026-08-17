@@ -45,7 +45,7 @@ function renderPeople() {
         <div class="person-row">
           <span class="person-avatar">${escapeHtml(person.name.slice(0, 1))}</span>
           <div class="person-copy"><h3>${escapeHtml(person.name)}</h3><p>${escapeHtml(profileMeta(person))}</p></div>
-          ${person.id === state.currentPersonId ? `<span class="selected-badge">관리 중</span>` : ""}
+          ${person.id === state.currentPersonId ? `<span class="selected-badge">선택됨</span>` : ""}
         </div>
       </div>
       <div class="person-actions">
