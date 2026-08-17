@@ -17,7 +17,8 @@ DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
 STATIC_DIR = Path(__file__).parent / "static"
 # Development web remains local-only; keep browser capabilities restricted to the app origin.
 BROWSER_CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
+    "img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; "
     "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 )
 
@@ -131,6 +132,7 @@ def _confirmation_response(exc: ConfirmationRequired) -> JSONResponse:
 def create_web_app(
     canonical_db: Path | str = DEFAULT_CANONICAL_DB,
     personal_db: Path | str = DEFAULT_PERSONAL_DB,
+    ocr_assets_dir: Path | str | None = None,
 ) -> FastAPI:
     service = MedicationApp(canonical_db, personal_db)
     app = FastAPI(title="Medicine", version="0.1.0")
@@ -144,6 +146,14 @@ def create_web_app(
         return response
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    configured_ocr_assets = ocr_assets_dir or os.environ.get("MEDICINE_OCR_ASSETS_DIR")
+    if configured_ocr_assets:
+        ocr_root = Path(configured_ocr_assets)
+        required = [ocr_root / "runtime-manifest.json", ocr_root / "direct" / "ocr-worker.js"]
+        missing = [path for path in required if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(f"OCR runtime assets are incomplete: {missing[0]}")
+        app.mount("/ocr-assets", StaticFiles(directory=ocr_root), name="ocr-assets")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:

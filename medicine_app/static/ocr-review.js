@@ -133,7 +133,7 @@
     activeWorker?.terminate();
     activeWorker = null;
     const input = root.document?.querySelector("#ocr-image-input");
-    if (input && root.location?.host === "appassets.androidplatform.net") input.disabled = false;
+    if (input) input.disabled = false;
   }
 
   function recognize(file) {
@@ -175,11 +175,6 @@
   function bind() {
     const input = root.document?.querySelector("#ocr-image-input");
     if (!input) return;
-    if (root.location?.host !== "appassets.androidplatform.net") {
-      input.disabled = true;
-      root.document.querySelector(".ocr-import-card")?.classList.add("hidden");
-      return;
-    }
     if (typeof root.Worker !== "function" || typeof root.createImageBitmap !== "function") {
       input.disabled = true;
       setStatus("이 기기에서는 사진 인식을 사용할 수 없어요.");

@@ -85,6 +85,27 @@ class DeploymentConfigTest(unittest.TestCase):
 
         self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', ui_service)
 
+    def test_local_web_packages_the_approved_on_device_ocr_runtime(self) -> None:
+        compose = Path("compose.yaml").read_text()
+        web_service = compose.split("\n  web:\n", 1)[1].split("\n  ui:\n", 1)[0]
+        dockerfile = Path("Dockerfile.web").read_text()
+        entrypoint = Path("medicine_app/web_entrypoint.py").read_text()
+
+        self.assertIn("dockerfile: Dockerfile.web", web_service)
+        self.assertNotIn("\n    user:", web_service)
+        self.assertIn('LOCAL_UID: "${LOCAL_UID:-1000}"', web_service)
+        self.assertIn('LOCAL_GID: "${LOCAL_GID:-1000}"', web_service)
+        self.assertIn("HOME: /tmp", web_service)
+        self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', web_service)
+        self.assertIn("AS ocr-assets", dockerfile)
+        self.assertIn("mobile/export_runtime.mjs /downloads /out", dockerfile)
+        self.assertIn("COPY --from=ocr-assets /out /opt/medicine-ocr-assets", dockerfile)
+        self.assertIn("MEDICINE_OCR_ASSETS_DIR=/opt/medicine-ocr-assets", dockerfile)
+        self.assertIn('ENTRYPOINT ["python", "-m", "medicine_app.web_entrypoint"]', dockerfile)
+        self.assertIn("os.chown", entrypoint)
+        self.assertIn("os.setgid", entrypoint)
+        self.assertIn("os.setuid", entrypoint)
+
     def test_retired_legacy_etl_is_not_packaged_or_exposed(self) -> None:
         compose = Path("compose.yaml").read_text()
         dockerfile = Path("Dockerfile").read_text()
