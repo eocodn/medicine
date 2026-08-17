@@ -103,8 +103,21 @@ test("medication cards separate DUR review, editing, and regimen completion sema
   assert.match(app, /class="regimen-summary"/);
   assert.match(app, />복용 종료<\/button>/);
   assert.doesNotMatch(app, /data-stop="\$\{med\.id\}"[^>]*>삭제<\/button>/);
-  assert.match(app, /사용 완료/);
-  assert.match(app, /data-instance-cancel[\s\S]{0,120}>되돌리기<\/button>/);
+});
+
+test("home dose actions prioritize normal completion and compact completed states", () => {
+  const app = source("app.js");
+  const styles = source("styles.css");
+
+  assert.match(app, /class="dose-primary-action"[^>]*data-instance-taken[^>]*>✓ 사용했어요<\/button>/);
+  assert.match(app, /class="dose-skip-action"[^>]*data-instance-skipped[^>]*>건너뛰기<\/button>/);
+  assert.match(app, /class="dose-status taken"[^>]*>✓ 복용 완료<\/span>/);
+  assert.match(app, /class="dose-status skipped"[^>]*>– 건너뜀<\/span>/);
+  assert.match(app, /class="dose-cancel-action"[^>]*data-instance-cancel[^>]*>취소<\/button>/);
+  assert.match(styles, /\.dose-actions\.planned[^{]*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto;/);
+  assert.match(styles, /\.dose-primary-action\s*\{[^}]*background:\s*var\(--brand\);[^}]*color:\s*white;/);
+  assert.match(styles, /\.dose-skip-action, \.dose-cancel-action\s*\{[^}]*background:\s*transparent;/);
+  assert.doesNotMatch(styles, /\.schedule-item\.done\s*\{[^}]*opacity:/);
 });
 
 test("schedule entry uses explicit time controls and immediate count guidance", () => {
@@ -166,11 +179,13 @@ test("bottom-sheet close controls meet the 44px touch target", () => {
 test("new medication UX actions keep 44px mobile touch targets", () => {
   const styles = source("styles.css");
   const prescription = source("prescription.css");
-  const durBlock = styles.match(/\.dur-alert-badge, \.dur-review-badge\s*\{([^}]*)\}/)?.[1] || "";
+  const durBlock = styles.match(/\.dur-alert-badge, \.dur-review-badge, \.split-caution-badge\s*\{([^}]*)\}/)?.[1] || "";
+  const doseActionBlock = styles.match(/\.dose-primary-action, \.dose-skip-action, \.dose-cancel-action\s*\{([^}]*)\}/)?.[1] || "";
   const addBlock = prescription.match(/\.schedule-time-add\s*\{([^}]*)\}/)?.[1] || "";
   const removeBlock = prescription.match(/\.schedule-time-remove\s*\{([^}]*)\}/)?.[1] || "";
 
   assert.match(durBlock, /min-height:\s*44px/);
+  assert.match(doseActionBlock, /min-height:\s*44px/);
   assert.match(addBlock, /min-height:\s*44px/);
   assert.match(removeBlock, /min-height:\s*44px/);
 });
