@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release import RELEASE_PREFIX, decompress_snapshot, prepare_release, sha256_file
+from .release_signing import ReleaseSigner, encode_signed_envelope, verify_signed_envelope
 
 LATEST_KEY = f"{RELEASE_PREFIX}/latest.json"
 MAX_PATCH_BASES = 3
@@ -39,21 +40,36 @@ def _read_body_bytes(body) -> bytes:
     return body.read()
 
 
-def _read_latest(client, bucket: str, latest_key: str) -> tuple[bytes | None, str | None, dict | None]:
+def _read_latest(
+    client,
+    bucket: str,
+    latest_key: str,
+    *,
+    trusted_public_keys: dict[str, bytes],
+) -> tuple[bytes | None, str | None, dict | None, int | None, bool]:
     try:
         response = client.get_object(Bucket=bucket, Key=latest_key)
     except Exception as exc:
         if _not_found(exc):
-            return None, None, None
+            return None, None, None, None, False
         raise
     raw = _read_body_bytes(response["Body"])
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("remote latest manifest is invalid JSON") from exc
+    if isinstance(payload, dict) and "envelope_version" in payload:
+        verified = verify_signed_envelope(raw, trusted_public_keys)
+        return (
+            raw,
+            response.get("ETag"),
+            verified["manifest"],
+            verified["release_sequence"],
+            True,
+        )
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("remote latest manifest schema is unsupported")
-    return raw, response.get("ETag"), payload
+    return raw, response.get("ETag"), payload, None, False
 
 
 def _download_to_file(client, bucket: str, key: str, output: Path) -> dict:
@@ -235,10 +251,16 @@ def _cleanup_release_artifacts(
     initial_inventory: set[str],
     expected_latest_raw: bytes,
     latest_key: str,
+    trusted_public_keys: dict[str, bytes],
 ) -> dict:
     # Retention is post-commit only. Re-read authoritative latest before deleting any
     # pre-existing artifact so a competing state transition cannot be cleaned against.
-    current_raw, _, _ = _read_latest(client, bucket, latest_key)
+    current_raw, _, _, _, _ = _read_latest(
+        client,
+        bucket,
+        latest_key,
+        trusted_public_keys=trusted_public_keys,
+    )
     if current_raw != expected_latest_raw:
         raise RuntimeError("remote latest manifest changed before retention cleanup")
 
@@ -289,6 +311,8 @@ def publish_release(
     mobile_manifest_path: str | Path,
     output_dir: str | Path,
     *,
+    signer: ReleaseSigner,
+    release_sequence: int,
     created_at: str | None = None,
     latest_key: str = LATEST_KEY,
 ) -> dict:
@@ -300,12 +324,53 @@ def publish_release(
     dataset_id = mobile_manifest.get("dataset_id")
     if not isinstance(dataset_id, str) or not dataset_id:
         raise ValueError("mobile manifest dataset_id is required")
+    if (
+        not isinstance(release_sequence, int)
+        or isinstance(release_sequence, bool)
+        or release_sequence <= 0
+        or release_sequence > (1 << 63) - 1
+    ):
+        raise ValueError("release_sequence must be a positive signed 64-bit integer")
 
-    initial_raw, initial_etag, previous_latest = _read_latest(client, bucket, latest_key)
+    trusted_public_keys = {signer.key_id: signer.public_key_pem()}
+
+    initial_raw, initial_etag, previous_latest, previous_sequence, previous_signed = _read_latest(
+        client,
+        bucket,
+        latest_key,
+        trusted_public_keys=trusted_public_keys,
+    )
     # Snapshot only pre-existing objects so cleanup can never delete artifacts uploaded
     # concurrently after this publisher began.
     initial_inventory = _release_artifact_inventory(client, bucket)
     if previous_latest is not None and previous_latest.get("dataset_id") == dataset_id:
+        if not previous_signed:
+            signed_body = encode_signed_envelope(
+                signer.sign_payload(initial_raw, release_sequence=release_sequence)
+            )
+            _put_latest(
+                client,
+                bucket,
+                latest_key,
+                signed_body,
+                previous_etag=initial_etag,
+            )
+            cleanup = _cleanup_release_artifacts(
+                client,
+                bucket,
+                manifest=previous_latest,
+                initial_inventory=initial_inventory,
+                expected_latest_raw=signed_body,
+                latest_key=latest_key,
+                trusted_public_keys=trusted_public_keys,
+            )
+            return {
+                "status": "migrated",
+                "dataset_id": dataset_id,
+                "release_sequence": release_sequence,
+                "manifest": previous_latest,
+                "cleanup": cleanup,
+            }
         cleanup = _cleanup_release_artifacts(
             client,
             bucket,
@@ -313,13 +378,19 @@ def publish_release(
             initial_inventory=initial_inventory,
             expected_latest_raw=initial_raw,
             latest_key=latest_key,
+            trusted_public_keys=trusted_public_keys,
         )
         return {
             "status": "unchanged",
             "dataset_id": dataset_id,
+            "release_sequence": previous_sequence,
             "manifest": previous_latest,
             "cleanup": cleanup,
         }
+    if previous_signed and previous_sequence is not None and release_sequence <= previous_sequence:
+        raise ValueError(
+            "release_sequence must be greater than the currently published release sequence"
+        )
 
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -365,10 +436,18 @@ def publish_release(
             content_type="application/octet-stream",
         )
 
-    current_raw, current_etag, _ = _read_latest(client, bucket, latest_key)
+    current_raw, current_etag, _, _, _ = _read_latest(
+        client,
+        bucket,
+        latest_key,
+        trusted_public_keys=trusted_public_keys,
+    )
     if current_raw != initial_raw or current_etag != initial_etag:
         raise RuntimeError("remote latest manifest changed during publication")
-    manifest_body = Path(prepared["manifest_path"]).read_bytes()
+    manifest_payload = Path(prepared["manifest_path"]).read_bytes()
+    manifest_body = encode_signed_envelope(
+        signer.sign_payload(manifest_payload, release_sequence=release_sequence)
+    )
     _put_latest(
         client,
         bucket,
@@ -383,10 +462,12 @@ def publish_release(
         initial_inventory=initial_inventory,
         expected_latest_raw=manifest_body,
         latest_key=latest_key,
+        trusted_public_keys=trusted_public_keys,
     )
     return {
         "status": "published",
         "dataset_id": dataset_id,
+        "release_sequence": release_sequence,
         "manifest": manifest,
         "cleanup": cleanup,
     }
@@ -444,6 +525,32 @@ def download_object_from_env(key: str, output_path: str | Path) -> dict:
     return {"bucket": bucket, "key": key, "output_path": str(output), **downloaded}
 
 
+def release_signer_from_env() -> ReleaseSigner:
+    key_id = os.environ.get("REFERENCE_SIGNING_KEY_ID", "").strip()
+    private_key_pem = os.environ.get("REFERENCE_SIGNING_PRIVATE_KEY_PEM", "")
+    missing = []
+    if not key_id:
+        missing.append("REFERENCE_SIGNING_KEY_ID")
+    if not private_key_pem.strip():
+        missing.append("REFERENCE_SIGNING_PRIVATE_KEY_PEM")
+    if missing:
+        raise RuntimeError(f"missing release signing environment: {', '.join(missing)}")
+    return ReleaseSigner.from_private_pem(key_id, private_key_pem.encode("utf-8"))
+
+
+def release_sequence_from_env() -> int:
+    raw = os.environ.get("REFERENCE_RELEASE_SEQUENCE", "").strip()
+    if not raw:
+        raise RuntimeError("REFERENCE_RELEASE_SEQUENCE is required")
+    try:
+        sequence = int(raw, 10)
+    except ValueError as exc:
+        raise RuntimeError("REFERENCE_RELEASE_SEQUENCE must be an integer") from exc
+    if sequence <= 0 or sequence > (1 << 63) - 1:
+        raise RuntimeError("REFERENCE_RELEASE_SEQUENCE must be a positive signed 64-bit integer")
+    return sequence
+
+
 def publish_release_from_env(
     target_db: str | Path,
     mobile_manifest_path: str | Path,
@@ -460,6 +567,8 @@ def publish_release_from_env(
         target_db,
         mobile_manifest_path,
         output_dir,
+        signer=release_signer_from_env(),
+        release_sequence=release_sequence_from_env(),
         created_at=created_at,
     )
 
@@ -473,4 +582,6 @@ __all__ = [
     "download_object_from_env",
     "publish_release",
     "publish_release_from_env",
+    "release_sequence_from_env",
+    "release_signer_from_env",
 ]

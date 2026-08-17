@@ -8,8 +8,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from medicine_canonical.release import sha256_file
-from medicine_canonical.release_r2 import publish_release
+from medicine_canonical.release import prepare_release, sha256_file
+from medicine_canonical.release_r2 import publish_release as publish_release_to_r2
+from medicine_canonical.release_signing import ReleaseSigner, verify_signed_envelope
+
+
+TEST_PRIVATE_KEY_PEM = b"""-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEINYQXOCBt5NbSlID2k5wrhlJSG5+jCgG9PpIwcftmU9boAoGCCqGSM49
+AwEHoUQDQgAEPI67A47esbrnylrrO7WqAaSUwlSj9REIzwEkQlWQb4L3vx8tR5DS
+Dl80GkuBe8cFmWJ4YtbS0n2nt4uKKPyxAA==
+-----END EC PRIVATE KEY-----
+"""
+
+TEST_PUBLIC_KEY_PEM = b"""-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEPI67A47esbrnylrrO7WqAaSUwlSj
+9REIzwEkQlWQb4L3vx8tR5DSDl80GkuBe8cFmWJ4YtbS0n2nt4uKKPyxAA==
+-----END PUBLIC KEY-----
+"""
 
 
 class FakeNotFound(Exception):
@@ -102,6 +117,8 @@ class R2ReleasePublisherTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.client = FakeS3()
         self.bucket = "medicine-reference"
+        self.signer = ReleaseSigner.from_private_pem("test-2026", TEST_PRIVATE_KEY_PEM)
+        self.next_release_sequence = 1000
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -123,9 +140,130 @@ class R2ReleasePublisherTest(unittest.TestCase):
         )
         return db, manifest
 
+    def seed_legacy_unsigned_release(
+        self,
+        db: Path,
+        mobile_manifest: Path,
+        *,
+        created_at: str,
+    ) -> dict:
+        prepared = prepare_release(
+            db,
+            mobile_manifest,
+            self.root / "legacy-dist",
+            created_at=created_at,
+        )
+        manifest = prepared["manifest"]
+        full_path = Path(prepared["full_path"])
+        full = manifest["full"]
+        self.client.objects[(self.bucket, full["key"])] = {
+            "Body": full_path.read_bytes(),
+            "Metadata": {"sha256": full["sha256"]},
+            "ContentType": "application/gzip",
+        }
+        latest_body = Path(prepared["manifest_path"]).read_bytes()
+        self.client.objects[(self.bucket, "reference/v1/latest.json")] = {
+            "Body": latest_body,
+            "Metadata": {"sha256": hashlib.sha256(latest_body).hexdigest()},
+            "ContentType": "application/json",
+        }
+        return manifest
+
+    def verify_latest(self) -> dict:
+        raw = self.client.objects[(self.bucket, "reference/v1/latest.json")]["Body"]
+        return verify_signed_envelope(raw, {"test-2026": TEST_PUBLIC_KEY_PEM})
+
+    def publish_release(self, *args, release_sequence: int | None = None, **kwargs) -> dict:
+        if release_sequence is None:
+            release_sequence = self.next_release_sequence
+            self.next_release_sequence += 1
+        return publish_release_to_r2(
+            *args,
+            signer=self.signer,
+            release_sequence=release_sequence,
+            **kwargs,
+        )
+
+    def test_unchanged_legacy_unsigned_release_is_migrated_to_signed_envelope(self) -> None:
+        db, manifest = self.mobile("legacy", b"A" * 500_000, "sha256:legacy")
+        legacy = self.seed_legacy_unsigned_release(
+            db,
+            manifest,
+            created_at="2026-08-17T10:00:00Z",
+        )
+
+        result = self.publish_release(
+            self.client,
+            self.bucket,
+            db,
+            manifest,
+            self.root / "dist-legacy-migration",
+            created_at="2026-08-17T11:00:00Z",
+            release_sequence=41,
+        )
+
+        verified = self.verify_latest()
+        self.assertEqual(result["status"], "migrated")
+        self.assertEqual(verified["release_sequence"], 41)
+        self.assertEqual(verified["manifest"], legacy)
+        self.assertEqual(self.client.put_order, ["reference/v1/latest.json"])
+
+    def test_signed_release_requires_increasing_sequence_for_new_dataset(self) -> None:
+        first_db, first_manifest = self.mobile("signed-one", b"A" * 500_000, "sha256:signed-one")
+        self.publish_release(
+            self.client,
+            self.bucket,
+            first_db,
+            first_manifest,
+            self.root / "dist-signed-one",
+            created_at="2026-08-17T10:00:00Z",
+            release_sequence=50,
+        )
+        second_db, second_manifest = self.mobile(
+            "signed-two", b"A" * 490_000 + b"B" * 10_000, "sha256:signed-two"
+        )
+
+        with self.assertRaisesRegex(ValueError, "release_sequence"):
+            self.publish_release(
+                self.client,
+                self.bucket,
+                second_db,
+                second_manifest,
+                self.root / "dist-signed-two",
+                created_at="2026-08-17T11:00:00Z",
+                    release_sequence=50,
+            )
+
+    def test_signed_same_dataset_is_idempotent_without_resigning(self) -> None:
+        db, manifest = self.mobile("signed-same", b"A" * 500_000, "sha256:signed-same")
+        self.publish_release(
+            self.client,
+            self.bucket,
+            db,
+            manifest,
+            self.root / "dist-signed-same",
+            created_at="2026-08-17T10:00:00Z",
+            release_sequence=60,
+        )
+        self.client.put_order.clear()
+
+        result = self.publish_release(
+            self.client,
+            self.bucket,
+            db,
+            manifest,
+            self.root / "dist-signed-same-retry",
+            created_at="2026-08-17T11:00:00Z",
+            release_sequence=61,
+        )
+
+        self.assertEqual(result["status"], "unchanged")
+        self.assertEqual(self.verify_latest()["release_sequence"], 60)
+        self.assertEqual(self.client.put_order, [])
+
     def test_first_publish_uploads_full_before_latest_and_round_trips_remote_state(self) -> None:
         db, manifest = self.mobile("one", b"A" * 500_000, "sha256:one")
-        result = publish_release(
+        result = self.publish_release(
             self.client,
             self.bucket,
             db,
@@ -137,7 +275,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
         self.assertEqual(result["status"], "published")
         latest_key = "reference/v1/latest.json"
         self.assertEqual(self.client.put_order[-1], latest_key)
-        latest = json.loads(self.client.objects[(self.bucket, latest_key)]["Body"])
+        latest = self.verify_latest()["manifest"]
         self.assertEqual(latest["dataset_id"], "sha256:one")
         self.assertEqual(latest["patches"], [])
         full = self.client.objects[(self.bucket, latest["full"]["key"])]
@@ -145,7 +283,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
 
     def test_second_publish_downloads_verified_base_and_publishes_direct_patch(self) -> None:
         first_db, first_manifest = self.mobile("one", b"A" * 2_000_000, "sha256:one")
-        publish_release(
+        self.publish_release(
             self.client,
             self.bucket,
             first_db,
@@ -158,7 +296,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
         second_db, second_manifest = self.mobile(
             "two", b"A" * 1_900_000 + b"B" * 100_000, "sha256:two"
         )
-        result = publish_release(
+        result = self.publish_release(
             self.client,
             self.bucket,
             second_db,
@@ -177,21 +315,21 @@ class R2ReleasePublisherTest(unittest.TestCase):
     def test_new_release_builds_direct_patches_from_recent_history_bases(self) -> None:
         base = bytearray(os.urandom(1_000_000))
         one_db, one_manifest = self.mobile("one-history", bytes(base), "sha256:one-history")
-        publish_release(
+        self.publish_release(
             self.client, self.bucket, one_db, one_manifest, self.root / "dist-history-one",
             created_at="2026-08-16T10:00:00Z",
         )
 
         base[65_536:69_632] = b"2" * 4_096
         two_db, two_manifest = self.mobile("two-history", bytes(base), "sha256:two-history")
-        publish_release(
+        self.publish_release(
             self.client, self.bucket, two_db, two_manifest, self.root / "dist-history-two",
             created_at="2026-08-16T11:00:00Z",
         )
 
         base[400_000:404_096] = b"3" * 4_096
         three_db, three_manifest = self.mobile("three-history", bytes(base), "sha256:three-history")
-        result = publish_release(
+        result = self.publish_release(
             self.client, self.bucket, three_db, three_manifest, self.root / "dist-history-three",
             created_at="2026-08-16T12:00:00Z",
         )
@@ -218,7 +356,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
                 bytes(base),
                 f"sha256:retention-{label}",
             )
-            result = publish_release(
+            result = self.publish_release(
                 self.client,
                 self.bucket,
                 db,
@@ -277,7 +415,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
             )
             if first_sha is None:
                 first_sha = sha256_file(db)
-            latest = publish_release(
+            latest = self.publish_release(
                 self.client,
                 self.bucket,
                 db,
@@ -300,14 +438,14 @@ class R2ReleasePublisherTest(unittest.TestCase):
     def test_same_dataset_retry_repairs_retention_after_post_publish_cleanup_failure(self) -> None:
         base = bytearray(os.urandom(1_000_000))
         one_db, one_manifest = self.mobile("cleanup-one", bytes(base), "sha256:cleanup-one")
-        publish_release(
+        self.publish_release(
             self.client, self.bucket, one_db, one_manifest, self.root / "dist-cleanup-one",
             created_at="2026-08-16T10:00:00Z",
         )
 
         base[100_000:104_096] = b"2" * 4_096
         two_db, two_manifest = self.mobile("cleanup-two", bytes(base), "sha256:cleanup-two")
-        second = publish_release(
+        second = self.publish_release(
             self.client, self.bucket, two_db, two_manifest, self.root / "dist-cleanup-two",
             created_at="2026-08-16T11:00:00Z",
         )
@@ -317,18 +455,16 @@ class R2ReleasePublisherTest(unittest.TestCase):
         base[200_000:204_096] = b"3" * 4_096
         three_db, three_manifest = self.mobile("cleanup-three", bytes(base), "sha256:cleanup-three")
         with self.assertRaisesRegex(RuntimeError, "retention cleanup failed"):
-            publish_release(
+            self.publish_release(
                 self.client, self.bucket, three_db, three_manifest, self.root / "dist-cleanup-three",
                 created_at="2026-08-16T12:00:00Z",
             )
 
-        latest = json.loads(
-            self.client.objects[(self.bucket, "reference/v1/latest.json")]["Body"]
-        )
+        latest = self.verify_latest()["manifest"]
         self.assertEqual(latest["dataset_id"], "sha256:cleanup-three")
         self.assertIn((self.bucket, stale_patch), self.client.objects)
 
-        retried = publish_release(
+        retried = self.publish_release(
             self.client, self.bucket, three_db, three_manifest, self.root / "dist-cleanup-three-retry",
             created_at="2026-08-16T12:30:00Z",
         )
@@ -338,7 +474,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
 
     def test_same_dataset_id_is_idempotent_and_uploads_nothing(self) -> None:
         db, manifest = self.mobile("one", b"A" * 100_000, "sha256:one")
-        publish_release(
+        self.publish_release(
             self.client,
             self.bucket,
             db,
@@ -347,7 +483,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
             created_at="2026-08-16T11:00:00Z",
         )
         self.client.put_order.clear()
-        result = publish_release(
+        result = self.publish_release(
             self.client,
             self.bucket,
             db,
@@ -360,7 +496,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
 
     def test_publisher_refuses_to_advance_latest_when_remote_state_changes(self) -> None:
         first_db, first_manifest = self.mobile("one", b"A" * 200_000, "sha256:one")
-        publish_release(
+        self.publish_release(
             self.client,
             self.bucket,
             first_db,
@@ -379,7 +515,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
         self.client.before_latest_put = mutate_latest
         self.client.delete_order.clear()
         with self.assertRaisesRegex(RuntimeError, "latest manifest changed"):
-            publish_release(
+            self.publish_release(
                 self.client,
                 self.bucket,
                 second_db,
