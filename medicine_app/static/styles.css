@@ -200,7 +200,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .stack.compact { gap: 8px; }
 .card { padding: 17px; box-shadow: 0 8px 24px rgba(34, 52, 40, .05); }
 .med-card h3 { margin: 0 0 5px; font-size: 17px; }
-.med-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.med-badges { display: flex; flex-wrap: nowrap; flex: 0 0 auto; justify-content: flex-end; gap: 6px; }
 .dur-alert-badge, .dur-review-badge, .split-caution-badge {
   min-height: 44px;
   padding: 0 10px;

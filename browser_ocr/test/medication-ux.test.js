@@ -96,6 +96,7 @@ test("payload ignores preserved incompatible values instead of submitting them",
 
 test("medication cards separate DUR review, editing, and regimen completion semantics", () => {
   const app = source("app.js");
+  const styles = source("styles.css");
 
   assert.match(app, /data-dur-alert[\s\S]{0,300}openMedicationSafety/);
   assert.match(app, />DUR 주의<\/button>/);
@@ -103,6 +104,7 @@ test("medication cards separate DUR review, editing, and regimen completion sema
   assert.match(app, /class="regimen-summary"/);
   assert.match(app, />복용 종료<\/button>/);
   assert.doesNotMatch(app, /data-stop="\$\{med\.id\}"[^>]*>삭제<\/button>/);
+  assert.match(styles, /\.med-badges\s*\{[^}]*flex-wrap:\s*nowrap;[^}]*flex:\s*0\s+0\s+auto;/);
 });
 
 test("home dose actions prioritize normal completion and compact completed states", () => {
