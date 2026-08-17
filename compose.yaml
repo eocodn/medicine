@@ -16,7 +16,13 @@ services:
     entrypoint: ["python", "-m", "medicine_app.cli"]
 
   web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    environment:
+      HOME: /tmp
+      LOCAL_UID: "${LOCAL_UID:-1000}"
+      LOCAL_GID: "${LOCAL_GID:-1000}"
     working_dir: /app
     volumes:
       - .:/app

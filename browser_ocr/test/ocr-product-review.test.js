@@ -38,6 +38,7 @@ test("product shell exposes local-only image review without an OCR backend route
   assert.match(index, /사진은 서버로 전송되지 않/);
   assert.match(index, /ocr-review\.js/);
   assert.match(review, /new Worker\("\/ocr-assets\/direct\/ocr-worker\.js"\)/);
+  assert.doesNotMatch(review, /appassets\.androidplatform\.net/);
   assert.match(review, /인식 정확도가 낮아/);
   assert.doesNotMatch(review, /OCR 확인 항목:/);
   assert.doesNotMatch(review, /fetch\(|\/api\/ocr|MedicineNative/);

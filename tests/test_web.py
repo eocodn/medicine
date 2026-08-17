@@ -43,6 +43,10 @@ class WebApiTest(unittest.TestCase):
         self.assertNotIn("로컬 우선", response.text)
         self.assertNotIn("personal.sqlite", response.text)
         self.assertIn("Content-Security-Policy", response.text)
+        csp = response.headers["Content-Security-Policy"]
+        self.assertIn("'wasm-unsafe-eval'", csp)
+        self.assertIn("worker-src 'self' blob:", csp)
+        self.assertIn("child-src 'self' blob:", csp)
         self.assertIn('name="lactation_status"', response.text)
         self.assertIn('name="notes" type="hidden"', response.text)
         self.assertIn('class="screen people-screen"', response.text)

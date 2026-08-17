@@ -97,10 +97,14 @@ test("independent OCR Docker pipeline exposes separate eval and trimmed runtime 
   assert.match(compose, /target: eval/);
 });
 
-test("web product builder stays detached while Android packages only the approved OCR runtime", () => {
+test("base product builder stays detached while local web and Android package the approved OCR runtime", () => {
   assert.equal(fs.existsSync(path.join(OCR, "prepare_models.mjs")), false);
-  const webDockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
-  assert.doesNotMatch(webDockerfile, /browser_ocr|browser-ocr|medicine-browser-ocr|export_runtime/);
+  const baseDockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
+  assert.doesNotMatch(baseDockerfile, /browser_ocr|browser-ocr|medicine-browser-ocr|export_runtime/);
+  const webDockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile.web"), "utf8");
+  assert.match(webDockerfile, /mobile\/export_runtime\.mjs \/downloads \/out/);
+  assert.match(webDockerfile, /COPY --from=ocr-assets \/out \/opt\/medicine-ocr-assets/);
+  assert.doesNotMatch(webDockerfile, /browser_ocr\/eval|finetune\/work|ocr-eval/);
   const androidDockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile.android"), "utf8");
   assert.match(androidDockerfile, /mobile\/export_runtime\.mjs/);
   assert.match(androidDockerfile, /COPY --from=ocr-assets \/out \/opt\/medicine-ocr-assets/);

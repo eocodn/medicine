@@ -19,6 +19,7 @@ class ManualOnlyIntakeTest(unittest.TestCase):
         root = Path(self.tmp.name)
         self.canonical_db = root / "canonical.sqlite"
         self.personal_db = root / "personal.sqlite"
+        self.ocr_assets = root / "ocr-assets"
         make_canonical_db(self.canonical_db)
         self.client = TestClient(create_web_app(self.canonical_db, self.personal_db))
 
@@ -44,18 +45,23 @@ class ManualOnlyIntakeTest(unittest.TestCase):
         self.assertNotIn("ocr-preview", app.text)
         self.assertNotIn("ocr_review_token", app.text)
 
-    def test_development_web_does_not_serve_on_device_ocr_runtime(self) -> None:
+    def test_development_web_can_serve_on_device_ocr_runtime_when_configured(self) -> None:
+        (self.ocr_assets / "direct").mkdir(parents=True)
+        (self.ocr_assets / "direct" / "ocr-worker.js").write_text("self.onmessage = () => {};\n", encoding="utf-8")
+        (self.ocr_assets / "runtime-manifest.json").write_text('{"schema_version":1}\n', encoding="utf-8")
+        client = TestClient(create_web_app(
+            self.canonical_db,
+            self.personal_db.with_name("ocr-personal.sqlite"),
+            ocr_assets_dir=self.ocr_assets,
+        ))
         review = self.client.get("/static/ocr-review.js")
         self.assertEqual(review.status_code, 200)
         self.assertIn('new Worker("/ocr-assets/direct/ocr-worker.js")', review.text)
         self.assertNotIn("/api/ocr", review.text)
-        for path in [
-            "/ocr-assets/runtime-manifest.json",
-            "/static/ocr.js",
-            "/static/browser-ocr.js",
-            "/static/browser-ocr-parser.js",
-        ]:
-            self.assertEqual(self.client.get(path).status_code, 404, path)
+        self.assertEqual(client.get("/ocr-assets/runtime-manifest.json").status_code, 200)
+        self.assertEqual(client.get("/ocr-assets/direct/ocr-worker.js").status_code, 200)
+        for path in ["/static/ocr.js", "/static/browser-ocr.js", "/static/browser-ocr-parser.js"]:
+            self.assertEqual(client.get(path).status_code, 404, path)
 
     def test_web_api_has_no_ocr_or_batch_ingestion_routes(self) -> None:
         person = self.client.post(
