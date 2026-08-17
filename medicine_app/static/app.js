@@ -7,11 +7,14 @@ const state = {
   pendingProduct: null,
   pendingRequestId: null,
   pendingOcrDraft: null,
+  pendingOcrPersonId: null,
+  ocrSearchActive: false,
   warningToken: null,
   reviewedDraftKey: null,
   editingMedicationId: null,
   editingPersonId: null,
   searchTimer: null,
+  searchRequestId: 0,
 };
 const titles = {
   home: "오늘의 복약",
@@ -72,7 +75,26 @@ function toast(message) {
   node._timer = setTimeout(() => node.classList.add("hidden"), 2200);
 }
 
+function resetOcrTransientState({ clearSearch = false } = {}) {
+  const hadOcrSearch = state.ocrSearchActive;
+  state.pendingOcrDraft = null;
+  state.pendingOcrPersonId = null;
+  state.ocrSearchActive = false;
+  window.MedicineOcrReview?.reset?.();
+  if (!clearSearch || !hadOcrSearch) return;
+  state.searchRequestId += 1;
+  const query = $("#drug-query");
+  const status = $("#search-status");
+  const results = $("#drug-results");
+  if (query) query.value = "";
+  if (status) status.textContent = "";
+  if (results) results.innerHTML = "";
+  updateSearchMode();
+}
+
 function showScreen(name) {
+  const previousScreen = $(".screen.active")?.dataset.screen || null;
+  if (previousScreen === "search" && name !== "search") resetOcrTransientState({ clearSearch: true });
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
   $$(".nav-item").forEach((node) => {
     const active = node.dataset.nav === name;
@@ -132,10 +154,12 @@ function currentPerson() {
   return state.people.find((person) => person.id === state.currentPersonId) || null;
 }
 async function loadPeople() {
+  const previousPersonId = state.currentPersonId;
   state.people = await api("/api/people");
   if (!state.people.some((person) => person.id === state.currentPersonId)) {
     state.currentPersonId = state.people[0]?.id || null;
   }
+  if (previousPersonId && previousPersonId !== state.currentPersonId) resetOcrTransientState({ clearSearch: true });
   if (state.currentPersonId) {
     localStorage.setItem("medicine.currentPersonId", state.currentPersonId);
     await loadDashboard();
@@ -173,7 +197,7 @@ function renderHome() {
         <p class="muted">프로필을 먼저 만들면 나이와 건강 관련 정보, 현재 복용약을 함께 확인할 수 있어요.</p>
         <button class="primary-button wide" id="home-add-person" type="button">프로필 추가</button>
       </div>`;
-    $("#home-add-person").addEventListener("click", () => openSheet("#person-sheet"));
+    $("#home-add-person").addEventListener("click", () => openPersonForm());
     return;
   }
 
@@ -333,9 +357,11 @@ async function runDrugSearch(successMessage = "") {
   const root = $("#drug-results");
   updateSearchMode();
   if (!term) { status.textContent = ""; root.innerHTML = ""; return false; }
+  const requestId = ++state.searchRequestId;
   status.textContent = "";
   try {
     const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`);
+    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
     state.fullCatalog = true;
     status.textContent = successMessage;
     root.innerHTML = results.length ? results.map((item) => `
@@ -359,6 +385,7 @@ async function runDrugSearch(successMessage = "") {
     });
     return true;
   } catch (error) {
+    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
     status.textContent = friendlyErrorMessage(error.message);
     root.innerHTML = "";
     return false;
@@ -366,7 +393,15 @@ async function runDrugSearch(successMessage = "") {
 }
 
 function selectProductResult(card) {
-  previewProduct(card.dataset.productSelect, state.pendingOcrDraft);
+  let ocrDraft = null;
+  if (state.pendingOcrDraft) {
+    if (state.pendingOcrPersonId !== state.currentPersonId) {
+      resetOcrTransientState({ clearSearch: true });
+    } else {
+      ocrDraft = { ...state.pendingOcrDraft };
+    }
+  }
+  previewProduct(card.dataset.productSelect, ocrDraft);
 }
 
 async function refreshForDateChange() {
@@ -385,7 +420,9 @@ function bindEvents() {
   $("#sheet-backdrop").addEventListener("click", closeSheets);
   $$('[data-close-sheet]').forEach((button) => button.addEventListener("click", closeSheets));
   $("#drug-query").addEventListener("input", () => {
-    state.pendingOcrDraft = null;
+    resetOcrTransientState();
+    $("#search-status").textContent = "";
+    $("#drug-results").innerHTML = "";
     updateSearchMode();
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runDrugSearch, 280);
@@ -394,6 +431,9 @@ function bindEvents() {
     const row = event.detail;
     if (!row || typeof row.product_query !== "string" || !row.product_query.trim()) return;
     state.pendingOcrDraft = row.draft && typeof row.draft === "object" ? { ...row.draft } : {};
+    state.pendingOcrPersonId = state.currentPersonId;
+    state.ocrSearchActive = true;
+    window.MedicineOcrReview?.reset?.();
     const query = row.product_query.trim();
     $("#drug-query").value = query;
     updateSearchMode();

@@ -54,11 +54,15 @@ function openSheet(selector) {
 }
 
 function closeSheets() {
+  const closingSheet = activeSheet();
   document.querySelector("#sheet-backdrop").classList.add("hidden");
   document.querySelectorAll(".bottom-sheet").forEach((node) => node.classList.add("hidden"));
   document.querySelector(".app-shell").inert = false;
   document.removeEventListener("keydown", trapSheetFocus);
   if (previousSheetFocus?.focus) previousSheetFocus.focus();
   previousSheetFocus = null;
+  if (closingSheet?.id) {
+    document.dispatchEvent(new CustomEvent("medicine:sheet-closed", { detail: { id: closingSheet.id } }));
+  }
   return true;
 }

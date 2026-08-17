@@ -14,6 +14,7 @@
   ]);
   let activeWorker = null;
   let timeout = null;
+  let supported = false;
 
   function normalizeOcrRows(value) {
     if (!Array.isArray(value)) return [];
@@ -58,6 +59,10 @@
     return { tablet: "정", capsule: "캡슐", packet: "포" }[value] || value || "";
   }
 
+  function option(value, current, label) {
+    return `<option value="${value}"${current === value ? " selected" : ""}>${label}</option>`;
+  }
+
   function uncertaintyText(codes) {
     const labels = {
       LOW_CONFIDENCE_OCR: "인식 정확도가 낮아 제품명과 복용 정보를 다시 확인해주세요.",
@@ -73,6 +78,7 @@
 
   function readRow(card, base) {
     const value = (field) => card.querySelector(`[data-ocr-field="${field}"]`)?.value?.trim() || "";
+    const checked = (field) => Boolean(card.querySelector(`[data-ocr-field="${field}"]`)?.checked);
     const number = (field) => {
       const raw = value(field);
       const parsed = raw ? Number(raw) : null;
@@ -83,19 +89,37 @@
     const frequency = number("frequency_per_day");
     const days = number("prescription_days");
     const unit = value("dose_unit");
+    const scheduleTimes = value("schedule_times").split(",").map((item) => item.trim()).filter(Boolean).slice(0, 24);
+    const mealRelation = value("meal_relation");
+    const administrationRoute = value("administration_route");
     if (amount !== null) draft.dose_amount = amount;
     if (unit) draft.dose_unit = unit;
     if (frequency !== null) draft.frequency_per_day = frequency;
     if (days !== null) draft.prescription_days = days;
+    if (scheduleTimes.length) draft.schedule_times = scheduleTimes;
+    if (mealRelation) draft.meal_relation = mealRelation;
+    if (administrationRoute) draft.administration_route = administrationRoute;
+    if (checked("as_needed")) draft.as_needed = true;
     return { ...base, product_query: value("product_query"), draft };
+  }
+
+  function clearReview() {
+    const panel = root.document?.querySelector("#ocr-review-panel");
+    const list = root.document?.querySelector("#ocr-review-list");
+    if (panel) panel.classList.add("hidden");
+    if (list) list.innerHTML = "";
   }
 
   function renderRows(rows) {
     const panel = root.document.querySelector("#ocr-review-panel");
     const list = root.document.querySelector("#ocr-review-list");
     if (!panel || !list) return;
+    if (!rows.length) {
+      clearReview();
+      return;
+    }
     panel.classList.remove("hidden");
-    list.innerHTML = rows.length ? rows.map((row, index) => `
+    list.innerHTML = rows.map((row, index) => `
       <article class="card ocr-row-card" data-ocr-row="${index}">
         <div class="ocr-row-heading"><strong>인식된 약 ${index + 1}</strong>${row.uncertainty_codes.length ? `<span class="permit-badge unknown">확인 필요</span>` : ""}</div>
         <label>제품명<input data-ocr-field="product_query" value="${escapeHtml(row.product_query)}" autocomplete="off"></label>
@@ -107,9 +131,32 @@
           <label>1일 횟수<input data-ocr-field="frequency_per_day" type="number" min="1" max="24" value="${escapeHtml(row.draft.frequency_per_day ?? "")}"></label>
           <label>처방 일수<input data-ocr-field="prescription_days" type="number" min="1" max="3650" value="${escapeHtml(row.draft.prescription_days ?? "")}"></label>
         </div>
+        <label>복용 시간<input data-ocr-field="schedule_times" value="${escapeHtml(Array.isArray(row.draft.schedule_times) ? row.draft.schedule_times.join(", ") : "")}" placeholder="08:00, 20:00"></label>
+        <div class="form-grid two">
+          <label>식사 관계<select data-ocr-field="meal_relation">
+            ${option("unspecified", row.draft.meal_relation || "unspecified", "미지정")}
+            ${option("after_meal", row.draft.meal_relation, "식후")}
+            ${option("before_meal", row.draft.meal_relation, "식전")}
+            ${option("with_meal", row.draft.meal_relation, "식사와 함께")}
+            ${option("empty_stomach", row.draft.meal_relation, "공복")}
+            ${option("regardless", row.draft.meal_relation, "식사 무관")}
+          </select></label>
+          <label>투여 경로<select data-ocr-field="administration_route">
+            ${option("unknown", row.draft.administration_route || "unknown", "확인 필요")}
+            ${option("oral", row.draft.administration_route, "경구")}
+            ${option("topical", row.draft.administration_route, "외용")}
+            ${option("inhaled", row.draft.administration_route, "흡입")}
+            ${option("ophthalmic", row.draft.administration_route, "점안")}
+            ${option("otic", row.draft.administration_route, "점이")}
+            ${option("nasal", row.draft.administration_route, "비강")}
+            ${option("injection", row.draft.administration_route, "주사")}
+            ${option("other", row.draft.administration_route, "기타")}
+          </select></label>
+        </div>
+        <label class="ocr-choice"><input data-ocr-field="as_needed" type="checkbox"${row.draft.as_needed === true ? " checked" : ""}><span>필요할 때만 복용</span></label>
         ${row.uncertainty_codes.length ? `<p class="muted small ocr-review-note">${escapeHtml(uncertaintyText(row.uncertainty_codes))}</p>` : ""}
         <button class="secondary-button wide" type="button" data-ocr-select="${index}">제품 검색해서 확인</button>
-      </article>`).join("") : `<div class="empty-state"><strong>약 정보를 찾지 못했어요</strong>사진을 다시 찍거나 직접 검색해주세요.</div>`;
+      </article>`).join("");
     list.querySelectorAll("[data-ocr-select]").forEach((button) => {
       button.addEventListener("click", () => {
         const index = Number(button.dataset.ocrSelect);
@@ -127,29 +174,47 @@
     if (status) status.textContent = message || "";
   }
 
+  function setImportDisabled(disabled, busy = false) {
+    const input = root.document?.querySelector("#ocr-image-input");
+    const button = root.document?.querySelector(".ocr-file-button");
+    if (input) input.disabled = disabled;
+    if (!button) return;
+    button.classList.toggle("is-disabled", disabled);
+    button.setAttribute("aria-disabled", disabled ? "true" : "false");
+    if (busy) button.setAttribute("aria-busy", "true");
+    else button.removeAttribute("aria-busy");
+  }
+
   function cleanup() {
     if (timeout) root.clearTimeout(timeout);
     timeout = null;
     activeWorker?.terminate();
     activeWorker = null;
+    setImportDisabled(!supported);
+  }
+
+  function reset() {
+    cleanup();
+    clearReview();
+    setStatus("");
     const input = root.document?.querySelector("#ocr-image-input");
-    if (input) input.disabled = false;
+    if (input) input.value = "";
   }
 
   function recognize(file) {
     cleanup();
-    const input = root.document?.querySelector("#ocr-image-input");
-    if (input) input.disabled = true;
-    const panel = root.document?.querySelector("#ocr-review-panel");
-    if (panel) panel.classList.add("hidden");
+    clearReview();
+    setImportDisabled(true, true);
     setStatus("사진에서 약 정보를 읽고 있어요… 5%");
     const worker = new Worker("/ocr-assets/direct/ocr-worker.js");
     activeWorker = worker;
     timeout = root.setTimeout(() => {
+      if (activeWorker !== worker) return;
       cleanup();
       setStatus("인식 시간이 오래 걸려 중단했어요. 사진을 다시 선택해주세요.");
     }, TIMEOUT_MS);
     worker.onmessage = (event) => {
+      if (activeWorker !== worker) return;
       const message = event.data || {};
       if (message.type === "progress") {
         setStatus(`사진에서 약 정보를 읽고 있어요… ${Math.max(0, Math.min(100, Number(message.progress) || 0))}%`);
@@ -159,13 +224,15 @@
         const rows = normalizeOcrRows(message.rows);
         cleanup();
         setStatus(rows.length ? `약 ${rows.length}개를 찾았어요. 제품명과 복용 정보를 확인해주세요.` : "약 정보를 찾지 못했어요.");
-        renderRows(rows);
+        if (rows.length) renderRows(rows);
+        else clearReview();
       } else if (message.type === "error") {
         cleanup();
         setStatus("사진을 인식하지 못했어요. 다른 사진을 선택하거나 직접 검색해주세요.");
       }
     };
     worker.onerror = () => {
+      if (activeWorker !== worker) return;
       cleanup();
       setStatus("사진 인식 기능을 시작하지 못했어요. 직접 검색해주세요.");
     };
@@ -175,8 +242,9 @@
   function bind() {
     const input = root.document?.querySelector("#ocr-image-input");
     if (!input) return;
-    if (typeof root.Worker !== "function" || typeof root.createImageBitmap !== "function") {
-      input.disabled = true;
+    supported = typeof root.Worker === "function" && typeof root.createImageBitmap === "function";
+    setImportDisabled(!supported);
+    if (!supported) {
       setStatus("이 기기에서는 사진 인식을 사용할 수 없어요.");
       return;
     }
@@ -185,9 +253,9 @@
       input.value = "";
       if (file) recognize(file);
     });
-    root.addEventListener("pagehide", cleanup, { once: false });
+    root.addEventListener("pagehide", reset, { once: false });
   }
 
   if (root.document) root.document.addEventListener("DOMContentLoaded", bind);
-  return { normalizeOcrRows };
+  return { normalizeOcrRows, reset };
 });
