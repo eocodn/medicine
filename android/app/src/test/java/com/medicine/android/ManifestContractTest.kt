@@ -6,11 +6,16 @@ import org.junit.Test
 
 class ManifestContractTest {
     @Test
-    fun manifestDoesNotRequireExternalNetworkOrCleartext() {
+    fun nativeReferenceUpdaterHasInternetButWebViewRemainsLocalAndCleartextDisabled() {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
-        assertFalse(manifest.contains("android.permission.INTERNET"))
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val index = java.io.File("../../medicine_app/static/index.html").readText()
+        assertTrue(manifest.contains("android.permission.INTERNET"))
         assertFalse(manifest.contains("usesCleartextTraffic"))
         assertTrue(manifest.contains("com.chaquo.python.android.PyApplication"))
+        assertTrue(activity.contains("blocked external request"))
+        assertTrue(activity.contains("BuildConfig.REFERENCE_UPDATE_BASE_URL"))
+        assertTrue(index.contains("connect-src 'self'"))
     }
 
     @Test
@@ -49,11 +54,30 @@ class ManifestContractTest {
     @Test
     fun referenceDataInstallIsHashVerifiedAtomicAndReadOnly() {
         val installer = java.io.File("src/main/java/com/medicine/android/ReferenceAssetInstaller.kt").readText()
-        assertTrue(installer.contains("MessageDigest.getInstance(\"SHA-256\")"))
-        assertTrue(installer.contains("isVerified(target, expectedHash, expectedSize)"))
+        val store = java.io.File("src/main/java/com/medicine/android/ReferenceStore.kt").readText()
+        assertTrue(store.contains("MessageDigest.getInstance(\"SHA-256\")"))
+        assertTrue(store.contains("highestActivatedSequence"))
+        assertTrue(store.contains("pending"))
+        assertTrue(store.contains("previous"))
         assertTrue(installer.contains("output.fd.sync()"))
-        assertTrue(installer.contains("temporary.renameTo(target)"))
-        assertTrue(installer.contains("target.setReadOnly()"))
+        assertTrue(store.contains("candidate.renameTo(target)"))
+        assertTrue(store.contains("target.setReadOnly()"))
+        assertFalse(installer.contains("file.name.startsWith(\"mobile-\") && file.extension == \"sqlite\" && file != target"))
+    }
+
+    @Test
+    fun referenceUpdaterPackagesSharedPatchCoreAndKeepsDistributionEndpointOffByDefault() {
+        val build = java.io.File("build.gradle.kts").readText()
+        val updater = java.io.File("src/main/java/com/medicine/android/ReferenceUpdater.kt").readText()
+        val source = java.io.File("src/main/java/com/medicine/android/ReferenceReleaseHttpSource.kt").readText()
+        assertTrue(build.contains("MEDICINE_REFERENCE_UPDATE_BASE_URL"))
+        assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
+        assertTrue(build.contains("include(\"medicine_canonical/release.py\")"))
+        assertTrue(updater.contains("ReferenceUpdateStatus.STAGED"))
+        assertTrue(updater.contains(".artifact-"))
+        assertTrue(source.contains("Range"))
+        assertTrue(source.contains("Content-Range"))
+        assertTrue(source.contains("HttpsURLConnection"))
     }
 
     @Test

@@ -6,6 +6,7 @@ import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
+import java.net.URI
 import javax.inject.Inject
 
 abstract class PrepareMobileAssets : DefaultTask() {
@@ -62,6 +63,16 @@ require((mobileDatabaseOverride == null) == (mobileManifestOverride == null)) {
 }
 val mobileDatabaseFile = rootProject.file(mobileDatabaseOverride ?: "../data/db/mobile.sqlite")
 val mobileManifestFile = rootProject.file(mobileManifestOverride ?: "../data/db/mobile.manifest.json")
+val referenceUpdateBaseUrl = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")?.trim().orEmpty()
+if (referenceUpdateBaseUrl.isNotEmpty()) {
+    val uri = URI(referenceUpdateBaseUrl)
+    require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.path.endsWith("/")) {
+        "MEDICINE_REFERENCE_UPDATE_BASE_URL must be an HTTPS origin/base path ending in /"
+    }
+    require(uri.query == null && uri.fragment == null && '"' !in referenceUpdateBaseUrl && '\\' !in referenceUpdateBaseUrl) {
+        "MEDICINE_REFERENCE_UPDATE_BASE_URL cannot contain query, fragment, quotes, or backslashes"
+    }
+}
 val prepareMobileAssets = tasks.register<PrepareMobileAssets>("prepareMobileAssets") {
     mobileDatabase.set(layout.file(providers.provider { mobileDatabaseFile }))
     mobileManifest.set(layout.file(providers.provider { mobileManifestFile }))
@@ -85,6 +96,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.2.0"
+        buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$referenceUpdateBaseUrl\"")
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -98,6 +110,10 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
 }
@@ -121,6 +137,8 @@ chaquopy {
     sourceSets.getByName("main") {
         srcDir(rootProject.file(".."))
         include("medicine_app/**/*.py")
+        include("medicine_canonical/__init__.py")
+        include("medicine_canonical/release.py")
     }
 }
 

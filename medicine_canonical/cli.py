@@ -12,6 +12,7 @@ from .inspection import canonical_product_criteria, canonical_product_ingredient
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .kids_sources import sync_kids_xlsx_sources
 from .mobile import build_mobile_database
+from medicine_app.reference_update import verify_reference_database
 from .release import apply_chunk_patch, prepare_release
 from .release_r2 import download_object_from_env, publish_release_from_env
 from .release_signing import verify_signed_envelope
@@ -119,6 +120,15 @@ def build_parser() -> argparse.ArgumentParser:
     mobile_build.add_argument("--output", type=Path, default=Path("data/db/mobile.sqlite"))
     mobile_build.add_argument("--manifest", type=Path)
     mobile_build.add_argument("--json", action="store_true")
+
+    mobile_verify_runtime = sub.add_parser(
+        "mobile-verify-runtime",
+        help="Verify a mobile reference DB against on-device runtime policy and release identity",
+    )
+    mobile_verify_runtime.add_argument("--db", type=Path, required=True)
+    mobile_verify_runtime.add_argument("--schema-version", required=True)
+    mobile_verify_runtime.add_argument("--dataset-id", required=True)
+    mobile_verify_runtime.add_argument("--json", action="store_true")
 
     verify = sub.add_parser("verify", help="Verify canonical source policy, schema and SQLite integrity")
     verify.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -283,6 +293,12 @@ def main(argv=None) -> int:
     elif args.command == "mobile-build":
         payload = build_mobile_database(
             args.db, args.output, manifest_path=args.manifest
+        )
+    elif args.command == "mobile-verify-runtime":
+        payload = verify_reference_database(
+            args.db,
+            expected_schema_version=args.schema_version,
+            expected_dataset_id=args.dataset_id,
         )
     elif args.command == "substance-sync":
         payload = sync_substance_identity_sources(args.raw_dir)
