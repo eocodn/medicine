@@ -301,10 +301,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .search-box span { color: var(--muted); font-size: 22px; }
 .search-box input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); }
-.search-options { margin: 10px 2px 0; color: #536059; font-size: 12px; }
-.search-options summary { width: max-content; cursor: pointer; font-weight: 800; }
-.search-toggle { display: flex; align-items: center; gap: 8px; margin: 9px 0 0; color: #536059; font-size: 12px; font-weight: 750; }
-.search-toggle input { width: 18px; height: 18px; margin: 0; accent-color: var(--brand); }
 .camera-placeholder {
   width: 100%;
   margin-top: 10px;
@@ -339,6 +335,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .permit-badge.active { background: var(--brand-soft); color: var(--brand); }
 .permit-badge.expired, .permit-badge.withdrawn, .permit-badge.business_closed, .permit-badge.canceled, .permit-badge.inactive_unknown { background: var(--warning-soft); color: var(--warning); }
 .permit-badge.unknown { background: var(--surface-soft); color: var(--muted); }
+.permit-change-note { margin-top: 12px; padding: 11px 12px; border-radius: 12px; background: var(--warning-soft); color: var(--warning); }
+.permit-change-note > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.permit-change-note p { margin: 6px 0 0; font-size: 12px; line-height: 1.45; }
+.permit-change-badge { display: inline-flex; padding: 4px 7px; border-radius: 99px; background: var(--warning); color: white; font-size: 10px; font-weight: 850; }
 .add-button { flex: 0 0 auto; min-width: 58px; min-height: 40px; display: grid; place-items: center; border: 0; border-radius: 13px; background: var(--brand); color: white; font-weight: 800; }
 
 .person-card { padding: 17px; }

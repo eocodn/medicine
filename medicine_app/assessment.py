@@ -345,7 +345,7 @@ def assess_current_medication(
         "start_date": medication.get("start_date"),
         "end_date": medication.get("end_date"),
     }
-    return assess_medication(
+    assessment = assess_medication(
         app,
         personal_con,
         person,
@@ -355,6 +355,10 @@ def assess_current_medication(
         exclude_medication_id=str(medication["id"]),
         as_of=as_of,
     )
+    assessment["permit_status"] = product.get("permit_status")
+    assessment["permit_status_name"] = product.get("permit_status_name")
+    assessment["permit_status_changed_at"] = product.get("cancel_date")
+    return assessment
 
 
 __all__ = [
