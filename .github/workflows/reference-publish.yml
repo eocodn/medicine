@@ -124,6 +124,9 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      REFERENCE_SIGNING_PRIVATE_KEY_PEM: ${{ secrets.REFERENCE_SIGNING_PRIVATE_KEY_PEM }}
+      REFERENCE_SIGNING_KEY_ID: reference-prod-2026-01
+      REFERENCE_RELEASE_SEQUENCE: ${{ github.run_number }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -138,7 +141,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
+          for name in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET REFERENCE_SIGNING_PRIVATE_KEY_PEM REFERENCE_SIGNING_KEY_ID REFERENCE_RELEASE_SEQUENCE; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::$name is not configured"
               exit 1

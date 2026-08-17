@@ -14,6 +14,7 @@ from .kids_sources import sync_kids_xlsx_sources
 from .mobile import build_mobile_database
 from .release import apply_chunk_patch, prepare_release
 from .release_r2 import download_object_from_env, publish_release_from_env
+from .release_signing import verify_signed_envelope
 from .sources import sync_canonical_api_sources
 from .substance_build import (
     assemble_substance_database,
@@ -187,6 +188,16 @@ def build_parser() -> argparse.ArgumentParser:
     release_apply.add_argument("--output", type=Path, required=True)
     release_apply.add_argument("--json", action="store_true")
 
+    release_verify = sub.add_parser(
+        "release-verify-envelope",
+        help="Verify a signed reference release manifest envelope",
+    )
+    release_verify.add_argument("--envelope", type=Path, required=True)
+    release_verify.add_argument("--public-key", type=Path, required=True)
+    release_verify.add_argument("--key-id", required=True)
+    release_verify.add_argument("--minimum-sequence", type=int)
+    release_verify.add_argument("--json", action="store_true")
+
     r2_download = sub.add_parser("r2-download", help="Download one private R2 object using configured credentials")
     r2_download.add_argument("--key", required=True)
     r2_download.add_argument("--output", type=Path, required=True)
@@ -304,6 +315,18 @@ def main(argv=None) -> int:
         )
     elif args.command == "release-apply":
         payload = apply_chunk_patch(args.source, args.patch, args.output)
+    elif args.command == "release-verify-envelope":
+        verified = verify_signed_envelope(
+            args.envelope.read_bytes(),
+            {args.key_id: args.public_key.read_bytes()},
+            minimum_release_sequence=args.minimum_sequence,
+        )
+        payload = {
+            "status": "verified",
+            "key_id": verified["key_id"],
+            "release_sequence": verified["release_sequence"],
+            "manifest": verified["manifest"],
+        }
     elif args.command == "r2-download":
         payload = download_object_from_env(args.key, args.output)
     elif args.command == "release-publish-r2":
