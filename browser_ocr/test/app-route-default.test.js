@@ -113,7 +113,7 @@ test("unknown route warning stays in the DUR review before entry", () => {
   assert.match(risk.innerHTML, /투여 경로를 확인해주세요/);
 });
 
-test("conditional DUR items get a condition-review heading", () => {
+test("conditional DUR items surface under the regular DUR warning heading", () => {
   const { context, risk } = appContext();
   const conditional = preview("oral");
   conditional.dur_checks = [{
@@ -123,6 +123,7 @@ test("conditional DUR items get a condition-review heading", () => {
 
   context.renderRiskSheet(conditional);
 
-  assert.match(risk.innerHTML, /조건 확인이 필요한 DUR 항목 1건이 있어요/);
+  assert.match(risk.innerHTML, /DUR 주의사항 1건이 있어요/);
+  assert.doesNotMatch(risk.innerHTML, /조건 확인이 필요한 DUR 항목/);
   assert.doesNotMatch(risk.innerHTML, /DUR 판정 결과를 확인할 수 없어요/);
 });
