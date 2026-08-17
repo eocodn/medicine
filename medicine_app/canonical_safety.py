@@ -103,8 +103,10 @@ def _combination_risks(
         for row in rows:
             candidate_side = "left" if row.get("item_seq") == target else "right"
             details = _canonical_details(row)
+            criterion_note = str(row.get("criterion_note") or "").strip()
+            timing_text = " ".join(part for part in (criterion_note, details) if part)
             timing = parse_interaction_timing(
-                details, _canonical_ingredient(row), _canonical_paired_ingredient(row)
+                timing_text, _canonical_ingredient(row), _canonical_paired_ingredient(row)
             )
             if not interaction_timing_applies(
                 timing, candidate_course, medication, candidate_side=candidate_side
@@ -119,7 +121,11 @@ def _combination_risks(
                 "related_medication_id": medication["id"], "timing": timing,
                 "source_scope": "canonical_product",
             }
-            if timing.get("status") == "not_evaluable":
+            # The canonical note can carry a dose, indication, age, emergency, or
+            # formulation qualifier. Known timing notes are evaluated above; any
+            # other non-empty qualifier must remain conditional rather than being
+            # presented as an unconditional contraindication.
+            if timing.get("status") == "not_evaluable" or (criterion_note and timing.get("status") == "default"):
                 finding["evaluation_status"] = "conditional"
             risks.append(finding)
         if not rows and _unlinked_combination_exists(con, target, paired):
