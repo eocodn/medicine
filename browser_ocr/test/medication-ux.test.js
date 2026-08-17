@@ -48,6 +48,8 @@ test("primary navigation keeps only user tasks and removes the empty settings de
   assert.deepEqual(navItems, ["home", "meds", "search", "people"]);
   assert.doesNotMatch(index, /data-screen="settings"/);
   assert.doesNotMatch(index, /data-nav="settings"/);
+  assert.match(index, /data-nav="people"[^>]*>[\s\S]*?<small>프로필<\/small>/);
+  assert.doesNotMatch(index, /data-nav="people"[^>]*>[\s\S]*?<small>가족<\/small>/);
 });
 
 test("top bar exposes the active person's name instead of only an initial", () => {
@@ -96,10 +98,57 @@ test("medication cards separate DUR review, editing, and regimen completion sema
   const app = source("app.js");
 
   assert.match(app, /data-dur-alert[\s\S]{0,300}openMedicationSafety/);
+  assert.match(app, />DUR 주의<\/button>/);
+  assert.match(app, />DUR 확인 필요<\/button>/);
+  assert.match(app, /class="regimen-summary"/);
   assert.match(app, />복용 종료<\/button>/);
   assert.doesNotMatch(app, /data-stop="\$\{med\.id\}"[^>]*>삭제<\/button>/);
   assert.match(app, /사용 완료/);
   assert.match(app, /data-instance-cancel[\s\S]{0,120}>되돌리기<\/button>/);
+});
+
+test("schedule entry uses explicit time controls and immediate count guidance", () => {
+  const prescription = source("prescription.js");
+
+  assert.match(prescription, /type="hidden" id="pending-times"/);
+  assert.match(prescription, /type="time"[^>]*data-schedule-time/);
+  assert.match(prescription, /data-add-schedule-time/);
+  assert.match(prescription, /id="schedule-time-status"[^>]*role="status"/);
+  assert.match(prescription, /function scheduleCountGuidance/);
+});
+
+test("schedule count guidance identifies mismatch and duplicate times before submit", () => {
+  const { context } = prescriptionContext();
+
+  assert.equal(context.scheduleCountGuidance("3", []), "복용 시간을 추가하지 않으면 하루 횟수만 저장돼요.");
+  assert.equal(context.scheduleCountGuidance("3", ["08:00", "13:00"]), "하루 3회인데 복용 시간은 2개예요.");
+  assert.equal(context.scheduleCountGuidance("2", ["08:00", "08:00"]), "같은 복용 시간이 두 번 있어요.");
+  assert.equal(context.scheduleCountGuidance("2", ["08:00", "20:00"]), "복용 시간 2개가 하루 횟수와 맞아요.");
+});
+
+test("native schedule controls canonicalize backend-accepted single-digit times", () => {
+  const { context } = prescriptionContext();
+
+  assert.equal(context.normalizeScheduleTimeForInput("8:00"), "08:00");
+  assert.equal(context.normalizeScheduleTimeForInput("8:5"), "08:05");
+  assert.equal(context.normalizeScheduleTimeForInput("23:59"), "23:59");
+  assert.equal(context.normalizeScheduleTimeForInput("24:00"), "24:00");
+});
+
+test("search de-emphasizes inactive products and compacts context while querying", () => {
+  const index = source("index.html");
+  const app = source("app.js");
+
+  assert.match(index, /class="search-options"/);
+  assert.match(index, /<summary>검색 옵션<\/summary>/);
+  assert.match(app, /search-hero[\s\S]{0,300}has-query/);
+});
+
+test("medication names can wrap to two lines in schedules and search results", () => {
+  const styles = source("styles.css");
+
+  assert.match(styles, /\.schedule-name strong[^{]*\{[^}]*-webkit-line-clamp:\s*2/);
+  assert.match(styles, /\.result-title-line strong[^{]*\{[^}]*-webkit-line-clamp:\s*2/);
 });
 
 test("main content is not one giant live region", () => {
@@ -112,4 +161,16 @@ test("bottom-sheet close controls meet the 44px touch target", () => {
   const block = styles.match(/(?:^|\n)\.icon-button\s*\{([^}]*)\}/)?.[1] || "";
   assert.match(block, /width:\s*44px/);
   assert.match(block, /height:\s*44px/);
+});
+
+test("new medication UX actions keep 44px mobile touch targets", () => {
+  const styles = source("styles.css");
+  const prescription = source("prescription.css");
+  const durBlock = styles.match(/\.dur-alert-badge, \.dur-review-badge\s*\{([^}]*)\}/)?.[1] || "";
+  const addBlock = prescription.match(/\.schedule-time-add\s*\{([^}]*)\}/)?.[1] || "";
+  const removeBlock = prescription.match(/\.schedule-time-remove\s*\{([^}]*)\}/)?.[1] || "";
+
+  assert.match(durBlock, /min-height:\s*44px/);
+  assert.match(addBlock, /min-height:\s*44px/);
+  assert.match(removeBlock, /min-height:\s*44px/);
 });

@@ -56,6 +56,36 @@
 .prescription-form input:not([type="checkbox"]):focus, .prescription-form select:focus { border-bottom-color: var(--brand); }
 .prescription-form input:disabled, .prescription-form select:disabled { opacity: .48; }
 .field-help { color: var(--muted); font-size: 11px; font-weight: 550; line-height: 1.45; }
+.schedule-time-field { display: grid; gap: 8px; }
+.schedule-time-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.schedule-time-heading strong { color: #536059; font-size: 12px; }
+.schedule-time-add {
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 850;
+}
+.schedule-time-list { display: grid; gap: 7px; }
+.schedule-time-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.schedule-time-row input[type="time"] { min-height: 44px; }
+.schedule-time-remove {
+  min-width: 58px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+.schedule-time-status { min-height: 16px; color: var(--muted); font-size: 11px; font-weight: 650; line-height: 1.4; }
+.schedule-time-status[data-state="attention"] { color: var(--warning); }
+.schedule-time-status[data-state="ok"] { color: var(--brand); }
 .choice-card {
   grid-template-columns: 24px minmax(0, 1fr) !important;
   align-items: start;
