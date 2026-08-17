@@ -207,22 +207,22 @@ function renderHome() {
 }
 
 function scheduleHtml(item) {
-  const done = item.status !== "planned";
+  const stateClass = item.status === "taken" ? "done taken" : item.status === "skipped" ? "done skipped" : "planned";
   const mealRelation = item.meal_relation && item.meal_relation !== "unspecified"
     ? mealRelationLabel(item.meal_relation) : null;
   const doseMeta = [item.dose_text ? formatDoseText(item.dose_text) : "복용량 미입력", mealRelation]
     .filter(Boolean).join(" · ");
   return `
-    <div class="schedule-item ${done ? "done" : ""}">
+    <div class="schedule-item ${stateClass}">
       <span class="schedule-time">${escapeHtml(item.scheduled_time || item.slot_label || "시간 미정")}</span>
       <div class="schedule-name"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(doseMeta)}</span></div>
       ${item.status === "taken"
-        ? `<div class="dose-actions"><span class="dose-status taken">사용 완료</span><button class="mini-action" data-instance-cancel="${item.id}" type="button">되돌리기</button></div>`
+        ? `<div class="dose-result"><span class="dose-status taken">✓ 복용 완료</span><button class="dose-cancel-action" data-instance-cancel="${item.id}" type="button">취소</button></div>`
         : item.status === "skipped"
-          ? `<div class="dose-actions"><span class="dose-status skipped">건너뜀</span><button class="mini-action" data-instance-cancel="${item.id}" type="button">되돌리기</button></div>`
-          : `<div class="dose-actions">
-              <button class="mini-action" data-instance-taken="${item.id}" type="button">사용했어요</button>
-              <button class="mini-action skip-action" data-instance-skipped="${item.id}" type="button">건너뛰기</button>
+          ? `<div class="dose-result"><span class="dose-status skipped">– 건너뜀</span><button class="dose-cancel-action" data-instance-cancel="${item.id}" type="button">취소</button></div>`
+          : `<div class="dose-actions planned">
+              <button class="dose-primary-action" data-instance-taken="${item.id}" type="button">✓ 사용했어요</button>
+              <button class="dose-skip-action" data-instance-skipped="${item.id}" type="button">건너뛰기</button>
             </div>`}
     </div>`;
 }

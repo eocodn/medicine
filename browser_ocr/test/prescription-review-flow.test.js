@@ -87,7 +87,7 @@ test("conditional DUR review renders as a distinct detailed state", () => {
   assert.doesNotMatch(html, /dur-check unknown/);
 });
 
-test("conditional DUR review has its own orange styling contract", () => {
+test("conditional DUR review uses the regular DUR warning styling contract", () => {
   const css = fs.readFileSync(
     path.join(__dirname, "../../medicine_app/static/styles.css"), "utf8",
   );
@@ -95,7 +95,8 @@ test("conditional DUR review has its own orange styling contract", () => {
   assert.match(css, /--conditional:/);
   assert.match(css, /--conditional-soft:/);
   assert.match(css, /\.dur-check\.conditional\s*\{/);
-  assert.match(css, /background:\s*var\(--conditional-soft\)/);
+  assert.match(css, /\.dur-check\.conditional\s*\{[^}]*background:\s*var\(--danger-soft\)/);
+  assert.doesNotMatch(css, /\.dur-check\.conditional\s*\{[^}]*background:\s*var\(--conditional-soft\)/);
   assert.match(css, /\.dur-check\.unknown\s*\{/);
   assert.match(css, /background:\s*var\(--warning-soft\)/);
 });
