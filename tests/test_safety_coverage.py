@@ -29,6 +29,8 @@ def make_canonical_db(path: Path) -> None:
     add_product(con, "MFDS-PC", "조건부임부금기제품", "PregnancyConditional", dosage_form="정제")
     add_product(con, "MFDS-CW", "중단조건약", "ConditionalWashout", dosage_form="정제")
     add_product(con, "MFDS-CT", "중단조건대상약", "ConditionalTarget", dosage_form="정제")
+    add_product(con, "MFDS-CN-A", "용량조건병용약", "ConditionalDoseA", dosage_form="정제")
+    add_product(con, "MFDS-CN-B", "용량조건대상약", "ConditionalDoseB", dosage_form="정제")
     add_linked_rule(
         con, category="duration_caution", item_seq="MFDS-Z", ingredient="Zolpidem",
         rule_value="28일", details="최대 투여기간 28일", dosage_form="정제",
@@ -77,6 +79,12 @@ def make_canonical_db(path: Path) -> None:
         ingredient="ConditionalWashout", paired_item_seq="MFDS-CT",
         paired_ingredient="ConditionalTarget",
         details="ConditionalWashout 중단한 직후에는 ConditionalTarget 시작할 수 없음",
+    )
+    add_linked_rule(
+        con, category="combination_contraindication", item_seq="MFDS-CN-A",
+        ingredient="ConditionalDoseA", paired_item_seq="MFDS-CN-B",
+        paired_ingredient="ConditionalDoseB", details="혈액학적 독성 증가",
+        criterion_note="ConditionalDoseB 1주에 20mg 이상 투여시",
     )
     add_unlinked_rule(
         con, category="duration_caution", item_seq="MFDS-ZU", ingredient="Zolpidem",
@@ -213,6 +221,21 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(interaction["status"], "conditional")
         self.assertEqual(interaction["findings"][0]["evaluation_status"], "conditional")
         self.assertEqual(interaction["findings"][0]["timing"]["status"], "not_evaluable")
+        self.assertTrue(preview["warning_token"])
+
+    def test_interaction_with_unmodeled_criterion_note_is_conditional(self) -> None:
+        person = self.app.create_person(
+            "병용용량조건", "1990-01-01", "male", "not_applicable", lactation_status="not_applicable"
+        )
+        self.app.add_medication(person["id"], product_ref="MFDS-CN-B", long_term=True)
+
+        preview = self.app.preview_medication(
+            person["id"], {"product_ref": "MFDS-CN-A", "long_term": True}
+        )
+
+        interaction = next(row for row in preview["dur_checks"] if row["category"] == "combination_contraindication")
+        self.assertEqual(interaction["status"], "conditional")
+        self.assertEqual(interaction["findings"][0]["evaluation_status"], "conditional")
         self.assertTrue(preview["warning_token"])
 
     def test_multi_form_age_rule_uses_the_threshold_for_the_product_form(self) -> None:

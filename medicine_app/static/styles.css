@@ -458,7 +458,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .dur-check-heading span { font-size: 13px; font-weight: 800; }
 .dur-check p { margin: 7px 0 0; font-size: 13px; line-height: 1.55; }
 .dur-check.hit { padding: 15px; background: var(--danger-soft); border-color: #ecc7c2; color: #712a26; }
-.dur-check.conditional { padding: 12px 14px; background: var(--conditional-soft); border-color: #eab06b; color: var(--conditional); }
+.dur-check.conditional { padding: 12px 14px; background: var(--danger-soft); border-color: #ecc7c2; color: #712a26; }
 .dur-check.unknown { padding: 12px 14px; background: var(--warning-soft); border-color: #ead8b4; color: #69440e; }
 .dur-check.compact { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 11px; margin-bottom: 5px; border-radius: 12px; color: var(--muted); background: var(--surface-soft); font-size: 12px; }
 .dur-check.compact strong { color: #536059; }
