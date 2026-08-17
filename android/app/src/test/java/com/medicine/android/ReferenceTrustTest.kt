@@ -12,6 +12,6 @@ class ReferenceTrustTest {
             .digest(publicKey)
             .joinToString("") { "%02x".format(it) }
         assertEquals(ReferenceTrust.PRODUCTION_SPKI_SHA256, fingerprint)
-        assertEquals("d75d79623ff8016b7e1b12665d0d4edea0551ab8f299ab08ebe7d35a73bee4fa", fingerprint)
+        assertEquals("96de63a5e5cb2d1233dc09d13f2e1da8148b97a2cb15e69346a01514287969ea", fingerprint)
     }
 }
