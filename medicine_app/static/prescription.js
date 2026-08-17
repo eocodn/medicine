@@ -217,11 +217,9 @@ function durReviewOverviewHtml(items) {
 
 function riskStatusHeading(preview) {
   const durChecks = preview.dur_checks || [];
-  const hitCount = durChecks.filter((item) => item.status === "hit").length;
-  const conditionalCount = durChecks.filter((item) => item.status === "conditional").length;
+  const hitCount = durChecks.filter((item) => ["hit", "conditional"].includes(item.status)).length;
   const unknownCount = durChecks.filter((item) => item.status === "unknown").length;
   if (hitCount) return `DUR 주의사항 ${hitCount}건이 있어요`;
-  if (conditionalCount) return `조건 확인이 필요한 DUR 항목 ${conditionalCount}건이 있어요`;
   if (unknownCount) return `확인이 필요한 DUR 항목 ${unknownCount}건이 있어요`;
   if (hasClearDurCoverage(preview)) return "DUR 주의사항 없음";
   return "DUR 판정 결과를 확인할 수 없어요";
@@ -519,12 +517,12 @@ function durStatusHtml(items) {
       const detailHtml = findings.length
         ? findings.map((finding) => `
           <div class="dur-finding">
-            <strong>${escapeHtml(finding.title || item.summary || "DUR 조건 확인 필요")}</strong>
+            <strong>${escapeHtml(finding.title || item.summary || "DUR 주의사항")}</strong>
             <p>${escapeHtml(finding.details || item.details || "규칙의 적용 조건을 확인해야 합니다.")}</p>
             ${interactionTimingHtml(finding.timing)}
           </div>`).join("")
         : `<div class="dur-finding"><strong>${summary}</strong>${item.details ? `<p>${escapeHtml(item.details)}</p>` : ""}</div>`;
-      return `<section class="dur-check conditional"><div class="dur-check-heading"><strong>${label}</strong><span>조건부</span></div>${detailHtml}</section>`;
+      return `<section class="dur-check conditional">${detailHtml}</section>`;
     }
     if (status === "unknown") {
       return `<section class="dur-check unknown"><div class="dur-check-heading"><strong>${label}</strong><span>${summary}</span></div>${item.details ? `<p>${escapeHtml(item.details)}</p>` : ""}</section>`;
