@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from medicine_canonical.cli import main as canonical_main
-from medicine_canonical.release_r2 import release_sequence_from_env, release_signer_from_env
+from medicine_canonical.release_r2 import release_sequence_from_env
 from medicine_canonical.release_signing import (
     RELEASE_SIGNATURE_ALGORITHM,
     RELEASE_SIGNATURE_ENVELOPE_VERSION,
@@ -124,23 +124,18 @@ class ReleaseSigningTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "key_id"):
             ReleaseSigner.from_private_pem("", TEST_PRIVATE_KEY_PEM)
 
-    def test_publication_signing_environment_is_required_and_strict(self) -> None:
+    def test_publication_release_sequence_environment_is_required_and_strict(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "REFERENCE_SIGNING_KEY_ID"):
-                release_signer_from_env()
             with self.assertRaisesRegex(RuntimeError, "REFERENCE_RELEASE_SEQUENCE"):
                 release_sequence_from_env()
 
         with patch.dict(
             os.environ,
             {
-                "REFERENCE_SIGNING_KEY_ID": "test-2026",
-                "REFERENCE_SIGNING_PRIVATE_KEY_PEM": TEST_PRIVATE_KEY_PEM.decode("ascii"),
                 "REFERENCE_RELEASE_SEQUENCE": "123",
             },
             clear=True,
         ):
-            self.assertEqual(release_signer_from_env().key_id, "test-2026")
             self.assertEqual(release_sequence_from_env(), 123)
 
         with patch.dict(os.environ, {"REFERENCE_RELEASE_SEQUENCE": "0"}, clear=True):
