@@ -82,6 +82,20 @@ class ManifestContractTest {
     }
 
     @Test
+    fun applicationUsesProductNameAndDoesNotExposeStartupExceptionDetails() {
+        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
+        val strings = java.io.File("src/main/res/values/strings.xml").readText()
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+
+        assertTrue(manifest.contains("android:label=\"@string/app_name\""))
+        assertTrue(strings.contains("<string name=\"app_name\">약봄</string>"))
+        assertFalse(strings.contains(">Medicine</string>"))
+        assertTrue(activity.contains("Log.e(TAG, \"Application startup failed\", error)"))
+        assertTrue(activity.contains("앱 데이터를 준비하지 못했습니다.\\n앱을 다시 실행해주세요."))
+        assertFalse(activity.contains("\${error.message"))
+    }
+
+    @Test
     fun applicationDefinesLauncherIcon() {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
         val icon = java.io.File("src/main/res/drawable/ic_launcher.xml")
