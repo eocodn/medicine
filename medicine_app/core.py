@@ -28,6 +28,7 @@ from .assessment import (
     assess_medication,
     bind_warning_token,
     has_dur_alert,
+    has_split_prohibition,
     requires_acknowledgement,
 )
 from .profiles import create_person_record, delete_person_record, person_dict, update_person_record
@@ -343,6 +344,7 @@ class MedicationApp:
                     if not medication.get("active"):
                         medication["current_assessment"] = None
                         medication["dur_alert"] = False
+                        medication["split_prohibited"] = False
                         medication["dur_review_required"] = False
                         medication["review_required"] = False
                         continue
@@ -355,6 +357,7 @@ class MedicationApp:
                     )
                     medication["current_assessment"] = current_assessment
                     medication["dur_alert"] = has_dur_alert(current_assessment)
+                    medication["split_prohibited"] = has_split_prohibition(current_assessment)
                     medication["dur_review_required"] = dur_review_required(current_assessment)
                     medication["review_required"] = bool(current_assessment.get("requires_review"))
         return sort_medications_by_time(medications, target)

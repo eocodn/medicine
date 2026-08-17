@@ -19,7 +19,7 @@ from .product_flags import apply_product_flag_fallbacks, build_product_flag_chec
 from .safety import age_years
 
 
-EVALUATOR_VERSION = "9-product-safety"
+EVALUATOR_VERSION = "10-split-caution-separation"
 
 
 def _fallback_product(medication: Mapping[str, Any]) -> dict[str, Any]:
@@ -279,7 +279,11 @@ def has_dur_alert(assessment: Mapping[str, Any]) -> bool:
     """
     dur_checks = assessment.get("dur_checks") or []
     if dur_checks:
-        return any(item.get("status") in {"hit", "conditional"} for item in dur_checks)
+        return any(
+            item.get("status") in {"hit", "conditional"}
+            and item.get("category") != "split_caution"
+            for item in dur_checks
+        )
     return (
         any(
             risk.get("severity") in {"danger", "warning"}
@@ -290,6 +294,20 @@ def has_dur_alert(assessment: Mapping[str, Any]) -> bool:
             (assessment.get(name) or {}).get("result") == "exceeded"
             for name in ("duration", "dose")
         )
+    )
+
+
+def has_split_prohibition(assessment: Mapping[str, Any]) -> bool:
+    """Return whether the source explicitly says that this product cannot be split.
+
+    Split handling remains visible in the shared safety-details list, but it is
+    not a core DUR alert and therefore gets its own medication-card badge.
+    """
+    return any(
+        item.get("category") == "split_caution"
+        and item.get("status") == "hit"
+        and "".join(str(item.get("summary") or "").split()) == "분할불가"
+        for item in assessment.get("dur_checks") or []
     )
 
 
@@ -344,5 +362,6 @@ __all__ = [
     "assess_medication",
     "bind_warning_token",
     "has_dur_alert",
+    "has_split_prohibition",
     "requires_acknowledgement",
 ]
