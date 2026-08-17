@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#f6f7f4">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
   <title>약봄</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260817ux1">
-  <link rel="stylesheet" href="/static/prescription.css?v=20260817ux1">
+  <link rel="stylesheet" href="/static/styles.css?v=20260817ux2">
+  <link rel="stylesheet" href="/static/prescription.css?v=20260817ux2">
 </head>
 <body>
   <div class="app-shell">
@@ -42,17 +42,22 @@
 
       <section class="screen" data-screen="search">
         <div class="hero-card search-hero">
-          <p class="eyebrow">ADD MEDICINE</p>
-          <h2>약을 검색하세요</h2>
-          <p class="muted">식약처 허가 의약품에서 검색하고, 현재 복용약과 프로필을 함께 확인해 DUR 위험 범위를 알려줘요.</p>
+          <div class="search-intro">
+            <p class="eyebrow">ADD MEDICINE</p>
+            <h2>약을 검색하세요</h2>
+            <p class="muted">식약처 허가 의약품에서 검색하고, 현재 복용약과 프로필을 함께 확인해 DUR 위험 범위를 알려줘요.</p>
+          </div>
           <label class="search-box">
             <span aria-hidden="true">⌕</span>
             <input id="drug-query" type="search" placeholder="제품명, 성분명, 제품코드" autocomplete="off">
           </label>
-          <label class="search-toggle">
-            <input id="include-inactive" type="checkbox">
-            <span>취소·취하·만료 품목도 검색</span>
-          </label>
+          <details class="search-options">
+            <summary>검색 옵션</summary>
+            <label class="search-toggle">
+              <input id="include-inactive" type="checkbox">
+              <span>취소·취하·만료 품목도 검색</span>
+            </label>
+          </details>
           <div class="ocr-import-card">
             <label class="secondary-button wide ocr-file-button" for="ocr-image-input">처방전 사진으로 불러오기</label>
             <input id="ocr-image-input" class="visually-hidden" type="file" accept="image/*" capture="environment">
@@ -81,7 +86,7 @@
       <button class="nav-item active" data-nav="home" type="button" aria-current="page"><span aria-hidden="true">⌂</span><small>홈</small></button>
       <button class="nav-item" data-nav="meds" type="button"><span aria-hidden="true">◉</span><small>복용</small></button>
       <button class="nav-item nav-search" data-nav="search" type="button"><span aria-hidden="true">＋</span><small>약 검색</small></button>
-      <button class="nav-item" data-nav="people" type="button"><span aria-hidden="true">♙</span><small>가족</small></button>
+      <button class="nav-item" data-nav="people" type="button"><span aria-hidden="true">♙</span><small>프로필</small></button>
     </nav>
   </div>
 
@@ -129,10 +134,10 @@
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/static/native-api.js?v=20260811k" defer></script>
   <script src="/static/dialog.js?v=20260815a" defer></script>
-  <script src="/static/prescription.js?v=20260817ux1" defer></script>
-  <script src="/static/people.js?v=20260817ux1" defer></script>
+  <script src="/static/prescription.js?v=20260817ux2" defer></script>
+  <script src="/static/people.js?v=20260817ux2" defer></script>
   <script src="/static/timeline.js?v=20260811b" defer></script>
-  <script src="/static/app.js?v=20260817ux1" defer></script>
-  <script src="/static/ocr-review.js?v=20260817ux1" defer></script>
+  <script src="/static/app.js?v=20260817ux2" defer></script>
+  <script src="/static/ocr-review.js?v=20260817ux2" defer></script>
 </body>
 </html>

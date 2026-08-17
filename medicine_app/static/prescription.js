@@ -1,3 +1,84 @@
+function scheduleTimeInputs(root = document) {
+  return $$('[data-schedule-time]', root);
+}
+
+function scheduleTimeValues(root = document) {
+  const inputs = scheduleTimeInputs(root);
+  if (inputs.length) return inputs.map((input) => input.value.trim()).filter(Boolean);
+  const hidden = $("#pending-times", root);
+  return hidden ? hidden.value.split(",").map((value) => value.trim()).filter(Boolean) : [];
+}
+
+function normalizeScheduleTimeForInput(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!match) return text;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return text;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function scheduleCountGuidance(frequencyValue, times) {
+  const values = (times || []).filter(Boolean);
+  if (new Set(values).size !== values.length) return "같은 복용 시간이 두 번 있어요.";
+  const frequency = Number(frequencyValue);
+  if (!Number.isInteger(frequency) || frequency <= 0) {
+    return values.length ? `복용 시간 ${values.length}개가 입력됐어요.` : "";
+  }
+  if (!values.length) return "복용 시간을 추가하지 않으면 하루 횟수만 저장돼요.";
+  if (values.length !== frequency) return `하루 ${frequency}회인데 복용 시간은 ${values.length}개예요.`;
+  return `복용 시간 ${values.length}개가 하루 횟수와 맞아요.`;
+}
+
+function updateScheduleTimeGuidance(root = document) {
+  const status = $("#schedule-time-status", root);
+  if (!status) return;
+  if ($("#pending-prn", root)?.checked) {
+    status.textContent = "";
+    status.dataset.state = "";
+    return;
+  }
+  const times = scheduleTimeValues(root);
+  const frequency = $("#pending-frequency", root)?.value || "";
+  status.textContent = scheduleCountGuidance(frequency, times);
+  const duplicate = new Set(times).size !== times.length;
+  const numericFrequency = Number(frequency);
+  const mismatch = Number.isInteger(numericFrequency) && numericFrequency > 0 && times.length > 0 && times.length !== numericFrequency;
+  status.dataset.state = duplicate || mismatch ? "attention" : (status.textContent ? "ok" : "");
+}
+
+function setScheduleTimeControls(root, values) {
+  const hidden = $("#pending-times", root);
+  const list = $("#schedule-time-list", root);
+  const displayValues = (values || []).map(normalizeScheduleTimeForInput);
+  if (hidden) hidden.value = displayValues.filter(Boolean).join(", ");
+  if (!list) return;
+  list.innerHTML = displayValues.map((value, index) => `
+    <div class="schedule-time-row">
+      <input type="time" data-schedule-time value="${escapeHtml(value)}" aria-label="복용 시간 ${index + 1}">
+      <button class="schedule-time-remove" data-remove-schedule-time="${index}" type="button" aria-label="복용 시간 ${index + 1} 삭제">삭제</button>
+    </div>`).join("");
+  scheduleTimeInputs(root).forEach((input) => input.addEventListener("input", () => {
+    if (hidden) hidden.value = scheduleTimeValues(root).join(", ");
+    updateScheduleTimeGuidance(root);
+  }));
+  $$('[data-remove-schedule-time]', root).forEach((button) => button.addEventListener("click", () => {
+    const next = scheduleTimeInputs(root).map((input) => input.value);
+    next.splice(Number(button.dataset.removeScheduleTime), 1);
+    setScheduleTimeControls(root, next);
+    syncPrnFields(root);
+  }));
+  updateScheduleTimeGuidance(root);
+}
+
+function addScheduleTime(root = document) {
+  const current = scheduleTimeInputs(root).map((input) => input.value);
+  setScheduleTimeControls(root, [...current, ""]);
+  const inputs = scheduleTimeInputs(root);
+  inputs.at(-1)?.focus();
+  syncPrnFields(root);
+}
 
 function syncPrnFields(root = document) {
   const prn = $("#pending-prn", root).checked;
@@ -6,9 +87,14 @@ function syncPrnFields(root = document) {
   const maximum = $("#pending-prn-max", root);
   frequency.disabled = prn;
   times.disabled = prn;
+  scheduleTimeInputs(root).forEach((input) => { input.disabled = prn; });
+  const addTime = $("[data-add-schedule-time]", root);
+  if (addTime) addTime.disabled = prn;
+  $$('[data-remove-schedule-time]', root).forEach((button) => { button.disabled = prn; });
   maximum.disabled = !prn;
   $("#fixed-schedule-fields", root)?.classList.toggle("is-disabled", prn);
   $("#prn-limit-field", root)?.classList.toggle("is-disabled", !prn);
+  updateScheduleTimeGuidance(root);
 }
 
 function syncLongTermFields(root = document) {
@@ -60,7 +146,7 @@ function friendlyErrorMessage(message) {
 function prescriptionPayloadFromForm() {
   const asNeeded = $("#pending-prn").checked;
   const longTerm = $("#pending-long-term").checked;
-  const preservedTimes = $("#pending-times").value.split(",").map((value) => value.trim()).filter(Boolean);
+  const preservedTimes = scheduleTimeValues();
   const times = asNeeded ? [] : preservedTimes;
   return {
     dose_amount: $("#pending-dose-amount").value ? Number($("#pending-dose-amount").value) : null,
@@ -86,7 +172,7 @@ function applyOcrDraftToForm(draft) {
   if (unit) $("#pending-dose-unit", root).value = unit;
   if (draft.frequency_per_day != null) $("#pending-frequency", root).value = draft.frequency_per_day;
   if (draft.prescription_days != null) $("#pending-days", root).value = draft.prescription_days;
-  if (Array.isArray(draft.schedule_times)) $("#pending-times", root).value = draft.schedule_times.join(", ");
+  if (Array.isArray(draft.schedule_times)) setScheduleTimeControls(root, draft.schedule_times);
   if (draft.meal_relation && $("#pending-meal", root).querySelector(`option[value="${CSS.escape(draft.meal_relation)}"]`)) {
     $("#pending-meal", root).value = draft.meal_relation;
   }
@@ -230,7 +316,13 @@ function renderPrescriptionForm(preview, medication = null) {
               </select>
             </label>
           </div>
-          <label>복용 시간<input id="pending-times" placeholder="08:00, 13:00, 19:00"><small class="field-help">시간이 정해져 있다면 쉼표로 구분해 입력하세요.</small></label>
+          <div class="schedule-time-field">
+            <div class="schedule-time-heading"><strong>복용 시간</strong><button class="schedule-time-add" data-add-schedule-time type="button">+ 시간 추가</button></div>
+            <input type="hidden" id="pending-times">
+            <div id="schedule-time-list" class="schedule-time-list"></div>
+            <small class="field-help">시간이 정해져 있다면 하나씩 추가하세요. 입력한 시간 수와 하루 횟수가 다르면 바로 알려드려요.</small>
+            <small id="schedule-time-status" class="schedule-time-status" role="status"></small>
+          </div>
         </div>
         <div id="prn-limit-field" class="dependent-fields is-disabled">
           <label>필요시 1일 최대 횟수<input id="pending-prn-max" type="number" min="1" max="24" placeholder="예: 3"><small class="field-help">처방에 최대 횟수가 있을 때만 입력하세요.</small></label>
@@ -261,7 +353,7 @@ function renderPrescriptionForm(preview, medication = null) {
     $("#pending-frequency", root).value = medication.frequency_per_day ?? "";
     $("#pending-days", root).value = medication.prescription_days ?? "";
     $("#pending-long-term", root).checked = Boolean(medication.long_term);
-    $("#pending-times", root).value = (medication.schedules || []).map((item) => item.time_of_day).join(", ");
+    setScheduleTimeControls(root, (medication.schedules || []).map((item) => item.time_of_day));
     $("#pending-meal", root).value = medication.meal_relation || "unspecified";
     $("#pending-route", root).value = medication.administration_route || "unknown";
     $("#pending-start-date", root).value = medication.start_date || "";
@@ -271,8 +363,11 @@ function renderPrescriptionForm(preview, medication = null) {
   } else {
     $("#pending-route", root).value = preview.product.suggested_administration_route || "unknown";
     $("#pending-start-date", root).value = todayInKorea();
+    setScheduleTimeControls(root, []);
     $("#confirm-add-med", root).addEventListener("click", confirmAddMedication);
   }
+  $("[data-add-schedule-time]", root)?.addEventListener("click", () => addScheduleTime(root));
+  $("#pending-frequency", root).addEventListener("input", () => updateScheduleTimeGuidance(root));
   $("#pending-prn", root).addEventListener("change", () => syncPrnFields(root));
   $("#pending-long-term", root).addEventListener("change", () => syncLongTermFields(root));
   syncPrnFields(root);

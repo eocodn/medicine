@@ -17,7 +17,7 @@ const titles = {
   home: "오늘의 복약",
   meds: "복용 관리",
   search: "약 검색",
-  people: "함께 관리",
+  people: "프로필",
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -117,6 +117,16 @@ function routeLabel(value) {
     other: "기타",
     unknown: "사용 방법 미지정",
   }[value] || value;
+}
+function medicationRegimenSummaryHtml(med) {
+  const parts = [];
+  if (med.dosage_text) parts.push(`1회 ${formatDoseText(med.dosage_text)}`);
+  if (med.frequency_per_day) parts.push(`하루 ${med.frequency_per_day}회`);
+  if (med.meal_relation && med.meal_relation !== "unspecified") parts.push(mealRelationLabel(med.meal_relation));
+  if (med.administration_route) parts.push(routeLabel(med.administration_route));
+  if ((med.schedules || []).length) parts.push(`매일 ${(med.schedules || []).map((item) => item.time_of_day).join(", ")}`);
+  if (med.prescription_days && !med.course_progress) parts.push(`${med.prescription_days}일 복용`);
+  return parts.length ? `<p class="regimen-summary">${parts.map(escapeHtml).join(" · ")}</p>` : "";
 }
 function currentPerson() {
   return state.people.find((person) => person.id === state.currentPersonId) || null;
@@ -227,19 +237,14 @@ function renderMedications() {
     <article class="card med-card">
       <div class="med-row">
         <div><p class="eyebrow">${escapeHtml(med.ingredient_name || "MEDICINE")}</p><h3>${escapeHtml(med.product_name)}</h3></div>
-        ${med.dur_alert ? `<button class="dur-alert-badge" data-dur-alert="${med.id}" type="button" aria-label="현재 DUR 주의 항목 보기" title="현재 DUR 주의 항목 보기">!</button>` : med.dur_review_required ? `<button class="dur-review-badge" data-dur-alert="${med.id}" type="button" aria-label="확인이 필요한 DUR 항목 보기" title="확인이 필요한 DUR 항목 보기">?</button>` : ""}
+        ${med.dur_alert ? `<button class="dur-alert-badge" data-dur-alert="${med.id}" type="button" aria-label="현재 DUR 주의 항목 보기" title="현재 DUR 주의 항목 보기">DUR 주의</button>` : med.dur_review_required ? `<button class="dur-review-badge" data-dur-alert="${med.id}" type="button" aria-label="확인이 필요한 DUR 항목 보기" title="확인이 필요한 DUR 항목 보기">DUR 확인 필요</button>` : ""}
       </div>
       ${medicationCourseHtml(med.course_progress)}
+      ${medicationRegimenSummaryHtml(med)}
       <div class="med-meta">
-        ${med.dosage_text ? `<span class="chip">한 번에 ${escapeHtml(formatDoseText(med.dosage_text))}</span>` : ""}
-        ${med.frequency_per_day ? `<span class="chip">하루 ${escapeHtml(med.frequency_per_day)}회</span>` : ""}
         ${med.as_needed ? `<span class="chip prn-chip">필요할 때 복용</span>` : ""}
         ${med.prn_max_per_day ? `<span class="chip">1일 최대 ${escapeHtml(med.prn_max_per_day)}회</span>` : ""}
         ${med.long_term ? `<span class="chip">장기복용 · 종료일 없음</span>` : ""}
-        ${med.meal_relation && med.meal_relation !== "unspecified" ? `<span class="chip">${escapeHtml(mealRelationLabel(med.meal_relation))}</span>` : ""}
-        ${med.administration_route ? `<span class="chip">${escapeHtml(routeLabel(med.administration_route))}</span>` : ""}
-        ${med.prescription_days && !med.course_progress ? `<span class="chip">${escapeHtml(med.prescription_days)}일 복용</span>` : ""}
-        ${(med.schedules || []).map((s) => `<span class="chip">매일 ${escapeHtml(s.time_of_day)}</span>`).join("")}
         ${med.source === "manual" ? `<span class="chip caution-chip">직접 입력 · DUR 제한</span>` : ""}
       </div>
       <div class="med-actions">
@@ -302,10 +307,17 @@ function formatTime(value) {
   } catch (_) { return value; }
 }
 
+function updateSearchMode() {
+  const hero = $(".search-hero");
+  if (!hero) return;
+  hero.classList.toggle("has-query", Boolean($("#drug-query").value.trim()));
+}
+
 async function runDrugSearch(successMessage = "") {
   const term = $("#drug-query").value.trim();
   const status = $("#search-status");
   const root = $("#drug-results");
+  updateSearchMode();
   if (!term) { status.textContent = ""; root.innerHTML = ""; return false; }
   status.textContent = "";
   try {
@@ -361,6 +373,7 @@ function bindEvents() {
   $$('[data-close-sheet]').forEach((button) => button.addEventListener("click", closeSheets));
   $("#drug-query").addEventListener("input", () => {
     state.pendingOcrDraft = null;
+    updateSearchMode();
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runDrugSearch, 280);
   });
@@ -370,6 +383,7 @@ function bindEvents() {
     state.pendingOcrDraft = row.draft && typeof row.draft === "object" ? { ...row.draft } : {};
     const query = row.product_query.trim();
     $("#drug-query").value = query;
+    updateSearchMode();
     $("#ocr-review-panel").classList.add("hidden");
     const found = await runDrugSearch(`“${query}” 제품 후보를 확인하고 맞는 품목을 선택해주세요.`);
     if (found) $("#drug-results").scrollIntoView({ behavior: "smooth", block: "start" });
