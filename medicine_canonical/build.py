@@ -32,7 +32,6 @@ FLAG_CATEGORY_BY_CODE = {
     "D": "dose_caution",
     "E": "duration_caution",
     "F": "elderly_caution",
-    "I": "additive_caution",
 }
 FLAG_NAME_BY_CODE = {
     "B": "특정연령대금기",
@@ -40,8 +39,8 @@ FLAG_NAME_BY_CODE = {
     "D": "용량주의",
     "E": "투여기간주의",
     "F": "노인주의",
-    "I": "첨가제주의",
 }
+IGNORED_DUR_PRODUCT_FLAG_CODES = {"I"}
 PERMIT_STATUS_BY_CANCEL_NAME = {
     "정상": "active",
     "유효기간만료": "expired",
@@ -244,6 +243,8 @@ def _import_flag_row(con: sqlite3.Connection, dataset_key: str, source_row: int,
         raise ValueError(f"{dataset_key} row {source_row} missing TYPE_CODE")
     count = 0
     for ordinal, code in enumerate(codes, start=1):
+        if code in IGNORED_DUR_PRODUCT_FLAG_CODES:
+            continue
         category = FLAG_CATEGORY_BY_CODE.get(code)
         if not category:
             raise ValueError(f"unsupported DUR product flag code {code!r} at row {source_row}")

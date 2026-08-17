@@ -40,7 +40,7 @@ class SubstanceNomenclatureCorpusTest(unittest.TestCase):
         self.assertEqual(corpus["doxycycline hydrate"].target_unii, "N12000U13O")
         self.assertEqual(
             corpus["doxycycline hydrate"].external_evidence_name,
-            "Doxycycline monohydrate",
+            "DOXYCYCLINE MONOHYDRATE",
         )
         self.assertEqual(corpus["sitagliptin hydrochloride hydrate"].target_unii, "6DH2XG35TG")
         self.assertEqual(corpus["norepinephrine tartrate hydrate"].target_unii, "IFY5PE3ZRW")
@@ -54,16 +54,16 @@ class SubstanceNomenclatureCorpusTest(unittest.TestCase):
         self.assertEqual(corpus["glutathione (reduced)"].target_unii, "GAN16C9B8O")
         self.assertEqual(corpus["precipitated calcium carbonate"].target_unii, "H0G9379FGK")
         current_gsrs_names = {
-            "zoledronic acid monohydrate": "Zoledronic acid monohydrate [WHO-DD]",
-            "levothyroxine sodium hydrate": "Levothyroxine sodium hydrate [WHO-DD]",
-            "calcium gluconate hydrate": "Calcium gluconate hydrate [JAN]",
-            "zabofloxacin d-aspartate hydrate": "Zabofloxacin d-aspartate hydrate [WHO-DD]",
-            "doxycycline hydrate": "Doxycycline monohydrate",
-            "norepinephrine tartrate hydrate": "Norepinephrine hydrogen tartrate monohydrate",
-            "donepezil hydrochloride hydrate": "Donepezil hydrochloride monohydrate [WHO-DD]",
-            "ketoprofen lysin": "Ketoprofen lysine [WHO-DD]",
-            "s-amlodipine nicotinate": "(S)-Amlodipine Nicotinate",
-            "edoxaban tosylate hydrate": "Edoxaban tosilate hydrate [JAN]",
+            "zoledronic acid monohydrate": "ZOLEDRONIC ACID MONOHYDRATE [WHO-DD]",
+            "levothyroxine sodium hydrate": "LEVOTHYROXINE SODIUM HYDRATE [WHO-DD]",
+            "calcium gluconate hydrate": "CALCIUM GLUCONATE HYDRATE [JAN]",
+            "zabofloxacin d-aspartate hydrate": "ZABOFLOXACIN D-ASPARTATE HYDRATE [WHO-DD]",
+            "doxycycline hydrate": "DOXYCYCLINE MONOHYDRATE",
+            "norepinephrine tartrate hydrate": "NOREPINEPHRINE HYDROGEN TARTRATE MONOHYDRATE",
+            "donepezil hydrochloride hydrate": "DONEPEZIL HYDROCHLORIDE MONOHYDRATE [WHO-DD]",
+            "ketoprofen lysin": "KETOPROFEN LYSINE [WHO-DD]",
+            "s-amlodipine nicotinate": "(S)-AMLODIPINE NICOTINATE",
+            "edoxaban tosylate hydrate": "EDOXABAN TOSILATE HYDRATE [JAN]",
         }
         for observed_name, evidence_name in current_gsrs_names.items():
             self.assertEqual(corpus[observed_name].external_evidence_name, evidence_name)
