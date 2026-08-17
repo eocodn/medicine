@@ -58,7 +58,7 @@ test("top bar exposes the active person's name instead of only an initial", () =
 
   assert.match(index, /id="profile-shortcut-name"/);
   assert.match(index, /id="profile-shortcut-avatar"/);
-  assert.match(index, /\/static\/people\.js\?v=20260817ux6/);
+  assert.match(index, /\/static\/people\.js\?v=20260817ux7/);
   assert.match(people, /profile-shortcut-name/);
   assert.match(people, /person\.name/);
   assert.match(people, /class="selected-badge">선택됨<\/span>/);
@@ -115,8 +115,8 @@ test("home dose actions prioritize normal completion and compact completed state
   const app = source("app.js");
   const styles = source("styles.css");
 
-  assert.match(index, /\/static\/styles\.css\?v=20260817ux6/);
-  assert.match(index, /\/static\/app\.js\?v=20260817ux6/);
+  assert.match(index, /\/static\/styles\.css\?v=20260817ux7/);
+  assert.match(index, /\/static\/app\.js\?v=20260817ux7/);
   assert.match(app, /class="dose-primary-action"[^>]*data-instance-taken[^>]*>✓ 사용했어요<\/button>/);
   assert.match(app, /class="dose-skip-action"[^>]*data-instance-skipped[^>]*>건너뛰기<\/button>/);
   assert.match(app, /class="dose-status taken"[^>]*>✓ 복용 완료<\/span>/);

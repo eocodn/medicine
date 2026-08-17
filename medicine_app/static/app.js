@@ -47,10 +47,16 @@ function formatDoseText(value) {
 async function api(path, options = {}) {
   const local = window.MedicineLocalApi?.request(path, options);
   if (local !== undefined) return local;
-  const response = await fetch(path, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    });
+  } catch (error) {
+    console.error("api transport failed", { path, error });
+    throw new Error("요청을 처리하지 못했어요");
+  }
   if (!response.ok) {
     let message = "요청을 처리하지 못했어요";
     let body = null;
@@ -69,7 +75,7 @@ async function api(path, options = {}) {
 
 function toast(message) {
   const node = $("#toast");
-  node.textContent = friendlyErrorMessage(message);
+  node.textContent = String(message || "");
   node.classList.remove("hidden");
   clearTimeout(node._timer);
   node._timer = setTimeout(() => node.classList.add("hidden"), 2200);

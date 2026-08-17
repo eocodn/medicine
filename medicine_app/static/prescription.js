@@ -139,8 +139,9 @@ function friendlyErrorMessage(message) {
     "dose rule has multiple rows": "성분별 용량 기준이 여러 개라 자동으로 하나의 기준과 비교하지 않았어요.",
     "duration rule is missing, malformed, or ambiguous": "투여기간 기준값을 하나로 확정하지 못했어요.",
     "dose rule value or structured details are not a single numeric threshold": "용량 기준값을 하나의 수치로 확정하지 못했어요.",
+    "name is required": "이름을 입력해주세요.",
   };
-  return exact[text] || text;
+  return exact[text] || "요청을 처리하지 못했어요";
 }
 
 function prescriptionPayloadFromForm() {

@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.MediaStore
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.view.ViewGroup
 import android.webkit.ValueCallback
@@ -73,9 +74,10 @@ class MainActivity : ComponentActivity() {
                     if (!isFinishing && !isDestroyed) setupWebView(bridge)
                 }
             }.onFailure { error ->
+                Log.e(TAG, "Application startup failed", error)
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
-                        showStartupView("앱 데이터를 준비하지 못했습니다.\n${error.message ?: "알 수 없는 오류"}")
+                        showStartupView("앱 데이터를 준비하지 못했습니다.\n앱을 다시 실행해주세요.")
                     }
                 }
             }
@@ -235,6 +237,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val TAG = "MainActivity"
         private const val APP_ASSET_DOMAIN = "appassets.androidplatform.net"
         private const val APP_URL = "https://$APP_ASSET_DOMAIN/static/index.html"
         private const val PERSONAL_DB_KEY_ALIAS = "medicine.personal-db.v1"
