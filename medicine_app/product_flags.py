@@ -23,6 +23,10 @@ def _check(
     }
 
 
+def _compact_korean_flag(value: Any) -> str:
+    return "".join(str(value or "").split())
+
+
 def build_product_flag_checks(product: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Convert product-only DUR flags into explicit display checks.
 
@@ -49,11 +53,14 @@ def build_product_flag_checks(product: Mapping[str, Any]) -> list[dict[str, Any]
             )
         elif category == "split_caution":
             details = str(flag.get("details") or "분할 시 주의가 필요한 제품입니다.")
+            compact_details = _compact_korean_flag(details)
+            if compact_details == "분할가능":
+                continue
             checks.append(
                 _check(
                     category,
                     "서방정 분할주의",
-                    "분할주의 있음",
+                    "분할불가" if compact_details == "분할불가" else "분할주의 있음",
                     details=details,
                 )
             )

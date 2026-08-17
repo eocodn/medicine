@@ -196,7 +196,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .stack.compact { gap: 8px; }
 .card { padding: 17px; box-shadow: 0 8px 24px rgba(34, 52, 40, .05); }
 .med-card h3 { margin: 0 0 5px; font-size: 17px; }
-.dur-alert-badge, .dur-review-badge {
+.med-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.dur-alert-badge, .dur-review-badge, .split-caution-badge {
   min-height: 44px;
   padding: 0 10px;
   flex: 0 0 auto;
@@ -211,6 +212,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   white-space: nowrap;
 }
 .dur-alert-badge { border: 1px solid #e7bbb5; background: var(--danger-soft); color: var(--danger); }
+.split-caution-badge { border: 1px solid #d7c3a0; background: var(--warning-soft); color: #69440e; }
 .course-progress { margin-top: 13px; }
 .course-progress > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
 .course-progress > div:first-child strong { color: var(--ink); }

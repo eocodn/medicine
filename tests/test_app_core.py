@@ -11,7 +11,7 @@ from medicine_app.safety import age_rule_matches
 
 
 def make_canonical_db(path: Path) -> None:
-    from tests.canonical_fixture_support import create_canonical_fixture, add_product, add_linked_rule
+    from tests.canonical_fixture_support import add_flag, add_linked_rule, add_product, create_canonical_fixture
     con = create_canonical_fixture(path)
     products = [
         ("MFDS-A", "약A", "drug-a", "P-A", "active", None, "정상"),
@@ -29,6 +29,8 @@ def make_canonical_db(path: Path) -> None:
         )
     add_product(con, "MFDS-J", "주사형제품", "drug-j", dosage_form=None)
     add_product(con, "MFDS-N", "제형근거없는제품", "drug-n", dosage_form=None)
+    add_product(con, "MFDS-SPLIT-NO", "분할불가제품", "split-no", dosage_form="서방정")
+    add_product(con, "MFDS-SPLIT-YES", "분할가능제품", "split-yes", dosage_form="서방정")
     add_linked_rule(
         con, category="combination_contraindication", item_seq="MFDS-A", ingredient="drug-a",
         paired_item_seq="MFDS-B", paired_ingredient="drug-b", details="함께 사용하지 않아야 함",
@@ -60,6 +62,8 @@ def make_canonical_db(path: Path) -> None:
         con, category="duration_caution", item_seq="MFDS-B", ingredient="drug-b",
         rule_value="28", details="최대 투여기간은 28일입니다.",
     )
+    add_flag(con, item_seq="MFDS-SPLIT-NO", category="split_caution", details="분할 불가")
+    add_flag(con, item_seq="MFDS-SPLIT-YES", category="split_caution", details="분할가능")
     con.commit()
     con.close()
 
@@ -313,6 +317,47 @@ class MedicationAppTest(unittest.TestCase):
         )
 
         self.assertNotIn("therapeutic_duplication_caution", {r["type"] for r in separated["risks"]})
+
+    def test_split_caution_is_separate_from_main_dur_alert_and_possible_is_not_warning(self) -> None:
+        person = self.app.create_person("Adult", "1990-01-01", "male", "not_applicable")
+
+        blocked_preview = self.app.preview_medication(
+            person["id"], {"product_code": "MFDS-SPLIT-NO", "long_term": True}
+        )
+        blocked_split = [
+            item for item in blocked_preview["dur_checks"]
+            if item.get("category") == "split_caution"
+        ]
+        self.assertEqual(len(blocked_split), 1)
+        self.assertEqual(blocked_split[0]["status"], "hit")
+        self.assertEqual(blocked_split[0]["summary"], "분할불가")
+        blocked = self.app.add_medication(
+            person["id"], product_code="MFDS-SPLIT-NO", long_term=True,
+            acknowledge_warnings=True, warning_token=blocked_preview["warning_token"],
+        )
+
+        possible_preview = self.app.preview_medication(
+            person["id"], {"product_code": "MFDS-SPLIT-YES", "long_term": True}
+        )
+        self.assertNotIn(
+            "split_caution",
+            {item.get("category") for item in possible_preview["dur_checks"]},
+        )
+        possible = self.app.add_medication(
+            person["id"], product_code="MFDS-SPLIT-YES", long_term=True
+        )
+
+        listed = {item["id"]: item for item in self.app.list_medications(person["id"])}
+        blocked_current = listed[blocked["id"]]
+        possible_current = listed[possible["id"]]
+        self.assertFalse(blocked_current["dur_alert"])
+        self.assertTrue(blocked_current["split_prohibited"])
+        self.assertIn(
+            "split_caution",
+            {item.get("category") for item in blocked_current["current_assessment"]["dur_checks"]},
+        )
+        self.assertFalse(possible_current["dur_alert"])
+        self.assertFalse(possible_current["split_prohibited"])
 
     def test_active_medication_is_reassessed_after_profile_change_without_rewriting_history(self) -> None:
         person = self.app.create_person("Adult", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
