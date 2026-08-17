@@ -142,11 +142,28 @@ class CanonicalDatabaseTest(unittest.TestCase):
             api_workers=1,
         )
 
+    def test_rejects_unknown_product_flag_code(self) -> None:
+        def fetch(operation: str, page: int, page_size: int):
+            if operation == "getDurPrdlstInfoList03":
+                return ([{"ITEM_SEQ": "P1", "ITEM_NAME": "알파정", "TYPE_CODE": "Z", "TYPE_NAME": "알수없음"}], 1)
+            return self._dur_fetch(operation, page, page_size)
+
+        with self.assertRaisesRegex(ValueError, "unsupported DUR product flag code 'Z'"):
+            build_canonical_database(
+                self.db,
+                self.kids,
+                service_key="test-key",
+                progress=False,
+                permit_fetch_page=self._permit_fetch,
+                dur_fetch_page=fetch,
+                api_workers=1,
+            )
+
     def test_builds_three_source_family_canonical_database(self) -> None:
         result = self._build()
         self.assertEqual(result["products"], 2)
         self.assertEqual(result["product_rules"], 7)
-        self.assertEqual(result["product_flags"], 3)
+        self.assertEqual(result["product_flags"], 2)
         self.assertEqual(result["ingredient_rules"], 8)
         self.assertEqual(result["product_criterion_links"], 7)
         self.assertEqual(result["linked_product_rules"], 7)
@@ -172,6 +189,8 @@ class CanonicalDatabaseTest(unittest.TestCase):
             self.assertEqual(lactation, ("Alpha", "알파", "수유 주의"))
             identifiers = set(con.execute("SELECT system,value FROM product_identifiers WHERE item_seq='P1'").fetchall())
             self.assertEqual(identifiers, {("MFDS_ITEM_SEQ", "P1"), ("EDI", "E1")})
+            flag_categories = {row[0] for row in con.execute("SELECT category FROM product_flags")}
+            self.assertEqual(flag_categories, {"pregnancy_contraindication", "split_caution"})
             dose_product = con.execute(
                 "SELECT ingredient_code,ingredient_name_en FROM product_rules WHERE category='dose_caution'"
             ).fetchone()

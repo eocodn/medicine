@@ -31,27 +31,13 @@ def build_product_flag_checks(product: Mapping[str, Any]) -> list[dict[str, Any]
     """Convert product-only DUR flags into explicit display checks.
 
     These flags are authoritative statements about the product itself. They are
-    intentionally separate from patient-profile and quantitative evaluation:
-    additive-caution does not identify the specific excipient in this source,
-    and split-caution is a product handling warning rather than a dose limit.
+    intentionally separate from patient-profile and quantitative evaluation;
+    split-caution is a product handling warning rather than a dose limit.
     """
     checks: list[dict[str, Any]] = []
     for flag in product.get("product_flags") or []:
         category = str(flag.get("category") or "")
-        if category == "additive_caution":
-            checks.append(
-                _check(
-                    category,
-                    "첨가제주의",
-                    "첨가제 주의사항 있음",
-                    details=(
-                        str(flag.get("details"))
-                        if flag.get("details")
-                        else "식약처 DUR에서 첨가제주의 품목으로 분류된 제품입니다."
-                    ),
-                )
-            )
-        elif category == "split_caution":
+        if category == "split_caution":
             details = str(flag.get("details") or "분할 시 주의가 필요한 제품입니다.")
             compact_details = _compact_korean_flag(details)
             if compact_details == "분할가능":
