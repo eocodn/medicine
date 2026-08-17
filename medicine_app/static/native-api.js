@@ -14,7 +14,7 @@
       console.error("native request failed", { path, status: envelope.status });
       const displayMessage = typeof window.friendlyErrorMessage === "function"
         ? window.friendlyErrorMessage(message)
-        : message;
+        : "요청을 처리하지 못했어요";
       const error = new Error(typeof displayMessage === "string" ? displayMessage : "요청을 처리하지 못했어요");
       error.status = envelope.status;
       error.body = body;
