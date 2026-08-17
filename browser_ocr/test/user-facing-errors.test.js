@@ -103,6 +103,6 @@ test("changed error-handling assets use fresh cache keys", () => {
   const index = fs.readFileSync(path.join(staticDir, "index.html"), "utf8");
 
   assert.match(index, /native-api\.js\?v=20260817err1/);
-  assert.match(index, /prescription\.js\?v=20260817ux7/);
+  assert.match(index, /prescription\.js\?v=20260817ux8/);
   assert.match(index, /app\.js\?v=20260817ux7/);
 });

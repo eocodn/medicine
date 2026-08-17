@@ -216,6 +216,62 @@ test("DUR status UI renders all eight categories with compact non-hit states", (
   assert.match(html, /복용정보를 확인해주세요/);
 });
 
+test("DUR hit cards replace missing source details with consultation guidance", () => {
+  const context = prescriptionContext({});
+  const html = context.durStatusHtml([
+    {
+      category: "lactation_caution",
+      label: "수유부주의",
+      status: "hit",
+      summary: "성분 수유부주의 대상",
+      findings: [{ title: "성분 수유부주의 대상", details: "-" }],
+    },
+    {
+      category: "elderly_caution",
+      label: "노인주의",
+      status: "hit",
+      summary: "노인주의 대상",
+      findings: [{ title: "노인주의 대상", details: null }],
+    },
+  ]);
+
+  assert.match(html, /수유 중 복용에 대해서는 약사 또는 처방 의료진에게 확인해 주세요/);
+  assert.match(html, /복용 시 주의사항은 약사 또는 처방 의료진에게 확인해 주세요/);
+  assert.doesNotMatch(html, /상세 설명 없음/);
+  assert.doesNotMatch(html, /<p>-<\/p>/);
+});
+
+test("split prohibition uses warning styling, guidance, and renders after DUR warnings", () => {
+  const context = prescriptionContext({});
+  const html = context.durStatusHtml([
+    {
+      category: "split_caution",
+      label: "서방정 분할주의",
+      status: "hit",
+      summary: "분할불가",
+      details: "분할 불가",
+      findings: [],
+    },
+    {
+      category: "elderly_caution",
+      label: "노인주의",
+      status: "hit",
+      summary: "노인주의 대상",
+      findings: [{ title: "노인주의 대상", details: null }],
+    },
+  ]);
+
+  assert.match(html, /dur-check hit split-caution/);
+  assert.match(html, /분할 복용이 필요한 경우 약사에게 확인해 주세요/);
+  assert.equal((html.match(/분할불가/g) || []).length, 1);
+  assert.ok(html.indexOf("노인주의 대상") < html.indexOf("분할불가"));
+
+  const css = fs.readFileSync(
+    path.join(__dirname, "../../medicine_app/static/styles.css"), "utf8",
+  );
+  assert.match(css, /\.dur-check\.hit\.split-caution\s*\{[^}]*background:\s*var\(--warning-soft\)/);
+});
+
 test("quantitative hit cards use category-specific titles without a category header", () => {
   const context = prescriptionContext({});
   const html = context.durStatusHtml([
