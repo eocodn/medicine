@@ -1,15 +1,22 @@
 services:
   canonical:
     build: .
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     working_dir: /app
     volumes:
       - .:/app
     environment:
       DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}
+      HOME: /tmp
+      PYTHONDONTWRITEBYTECODE: "1"
     entrypoint: ["python", "-m", "medicine_canonical.cli"]
 
   app:
     build: .
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      HOME: /tmp
+      PYTHONDONTWRITEBYTECODE: "1"
     working_dir: /app
     volumes:
       - .:/app
@@ -54,6 +61,9 @@ services:
 
   browser-test:
     image: node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      HOME: /tmp
     working_dir: /workspace
     volumes:
       - .:/workspace
@@ -66,7 +76,7 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace
-    user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     command: ["sh", "-lc", "node --test browser_ocr/detection/tests/*.test.mjs && /opt/detection-venv/bin/python -m unittest browser_ocr.detection.tests.test_detector_benchmark -v && node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json && node browser_ocr/detection/cli.mjs audit --corpus browser_ocr/detection/corpus/manifest.json --json"]
 
   ocr-detection-benchmark:
@@ -76,7 +86,7 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace
-    user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     command: ["node", "browser_ocr/detection/cli.mjs", "benchmark", "--json"]
 
   ocr-corpus:
@@ -86,7 +96,7 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace
-    user: "${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}"
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     entrypoint: ["node", "browser_ocr/corpus/cli.mjs"]
 
   ocr-eval:
@@ -173,19 +183,30 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.android
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      HOME: /tmp
+      GRADLE_USER_HOME: /workspace/.android-gradle-cache
+      MEDICINE_MOBILE_DB: ${MEDICINE_MOBILE_DB:-}
+      MEDICINE_MOBILE_MANIFEST: ${MEDICINE_MOBILE_MANIFEST:-}
+      PYTHONDONTWRITEBYTECODE: "1"
     working_dir: /workspace/android
     volumes:
       - .:/workspace
-      - android-gradle-cache:/opt/gradle-cache
     command:
       - sh
       - -lc
       - >-
         cd /workspace &&
-        PYTHONPATH=/workspace python3.12 -c
-        'import json; from medicine_canonical.mobile import build_mobile_database; print(json.dumps(build_mobile_database("data/db/canonical.sqlite", "data/db/mobile.sqlite"), ensure_ascii=False))'
+        if [ -n "$${MEDICINE_MOBILE_DB:-}" ] || [ -n "$${MEDICINE_MOBILE_MANIFEST:-}" ]; then
+          if [ -z "$${MEDICINE_MOBILE_DB:-}" ] || [ -z "$${MEDICINE_MOBILE_MANIFEST:-}" ]; then
+            echo 'Both MEDICINE_MOBILE_DB and MEDICINE_MOBILE_MANIFEST must be set together' >&2;
+            exit 2;
+          fi;
+          echo 'Skipping mobile database build; using prebuilt reference inputs';
+        else
+          PYTHONPATH=/workspace python3.12 -c
+          'import json; from medicine_canonical.mobile import build_mobile_database; print(json.dumps(build_mobile_database("data/db/canonical.sqlite", "data/db/mobile.sqlite"), ensure_ascii=False))';
+        fi
         && cd /workspace/android
         && gradle --no-daemon testDebugUnitTest assembleDebug
-
-volumes:
-  android-gradle-cache:

@@ -55,8 +55,13 @@ plugins {
     id("com.chaquo.python")
 }
 
-val mobileDatabaseFile = rootProject.file("../data/db/mobile.sqlite")
-val mobileManifestFile = rootProject.file("../data/db/mobile.manifest.json")
+val mobileDatabaseOverride = System.getenv("MEDICINE_MOBILE_DB")?.takeIf { it.isNotBlank() }
+val mobileManifestOverride = System.getenv("MEDICINE_MOBILE_MANIFEST")?.takeIf { it.isNotBlank() }
+require((mobileDatabaseOverride == null) == (mobileManifestOverride == null)) {
+    "Both MEDICINE_MOBILE_DB and MEDICINE_MOBILE_MANIFEST must be set together"
+}
+val mobileDatabaseFile = rootProject.file(mobileDatabaseOverride ?: "../data/db/mobile.sqlite")
+val mobileManifestFile = rootProject.file(mobileManifestOverride ?: "../data/db/mobile.manifest.json")
 val prepareMobileAssets = tasks.register<PrepareMobileAssets>("prepareMobileAssets") {
     mobileDatabase.set(layout.file(providers.provider { mobileDatabaseFile }))
     mobileManifest.set(layout.file(providers.provider { mobileManifestFile }))
