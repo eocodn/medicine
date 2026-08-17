@@ -16,10 +16,23 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("R2_SECRET_ACCESS_KEY", workflow)
         self.assertIn("R2_ENDPOINT", workflow)
         self.assertIn("R2_BUCKET", workflow)
-        self.assertIn("REFERENCE_SIGNING_PRIVATE_KEY_PEM", workflow)
+        self.assertNotIn("REFERENCE_SIGNING_PRIVATE_KEY_PEM", workflow)
         self.assertIn("REFERENCE_SIGNING_KEY_ID", workflow)
+        self.assertIn("REFERENCE_SIGNING_KMS_KEY_VERSION", workflow)
         self.assertIn("REFERENCE_RELEASE_SEQUENCE", workflow)
         self.assertIn("github.run_number", workflow)
+        self.assertIn("id-token: write", workflow)
+        self.assertIn("google-github-actions/auth@v3", workflow)
+        self.assertIn("medicine-505813", workflow)
+        self.assertIn(
+            "projects/173565993547/locations/global/workloadIdentityPools/github-actions/providers/medicine-reference-publisher",
+            workflow,
+        )
+        self.assertIn(
+            "projects/medicine-505813/locations/global/keyRings/medicine-release/cryptoKeys/reference-release-signing/cryptoKeyVersions/1",
+            workflow,
+        )
+        self.assertIn("google-cloud-kms", workflow)
         self.assertIn("refresh_sources", workflow)
         self.assertIn("actions/cache/restore@v5", workflow)
         self.assertIn("actions/cache/save@v5", workflow)

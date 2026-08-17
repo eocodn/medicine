@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import re
 import struct
@@ -18,6 +19,10 @@ _SIGNATURE_MAGIC = b"MEDREFSIG1"
 _SIGNATURE_FRAME = struct.Struct(">IQQ")
 _KEY_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
 _MAX_SEQUENCE = (1 << 63) - 1
+_KMS_KEY_VERSION_RE = re.compile(
+    r"projects/[^/\s]+/locations/[^/\s]+/keyRings/[^/\s]+/"
+    r"cryptoKeys/[^/\s]+/cryptoKeyVersions/[1-9][0-9]*\Z"
+)
 _ENVELOPE_FIELDS = {
     "envelope_version",
     "algorithm",
@@ -115,6 +120,60 @@ class ReleaseSigner:
         }
 
 
+@dataclass(frozen=True)
+class KmsReleaseSigner:
+    key_id: str
+    key_version: str
+    client: object
+    public_key: ec.EllipticCurvePublicKey
+
+    @classmethod
+    def from_client(cls, *, key_id: str, key_version: str, client: object) -> "KmsReleaseSigner":
+        key_id = _validate_key_id(key_id)
+        if not isinstance(key_version, str) or not _KMS_KEY_VERSION_RE.fullmatch(key_version):
+            raise ValueError("release signing KMS key version resource name is invalid")
+        try:
+            response = client.get_public_key(request={"name": key_version})
+        except Exception as exc:
+            raise RuntimeError("failed to fetch release signing KMS public key") from exc
+        pem = getattr(response, "pem", None)
+        if not isinstance(pem, str) or not pem.strip():
+            raise ValueError("release signing KMS public key is missing")
+        public_key = _load_p256_public_key(pem.encode("ascii"))
+        return cls(key_id=key_id, key_version=key_version, client=client, public_key=public_key)
+
+    def public_key_pem(self) -> bytes:
+        return self.public_key.public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+
+    def sign_payload(self, payload: bytes, *, release_sequence: int) -> dict:
+        message = _signing_message(self.key_id, release_sequence, payload)
+        digest = hashlib.sha256(message).digest()
+        try:
+            response = self.client.asymmetric_sign(
+                request={"name": self.key_version, "digest": {"sha256": digest}}
+            )
+        except Exception as exc:
+            raise RuntimeError("release signing KMS request failed") from exc
+        signature = getattr(response, "signature", None)
+        if not isinstance(signature, bytes) or not signature:
+            raise RuntimeError("release signing KMS returned an invalid signature")
+        try:
+            self.public_key.verify(signature, message, ec.ECDSA(hashes.SHA256()))
+        except InvalidSignature as exc:
+            raise RuntimeError("release signing KMS signature failed local verification") from exc
+        return {
+            "envelope_version": RELEASE_SIGNATURE_ENVELOPE_VERSION,
+            "algorithm": RELEASE_SIGNATURE_ALGORITHM,
+            "key_id": self.key_id,
+            "release_sequence": release_sequence,
+            "payload_base64": base64.b64encode(payload).decode("ascii"),
+            "signature_base64": base64.b64encode(signature).decode("ascii"),
+        }
+
+
 def encode_signed_envelope(envelope: dict) -> bytes:
     if not isinstance(envelope, dict) or set(envelope) != _ENVELOPE_FIELDS:
         raise ValueError("signed release envelope fields are invalid")
@@ -180,6 +239,7 @@ def verify_signed_envelope(
 
 
 __all__ = [
+    "KmsReleaseSigner",
     "RELEASE_SIGNATURE_ALGORITHM",
     "RELEASE_SIGNATURE_ENVELOPE_VERSION",
     "ReleaseSigner",

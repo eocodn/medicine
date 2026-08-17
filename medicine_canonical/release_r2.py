@@ -8,7 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release import RELEASE_PREFIX, decompress_snapshot, prepare_release, sha256_file
-from .release_signing import ReleaseSigner, encode_signed_envelope, verify_signed_envelope
+from .release_signing import (
+    KmsReleaseSigner,
+    ReleaseSigner,
+    encode_signed_envelope,
+    verify_signed_envelope,
+)
+from .release_signing_runtime import release_sequence_from_env, release_signer_from_env
 
 LATEST_KEY = f"{RELEASE_PREFIX}/latest.json"
 MAX_PATCH_BASES = 3
@@ -311,7 +317,7 @@ def publish_release(
     mobile_manifest_path: str | Path,
     output_dir: str | Path,
     *,
-    signer: ReleaseSigner,
+    signer: ReleaseSigner | KmsReleaseSigner,
     release_sequence: int,
     created_at: str | None = None,
     latest_key: str = LATEST_KEY,
@@ -523,32 +529,6 @@ def download_object_from_env(key: str, output_path: str | Path) -> dict:
     output = Path(output_path)
     downloaded = _download_to_file(client_from_env(), bucket, key, output)
     return {"bucket": bucket, "key": key, "output_path": str(output), **downloaded}
-
-
-def release_signer_from_env() -> ReleaseSigner:
-    key_id = os.environ.get("REFERENCE_SIGNING_KEY_ID", "").strip()
-    private_key_pem = os.environ.get("REFERENCE_SIGNING_PRIVATE_KEY_PEM", "")
-    missing = []
-    if not key_id:
-        missing.append("REFERENCE_SIGNING_KEY_ID")
-    if not private_key_pem.strip():
-        missing.append("REFERENCE_SIGNING_PRIVATE_KEY_PEM")
-    if missing:
-        raise RuntimeError(f"missing release signing environment: {', '.join(missing)}")
-    return ReleaseSigner.from_private_pem(key_id, private_key_pem.encode("utf-8"))
-
-
-def release_sequence_from_env() -> int:
-    raw = os.environ.get("REFERENCE_RELEASE_SEQUENCE", "").strip()
-    if not raw:
-        raise RuntimeError("REFERENCE_RELEASE_SEQUENCE is required")
-    try:
-        sequence = int(raw, 10)
-    except ValueError as exc:
-        raise RuntimeError("REFERENCE_RELEASE_SEQUENCE must be an integer") from exc
-    if sequence <= 0 or sequence > (1 << 63) - 1:
-        raise RuntimeError("REFERENCE_RELEASE_SEQUENCE must be a positive signed 64-bit integer")
-    return sequence
 
 
 def publish_release_from_env(
