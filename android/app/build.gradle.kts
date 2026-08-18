@@ -138,10 +138,9 @@ chaquopy {
         srcDir(rootProject.file(".."))
         include("medicine_app/**/*.py")
         include("medicine_reference/**/*.py")
+        include("medicine_reference/data/mfds_remark_registry.tsv")
         include("medicine_canonical/__init__.py")
         include("medicine_canonical/release.py")
-        include("medicine_canonical/mfds_remark_registry.py")
-        include("medicine_canonical/data/mfds_remark_registry.tsv")
     }
 }
 

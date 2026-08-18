@@ -48,7 +48,7 @@ class ReviewedMfdsRemark:
 
 
 def _load_registry() -> dict[tuple[str, str], ReviewedMfdsRemark]:
-    resource = files("medicine_canonical").joinpath(_RESOURCE)
+    resource = files("medicine_reference").joinpath(_RESOURCE)
     result: dict[tuple[str, str], ReviewedMfdsRemark] = {}
     with resource.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")

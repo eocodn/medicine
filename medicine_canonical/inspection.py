@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from .mfds_remark_registry import reviewed_mfds_remark
+from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
 from .schema import CORE_SOURCE_FAMILIES, SCHEMA_VERSION
 from .source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_KEYS
 
