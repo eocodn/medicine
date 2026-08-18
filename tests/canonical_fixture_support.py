@@ -4,9 +4,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
+from medicine_reference.mfds_sources import (
+    MFDS_DUR_INGREDIENT_SOURCES_BY_OPERATION as MFDS_INGREDIENT_ENDPOINTS,
+)
+
 from medicine_canonical.dose_criteria import parse_daily_dose_threshold
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
-from medicine_canonical.mfds_ingredient_endpoints import MFDS_INGREDIENT_ENDPOINTS
 from medicine_canonical.source_policy import CANONICAL_SOURCE_POLICY
 from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY
 

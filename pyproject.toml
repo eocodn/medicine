@@ -19,7 +19,7 @@ medicine-app = "medicine_app.cli:main"
 medicine-canonical = "medicine_canonical.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["medicine_app*", "medicine_canonical*"]
+include = ["medicine_app*", "medicine_canonical*", "medicine_reference*"]
 
 [tool.setuptools.package-data]
 medicine_app = ["static/*.html", "static/*.css", "static/*.js"]

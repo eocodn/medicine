@@ -5,5 +5,6 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY medicine_app ./medicine_app
 COPY medicine_canonical ./medicine_canonical
+COPY medicine_reference ./medicine_reference
 
 RUN pip install --no-cache-dir .

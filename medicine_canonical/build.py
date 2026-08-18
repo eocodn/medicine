@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from medicine_reference.mfds_sources import PERMIT_SOURCE
+
 from .dose_criteria import materialize_dose_criteria
 from .inspection import canonical_stats, verify_canonical_database
 from .mfds_ingredient import (
@@ -138,7 +140,10 @@ def _normalize_permit_status(cancel_name, cancel_date=None) -> str:
 def _import_permit_snapshot(con: sqlite3.Connection, raw_dir: Path) -> int:
     path = raw_dir / PERMIT_FILENAME
     meta = _load_meta(path)
-    if meta["dataset_key"] != PERMIT_DATASET_KEY or meta["source_family"] != "mfds_permit_api":
+    if (
+        meta["dataset_key"] != PERMIT_SOURCE.dataset_key
+        or meta["source_family"] != PERMIT_SOURCE.source_family
+    ):
         raise ValueError("permit snapshot provenance mismatch")
     _insert_source_snapshot(con, meta, path)
     count = 0
@@ -312,8 +317,8 @@ def _import_dur_snapshots(con: sqlite3.Connection, raw_dir: Path) -> tuple[int, 
     for operation, spec in DUR_ENDPOINTS.items():
         path = raw_dir / spec.filename
         meta = _load_meta(path)
-        expected_key = f"mfds_dur:{operation}"
-        if meta["dataset_key"] != expected_key or meta["source_family"] != "mfds_dur_item_api":
+        expected_key = spec.dataset_key
+        if meta["dataset_key"] != expected_key or meta["source_family"] != spec.source_family:
             raise ValueError(f"DUR snapshot provenance mismatch for {operation}")
         _insert_source_snapshot(con, meta, path)
         imported_source_rows = 0

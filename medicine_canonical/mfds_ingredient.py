@@ -8,13 +8,16 @@ import sqlite3
 from pathlib import Path
 from typing import Callable
 
-from .mfds_ingredient_endpoints import MFDS_INGREDIENT_ENDPOINTS, MfdsIngredientEndpoint
+from medicine_reference.mfds_sources import (
+    MFDS_DUR_INGREDIENT_API_BASE,
+    MFDS_DUR_INGREDIENT_SOURCES_BY_OPERATION as MFDS_INGREDIENT_ENDPOINTS,
+    MfdsSourceSpec,
+)
+
 from .mfds_remark_registry import reviewed_mfds_remark
 from .sources import _request_json, _sync_paginated_jsonl
 
 
-MFDS_INGREDIENT_API_BASE = "https://apis.data.go.kr/1471000/DURIrdntInfoService03"
-MFDS_INGREDIENT_SOURCE_FAMILY = "mfds_dur_ingredient_api"
 MFDS_INGREDIENT_PAGE_SIZE_MAX = 500
 _MIXTURE_CODE_RE = re.compile(r"\[([A-Z]\d{6})\]")
 _MIXTURE_KOREAN_NAME_RE = re.compile(r"\([^()]*[가-힣][^()]*\)\s*$")
@@ -99,7 +102,9 @@ def fetch_mfds_ingredient_page(
         safe="%",
     )
     label = f"MFDS DUR ingredient {operation}"
-    payload = _request_json(f"{MFDS_INGREDIENT_API_BASE}/{operation}?{params}", label=label)
+    payload = _request_json(
+        f"{MFDS_DUR_INGREDIENT_API_BASE}/{operation}?{params}", label=label
+    )
     return _extract_ingredient_response(payload, label)
 
 
@@ -132,9 +137,9 @@ def sync_mfds_ingredient_sources(
         sources.append(
             _sync_paginated_jsonl(
                 root / spec.filename,
-                dataset_key=f"mfds_dur_ingredient:{operation}",
-                source_family=MFDS_INGREDIENT_SOURCE_FAMILY,
-                source_locator=f"{MFDS_INGREDIENT_API_BASE}/{operation}",
+                dataset_key=spec.dataset_key,
+                source_family=spec.source_family,
+                source_locator=spec.source_locator,
                 page_size=page_size,
                 workers=workers,
                 fetch_page=lambda page, size, operation=operation: fetcher(operation, page, size),
@@ -167,14 +172,14 @@ def _load_snapshot_meta(path: Path) -> dict:
 
 
 def _insert_source_snapshot(
-    con: sqlite3.Connection, meta: dict, path: Path, *, dataset_key: str, operation: str
+    con: sqlite3.Connection, meta: dict, path: Path, *, spec: MfdsSourceSpec
 ) -> None:
-    expected_locator = f"{MFDS_INGREDIENT_API_BASE}/{operation}"
-    if meta["dataset_key"] != dataset_key:
+    operation = str(spec.operation)
+    if meta["dataset_key"] != spec.dataset_key:
         raise ValueError(f"MFDS ingredient snapshot dataset mismatch for {operation}")
-    if meta["source_family"] != MFDS_INGREDIENT_SOURCE_FAMILY:
+    if meta["source_family"] != spec.source_family:
         raise ValueError(f"MFDS ingredient snapshot family mismatch for {operation}")
-    if meta["source_locator"] != expected_locator:
+    if meta["source_locator"] != spec.source_locator:
         raise ValueError(f"MFDS ingredient snapshot locator mismatch for {operation}")
     con.execute(
         """
@@ -184,9 +189,9 @@ def _insert_source_snapshot(
         ) VALUES(?,?,?,?,?,?,?,?,?)
         """,
         (
-            dataset_key,
-            MFDS_INGREDIENT_SOURCE_FAMILY,
-            expected_locator,
+            spec.dataset_key,
+            spec.source_family,
+            spec.source_locator,
             str(path),
             meta.get("fetched_at"),
             int(meta["row_count"]),
@@ -232,7 +237,7 @@ def _parse_mixture_ingredients(
 
 
 def _canonical_rule(
-    row: dict, spec: MfdsIngredientEndpoint, *, dataset_key: str, source_row: int
+    row: dict, spec: MfdsSourceSpec, *, dataset_key: str, source_row: int
 ) -> dict:
     ingredient_code = _required_text(
         row, "INGR_CODE", dataset_key=dataset_key, source_row=source_row
@@ -314,8 +319,8 @@ def import_mfds_ingredient_snapshots(
         if not path.exists():
             raise FileNotFoundError(f"missing MFDS ingredient snapshot: {path}")
         meta = _load_snapshot_meta(path)
-        dataset_key = f"mfds_dur_ingredient:{operation}"
-        _insert_source_snapshot(con, meta, path, dataset_key=dataset_key, operation=operation)
+        dataset_key = spec.dataset_key
+        _insert_source_snapshot(con, meta, path, spec=spec)
 
         imported_source_rows = 0
         with path.open("r", encoding="utf-8") as handle:
@@ -402,10 +407,7 @@ def import_mfds_ingredient_snapshots(
 
 
 __all__ = [
-    "MFDS_INGREDIENT_API_BASE",
     "MFDS_INGREDIENT_ENDPOINTS",
-    "MFDS_INGREDIENT_SOURCE_FAMILY",
-    "MfdsIngredientEndpoint",
     "fetch_mfds_ingredient_page",
     "import_mfds_ingredient_snapshots",
     "sync_mfds_ingredient_sources",

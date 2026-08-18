@@ -8,7 +8,7 @@ from medicine_app.canonical_runtime import _RUNTIME_SOURCE_FAMILIES
 from medicine_canonical.build import assemble_canonical_database, build_canonical_database
 from medicine_canonical.cli import build_parser
 from medicine_canonical import mfds_ingredient
-from medicine_canonical.mfds_ingredient_endpoints import MFDS_INGREDIENT_ENDPOINTS
+from medicine_canonical.mfds_ingredient import MFDS_INGREDIENT_ENDPOINTS
 from medicine_canonical.schema import CORE_SOURCE_FAMILIES
 from medicine_canonical.source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES
 from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY

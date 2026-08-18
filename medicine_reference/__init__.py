@@ -1,0 +1,1 @@
+"""Runtime-safe shared reference-data policy."""

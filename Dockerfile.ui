@@ -8,6 +8,7 @@ RUN apt-get update \
 
 COPY pyproject.toml ./
 COPY medicine_app ./medicine_app
+COPY medicine_reference ./medicine_reference
 
 RUN pip install --no-cache-dir .
 

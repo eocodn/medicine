@@ -5,29 +5,13 @@ import re
 import sqlite3
 from typing import Any, Mapping
 
-# Keep this allowlist in the Android-packaged medicine_app tree. The canonical
-# builder owns the same release policy separately; tests require them to match so
-# mobile runtime verification never depends on the omitted medicine_canonical package.
-_RUNTIME_SOURCE_FAMILIES = {
-    "mfds_permit:products": "mfds_permit_api",
-    "mfds_dur:getUsjntTabooInfoList03": "mfds_dur_item_api",
-    "mfds_dur:getSpcifyAgrdeTabooInfoList03": "mfds_dur_item_api",
-    "mfds_dur:getPwnmTabooInfoList03": "mfds_dur_item_api",
-    "mfds_dur:getCpctyAtentInfoList03": "mfds_dur_item_api",
-    "mfds_dur:getMdctnPdAtentInfoList03": "mfds_dur_item_api",
-    "mfds_dur:getOdsnAtentInfoList03": "mfds_dur_item_api",
-    "mfds_dur:getEfcyDplctInfoList03": "mfds_dur_item_api",
-    "mfds_dur:getDurPrdlstInfoList03": "mfds_dur_item_api",
-    "mfds_dur:getSeobangjeongPartitnAtentInfoList03": "mfds_dur_item_api",
-    "mfds_dur_ingredient:getUsjntTabooInfoList02": "mfds_dur_ingredient_api",
-    "mfds_dur_ingredient:getSpcifyAgrdeTabooInfoList02": "mfds_dur_ingredient_api",
-    "mfds_dur_ingredient:getPwnmTabooInfoList02": "mfds_dur_ingredient_api",
-    "mfds_dur_ingredient:getCpctyAtentInfoList02": "mfds_dur_ingredient_api",
-    "mfds_dur_ingredient:getMdctnPdAtentInfoList02": "mfds_dur_ingredient_api",
-    "mfds_dur_ingredient:getOdsnAtentInfoList02": "mfds_dur_ingredient_api",
-    "mfds_dur_ingredient:getEfcyDplctInfoList02": "mfds_dur_ingredient_api",
-}
-_RUNTIME_SOURCE_KEYS = frozenset(_RUNTIME_SOURCE_FAMILIES)
+from medicine_reference.mfds_sources import MFDS_SOURCE_FAMILIES, MFDS_SOURCE_KEYS
+
+
+# This manifest is deliberately shared with the builder, but lives in the
+# Android-packaged runtime-safe medicine_reference package.
+_RUNTIME_SOURCE_FAMILIES = MFDS_SOURCE_FAMILIES
+_RUNTIME_SOURCE_KEYS = MFDS_SOURCE_KEYS
 
 
 _CANONICAL_SCHEMA_VERSION = "9"

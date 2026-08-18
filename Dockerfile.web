@@ -22,6 +22,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY medicine_app ./medicine_app
 COPY medicine_canonical ./medicine_canonical
+COPY medicine_reference ./medicine_reference
 COPY --from=ocr-assets /out /opt/medicine-ocr-assets
 
 RUN pip install --no-cache-dir .
