@@ -20,6 +20,7 @@ from medicine_app.reference_update import verify_reference_database
 from .release import apply_chunk_patch, prepare_release
 from .release_r2 import download_object_from_env, publish_release_from_env
 from .release_signing import verify_signed_envelope
+from .source_layout import MfdsSourceLayout
 from .substance_build import (
     assemble_substance_database,
     rebuild_substance_database,
@@ -36,7 +37,7 @@ DEFAULT_DB = Path("data/db/canonical.sqlite")
 DEFAULT_RAW = Path("data/canonical/raw")
 DEFAULT_SUBSTANCE_DB = Path("data/db/canonical_substances.sqlite")
 DEFAULT_SUBSTANCE_RAW = Path("data/canonical/substances")
-DEFAULT_MFDS_INGREDIENT_RAW = Path("data/canonical/mfds_ingredient")
+DEFAULT_MFDS_INGREDIENT_RAW = MfdsSourceLayout.from_roots(DEFAULT_RAW).ingredient_dir
 
 
 def _emit(payload: dict, as_json: bool) -> None:
@@ -218,12 +219,15 @@ def _require_key(value: str) -> str:
     return value
 
 
+def _mfds_source_layout(args: argparse.Namespace) -> MfdsSourceLayout:
+    return MfdsSourceLayout.from_roots(args.raw_dir, args.ingredient_raw_dir)
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "sync":
         payload = sync_reference_sources(
-            args.raw_dir,
-            args.ingredient_raw_dir,
+            _mfds_source_layout(args),
             service_key=_require_key(args.service_key),
             permit_page_size=args.permit_page_size,
             dur_page_size=args.dur_page_size,
@@ -233,13 +237,12 @@ def main(argv=None) -> int:
         )
     elif args.command == "build":
         payload = assemble_canonical_database(
-            args.db, args.raw_dir, args.ingredient_raw_dir
+            args.db, _mfds_source_layout(args)
         )
     elif args.command == "rebuild":
         payload = build_canonical_database(
             args.db,
-            raw_dir=args.raw_dir,
-            ingredient_raw_dir=args.ingredient_raw_dir,
+            source_layout=_mfds_source_layout(args),
             service_key=_require_key(args.service_key),
             permit_page_size=args.permit_page_size,
             dur_page_size=args.dur_page_size,
@@ -251,18 +254,16 @@ def main(argv=None) -> int:
         payload = assemble_integrated_databases(
             args.db,
             args.substance_db,
-            args.raw_dir,
+            _mfds_source_layout(args),
             args.substance_raw_dir,
-            args.ingredient_raw_dir,
         )
     elif args.command == "integrated-rebuild":
         payload = build_integrated_databases(
             args.db,
             args.substance_db,
             service_key=_require_key(args.service_key),
-            canonical_raw_dir=args.raw_dir,
+            source_layout=_mfds_source_layout(args),
             substance_raw_dir=args.substance_raw_dir,
-            ingredient_raw_dir=args.ingredient_raw_dir,
             permit_page_size=args.permit_page_size,
             dur_page_size=args.dur_page_size,
             ingredient_page_size=args.ingredient_page_size,

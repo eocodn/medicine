@@ -22,6 +22,7 @@ from medicine_canonical.mfds_ingredient import (
     MFDS_INGREDIENT_PAGE_SIZE_MAX,
 )
 from medicine_canonical.schema import SCHEMA
+from medicine_canonical.source_layout import MfdsSourceLayout
 from medicine_canonical.source_policy import (
     CANONICAL_SOURCE_POLICY,
     EXPECTED_CANONICAL_SOURCE_FAMILIES,
@@ -286,7 +287,9 @@ class CanonicalDatabaseTest(unittest.TestCase):
         raw_dir = self.root / "canonical.sources"
         ingredient_raw_dir = self.root / "mfds_ingredient"
         self.db.unlink()
-        result = assemble_canonical_database(self.db, raw_dir, ingredient_raw_dir)
+        result = assemble_canonical_database(
+            self.db, MfdsSourceLayout.from_roots(raw_dir, ingredient_raw_dir)
+        )
         self.assertEqual(result["products"], 2)
         self.assertEqual(result["source_snapshots"], 17)
 
@@ -298,7 +301,8 @@ class CanonicalDatabaseTest(unittest.TestCase):
         target.write_text(target.read_text(encoding="utf-8") + "\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "sha256 mismatch"):
             assemble_canonical_database(
-                self.root / "tampered.sqlite", raw_dir, ingredient_raw_dir
+                self.root / "tampered.sqlite",
+                MfdsSourceLayout.from_roots(raw_dir, ingredient_raw_dir),
             )
 
     def test_rebuild_is_atomic_and_idempotent(self) -> None:
@@ -350,7 +354,9 @@ class CanonicalDatabaseTest(unittest.TestCase):
         self.assertEqual(MFDS_INGREDIENT_PAGE_SIZE_MAX, 500)
         with self.assertRaisesRegex(ValueError, "permit_page_size"):
             sync_canonical_api_sources(
-                self.root / "raw-limit",
+                MfdsSourceLayout.from_roots(
+                    self.root / "raw-limit", self.root / "ingredient-limit"
+                ),
                 service_key="test-key",
                 permit_page_size=501,
                 progress=False,

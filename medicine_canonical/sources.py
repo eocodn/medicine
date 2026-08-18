@@ -22,6 +22,7 @@ from medicine_reference.mfds_sources import (
     PERMIT_SOURCE,
 )
 
+from .source_layout import MfdsSourceLayout
 from .snapshot_io import canonical_json, sha256_file, snapshot_metadata_path
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
@@ -239,7 +240,7 @@ def _sync_paginated_jsonl(
 
 
 def sync_canonical_api_sources(
-    raw_dir: str | Path,
+    source_layout: MfdsSourceLayout,
     *,
     service_key: str,
     permit_page_size: int = PERMIT_PAGE_SIZE_MAX,
@@ -258,7 +259,7 @@ def sync_canonical_api_sources(
         raise ValueError(f"dur_page_size must be between 1 and {DUR_PAGE_SIZE_MAX}")
     if not 1 <= workers <= 16:
         raise ValueError("workers must be between 1 and 16")
-    root = Path(raw_dir)
+    root = source_layout.product_dir
     root.mkdir(parents=True, exist_ok=True)
     permit_fetcher = permit_fetch_page or (lambda page, size: fetch_permit_page(key, page, size))
     dur_fetcher = dur_fetch_page or (lambda operation, page, size: fetch_dur_page(key, operation, page, size))
@@ -266,7 +267,7 @@ def sync_canonical_api_sources(
     sources = []
     sources.append(
         _sync_paginated_jsonl(
-            root / PERMIT_SOURCE.filename,
+            source_layout.path_for(PERMIT_SOURCE),
             dataset_key=PERMIT_SOURCE.dataset_key,
             source_family=PERMIT_SOURCE.source_family,
             source_locator=PERMIT_SOURCE.source_locator,
@@ -279,7 +280,7 @@ def sync_canonical_api_sources(
     for operation, spec in DUR_ENDPOINTS.items():
         sources.append(
             _sync_paginated_jsonl(
-                root / spec.filename,
+                source_layout.path_for(spec),
                 dataset_key=spec.dataset_key,
                 source_family=spec.source_family,
                 source_locator=spec.source_locator,

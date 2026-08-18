@@ -20,12 +20,12 @@ from .mfds_ingredient import (
 )
 from .linking import materialize_product_criterion_links
 from .schema import SCHEMA, SCHEMA_VERSION
+from .source_layout import MfdsSourceLayout
 from .snapshot_io import insert_source_snapshot, load_snapshot_metadata
 from .source_policy import CANONICAL_SOURCE_POLICY
 from .sources import (
     DUR_ENDPOINTS,
     PERMIT_DATASET_KEY,
-    PERMIT_FILENAME,
     DurFetchPage,
     PermitFetchPage,
     sync_canonical_api_sources,
@@ -89,8 +89,8 @@ def _normalize_permit_status(cancel_name, cancel_date=None) -> str:
     return "inactive_unknown" if _text(cancel_date) else "unknown"
 
 
-def _import_permit_snapshot(con: sqlite3.Connection, raw_dir: Path) -> int:
-    path = raw_dir / PERMIT_FILENAME
+def _import_permit_snapshot(con: sqlite3.Connection, source_layout: MfdsSourceLayout) -> int:
+    path = source_layout.path_for(PERMIT_SOURCE)
     meta = load_snapshot_metadata(path, label="API snapshot")
     if (
         meta["dataset_key"] != PERMIT_SOURCE.dataset_key
@@ -263,11 +263,13 @@ def _import_split_row(con: sqlite3.Connection, dataset_key: str, source_row: int
     return 1
 
 
-def _import_dur_snapshots(con: sqlite3.Connection, raw_dir: Path) -> tuple[int, int]:
+def _import_dur_snapshots(
+    con: sqlite3.Connection, source_layout: MfdsSourceLayout
+) -> tuple[int, int]:
     rule_rows = 0
     flag_rows = 0
     for operation, spec in DUR_ENDPOINTS.items():
-        path = raw_dir / spec.filename
+        path = source_layout.path_for(spec)
         meta = load_snapshot_metadata(path, label="API snapshot")
         expected_key = spec.dataset_key
         if meta["dataset_key"] != expected_key or meta["source_family"] != spec.source_family:
@@ -296,13 +298,8 @@ def _import_dur_snapshots(con: sqlite3.Connection, raw_dir: Path) -> tuple[int, 
     return rule_rows, flag_rows
 
 
-def _default_ingredient_raw_dir(raw_root: Path) -> Path:
-    return raw_root.parent / "mfds_ingredient"
-
-
 def sync_reference_sources(
-    raw_dir: str | Path,
-    ingredient_raw_dir: str | Path,
+    source_layout: MfdsSourceLayout,
     *,
     service_key: str,
     permit_page_size: int = 500,
@@ -316,7 +313,7 @@ def sync_reference_sources(
 ) -> dict:
     """Sync the complete authoritative MFDS source set used by canonical builds."""
     product_sources = sync_canonical_api_sources(
-        raw_dir,
+        source_layout,
         service_key=service_key,
         permit_page_size=permit_page_size,
         dur_page_size=dur_page_size,
@@ -326,7 +323,7 @@ def sync_reference_sources(
         dur_fetch_page=dur_fetch_page,
     )
     ingredient_sources = sync_mfds_ingredient_sources(
-        ingredient_raw_dir,
+        source_layout,
         service_key=service_key,
         page_size=ingredient_page_size,
         workers=workers,
@@ -343,15 +340,12 @@ def sync_reference_sources(
 
 def populate_canonical_source_tables(
     con: sqlite3.Connection,
-    raw_dir: str | Path,
-    ingredient_raw_dir: str | Path,
+    source_layout: MfdsSourceLayout,
 ) -> dict:
     """Populate authoritative MFDS source tables without identity linking."""
-    raw_root = Path(raw_dir)
-    ingredient_root = Path(ingredient_raw_dir)
-    permit_rows = _import_permit_snapshot(con, raw_root)
-    product_rule_rows, product_flag_rows = _import_dur_snapshots(con, raw_root)
-    ingredient_result = import_mfds_ingredient_snapshots(con, ingredient_root)
+    permit_rows = _import_permit_snapshot(con, source_layout)
+    product_rule_rows, product_flag_rows = _import_dur_snapshots(con, source_layout)
+    ingredient_result = import_mfds_ingredient_snapshots(con, source_layout)
     dose_result = materialize_dose_criteria(con)
     return {
         "permit_source_rows": permit_rows,
@@ -366,16 +360,9 @@ def populate_canonical_source_tables(
 
 def assemble_canonical_database(
     db_path: str | Path,
-    raw_dir: str | Path,
-    ingredient_raw_dir: str | Path | None = None,
+    source_layout: MfdsSourceLayout,
 ) -> dict:
     db_path = Path(db_path)
-    raw_root = Path(raw_dir)
-    ingredient_root = (
-        Path(ingredient_raw_dir)
-        if ingredient_raw_dir is not None
-        else _default_ingredient_raw_dir(raw_root)
-    )
     db_path.parent.mkdir(parents=True, exist_ok=True)
     temp = db_path.with_name(db_path.name + ".tmp")
     temp.unlink(missing_ok=True)
@@ -384,7 +371,7 @@ def assemble_canonical_database(
         with closing(sqlite3.connect(temp)) as con:
             con.executescript(SCHEMA)
             con.execute("BEGIN")
-            source_result = populate_canonical_source_tables(con, raw_root, ingredient_root)
+            source_result = populate_canonical_source_tables(con, source_layout)
             link_result = materialize_product_criterion_links(con)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(
@@ -412,8 +399,8 @@ def assemble_canonical_database(
             **source_result,
             **link_result,
             "elapsed_seconds": round(time.monotonic() - started, 3),
-            "raw_dir": str(raw_root),
-            "ingredient_raw_dir": str(ingredient_root),
+            "raw_dir": str(source_layout.product_dir),
+            "ingredient_raw_dir": str(source_layout.ingredient_dir),
         }
     )
     return stats
@@ -423,8 +410,7 @@ def build_canonical_database(
     db_path: str | Path,
     *,
     service_key: str,
-    raw_dir: str | Path | None = None,
-    ingredient_raw_dir: str | Path | None = None,
+    source_layout: MfdsSourceLayout | None = None,
     permit_page_size: int = 500,
     dur_page_size: int = 500,
     ingredient_page_size: int = 500,
@@ -435,15 +421,9 @@ def build_canonical_database(
     ingredient_fetch_page: IngredientFetchPage | None = None,
 ) -> dict:
     db_path = Path(db_path)
-    raw_root = Path(raw_dir) if raw_dir is not None else db_path.parent / f"{db_path.stem}.sources"
-    ingredient_root = (
-        Path(ingredient_raw_dir)
-        if ingredient_raw_dir is not None
-        else _default_ingredient_raw_dir(raw_root)
-    )
+    layout = source_layout or MfdsSourceLayout.for_database(db_path)
     sync_reference_sources(
-        raw_root,
-        ingredient_root,
+        layout,
         service_key=service_key,
         permit_page_size=permit_page_size,
         dur_page_size=dur_page_size,
@@ -454,7 +434,7 @@ def build_canonical_database(
         dur_fetch_page=dur_fetch_page,
         ingredient_fetch_page=ingredient_fetch_page,
     )
-    return assemble_canonical_database(db_path, raw_root, ingredient_root)
+    return assemble_canonical_database(db_path, layout)
 
 
 __all__ = [

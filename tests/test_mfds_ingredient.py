@@ -20,6 +20,7 @@ from medicine_reference.mfds_remark_registry import (
     reviewed_mfds_remark_counts_by_category,
 )
 from medicine_canonical.schema import SCHEMA
+from medicine_canonical.source_layout import MfdsSourceLayout
 
 
 class MfdsIngredientCanonicalTest(unittest.TestCase):
@@ -27,6 +28,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.raw = self.root / "raw"
+        self.layout = MfdsSourceLayout.from_roots(self.root / "product", self.raw)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -87,7 +89,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
 
     def _sync(self) -> dict:
         return sync_mfds_ingredient_sources(
-            self.raw,
+            self.layout,
             service_key="test-key",
             page_size=500,
             workers=1,
@@ -154,7 +156,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         self._sync()
         with closing(sqlite3.connect(":memory:")) as con:
             con.executescript(SCHEMA)
-            result = import_mfds_ingredient_snapshots(con, self.raw)
+            result = import_mfds_ingredient_snapshots(con, self.layout)
             dose_result = materialize_dose_criteria(con)
 
             self.assertEqual(result["source_snapshots"], 7)
@@ -222,7 +224,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
 
         with closing(sqlite3.connect(":memory:")) as con:
             con.executescript(SCHEMA)
-            import_mfds_ingredient_snapshots(con, self.raw)
+            import_mfds_ingredient_snapshots(con, self.layout)
             row = con.execute(
                 """SELECT c.mixture_type,c.mixture_ingredient_codes_json,
                           c.mixture_ingredient_names_json
@@ -247,7 +249,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         with closing(sqlite3.connect(":memory:")) as con:
             con.executescript(SCHEMA)
             with self.assertRaisesRegex(ValueError, "unsupported DEL_YN"):
-                import_mfds_ingredient_snapshots(con, self.raw)
+                import_mfds_ingredient_snapshots(con, self.layout)
 
     def test_import_rejects_unreviewed_active_remark(self) -> None:
         self._sync()
@@ -262,7 +264,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         with closing(sqlite3.connect(":memory:")) as con:
             con.executescript(SCHEMA)
             with self.assertRaisesRegex(ValueError, "unreviewed MFDS REMARK"):
-                import_mfds_ingredient_snapshots(con, self.raw)
+                import_mfds_ingredient_snapshots(con, self.layout)
 
     def test_import_rejects_unreviewed_deleted_remark(self) -> None:
         self._sync()
@@ -277,7 +279,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         with closing(sqlite3.connect(":memory:")) as con:
             con.executescript(SCHEMA)
             with self.assertRaisesRegex(ValueError, "unreviewed MFDS REMARK"):
-                import_mfds_ingredient_snapshots(con, self.raw)
+                import_mfds_ingredient_snapshots(con, self.layout)
 
     def test_active_dose_row_without_max_qty_is_preserved_as_not_evaluable(self) -> None:
         self._sync()
@@ -291,7 +293,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
 
         with closing(sqlite3.connect(":memory:")) as con:
             con.executescript(SCHEMA)
-            result = import_mfds_ingredient_snapshots(con, self.raw)
+            result = import_mfds_ingredient_snapshots(con, self.layout)
             materialize_dose_criteria(con)
             self.assertEqual(result["ingredient_rules"], 7)
             rule = con.execute(
