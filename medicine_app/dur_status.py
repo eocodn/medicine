@@ -16,15 +16,6 @@ DUR_CATEGORIES = (
     ("therapeutic_duplication_caution", "효능군 중복주의"),
 )
 
-_PRODUCT_AND_INGREDIENT_CATEGORIES = {
-    "combination_contraindication",
-    "age_contraindication",
-    "pregnancy_contraindication",
-    "elderly_caution",
-    "dose_caution",
-    "duration_caution",
-    "therapeutic_duplication_caution",
-}
 _INTERACTION_CATEGORIES = {
     "combination_contraindication",
     "therapeutic_duplication_caution",

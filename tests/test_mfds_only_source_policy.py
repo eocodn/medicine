@@ -7,6 +7,7 @@ import unittest
 from medicine_app.canonical_runtime import _RUNTIME_SOURCE_FAMILIES
 from medicine_canonical.build import assemble_canonical_database, build_canonical_database
 from medicine_canonical.cli import build_parser
+from medicine_canonical import mfds_ingredient
 from medicine_canonical.mfds_ingredient_endpoints import MFDS_INGREDIENT_ENDPOINTS
 from medicine_canonical.schema import CORE_SOURCE_FAMILIES
 from medicine_canonical.source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES
@@ -55,11 +56,36 @@ class MfdsOnlySourcePolicyTest(unittest.TestCase):
         self.assertFalse(Path("medicine_canonical/xlsx.py").exists())
         self.assertFalse(Path("tests/test_kids_sources.py").exists())
 
+    def test_obsolete_mfds_ingredient_preview_surface_is_removed(self) -> None:
+        commands = build_parser()._subparsers._group_actions[0].choices
+        for command in ("sync", "build", "integrated-build", "criteria", "stats", "verify"):
+            self.assertIn(command, commands)
+        for command in (
+            "mfds-ingredient-sync",
+            "mfds-ingredient-build",
+            "mfds-ingredient-rebuild",
+        ):
+            self.assertNotIn(command, commands)
+
+        for name in (
+            "assemble_mfds_ingredient_preview",
+            "build_mfds_ingredient_preview",
+            "verify_mfds_ingredient_preview",
+        ):
+            self.assertFalse(hasattr(mfds_ingredient, name))
+
     def test_reference_publish_workflow_has_no_kids_source_path(self) -> None:
         workflow = Path(".github/workflows/reference-publish.yml").read_text(encoding="utf-8")
-        self.assertNotIn("data/kids", workflow)
-        self.assertNotIn("kids-sync", workflow)
-        self.assertNotIn("KIDS", workflow)
+        for legacy in (
+            "data/kids",
+            "kids-sync",
+            "KIDS",
+            "reference-source/kids/current.zip",
+            "kids_source_key",
+            "kids_source_sha256",
+            "kids-extract",
+        ):
+            self.assertNotIn(legacy, workflow)
         self.assertIn("data/canonical/mfds_ingredient", workflow)
 
 

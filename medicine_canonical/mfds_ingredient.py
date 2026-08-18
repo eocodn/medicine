@@ -2,29 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import sqlite3
-import time
 import urllib.parse
-from contextlib import closing
-from datetime import datetime
+import sqlite3
 from pathlib import Path
 from typing import Callable
-from zoneinfo import ZoneInfo
 
-from .dose_criteria import materialize_dose_criteria
 from .mfds_ingredient_endpoints import MFDS_INGREDIENT_ENDPOINTS, MfdsIngredientEndpoint
 from .mfds_remark_registry import reviewed_mfds_remark
-from .schema import SCHEMA, SCHEMA_VERSION
 from .sources import _request_json, _sync_paginated_jsonl
 
 
-APP_TIMEZONE = ZoneInfo("Asia/Seoul")
 MFDS_INGREDIENT_API_BASE = "https://apis.data.go.kr/1471000/DURIrdntInfoService03"
 MFDS_INGREDIENT_SOURCE_FAMILY = "mfds_dur_ingredient_api"
 MFDS_INGREDIENT_PAGE_SIZE_MAX = 500
-MFDS_INGREDIENT_SOURCE_POLICY = MFDS_INGREDIENT_SOURCE_FAMILY
 _MIXTURE_CODE_RE = re.compile(r"\[([A-Z]\d{6})\]")
 _MIXTURE_KOREAN_NAME_RE = re.compile(r"\([^()]*[가-힣][^()]*\)\s*$")
 
@@ -410,167 +401,12 @@ def import_mfds_ingredient_snapshots(
     }
 
 
-def _preview_stats(db_path: Path) -> dict:
-    with closing(sqlite3.connect(db_path)) as con:
-        categories = {
-            str(category): int(count)
-            for category, count in con.execute(
-                "SELECT category,COUNT(*) FROM ingredient_rules GROUP BY category ORDER BY category"
-            )
-        }
-        return {
-            "source_snapshots": int(con.execute("SELECT COUNT(*) FROM source_snapshots").fetchone()[0]),
-            "source_rows": int(
-                con.execute("SELECT COALESCE(SUM(row_count),0) FROM source_snapshots").fetchone()[0]
-            ),
-            "ingredient_rules": int(con.execute("SELECT COUNT(*) FROM ingredient_rules").fetchone()[0]),
-            "ingredient_rules_by_category": categories,
-            "dose_criteria": int(con.execute("SELECT COUNT(*) FROM dose_criteria").fetchone()[0]),
-        }
-
-
-def verify_mfds_ingredient_preview(db_path: str | Path) -> dict:
-    path = Path(db_path)
-    errors: list[str] = []
-    if not path.is_file():
-        return {"status": "invalid", "db_path": str(path), "errors": ["database not found"]}
-    with closing(sqlite3.connect(path)) as con:
-        if con.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-            errors.append("SQLite integrity check failed")
-        foreign_keys = con.execute("PRAGMA foreign_key_check").fetchall()
-        if foreign_keys:
-            errors.append(f"foreign key violations: {len(foreign_keys)}")
-        families = {
-            str(row[0]) for row in con.execute("SELECT DISTINCT source_family FROM source_snapshots")
-        }
-        if families != {MFDS_INGREDIENT_SOURCE_FAMILY}:
-            errors.append("preview source family mismatch")
-        expected_keys = {
-            f"mfds_dur_ingredient:{operation}" for operation in MFDS_INGREDIENT_ENDPOINTS
-        }
-        actual_keys = {str(row[0]) for row in con.execute("SELECT dataset_key FROM source_snapshots")}
-        if actual_keys != expected_keys:
-            errors.append("preview source key mismatch")
-        bad_hashes = int(
-            con.execute("SELECT COUNT(*) FROM source_snapshots WHERE LENGTH(sha256) != 64").fetchone()[0]
-        )
-        if bad_hashes:
-            errors.append(f"invalid source hashes: {bad_hashes}")
-        expected_categories = {spec.category for spec in MFDS_INGREDIENT_ENDPOINTS.values()}
-        actual_categories = {
-            str(row[0]) for row in con.execute("SELECT DISTINCT category FROM ingredient_rules")
-        }
-        missing_categories = expected_categories - actual_categories
-        if missing_categories:
-            errors.append("missing ingredient categories: " + ", ".join(sorted(missing_categories)))
-        dose_rules = int(
-            con.execute("SELECT COUNT(*) FROM ingredient_rules WHERE category='dose_caution'").fetchone()[0]
-        )
-        dose_criteria = int(con.execute("SELECT COUNT(*) FROM dose_criteria").fetchone()[0])
-        if dose_rules != dose_criteria:
-            errors.append("dose criteria coverage mismatch")
-        for category, qualifier_note, source_row in con.execute(
-            """SELECT category,qualifier_note,source_row FROM ingredient_rules
-               WHERE qualifier_note IS NOT NULL AND TRIM(qualifier_note) != ''"""
-        ):
-            try:
-                reviewed_mfds_remark(category, qualifier_note)
-            except ValueError as exc:
-                errors.append(f"{exc} (source row {source_row})")
-        meta = dict(con.execute("SELECT key,value FROM canonical_meta"))
-        if meta.get("schema_version") != SCHEMA_VERSION:
-            errors.append("schema version mismatch")
-        if meta.get("source_policy") != MFDS_INGREDIENT_SOURCE_POLICY:
-            errors.append("preview source policy mismatch")
-        if meta.get("build_stage") != "ingredient_preview":
-            errors.append("preview build stage mismatch")
-    return {"status": "verified" if not errors else "invalid", "db_path": str(path), "errors": errors}
-
-
-def assemble_mfds_ingredient_preview(
-    db_path: str | Path, raw_dir: str | Path
-) -> dict:
-    output = Path(db_path)
-    root = Path(raw_dir)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(output.name + ".tmp")
-    temporary.unlink(missing_ok=True)
-    started = time.monotonic()
-    try:
-        with closing(sqlite3.connect(temporary)) as con:
-            con.executescript(SCHEMA)
-            con.execute("BEGIN")
-            import_result = import_mfds_ingredient_snapshots(con, root)
-            dose_result = materialize_dose_criteria(con)
-            con.executemany(
-                "INSERT INTO canonical_meta(key,value) VALUES(?,?)",
-                [
-                    ("schema_version", SCHEMA_VERSION),
-                    ("source_policy", MFDS_INGREDIENT_SOURCE_POLICY),
-                    ("build_stage", "ingredient_preview"),
-                    ("built_at", datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")),
-                ],
-            )
-            con.commit()
-            con.execute("ANALYZE")
-            con.execute("PRAGMA optimize")
-            con.commit()
-        verification = verify_mfds_ingredient_preview(temporary)
-        if verification["status"] != "verified":
-            raise RuntimeError(
-                "MFDS ingredient preview verification failed: "
-                + "; ".join(verification["errors"])
-            )
-        os.replace(temporary, output)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-
-    stats = _preview_stats(output)
-    stats.update(
-        {
-            "status": "built",
-            "db_path": str(output),
-            "raw_dir": str(root),
-            "deleted_rows_skipped": import_result["deleted_rows_skipped"],
-            "dose_criteria_parsed": dose_result.get("dose_criteria_parsed", 0),
-            "dose_criteria_not_evaluable": dose_result.get("dose_criteria_not_evaluable", 0),
-            "elapsed_seconds": round(time.monotonic() - started, 3),
-        }
-    )
-    return stats
-
-
-def build_mfds_ingredient_preview(
-    db_path: str | Path,
-    *,
-    raw_dir: str | Path,
-    service_key: str,
-    page_size: int = MFDS_INGREDIENT_PAGE_SIZE_MAX,
-    workers: int = 8,
-    progress: bool = True,
-    fetch_page: IngredientFetchPage | None = None,
-) -> dict:
-    sync_mfds_ingredient_sources(
-        raw_dir,
-        service_key=service_key,
-        page_size=page_size,
-        workers=workers,
-        progress=progress,
-        fetch_page=fetch_page,
-    )
-    return assemble_mfds_ingredient_preview(db_path, raw_dir)
-
-
 __all__ = [
     "MFDS_INGREDIENT_API_BASE",
     "MFDS_INGREDIENT_ENDPOINTS",
     "MFDS_INGREDIENT_SOURCE_FAMILY",
     "MfdsIngredientEndpoint",
-    "assemble_mfds_ingredient_preview",
-    "build_mfds_ingredient_preview",
     "fetch_mfds_ingredient_page",
     "import_mfds_ingredient_snapshots",
     "sync_mfds_ingredient_sources",
-    "verify_mfds_ingredient_preview",
 ]

@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import closing, redirect_stdout
+from contextlib import closing
 from pathlib import Path
 
-from medicine_canonical.cli import main as canonical_main
+from medicine_canonical.dose_criteria import materialize_dose_criteria
 from medicine_canonical.mfds_ingredient import (
     MFDS_INGREDIENT_ENDPOINTS,
-    assemble_mfds_ingredient_preview,
     import_mfds_ingredient_snapshots,
     sync_mfds_ingredient_sources,
-    verify_mfds_ingredient_preview,
 )
 from medicine_canonical.mfds_remark_registry import (
     reviewed_mfds_remark,
@@ -30,7 +27,6 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.raw = self.root / "raw"
-        self.db = self.root / "mfds-ingredient.sqlite"
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -154,18 +150,19 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
             self.assertEqual({row["DEL_YN"] for row in rows}, {"정상", "삭제"})
 
-    def test_preview_converts_only_active_rows_to_existing_canonical_rule_shape(self) -> None:
+    def test_import_converts_only_active_rows_to_existing_canonical_rule_shape(self) -> None:
         self._sync()
-        result = assemble_mfds_ingredient_preview(self.db, self.raw)
+        with closing(sqlite3.connect(":memory:")) as con:
+            con.executescript(SCHEMA)
+            result = import_mfds_ingredient_snapshots(con, self.raw)
+            dose_result = materialize_dose_criteria(con)
 
-        self.assertEqual(result["source_snapshots"], 7)
-        self.assertEqual(result["source_rows"], 14)
-        self.assertEqual(result["ingredient_rules"], 7)
-        self.assertEqual(result["deleted_rows_skipped"], 7)
-        self.assertEqual(result["dose_criteria"], 1)
-        self.assertEqual(result["status"], "built")
+            self.assertEqual(result["source_snapshots"], 7)
+            self.assertEqual(result["source_rows"], 14)
+            self.assertEqual(result["ingredient_rules"], 7)
+            self.assertEqual(result["deleted_rows_skipped"], 7)
+            self.assertEqual(dose_result["dose_criteria_materialized"], 1)
 
-        with closing(sqlite3.connect(self.db)) as con:
             combination = con.execute(
                 """SELECT i.sequence_text,i.ingredient_name,i.ingredient_name_ko,i.paired_ingredient_name,
                           i.dosage_form,i.note,i.qualifier_note,i.details,c.ingredient_code,c.paired_ingredient_code
@@ -208,9 +205,6 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
                 row[0] for row in con.execute("SELECT DISTINCT source_family FROM source_snapshots")
             }
             self.assertEqual(source_families, {"mfds_dur_ingredient_api"})
-            meta = dict(con.execute("SELECT key,value FROM canonical_meta"))
-            self.assertEqual(meta["source_policy"], "mfds_dur_ingredient_api")
-            self.assertEqual(meta["build_stage"], "ingredient_preview")
 
     def test_import_preserves_authoritative_mixture_code_name_pairs(self) -> None:
         self._sync()
@@ -226,9 +220,9 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         )
         self._refresh_snapshot_hash(path)
 
-        assemble_mfds_ingredient_preview(self.db, self.raw)
-
-        with closing(sqlite3.connect(self.db)) as con:
+        with closing(sqlite3.connect(":memory:")) as con:
+            con.executescript(SCHEMA)
+            import_mfds_ingredient_snapshots(con, self.raw)
             row = con.execute(
                 """SELECT c.mixture_type,c.mixture_ingredient_codes_json,
                           c.mixture_ingredient_names_json
@@ -285,20 +279,6 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unreviewed MFDS REMARK"):
                 import_mfds_ingredient_snapshots(con, self.raw)
 
-    def test_verify_rejects_unreviewed_remark_in_built_database(self) -> None:
-        self._sync()
-        assemble_mfds_ingredient_preview(self.db, self.raw)
-        with closing(sqlite3.connect(self.db)) as con:
-            con.execute(
-                "UPDATE ingredient_rules SET qualifier_note=? WHERE category='pregnancy_contraindication'",
-                ("새로 추가된 미검토 비고",),
-            )
-            con.commit()
-
-        verification = verify_mfds_ingredient_preview(self.db)
-        self.assertEqual(verification["status"], "invalid")
-        self.assertTrue(any("unreviewed MFDS REMARK" in error for error in verification["errors"]))
-
     def test_active_dose_row_without_max_qty_is_preserved_as_not_evaluable(self) -> None:
         self._sync()
         spec = MFDS_INGREDIENT_ENDPOINTS["getCpctyAtentInfoList02"]
@@ -309,9 +289,11 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
         self._refresh_snapshot_hash(path)
 
-        result = assemble_mfds_ingredient_preview(self.db, self.raw)
-        self.assertEqual(result["ingredient_rules"], 7)
-        with closing(sqlite3.connect(self.db)) as con:
+        with closing(sqlite3.connect(":memory:")) as con:
+            con.executescript(SCHEMA)
+            result = import_mfds_ingredient_snapshots(con, self.raw)
+            materialize_dose_criteria(con)
+            self.assertEqual(result["ingredient_rules"], 7)
             rule = con.execute(
                 "SELECT rule_value,details FROM ingredient_rules WHERE category='dose_caution'"
             ).fetchone()
@@ -321,25 +303,6 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         self.assertEqual(rule, (None, "해당 제형(점안제)으로 1방울"))
         self.assertEqual(structured[0], "not_evaluable")
         self.assertEqual(structured[1], "dose criterion is missing")
-
-    def test_cli_build_exposes_headless_preview_conversion(self) -> None:
-        self._sync()
-        stdout = io.StringIO()
-        with redirect_stdout(stdout):
-            exit_code = canonical_main(
-                [
-                    "mfds-ingredient-build",
-                    "--raw-dir",
-                    str(self.raw),
-                    "--db",
-                    str(self.db),
-                    "--json",
-                ]
-            )
-        self.assertEqual(exit_code, 0)
-        payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["status"], "built")
-        self.assertEqual(payload["ingredient_rules"], 7)
 
 
 if __name__ == "__main__":

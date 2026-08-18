@@ -17,7 +17,6 @@ class CriterionCandidate:
     rule_value: str | None = None
     dosage_form: str | None = None
     details: str | None = None
-    strict_form_scope: bool = True
     exact_composition_scope: bool = False
     all_forms_scope: bool = False
 
@@ -27,7 +26,6 @@ class PairCriterionCandidate:
     criterion_id: int
     method: str
     dosage_form: str | None = None
-    strict_form_scope: bool = True
 
 
 @dataclass(frozen=True)
