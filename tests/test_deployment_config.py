@@ -81,6 +81,11 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("delete_object", workflow)
         self.assertIn("medicine-r2-smoke/", workflow)
 
+    def test_android_packages_mfds_remark_runtime_registry(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        self.assertIn('include("medicine_canonical/mfds_remark_registry.py")', gradle)
+        self.assertIn('include("medicine_canonical/data/mfds_remark_registry.tsv")', gradle)
+
     def test_android_build_packages_canonical_snapshot_without_alias_refresh(self) -> None:
         compose = Path("compose.yaml").read_text()
         gradle = Path("android/app/build.gradle.kts").read_text()

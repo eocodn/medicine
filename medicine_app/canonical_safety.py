@@ -6,12 +6,10 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
-from medicine_canonical.mfds_scope_overrides import (
-    mfds_product_scope_allows,
-    mfds_product_scope_is_explicit,
-)
+from medicine_canonical.mfds_remark_registry import ReviewedMfdsRemark, reviewed_mfds_remark
 
 from .canonical_runtime import has_unlinked_product_rule, item_seq, linked_product_rows
+from .dosage_forms import infer_administration_route
 from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 from .safety import (
     _COUNT_UNITS, _draft_quantity, _frequency, _source_quantity,
@@ -52,20 +50,22 @@ def _canonical_paired_ingredient(row: Mapping[str, Any]) -> str | None:
     return row.get("criterion_paired_ingredient_name") or row.get("paired_ingredient_name")
 
 
-def _mfds_criterion_note_requires_review(row: Mapping[str, Any]) -> bool:
-    """Keep MFDS REMARK qualifiers fail-closed unless an exact reviewed scope override resolves them."""
-    dataset_key = str(row.get("criterion_source_dataset_key") or "")
+def _mfds_remark(row: Mapping[str, Any]) -> ReviewedMfdsRemark | None:
+    dataset_key = str(row.get("criterion_source_dataset_key") or row.get("dataset_key") or "")
     if not dataset_key.startswith("mfds_dur_ingredient:"):
-        return False
-    if not str(row.get("criterion_qualifier_note") or "").strip():
-        return False
-    category = str(row.get("category") or "")
-    ingredient_code = row.get("ingredient_code")
-    if mfds_product_scope_is_explicit(category, ingredient_code):
-        return not mfds_product_scope_allows(
-            category, ingredient_code, row.get("item_seq"), row.get("criterion_rule_value")
-        )
-    return True
+        return None
+    return reviewed_mfds_remark(row.get("category"), row.get("criterion_qualifier_note") or row.get("qualifier_note"))
+
+
+def _mfds_qualifiers(row: Mapping[str, Any]) -> list[dict[str, object]]:
+    qualifier = _mfds_remark(row)
+    return [qualifier.payload()] if qualifier is not None else []
+
+
+def _mfds_criterion_note_requires_review(row: Mapping[str, Any]) -> bool:
+    qualifier = _mfds_remark(row)
+    return bool(qualifier and qualifier.requires_review)
+
 
 def _details_with_professional_review(details: Any) -> str:
     advice = "세부 적용 조건이 있어 의사 또는 약사에게 확인하세요."
@@ -73,37 +73,48 @@ def _details_with_professional_review(details: Any) -> str:
     return f"{text} {advice}" if text else advice
 
 
-def _pregnancy_note_condition(note: Any) -> str | None:
-    text = str(note or "").strip()
-    if not text:
-        return None
-    if re.search(r"(?:단\s*,?|제외|경우|한함|사용\s*시|투여\s*시)", text):
-        return text
-    return None
-
-
-def _pregnancy_rule_display(value: Any, note: Any = None) -> str:
+def _pregnancy_rule_display(value: Any) -> str:
     text = str(value or "").strip()
     if text in {"1", "2"}:
         text = f"{text}등급"
-    display = text or "등급 미표기"
-    condition = _pregnancy_note_condition(note)
-    if condition and condition not in display:
-        return f"{display} ({condition})"
-    return display
+    return text or "등급 미표기"
 
 
-def _pregnancy_rule_is_conditional(value: Any, note: Any = None) -> bool:
-    """Return whether the DUR grade itself carries an applicability qualifier.
+def _pregnancy_rule_is_conditional(value: Any) -> bool:
+    """Keep applicability text embedded in the structured grade review-required."""
+    return bool(re.search(r"[12]\s*등급\s*\(", str(value or "").strip()))
 
-    Canonical pregnancy criteria use plain ``1등급``/``2등급`` for unconditional
-    grades and parenthesized text for form, indication, duration, gestational-age,
-    or explicit exception conditions. Those conditions are authoritative evidence,
-    but the current medication/profile inputs do not model every required clinical
-    fact, so they must stay review-required without being presented as a definite hit.
-    """
-    text = str(value or "").strip()
-    return bool(re.search(r"[12]\s*등급\s*\(", text)) or _pregnancy_note_condition(note) is not None
+
+def _remark_interaction_timing(
+    row: Mapping[str, Any], details: Any,
+) -> dict[str, Any]:
+    qualifier = _mfds_remark(row)
+    if qualifier is not None and qualifier.mode == "interaction_window":
+        hours = int(qualifier.value or "0")
+        return {
+            "status": "structured",
+            "kind": "minimum_separation",
+            "hours": hours,
+            "amount": hours,
+            "unit": "시간",
+            "direction": "symmetric",
+            "source_text": qualifier.remark,
+        }
+    return parse_interaction_timing(
+        details or "", _canonical_ingredient(row), _canonical_paired_ingredient(row)
+    )
+
+
+def _dedupe_qualifiers(values: list[dict[str, object]]) -> list[dict[str, object]]:
+    seen: set[tuple[object, object, object]] = set()
+    result: list[dict[str, object]] = []
+    for value in values:
+        key = (value.get("type"), value.get("text"), value.get("source_remark"))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
 
 
 _DURATION_LIMIT_RE = re.compile(r"^\s*(?P<amount>\d+)\s*(?P<unit>일|주|개월)?\s*$")
@@ -142,13 +153,9 @@ def _combination_risks(
         for row in rows:
             candidate_side = "left" if row.get("item_seq") == target else "right"
             details = _canonical_details(row)
+            qualifiers = _mfds_qualifiers(row)
             qualifier_review = _mfds_criterion_note_requires_review(row)
-            timing = parse_interaction_timing(
-                details or "", _canonical_ingredient(row), _canonical_paired_ingredient(row)
-            )
-            # MFDS REMARK is preserved as a qualifier but is never interpreted as
-            # free-text executable logic. Missing structured inputs therefore stay
-            # review-required rather than silently widening the contraindication.
+            timing = _remark_interaction_timing(row, details)
             if qualifier_review:
                 details = _details_with_professional_review(details)
             if not interaction_timing_applies(
@@ -164,10 +171,8 @@ def _combination_risks(
                 "related_medication_id": medication["id"], "timing": timing,
                 "source_scope": "canonical_product",
             }
-            # The canonical note can carry a dose, indication, age, emergency, or
-            # formulation qualifier. Known timing notes are evaluated above; any
-            # other non-empty qualifier must remain conditional rather than being
-            # presented as an unconditional contraindication.
+            if qualifiers:
+                finding["qualifiers"] = qualifiers
             if timing.get("status") == "not_evaluable" or qualifier_review:
                 finding["evaluation_status"] = "conditional"
             risks.append(finding)
@@ -217,15 +222,7 @@ def _person_specific_risks(
         rows.extend(linked_product_rows(con, target, category))
     risks: list[dict[str, Any]] = []
     evaluation_dates = _profile_evaluation_dates(candidate_course, as_of)
-    age_note_review_required = any(
-        _mfds_criterion_note_requires_review(row)
-        for row in rows
-        if row.get("category") == "age_contraindication"
-    )
     pregnancy_rows = [row for row in rows if row.get("category") == "pregnancy_contraindication"]
-    pregnancy_note_review_required = any(
-        _mfds_criterion_note_requires_review(row) for row in pregnancy_rows
-    )
     pregnancy_grades = {
         match.group(1)
         for row in pregnancy_rows
@@ -236,7 +233,7 @@ def _person_specific_risks(
     )
     if conflicting_pregnancy_grades:
         first = pregnancy_rows[0]
-        risks.append({
+        finding = {
             "type": "pregnancy_contraindication",
             "severity": "info",
             "title": "임부금기 기준 확인 필요",
@@ -245,7 +242,15 @@ def _person_specific_risks(
             "source_scope": "canonical_product",
             "dataset_key": first.get("criterion_source_dataset_key"),
             "source_row": first.get("criterion_source_row"),
-        })
+        }
+        qualifiers = _dedupe_qualifiers([
+            qualifier
+            for pregnancy_row in pregnancy_rows
+            for qualifier in _mfds_qualifiers(pregnancy_row)
+        ])
+        if qualifiers:
+            finding["qualifiers"] = qualifiers
+        risks.append(finding)
     for row in rows:
         category = str(row["category"])
         rule_value = row.get("criterion_rule_value")
@@ -262,7 +267,7 @@ def _person_specific_risks(
                 title, severity = f"연령금기 · {rule_value}", "danger"
             elif any(applies is None for applies, _ in evaluations):
                 reason = next((reason for applies, reason in evaluations if applies is None and reason), None)
-                risks.append({
+                finding = {
                     "type": category,
                     "severity": "info",
                     "title": "연령금기 기준 확인 필요",
@@ -271,7 +276,11 @@ def _person_specific_risks(
                     "source_scope": "canonical_product",
                     "dataset_key": row.get("criterion_source_dataset_key"),
                     "source_row": row.get("criterion_source_row"),
-                })
+                }
+                qualifiers = _mfds_qualifiers(row)
+                if qualifiers:
+                    finding["qualifiers"] = qualifiers
+                risks.append(finding)
                 continue
             else:
                 continue
@@ -292,11 +301,10 @@ def _person_specific_risks(
             "dataset_key": row.get("criterion_source_dataset_key"),
             "source_row": row.get("criterion_source_row"),
         }
-        mfds_note_review = (
-            (category == "age_contraindication" and age_note_review_required)
-            or (category == "pregnancy_contraindication" and pregnancy_note_review_required)
-            or (category == "elderly_caution" and _mfds_criterion_note_requires_review(row))
-        )
+        qualifiers = _mfds_qualifiers(row)
+        if qualifiers:
+            finding["qualifiers"] = qualifiers
+        mfds_note_review = _mfds_criterion_note_requires_review(row)
         if mfds_note_review:
             finding["evaluation_status"] = "conditional"
             finding["details"] = _details_with_professional_review(finding.get("details"))
@@ -308,17 +316,33 @@ def _person_specific_risks(
 
 def _duplication_groups(
     con: sqlite3.Connection, product: Mapping[str, Any]
-) -> dict[str, bool]:
+) -> dict[str, dict[str, Any]]:
     target = item_seq(product)
     if not target:
         return {}
-    groups: dict[str, bool] = {}
+    groups: dict[str, dict[str, Any]] = {}
     for row in linked_product_rows(con, target, "therapeutic_duplication_caution"):
         value = row.get("criterion_rule_value") or row.get("effect_name")
-        if value:
-            group = str(value)
-            groups[group] = groups.get(group, False) or _mfds_criterion_note_requires_review(row)
+        if not value:
+            continue
+        qualifier = _mfds_remark(row)
+        requires_review = _mfds_criterion_note_requires_review(row)
+        if qualifier is not None and qualifier.mode == "form_exclusion":
+            route = infer_administration_route([
+                row.get("product_dosage_form") or product.get("dosage_form")
+            ])
+            if route == qualifier.value:
+                continue
+            if route == "unknown":
+                requires_review = True
+        group = str(value)
+        entry = groups.setdefault(group, {"requires_review": False, "qualifiers": []})
+        entry["requires_review"] = bool(entry["requires_review"] or requires_review)
+        entry["qualifiers"].extend(_mfds_qualifiers(row))
+    for entry in groups.values():
+        entry["qualifiers"] = _dedupe_qualifiers(entry["qualifiers"])
     return groups
+
 
 def _duplication_risks(
     con: sqlite3.Connection,
@@ -334,13 +358,20 @@ def _duplication_risks(
         current_groups = _duplication_groups(con, medication)
         for group in sorted(set(new_groups) & set(current_groups)):
             details = f"현재 복용 중인 {medication['product_name']}와 같은 효능군입니다."
+            new_info = new_groups[group]
+            current_info = current_groups[group]
+            qualifiers = _dedupe_qualifiers(
+                list(new_info["qualifiers"]) + list(current_info["qualifiers"])
+            )
             finding = {
                 "type": "therapeutic_duplication_caution", "severity": "warning",
                 "title": f"효능군 중복주의 · {group}",
                 "details": details,
                 "related_medication_id": medication["id"], "source_scope": "canonical_product",
             }
-            if new_groups[group] or current_groups[group]:
+            if qualifiers:
+                finding["qualifiers"] = qualifiers
+            if new_info["requires_review"] or current_info["requires_review"]:
                 finding["evaluation_status"] = "conditional"
                 finding["details"] = _details_with_professional_review(details)
             risks.append(finding)
@@ -398,6 +429,11 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
             duration_parse_reasons.add(reason)
         elif maximum_days is not None:
             distinct_days.add(maximum_days)
+    duration_qualifiers = _dedupe_qualifiers([
+        qualifier for row in duration_rows for qualifier in _mfds_qualifiers(row)
+    ])
+    if duration_qualifiers:
+        duration["qualifiers"] = duration_qualifiers
     duration_qualifier_review = any(
         _mfds_criterion_note_requires_review(row) for row in duration_rows
     )
@@ -408,6 +444,7 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
             duration["result"] = "not_applicable"
     elif duration_qualifier_review:
         duration["reason"] = "MFDS duration criterion has a qualifier requiring professional review"
+        duration["evaluation_status"] = "conditional"
     elif prescription_days is None:
         duration["reason"] = "prescription duration is missing or invalid"
     elif duration_parse_reasons or len(distinct_days) != 1:
@@ -437,6 +474,11 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
         product_dosage_form=", ".join(product_dose_forms) if product_dose_forms else None,
     )
     frequency, frequency_reason = _frequency(draft)
+    dose_qualifiers = _dedupe_qualifiers([
+        qualifier for row in dose_rows for qualifier in _mfds_qualifiers(row)
+    ])
+    if dose_qualifiers:
+        dose["qualifiers"] = dose_qualifiers
     dose_qualifier_review = any(
         _mfds_criterion_note_requires_review(row) for row in dose_rows
     )
@@ -447,6 +489,7 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
             dose["result"] = "not_applicable"
     elif dose_qualifier_review:
         dose["reason"] = "MFDS dose criterion has a qualifier requiring professional review"
+        dose["evaluation_status"] = "conditional"
     elif source is None:
         dose["reason"] = source_reason
     elif entered is None:

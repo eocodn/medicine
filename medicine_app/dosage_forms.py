@@ -29,6 +29,8 @@ def dosage_form_tags(value: object) -> set[str]:
         tags.add("로션제")
     if "겔" in text:
         tags.add("겔제")
+    if "피부액" in text or "외용액" in text:
+        tags.add("외용액제")
     if "좌제" in text:
         tags.add("좌제")
     if "경피흡수" in text:
@@ -92,7 +94,7 @@ def infer_administration_route(forms: Iterable[object]) -> str:
             route = "nasal"
         elif "흡입제" in tags:
             route = "inhaled"
-        elif tags & {"크림제", "연고제", "로션제", "겔제", "경피흡수제", "첩부제"}:
+        elif tags & {"크림제", "연고제", "로션제", "겔제", "외용액제", "경피흡수제", "첩부제"}:
             route = "topical"
         elif tags & {"정제", "캡슐제", "시럽제", "과립제", "세립제", "산제", "액제", "경구제"}:
             route = "oral"

@@ -4,6 +4,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from .mfds_remark_registry import reviewed_mfds_remark
 from .schema import CORE_SOURCE_FAMILIES, SCHEMA_VERSION
 from .source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_KEYS
 
@@ -292,6 +293,15 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 errors.append("no product rules imported")
             if stats["ingredient_rules"] == 0:
                 errors.append("no ingredient rules imported")
+            for category, qualifier_note, source_row in con.execute(
+                """SELECT category,qualifier_note,source_row FROM ingredient_rules
+                   WHERE source_dataset_key LIKE 'mfds_dur_ingredient:%'
+                     AND qualifier_note IS NOT NULL AND TRIM(qualifier_note) != ''"""
+            ):
+                try:
+                    reviewed_mfds_remark(category, qualifier_note)
+                except ValueError as exc:
+                    errors.append(f"{exc} (source row {source_row})")
             dose_rule_count = con.execute(
                 "SELECT COUNT(*) FROM ingredient_rules WHERE category='dose_caution'"
             ).fetchone()[0]

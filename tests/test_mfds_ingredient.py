@@ -15,6 +15,12 @@ from medicine_canonical.mfds_ingredient import (
     assemble_mfds_ingredient_preview,
     import_mfds_ingredient_snapshots,
     sync_mfds_ingredient_sources,
+    verify_mfds_ingredient_preview,
+)
+from medicine_canonical.mfds_remark_registry import (
+    reviewed_mfds_remark,
+    reviewed_mfds_remark_count,
+    reviewed_mfds_remark_counts_by_category,
 )
 from medicine_canonical.schema import SCHEMA
 
@@ -31,6 +37,15 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
 
     @staticmethod
     def _active_row(operation: str) -> dict:
+        remarks = {
+            "getUsjntTabooInfoList02": "24시간 이내 병용금기",
+            "getSpcifyAgrdeTabooInfoList02": "점안제(1%)",
+            "getPwnmTabooInfoList02": "경구",
+            "getCpctyAtentInfoList02": "정제",
+            "getMdctnPdAtentInfoList02": "주성분 함량 10mg, 30mg, 100mg, 캡슐제, 산제",
+            "getOdsnAtentInfoList02": "",
+            "getEfcyDplctInfoList02": "용량 Aspirin > 325mg",
+        }
         common = {
             "DUR_SEQ": "101",
             "INGR_CODE": "D000101",
@@ -39,7 +54,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             "FORM_NAME": "정제",
             "NOTIFICATION_DATE": "20260721",
             "PROHBT_CONTENT": "상세 주의",
-            "REMARK": "비고",
+            "REMARK": remarks[operation],
             "DEL_YN": "정상",
             "MIX_TYPE": "단일",
             "MIX_INGR": "",
@@ -105,6 +120,26 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             },
         )
 
+    def test_reviewed_remark_registry_covers_exactly_current_69_strings(self) -> None:
+        self.assertEqual(reviewed_mfds_remark_count(), 69)
+        self.assertEqual(
+            reviewed_mfds_remark_counts_by_category(),
+            {
+                "age_contraindication": 8,
+                "combination_contraindication": 11,
+                "dose_caution": 12,
+                "duration_caution": 4,
+                "elderly_caution": 0,
+                "pregnancy_contraindication": 32,
+                "therapeutic_duplication_caution": 2,
+            },
+        )
+        composition_scope = reviewed_mfds_remark("dose_caution", "단일제·복합제 포함")
+        self.assertIsNotNone(composition_scope)
+        self.assertEqual(composition_scope.mode, "composition_scope")
+        self.assertEqual(composition_scope.value, "all")
+        self.assertFalse(composition_scope.requires_review)
+
     def test_sync_preserves_full_api_snapshot_with_distinct_provenance(self) -> None:
         result = self._sync()
 
@@ -140,7 +175,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             ).fetchone()
             self.assertEqual(
                 combination,
-                ("101", "Alpha", "알파", "Beta", "정제", None, "비고", "상세 주의", "D000101", "D000202"),
+                ("101", "Alpha", "알파", "Beta", "정제", None, "24시간 이내 병용금기", "상세 주의", "D000101", "D000202"),
             )
 
             code_rows = con.execute(
@@ -167,7 +202,7 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             self.assertEqual(pregnancy, "2등급")
             self.assertEqual(dose, "240밀리그램")
             self.assertEqual(duration, "28일")
-            self.assertEqual(duplication, ("해열진통소염제", "비스테로이드성 소염제", "비고"))
+            self.assertEqual(duplication, ("해열진통소염제", "비스테로이드성 소염제", "용량 Aspirin > 325mg"))
 
             source_families = {
                 row[0] for row in con.execute("SELECT DISTINCT source_family FROM source_snapshots")
@@ -219,6 +254,50 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             con.executescript(SCHEMA)
             with self.assertRaisesRegex(ValueError, "unsupported DEL_YN"):
                 import_mfds_ingredient_snapshots(con, self.raw)
+
+    def test_import_rejects_unreviewed_active_remark(self) -> None:
+        self._sync()
+        operation = "getPwnmTabooInfoList02"
+        spec = MFDS_INGREDIENT_ENDPOINTS[operation]
+        path = self.raw / spec.filename
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        rows[0]["REMARK"] = "새로 추가된 미검토 비고"
+        path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+        self._refresh_snapshot_hash(path)
+
+        with closing(sqlite3.connect(":memory:")) as con:
+            con.executescript(SCHEMA)
+            with self.assertRaisesRegex(ValueError, "unreviewed MFDS REMARK"):
+                import_mfds_ingredient_snapshots(con, self.raw)
+
+    def test_import_rejects_unreviewed_deleted_remark(self) -> None:
+        self._sync()
+        operation = "getPwnmTabooInfoList02"
+        spec = MFDS_INGREDIENT_ENDPOINTS[operation]
+        path = self.raw / spec.filename
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        rows[1]["REMARK"] = "삭제행에 새로 추가된 미검토 비고"
+        path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+        self._refresh_snapshot_hash(path)
+
+        with closing(sqlite3.connect(":memory:")) as con:
+            con.executescript(SCHEMA)
+            with self.assertRaisesRegex(ValueError, "unreviewed MFDS REMARK"):
+                import_mfds_ingredient_snapshots(con, self.raw)
+
+    def test_verify_rejects_unreviewed_remark_in_built_database(self) -> None:
+        self._sync()
+        assemble_mfds_ingredient_preview(self.db, self.raw)
+        with closing(sqlite3.connect(self.db)) as con:
+            con.execute(
+                "UPDATE ingredient_rules SET qualifier_note=? WHERE category='pregnancy_contraindication'",
+                ("새로 추가된 미검토 비고",),
+            )
+            con.commit()
+
+        verification = verify_mfds_ingredient_preview(self.db)
+        self.assertEqual(verification["status"], "invalid")
+        self.assertTrue(any("unreviewed MFDS REMARK" in error for error in verification["errors"]))
 
     def test_active_dose_row_without_max_qty_is_preserved_as_not_evaluable(self) -> None:
         self._sync()

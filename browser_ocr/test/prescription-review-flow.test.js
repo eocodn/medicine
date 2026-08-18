@@ -17,10 +17,12 @@ function prescriptionContext(preview) {
     },
   };
   vm.createContext(context);
-  const source = fs.readFileSync(
-    path.join(__dirname, "../../medicine_app/static/prescription.js"), "utf8",
-  );
-  vm.runInContext(source, context);
+  for (const relative of ["prescription-dur.js", "prescription.js"]) {
+    const source = fs.readFileSync(
+      path.join(__dirname, `../../medicine_app/static/${relative}`), "utf8",
+    );
+    vm.runInContext(source, context);
+  }
   return context;
 }
 
@@ -87,6 +89,66 @@ test("conditional DUR review renders as a distinct detailed state", () => {
   assert.doesNotMatch(html, /dur-check unknown/);
 });
 
+test("reviewed MFDS qualifier is rendered explicitly", () => {
+  const context = prescriptionContext({});
+  const html = context.durStatusHtml([{
+    category: "pregnancy_contraindication", label: "임부금기", status: "conditional",
+    summary: "임부금기 · 2등급",
+    findings: [{
+      title: "임부금기 · 2등급",
+      details: "임부금기 기준입니다.",
+      qualifiers: [{ type: "clinical_context", text: "강심제로 사용시 제외" }],
+    }],
+  }]);
+
+  assert.match(html, /MFDS 적용조건/);
+  assert.match(html, /강심제로 사용시 제외/);
+});
+
+test("quantitative reviewed MFDS qualifier is visible without a finding row", () => {
+  const context = prescriptionContext({});
+  const html = context.durStatusHtml([{
+    category: "dose_caution", label: "용량주의", status: "conditional",
+    summary: "용량주의 조건 확인 필요",
+    details: "적응증 확인이 필요합니다.",
+    qualifiers: [{
+      type: "indication", mode: "review_required",
+      text: "적응증에 따라 엘트롬보팍 1일 최대용량이 다름",
+    }],
+    findings: [],
+  }]);
+
+  assert.match(html, /MFDS 적용조건/);
+  assert.match(html, /엘트롬보팍 1일 최대용량/);
+});
+
+test("reviewed composition scope is rendered as an MFDS applicability condition", () => {
+  const context = prescriptionContext({});
+  const html = context.durStatusHtml([{
+    category: "dose_caution", label: "용량주의", status: "clear", summary: "기준 이내",
+    qualifiers: [{
+      type: "composition", mode: "composition_scope", text: "단일제·복합제 포함", value: "all",
+    }],
+  }]);
+
+  assert.match(html, /MFDS 적용조건/);
+  assert.match(html, /단일제·복합제 포함/);
+});
+
+test("informational reviewed MFDS remark is labeled as source note", () => {
+  const context = prescriptionContext({});
+  const html = context.durStatusHtml([{
+    category: "pregnancy_contraindication", label: "임부금기", status: "hit",
+    summary: "임부금기", findings: [{
+      title: "임부금기", details: "임부금기 기준",
+      qualifiers: [{ type: "source_note", mode: "informational", text: "경구" }],
+    }],
+  }]);
+
+  assert.match(html, /MFDS 비고/);
+  assert.match(html, /경구/);
+});
+
 test("conditional DUR review uses the regular DUR warning styling contract", () => {
   const css = fs.readFileSync(
     path.join(__dirname, "../../medicine_app/static/styles.css"), "utf8",
@@ -141,13 +203,12 @@ test("authoritative confirmation response renders qualitative DUR details", () =
   assert.match(html, /임신 중 사용 금기입니다/);
 });
 
-test("clean DUR status requires exactly eight authoritative category checks", () => {
+test("clean DUR status requires exactly seven authoritative category checks", () => {
   const context = prescriptionContext({});
   const checks = [
     ["combination_contraindication", "clear"],
     ["age_contraindication", "clear"],
     ["pregnancy_contraindication", "not_applicable"],
-    ["lactation_caution", "not_applicable"],
     ["elderly_caution", "not_applicable"],
     ["dose_caution", "clear"],
     ["duration_caution", "clear"],
@@ -161,7 +222,7 @@ test("clean DUR status requires exactly eight authoritative category checks", ()
   assert.equal(context.hasClearDurCoverage({
     dur_checks: checks.map((item) => item.category === "duration_caution" ? { ...item, status: "hit" } : item),
   }), false);
-  assert.equal(context.hasClearDurCoverage({ dur_checks: checks.slice(0, 7) }), false);
+  assert.equal(context.hasClearDurCoverage({ dur_checks: checks.slice(0, 6) }), false);
   assert.equal(context.hasClearDurCoverage({
     dur_checks: checks,
     coverage: { status: "limited", not_evaluable_checks: [{ category: "dataset", reason: "legacy" }] },
@@ -188,20 +249,19 @@ test("authoritative DUR details never render legacy coverage output", () => {
   assert.doesNotMatch(html, /제품 제형 정보가 없어 성분 연령금기/);
 });
 
-test("DUR status UI renders all eight categories with compact non-hit states", () => {
+test("DUR status UI renders all seven categories with compact non-hit states", () => {
   const context = prescriptionContext({});
   const html = context.durStatusHtml([
     { category: "combination_contraindication", label: "병용금기", status: "hit", summary: "현재 복용약과 병용금기", findings: [{ severity: "danger", title: "약A와 병용금기", details: "함께 사용하지 않아야 합니다." }] },
     { category: "age_contraindication", label: "연령금기", status: "clear", summary: "해당 금기 없음", findings: [] },
     { category: "pregnancy_contraindication", label: "임부금기", status: "not_applicable", summary: "해당사항 없음", findings: [] },
-    { category: "lactation_caution", label: "수유부주의", status: "not_applicable", summary: "해당사항 없음", findings: [] },
     { category: "elderly_caution", label: "노인주의", status: "not_applicable", summary: "해당사항 없음", findings: [] },
     { category: "dose_caution", label: "용량주의", status: "unknown", summary: "복용정보를 확인해주세요", findings: [] },
     { category: "duration_caution", label: "투여기간주의", status: "clear", summary: "기준 이내", findings: [] },
     { category: "therapeutic_duplication_caution", label: "효능군 중복주의", status: "clear", summary: "중복 없음", findings: [] },
   ]);
 
-  for (const label of ["연령금기", "임부금기", "수유부주의", "노인주의", "용량주의", "투여기간주의", "효능군 중복주의"]) {
+  for (const label of ["연령금기", "임부금기", "노인주의", "용량주의", "투여기간주의", "효능군 중복주의"]) {
     assert.match(html, new RegExp(label));
   }
   assert.match(html, /dur-check hit/);
@@ -218,25 +278,16 @@ test("DUR status UI renders all eight categories with compact non-hit states", (
 
 test("DUR hit cards replace missing source details with consultation guidance", () => {
   const context = prescriptionContext({});
-  const html = context.durStatusHtml([
-    {
-      category: "lactation_caution",
-      label: "수유부주의",
-      status: "hit",
-      summary: "성분 수유부주의 대상",
-      findings: [{ title: "성분 수유부주의 대상", details: "-" }],
-    },
-    {
-      category: "elderly_caution",
-      label: "노인주의",
-      status: "hit",
-      summary: "노인주의 대상",
-      findings: [{ title: "노인주의 대상", details: null }],
-    },
-  ]);
+  const html = context.durStatusHtml([{
+    category: "elderly_caution",
+    label: "노인주의",
+    status: "hit",
+    summary: "노인주의 대상",
+    findings: [{ title: "노인주의 대상", details: null }],
+  }]);
 
-  assert.match(html, /수유 중 복용에 대해서는 약사 또는 처방 의료진에게 확인해 주세요/);
   assert.match(html, /복용 시 주의사항은 약사 또는 처방 의료진에게 확인해 주세요/);
+  assert.doesNotMatch(html, /수유 중 복용/);
   assert.doesNotMatch(html, /상세 설명 없음/);
   assert.doesNotMatch(html, /<p>-<\/p>/);
 });

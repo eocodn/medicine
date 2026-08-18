@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from .dose_criteria import materialize_dose_criteria
 from .mfds_ingredient_endpoints import MFDS_INGREDIENT_ENDPOINTS, MfdsIngredientEndpoint
+from .mfds_remark_registry import reviewed_mfds_remark
 from .schema import SCHEMA, SCHEMA_VERSION
 from .sources import _request_json, _sync_paginated_jsonl
 
@@ -333,6 +334,7 @@ def import_mfds_ingredient_snapshots(
                 row = json.loads(line)
                 if not isinstance(row, dict):
                     raise ValueError(f"{dataset_key} row {source_row} is not a JSON object")
+                reviewed_mfds_remark(spec.category, _text(_field(row, "REMARK")))
                 state = _text(_field(row, "DEL_YN"))
                 if state == "삭제":
                     deleted_rows += 1
@@ -467,6 +469,14 @@ def verify_mfds_ingredient_preview(db_path: str | Path) -> dict:
         dose_criteria = int(con.execute("SELECT COUNT(*) FROM dose_criteria").fetchone()[0])
         if dose_rules != dose_criteria:
             errors.append("dose criteria coverage mismatch")
+        for category, qualifier_note, source_row in con.execute(
+            """SELECT category,qualifier_note,source_row FROM ingredient_rules
+               WHERE qualifier_note IS NOT NULL AND TRIM(qualifier_note) != ''"""
+        ):
+            try:
+                reviewed_mfds_remark(category, qualifier_note)
+            except ValueError as exc:
+                errors.append(f"{exc} (source row {source_row})")
         meta = dict(con.execute("SELECT key,value FROM canonical_meta"))
         if meta.get("schema_version") != SCHEMA_VERSION:
             errors.append("schema version mismatch")

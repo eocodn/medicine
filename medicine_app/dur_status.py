@@ -39,6 +39,7 @@ def _item(
     *,
     details: str | None = None,
     findings: list[dict[str, Any]] | None = None,
+    qualifiers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "category": category,
@@ -49,6 +50,8 @@ def _item(
     }
     if details:
         result["details"] = details
+    if qualifiers:
+        result["qualifiers"] = qualifiers
     return result
 
 
@@ -158,6 +161,7 @@ def _quantitative_item(
     dataset_verified: bool,
 ) -> dict[str, Any]:
     result = check.get("result")
+    qualifiers = list(check.get("qualifiers") or [])
     if result == "exceeded":
         requested = check.get("requested_days", check.get("daily_amount"))
         maximum = check.get("maximum_days", check.get("maximum_daily_amount"))
@@ -168,19 +172,29 @@ def _quantitative_item(
                 details = f"입력한 1일 용량 {requested}{unit} · DUR 기준 {maximum}{unit}"
             else:
                 details = f"입력한 투여기간 {requested}{unit} · DUR 기준 {maximum}{unit}"
-        return _item(category, label, "hit", f"{label} 기준 초과", details=details)
+        return _item(
+            category, label, "hit", f"{label} 기준 초과",
+            details=details, qualifiers=qualifiers,
+        )
     if not dataset_verified:
         return _item(
             category, label, "unknown", "자동 확인 제한",
             details="필수 DUR 원본을 검증하지 못해 확인할 수 없습니다.",
+            qualifiers=qualifiers,
         )
     if result == "not_evaluable":
+        status = "conditional" if check.get("evaluation_status") == "conditional" else "unknown"
+        summary = f"{label} 조건 확인 필요" if status == "conditional" else "확인 필요"
         return _item(
-            category, label, "unknown", "확인 필요",
+            category, label, status, summary,
             details=_friendly_quantitative_reason(category, check),
+            qualifiers=qualifiers,
         )
     if not mapping_complete:
-        return _item(category, label, "unknown", "자동 확인 제한", details=mapping_reason)
+        return _item(
+            category, label, "unknown", "자동 확인 제한",
+            details=mapping_reason, qualifiers=qualifiers,
+        )
     if result == "within":
         requested = check.get("requested_days", check.get("daily_amount"))
         maximum = check.get("maximum_days", check.get("maximum_daily_amount"))
@@ -188,10 +202,18 @@ def _quantitative_item(
         details = None
         if requested is not None and maximum is not None:
             details = f"입력값 {requested}{unit} · 기준 {maximum}{unit}"
-        return _item(category, label, "clear", "기준 이내", details=details)
+        return _item(
+            category, label, "clear", "기준 이내",
+            details=details, qualifiers=qualifiers,
+        )
     if result == "not_applicable":
-        return _item(category, label, "not_applicable", "해당 기준 없음")
-    return _item(category, label, "unknown", "확인 필요", details="자동 판정 결과를 확정하지 못했습니다.")
+        return _item(
+            category, label, "not_applicable", "해당 기준 없음", qualifiers=qualifiers
+        )
+    return _item(
+        category, label, "unknown", "확인 필요",
+        details="자동 판정 결과를 확정하지 못했습니다.", qualifiers=qualifiers,
+    )
 
 
 def build_dur_checks(

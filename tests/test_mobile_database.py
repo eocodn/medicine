@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from medicine_app.core import MedicationApp
+from medicine_app.dur_status import DUR_CATEGORIES
 from medicine_canonical.mobile import RUNTIME_INDEXES, build_mobile_database
 from medicine_canonical.cli import main as canonical_main
 from tests.test_safety_coverage import make_canonical_db
@@ -62,9 +63,10 @@ class MobileDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(preview["product"]["product_mapping_method"], "item_seq_exact")
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "exceeded")
-        self.assertNotIn(
-            "lactation_caution", {row["category"] for row in preview["dur_checks"]}
-        )
+        categories = {row["category"] for row in preview["dur_checks"]}
+        supported = {category for category, _label in DUR_CATEGORIES}
+        self.assertEqual(categories & supported, supported)
+        self.assertEqual(len(categories & supported), 7)
 
     def test_mobile_build_rejects_incomplete_source_snapshot_set(self) -> None:
         with sqlite3.connect(self.canonical_db) as con:

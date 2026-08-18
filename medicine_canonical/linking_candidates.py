@@ -7,6 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from .dur_bridge import signature_key
+from .mfds_remark_registry import reviewed_mfds_remark
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,10 @@ def load_bridge_maps(con: sqlite3.Connection):
            FROM dur_criterion_signatures s
            JOIN ingredient_rules i ON i.id=s.criterion_rule_id"""
     ):
-        all_compositions = _evidence_text(row[8]) == "단일제·복합제포함"
+        qualifier = reviewed_mfds_remark(row[1], row[8])
+        all_compositions = bool(
+            qualifier and qualifier.mode == "composition_scope" and qualifier.value == "all"
+        )
         candidate = CriterionCandidate(
             criterion_id=int(row[0]),
             method=str(row[4]),

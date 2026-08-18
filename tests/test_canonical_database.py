@@ -269,6 +269,18 @@ class CanonicalDatabaseTest(unittest.TestCase):
         self.assertEqual(verification["status"], "invalid")
         self.assertIn("no quantitative dose criteria are parsable", verification["errors"])
 
+    def test_verify_rejects_unreviewed_mfds_remark(self) -> None:
+        self._build()
+        with closing(sqlite3.connect(self.db)) as con:
+            con.execute(
+                "UPDATE ingredient_rules SET qualifier_note=? WHERE category='pregnancy_contraindication'",
+                ("새로 추가된 미검토 비고",),
+            )
+            con.commit()
+        verification = verify_canonical_database(self.db)
+        self.assertEqual(verification["status"], "invalid")
+        self.assertIn("unreviewed MFDS REMARK", " ".join(verification["errors"]))
+
     def test_can_reassemble_from_preserved_mfds_snapshots_without_network(self) -> None:
         self._build()
         raw_dir = self.root / "canonical.sources"

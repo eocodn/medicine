@@ -10,6 +10,7 @@ from pathlib import Path
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
 from medicine_canonical.source_policy import CANONICAL_SOURCE_POLICY, EXPECTED_CANONICAL_SOURCE_FAMILIES
 from medicine_app.canonical_runtime import _RUNTIME_SOURCE_FAMILIES
+from medicine_app.dur_status import DUR_CATEGORIES
 from tests.canonical_fixture_support import expected_source_snapshots
 from medicine_app.core import MedicationApp
 from medicine_app.products import ProductRepository
@@ -119,7 +120,7 @@ class CanonicalRuntimeTest(unittest.TestCase):
         self.assertNotIn("product_code_bridge", names)
         self.assertNotIn("ingredient_aliases", names)
 
-    def test_app_uses_canonical_product_criteria_without_lactation_support(self) -> None:
+    def test_app_uses_exactly_seven_supported_dur_categories(self) -> None:
         app = MedicationApp(self.canonical, self.personal)
         person = app.create_person(
             "수유자", "1990-01-01", sex="female",
@@ -130,12 +131,14 @@ class CanonicalRuntimeTest(unittest.TestCase):
             "prescription_days": 30,
         })
         by_category = {row["category"]: row for row in preview["dur_checks"]}
-        self.assertNotIn("lactation_caution", by_category)
+        supported = {category for category, _label in DUR_CATEGORIES}
+        self.assertEqual(set(by_category) & supported, supported)
+        self.assertEqual(len(set(by_category) & supported), 7)
         self.assertEqual(by_category["duration_caution"]["status"], "hit")
         self.assertEqual(preview["coverage"]["product"]["identity_method"], "item_seq_exact")
         self.assertEqual(preview["coverage"]["dataset"]["status"], "verified")
 
-    def test_lactation_specific_reference_tables_are_absent(self) -> None:
+    def test_removed_legacy_criterion_tables_are_absent(self) -> None:
         with closing(sqlite3.connect(self.canonical)) as con:
             names = {row[0] for row in con.execute("SELECT name FROM sqlite_master")}
         self.assertNotIn("product_ingredient_criterion_links", names)
