@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = "8"
-CORE_SOURCE_FAMILIES = frozenset({"mfds_permit_api", "mfds_dur_item_api", "kids_mfds_xlsx"})
+SCHEMA_VERSION = "9"
+CORE_SOURCE_FAMILIES = frozenset({"mfds_permit_api", "mfds_dur_item_api", "mfds_dur_ingredient_api"})
 
 SCHEMA = r"""
 PRAGMA journal_mode = DELETE;
@@ -110,6 +110,7 @@ CREATE TABLE ingredient_rules (
     rule_value TEXT,
     dosage_form TEXT,
     note TEXT,
+    qualifier_note TEXT,
     details TEXT,
     UNIQUE(source_dataset_key, source_row)
 );
@@ -118,9 +119,8 @@ CREATE INDEX idx_ingredient_rules_name ON ingredient_rules(ingredient_name);
 CREATE INDEX idx_ingredient_rules_name_ko ON ingredient_rules(ingredient_name_ko);
 CREATE INDEX idx_ingredient_rules_pair ON ingredient_rules(paired_ingredient_name);
 
--- Build-time regulatory identifiers for ingredient criteria. KIDS XLSX rows do
--- not publish these codes, while MFDS ingredient APIs do. Keep them separate
--- from the mobile runtime row shape: they are authoritative linking evidence,
+-- Build-time regulatory identifiers published by MFDS ingredient criteria.
+-- Keep them separate from the mobile runtime row shape: they are authoritative linking evidence,
 -- not a chemical substance identity and are unnecessary after links are built.
 CREATE TABLE ingredient_rule_codes (
     criterion_rule_id INTEGER PRIMARY KEY REFERENCES ingredient_rules(id),
@@ -184,7 +184,7 @@ CREATE INDEX idx_dur_concept_substances_substance
 
 CREATE TABLE dur_product_item_signatures (
     item_seq TEXT NOT NULL,
-    signature_type TEXT NOT NULL CHECK(signature_type IN ('code','hybrid')),
+    signature_type TEXT NOT NULL CHECK(signature_type='code'),
     signature_key TEXT NOT NULL,
     component_count INTEGER NOT NULL CHECK(component_count > 0),
     match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','permit_composition')),
@@ -195,8 +195,8 @@ CREATE INDEX idx_dur_product_item_signatures_lookup
     ON dur_product_item_signatures(signature_type, signature_key);
 
 -- MFDS ingredient criteria carry category-scoped DUR composition codes. The
--- legacy global product signature remains for KIDS/lactation build-time paths;
--- this table resolves permit composition only inside the product-rule category
+-- The global product signature remains useful for ingredient applicability; this
+-- table resolves permit composition only inside the product-rule category
 -- so a name reused with another DUR code in another category cannot erase
 -- otherwise authoritative composition evidence.
 CREATE TABLE dur_product_category_signatures (
@@ -217,106 +217,35 @@ CREATE TABLE dur_criterion_signatures (
     criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
     category TEXT NOT NULL,
     effect_key TEXT NOT NULL,
-    signature_type TEXT NOT NULL CHECK(signature_type IN ('code','rule_value')),
     signature_key TEXT NOT NULL,
-    qualifier TEXT,
-    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','ingredient_preprocessed','permit_composition','rule_value_identity')),
+    match_method TEXT NOT NULL CHECK(match_method='mfds_ingredient_code'),
     evidence_kind TEXT NOT NULL,
-    PRIMARY KEY(criterion_rule_id, signature_type, signature_key)
+    PRIMARY KEY(criterion_rule_id, signature_key)
 ) WITHOUT ROWID;
 CREATE INDEX idx_dur_criterion_signatures_lookup
-    ON dur_criterion_signatures(category, effect_key, signature_type, signature_key);
+    ON dur_criterion_signatures(category, effect_key, signature_key);
 
 CREATE TABLE dur_criterion_pair_signatures (
     criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
-    signature_type TEXT NOT NULL CHECK(signature_type IN ('code','hybrid')),
     left_signature_key TEXT NOT NULL,
     right_signature_key TEXT NOT NULL,
-    left_qualifier TEXT,
-    right_qualifier TEXT,
-    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','ingredient_preprocessed','permit_composition')),
+    match_method TEXT NOT NULL CHECK(match_method='mfds_ingredient_code'),
     evidence_kind TEXT NOT NULL,
-    PRIMARY KEY(criterion_rule_id, signature_type, left_signature_key, right_signature_key)
+    PRIMARY KEY(criterion_rule_id, left_signature_key, right_signature_key)
 ) WITHOUT ROWID;
 CREATE INDEX idx_dur_pair_signatures_lookup
-    ON dur_criterion_pair_signatures(signature_type, left_signature_key, right_signature_key);
-
-CREATE TABLE dur_single_ambiguities (
-    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
-    category TEXT NOT NULL,
-    effect_key TEXT NOT NULL,
-    signature_key TEXT NOT NULL,
-    record_json TEXT NOT NULL,
-    rule_value TEXT,
-    dosage_form TEXT,
-    PRIMARY KEY(criterion_rule_id, signature_key)
-) WITHOUT ROWID;
-CREATE INDEX idx_dur_single_ambiguities_lookup
-    ON dur_single_ambiguities(category, effect_key, signature_key);
-
-CREATE TABLE dur_pair_ambiguities (
-    left_signature_key TEXT NOT NULL,
-    right_signature_key TEXT NOT NULL,
-    record_key TEXT NOT NULL,
-    record_json TEXT NOT NULL,
-    PRIMARY KEY(left_signature_key, right_signature_key, record_key)
-) WITHOUT ROWID;
-CREATE INDEX idx_dur_pair_ambiguities_lookup
-    ON dur_pair_ambiguities(left_signature_key, right_signature_key);
+    ON dur_criterion_pair_signatures(left_signature_key, right_signature_key);
 
 CREATE TABLE product_criterion_links (
     product_rule_id INTEGER NOT NULL REFERENCES product_rules(id),
     criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
-    match_method TEXT NOT NULL CHECK(match_method IN ('english_exact','mfds_ingredient_code','ingredient_preprocessed','permit_composition','rule_value_identity','product_detail_evidence')),
+    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','permit_composition')),
     pair_orientation TEXT CHECK(pair_orientation IN ('forward','reverse') OR pair_orientation IS NULL),
     PRIMARY KEY(product_rule_id, criterion_rule_id)
 ) WITHOUT ROWID;
 CREATE INDEX idx_product_criterion_links_criterion
     ON product_criterion_links(criterion_rule_id);
 CREATE INDEX idx_product_criterion_links_method ON product_criterion_links(match_method);
-
--- Ingredient-only regulatory criteria (currently lactation caution) need a
--- product applicability layer even when MFDS publishes no ITEM_SEQ rule family
--- for that category. Positive rows are limited to authoritative evidence. Name
--- similarity may appear only in the unresolved table so it can never silently
--- merge precise substances or create a clinical hit.
-CREATE TABLE product_ingredient_criterion_links (
-    item_seq TEXT NOT NULL REFERENCES products(item_seq),
-    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
-    category TEXT NOT NULL,
-    match_method TEXT NOT NULL CHECK(match_method IN (
-        'dur_scope_signature','precise_substance_exact',
-        'reviewed_substance_relation','same_item_official_dur_name'
-    )),
-    evidence_kind TEXT NOT NULL CHECK(evidence_kind IN (
-        'dur_scope_signature','precise_substance_identity',
-        'reviewed_substance_relation','same_item_official_dur_scope'
-    )),
-    evidence_json TEXT NOT NULL,
-    PRIMARY KEY(item_seq, criterion_rule_id)
-) WITHOUT ROWID;
-CREATE INDEX idx_product_ingredient_criteria_criterion
-    ON product_ingredient_criterion_links(criterion_rule_id);
-CREATE INDEX idx_product_ingredient_criteria_category_item
-    ON product_ingredient_criterion_links(category,item_seq);
-CREATE INDEX idx_product_ingredient_criteria_method
-    ON product_ingredient_criterion_links(match_method);
-
-CREATE TABLE product_ingredient_criterion_unresolved (
-    item_seq TEXT NOT NULL REFERENCES products(item_seq),
-    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
-    category TEXT NOT NULL,
-    reason TEXT NOT NULL CHECK(reason IN (
-        'scope_relation_unproven','product_composition_unresolved',
-        'product_component_identity_unresolved','criterion_identity_unresolved'
-    )),
-    evidence_json TEXT NOT NULL,
-    PRIMARY KEY(item_seq, criterion_rule_id)
-) WITHOUT ROWID;
-CREATE INDEX idx_product_ingredient_unresolved_category_item
-    ON product_ingredient_criterion_unresolved(category,item_seq);
-CREATE INDEX idx_product_ingredient_unresolved_reason
-    ON product_ingredient_criterion_unresolved(reason);
 
 CREATE VIEW product_rule_criteria AS
 SELECT
@@ -343,6 +272,7 @@ SELECT
     i.rule_value AS criterion_rule_value,
     i.dosage_form AS criterion_dosage_form,
     i.note AS criterion_note,
+    i.qualifier_note AS criterion_qualifier_note,
     i.details AS criterion_details,
     d.maximum_daily_amount AS criterion_maximum_daily_amount,
     d.maximum_daily_unit AS criterion_maximum_daily_unit,
@@ -358,28 +288,4 @@ JOIN ingredient_rules i
 LEFT JOIN dose_criteria d
   ON d.criterion_rule_id = i.id;
 
-CREATE VIEW product_ingredient_criteria AS
-SELECT
-    l.item_seq,
-    p.product_name,
-    p.ingredient_text AS product_ingredient_text,
-    p.dosage_form AS product_dosage_form,
-    p.permit_status,
-    i.source_dataset_key AS criterion_source_dataset_key,
-    i.source_row AS criterion_source_row,
-    l.criterion_rule_id,
-    l.category,
-    i.sequence_text AS criterion_sequence_text,
-    i.ingredient_name AS criterion_ingredient_name,
-    i.ingredient_name_ko AS criterion_ingredient_name_ko,
-    i.rule_value AS criterion_rule_value,
-    i.dosage_form AS criterion_dosage_form,
-    i.note AS criterion_note,
-    i.details AS criterion_details,
-    l.match_method,
-    l.evidence_kind,
-    l.evidence_json
-FROM product_ingredient_criterion_links l
-JOIN products p ON p.item_seq=l.item_seq
-JOIN ingredient_rules i ON i.id=l.criterion_rule_id;
 """

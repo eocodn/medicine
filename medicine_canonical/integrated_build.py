@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import time
@@ -9,19 +8,20 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .build import populate_canonical_source_tables
+from .build import populate_canonical_source_tables, sync_reference_sources
 from .dur_bridge import materialize_dur_ingredient_bridge
 from .inspection import canonical_stats, verify_canonical_database
 from .linking import materialize_product_criterion_links
-from .product_ingredient_applicability import materialize_product_ingredient_criterion_links
 from .schema import SCHEMA, SCHEMA_VERSION
-from .sources import DurFetchPage, PermitFetchPage, sync_canonical_api_sources
+from .source_policy import CANONICAL_SOURCE_POLICY
+from .mfds_ingredient import IngredientFetchPage
+from .sources import DurFetchPage, PermitFetchPage
 from .substance_build import assemble_substance_database
 from .substance_inspection import substance_stats, verify_substance_database
 
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
-SOURCE_POLICY = "mfds_permit_api+mfds_dur_item_api+kids_mfds_xlsx"
+SOURCE_POLICY = CANONICAL_SOURCE_POLICY
 
 
 def _insert_source_stage_meta(con: sqlite3.Connection) -> None:
@@ -38,15 +38,16 @@ def _insert_source_stage_meta(con: sqlite3.Connection) -> None:
 def assemble_integrated_databases(
     canonical_db_path: str | Path,
     substance_db_path: str | Path,
-    kids_dir: str | Path,
     canonical_raw_dir: str | Path,
     substance_raw_dir: str | Path,
+    ingredient_raw_dir: str | Path,
 ) -> dict:
     """Build source → substance → DUR bridge → product links in that order."""
     canonical_db = Path(canonical_db_path)
     substance_db = Path(substance_db_path)
     canonical_raw = Path(canonical_raw_dir)
     substance_raw = Path(substance_raw_dir)
+    ingredient_raw = Path(ingredient_raw_dir)
     canonical_db.parent.mkdir(parents=True, exist_ok=True)
     substance_db.parent.mkdir(parents=True, exist_ok=True)
     staged_canonical = canonical_db.with_name(canonical_db.name + ".integrated.tmp")
@@ -60,7 +61,9 @@ def assemble_integrated_databases(
         with closing(sqlite3.connect(staged_canonical)) as con:
             con.executescript(SCHEMA)
             con.execute("BEGIN")
-            source_result = populate_canonical_source_tables(con, kids_dir, canonical_raw)
+            source_result = populate_canonical_source_tables(
+                con, canonical_raw, ingredient_raw
+            )
             _insert_source_stage_meta(con)
             con.commit()
 
@@ -74,25 +77,13 @@ def assemble_integrated_databases(
             con.execute("BEGIN")
             bridge_result = materialize_dur_ingredient_bridge(con, staged_substance)
             link_result = materialize_product_criterion_links(con)
-            ingredient_applicability_result = materialize_product_ingredient_criterion_links(
-                con, staged_substance
-            )
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
-            con.execute("DELETE FROM canonical_meta WHERE key IN ('built_at','build_stage','unresolved_link_ambiguities','dur_bridge_substance_schema_version','dur_bridge_substance_source_fingerprint')")
+            con.execute("DELETE FROM canonical_meta WHERE key IN ('built_at','build_stage','dur_bridge_substance_schema_version','dur_bridge_substance_source_fingerprint')")
             con.executemany(
                 "INSERT INTO canonical_meta(key,value) VALUES(?,?)",
                 [
                     ("built_at", built_at),
                     ("build_stage", "complete"),
-                    (
-                        "unresolved_link_ambiguities",
-                        json.dumps(
-                            link_result["unresolved_link_ambiguities"],
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        ),
-                    ),
                     ("dur_bridge_substance_schema_version", str(substance_result["schema_version"])),
                     (
                         "dur_bridge_substance_source_fingerprint",
@@ -138,7 +129,6 @@ def assemble_integrated_databases(
         "source_import": source_result,
         "dur_bridge": bridge_result,
         "linking": link_result,
-        "ingredient_applicability": ingredient_applicability_result,
         "elapsed_seconds": round(time.monotonic() - started, 3),
     }
 
@@ -146,34 +136,39 @@ def assemble_integrated_databases(
 def build_integrated_databases(
     canonical_db_path: str | Path,
     substance_db_path: str | Path,
-    kids_dir: str | Path,
     *,
     service_key: str,
     canonical_raw_dir: str | Path,
     substance_raw_dir: str | Path,
+    ingredient_raw_dir: str | Path,
     permit_page_size: int = 500,
     dur_page_size: int = 500,
+    ingredient_page_size: int = 500,
     api_workers: int = 8,
     progress: bool = True,
     permit_fetch_page: PermitFetchPage | None = None,
     dur_fetch_page: DurFetchPage | None = None,
+    ingredient_fetch_page: IngredientFetchPage | None = None,
 ) -> dict:
-    sync_canonical_api_sources(
+    sync_reference_sources(
         canonical_raw_dir,
+        ingredient_raw_dir,
         service_key=service_key,
         permit_page_size=permit_page_size,
         dur_page_size=dur_page_size,
+        ingredient_page_size=ingredient_page_size,
         workers=api_workers,
         progress=progress,
         permit_fetch_page=permit_fetch_page,
         dur_fetch_page=dur_fetch_page,
+        ingredient_fetch_page=ingredient_fetch_page,
     )
     return assemble_integrated_databases(
         canonical_db_path,
         substance_db_path,
-        kids_dir,
         canonical_raw_dir,
         substance_raw_dir,
+        ingredient_raw_dir,
     )
 
 

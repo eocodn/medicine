@@ -79,7 +79,7 @@ def parse_daily_dose_threshold(
 
 
 def materialize_dose_criteria(con: sqlite3.Connection) -> dict[str, int]:
-    """Materialize structured dose criteria from authoritative XLSX rule text."""
+    """Materialize structured dose criteria from authoritative MFDS ingredient rule text."""
     rows = con.execute(
         """SELECT id,rule_value FROM ingredient_rules
            WHERE category='dose_caution' ORDER BY id"""

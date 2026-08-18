@@ -284,14 +284,10 @@ def _canonical_rule(
         if spec.rule_required and not rule_value:
             raise ValueError(f"{dataset_key} row {source_row} missing {spec.rule_field}")
 
-    note_parts: list[str] = []
+    series_note = None
     if spec.category == "therapeutic_duplication_caution":
-        series = _text(_field(row, "SERS_NAME"))
-        if series:
-            note_parts.append(series)
+        series_note = _text(_field(row, "SERS_NAME"))
     remark = _text(_field(row, "REMARK"))
-    if remark and remark not in note_parts:
-        note_parts.append(remark)
 
     return {
         "category": spec.category,
@@ -306,7 +302,8 @@ def _canonical_rule(
         "mixture_ingredient_names": mixture_names,
         "rule_value": rule_value,
         "dosage_form": _text(_field(row, "FORM_NAME")),
-        "note": "\n".join(note_parts) or None,
+        "note": series_note,
+        "qualifier_note": remark,
         "details": _text(_field(row, "PROHBT_CONTENT")),
     }
 
@@ -347,8 +344,8 @@ def import_mfds_ingredient_snapshots(
                         """
                         INSERT INTO ingredient_rules(
                             source_dataset_key,source_row,category,sequence_text,ingredient_name,
-                            ingredient_name_ko,paired_ingredient_name,rule_value,dosage_form,note,details
-                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                            ingredient_name_ko,paired_ingredient_name,rule_value,dosage_form,note,qualifier_note,details
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             dataset_key,
@@ -361,6 +358,7 @@ def import_mfds_ingredient_snapshots(
                             canonical["rule_value"],
                             canonical["dosage_form"],
                             canonical["note"],
+                            canonical["qualifier_note"],
                             canonical["details"],
                         ),
                     )

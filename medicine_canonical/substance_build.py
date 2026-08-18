@@ -165,18 +165,18 @@ def _extract_domestic_identities(
                 name_ko=row["name_ko"],
             )
 
-    xlsx_rows = con.execute(
+    ingredient_rows = con.execute(
         """SELECT source_dataset_key,source_row,ingredient_name,ingredient_name_ko,
                   paired_ingredient_name
            FROM ingredient_rules"""
     ).fetchall()
-    for row in xlsx_rows:
+    for row in ingredient_rows:
         primary = _split_top_level(row["ingredient_name"], frozenset({"/", "+"}))
         for component in dict.fromkeys(primary):
             _aggregate_identity(
                 bucket,
                 dataset_key=row["source_dataset_key"],
-                scope="xlsx_primary",
+                scope="ingredient_rule_primary",
                 source_row=row["source_row"],
                 occurrence_count=1,
                 name_en=component,
@@ -187,7 +187,7 @@ def _extract_domestic_identities(
             _aggregate_identity(
                 bucket,
                 dataset_key=row["source_dataset_key"],
-                scope="xlsx_paired",
+                scope="ingredient_rule_paired",
                 source_row=row["source_row"],
                 occurrence_count=1,
                 name_en=component,

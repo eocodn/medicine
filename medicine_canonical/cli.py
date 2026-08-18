@@ -3,14 +3,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .build import assemble_canonical_database, build_canonical_database, canonical_stats, verify_canonical_database
-from .inspection import canonical_product_criteria, canonical_product_ingredient_criteria
+from .build import (
+    assemble_canonical_database,
+    build_canonical_database,
+    canonical_stats,
+    sync_reference_sources,
+    verify_canonical_database,
+)
+from .inspection import canonical_product_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
-from .kids_sources import sync_kids_xlsx_sources
 from .mfds_ingredient import (
     assemble_mfds_ingredient_preview,
     build_mfds_ingredient_preview,
@@ -21,7 +25,6 @@ from medicine_app.reference_update import verify_reference_database
 from .release import apply_chunk_patch, prepare_release
 from .release_r2 import download_object_from_env, publish_release_from_env
 from .release_signing import verify_signed_envelope
-from .sources import sync_canonical_api_sources
 from .substance_build import (
     assemble_substance_database,
     rebuild_substance_database,
@@ -36,7 +39,6 @@ from .substance_sources import sync_substance_identity_sources
 
 DEFAULT_DB = Path("data/db/canonical.sqlite")
 DEFAULT_RAW = Path("data/canonical/raw")
-DEFAULT_KIDS = Path("data/kids")
 DEFAULT_SUBSTANCE_DB = Path("data/db/canonical_substances.sqlite")
 DEFAULT_SUBSTANCE_RAW = Path("data/canonical/substances")
 DEFAULT_MFDS_INGREDIENT_DB = Path("data/db/mfds_ingredient_preview.sqlite")
@@ -54,31 +56,32 @@ def _emit(payload: dict, as_json: bool) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="medicine-canonical",
-        description="Build a canonical Korean medication/DUR database from three official source families",
+        description="Build a canonical Korean medication/DUR database from official MFDS sources",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     common_api = argparse.ArgumentParser(add_help=False)
     common_api.add_argument("--service-key", default=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
     common_api.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW)
+    common_api.add_argument("--ingredient-raw-dir", type=Path, default=DEFAULT_MFDS_INGREDIENT_RAW)
     common_api.add_argument("--permit-page-size", type=int, default=500)
     common_api.add_argument("--dur-page-size", type=int, default=500)
+    common_api.add_argument("--ingredient-page-size", type=int, default=500)
     common_api.add_argument("--workers", type=int, default=8)
     common_api.add_argument("--quiet", action="store_true")
     common_api.add_argument("--json", action="store_true")
 
-    sync = sub.add_parser("sync", parents=[common_api], help="Download current MFDS permit and ITEM_SEQ DUR snapshots")
+    sync = sub.add_parser("sync", parents=[common_api], help="Download the complete MFDS permit, item-level DUR, and ingredient DUR source set")
     sync.set_defaults(command="sync")
 
-    build = sub.add_parser("build", help="Build the canonical DB from existing API snapshots and current XLSX files")
+    build = sub.add_parser("build", help="Build the canonical DB from preserved MFDS API snapshots")
     build.add_argument("--db", type=Path, default=DEFAULT_DB)
     build.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW)
-    build.add_argument("--kids-dir", type=Path, default=DEFAULT_KIDS)
+    build.add_argument("--ingredient-raw-dir", type=Path, default=DEFAULT_MFDS_INGREDIENT_RAW)
     build.add_argument("--json", action="store_true")
 
     rebuild = sub.add_parser("rebuild", parents=[common_api], help="Sync the APIs and atomically rebuild the canonical DB")
     rebuild.add_argument("--db", type=Path, default=DEFAULT_DB)
-    rebuild.add_argument("--kids-dir", type=Path, default=DEFAULT_KIDS)
 
     integrated_build = sub.add_parser(
         "integrated-build",
@@ -88,7 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     integrated_build.add_argument("--substance-db", type=Path, default=DEFAULT_SUBSTANCE_DB)
     integrated_build.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW)
     integrated_build.add_argument("--substance-raw-dir", type=Path, default=DEFAULT_SUBSTANCE_RAW)
-    integrated_build.add_argument("--kids-dir", type=Path, default=DEFAULT_KIDS)
+    integrated_build.add_argument("--ingredient-raw-dir", type=Path, default=DEFAULT_MFDS_INGREDIENT_RAW)
     integrated_build.add_argument("--json", action="store_true")
 
     integrated_rebuild = sub.add_parser(
@@ -99,28 +102,18 @@ def build_parser() -> argparse.ArgumentParser:
     integrated_rebuild.add_argument("--db", type=Path, default=DEFAULT_DB)
     integrated_rebuild.add_argument("--substance-db", type=Path, default=DEFAULT_SUBSTANCE_DB)
     integrated_rebuild.add_argument("--substance-raw-dir", type=Path, default=DEFAULT_SUBSTANCE_RAW)
-    integrated_rebuild.add_argument("--kids-dir", type=Path, default=DEFAULT_KIDS)
 
     stats = sub.add_parser("stats", help="Show canonical DB coverage and source counts")
     stats.add_argument("--db", type=Path, default=DEFAULT_DB)
     stats.add_argument("--json", action="store_true")
 
-    criteria = sub.add_parser("criteria", help="Show XLSX criteria linked to one ITEM_SEQ product")
+    criteria = sub.add_parser("criteria", help="Show MFDS ingredient criteria linked to one ITEM_SEQ product")
     criteria.add_argument("--db", type=Path, default=DEFAULT_DB)
     criteria.add_argument("--item-seq", required=True)
     criteria.add_argument("--category")
     criteria.add_argument("--limit", type=int, default=100)
     criteria.add_argument("--json", action="store_true")
 
-    ingredient_criteria = sub.add_parser(
-        "ingredient-criteria",
-        help="Show ingredient-only XLSX criteria applicable or unresolved for one ITEM_SEQ product",
-    )
-    ingredient_criteria.add_argument("--db", type=Path, default=DEFAULT_DB)
-    ingredient_criteria.add_argument("--item-seq", required=True)
-    ingredient_criteria.add_argument("--category")
-    ingredient_criteria.add_argument("--limit", type=int, default=100)
-    ingredient_criteria.add_argument("--json", action="store_true")
 
     mobile_build = sub.add_parser("mobile-build", help="Build compact canonical runtime DB for Android")
     mobile_build.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -184,11 +177,6 @@ def build_parser() -> argparse.ArgumentParser:
     substance_verify = sub.add_parser("substance-verify", help="Verify the parallel canonical substance database")
     substance_verify.add_argument("--db", type=Path, default=DEFAULT_SUBSTANCE_DB)
     substance_verify.add_argument("--json", action="store_true")
-
-    kids_sync = sub.add_parser("kids-sync", help="Download and validate the current official KIDS DUR XLSX sources")
-    kids_sync.add_argument("--output-dir", type=Path, default=DEFAULT_KIDS)
-    kids_sync.add_argument("--quiet", action="store_true")
-    kids_sync.add_argument("--json", action="store_true")
 
     mfds_ingredient_common = argparse.ArgumentParser(add_help=False)
     mfds_ingredient_common.add_argument(
@@ -274,24 +262,29 @@ def _require_key(value: str) -> str:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "sync":
-        payload = sync_canonical_api_sources(
+        payload = sync_reference_sources(
             args.raw_dir,
+            args.ingredient_raw_dir,
             service_key=_require_key(args.service_key),
             permit_page_size=args.permit_page_size,
             dur_page_size=args.dur_page_size,
+            ingredient_page_size=args.ingredient_page_size,
             workers=args.workers,
             progress=not args.quiet,
         )
     elif args.command == "build":
-        payload = assemble_canonical_database(args.db, args.kids_dir, args.raw_dir)
+        payload = assemble_canonical_database(
+            args.db, args.raw_dir, args.ingredient_raw_dir
+        )
     elif args.command == "rebuild":
         payload = build_canonical_database(
             args.db,
-            args.kids_dir,
             raw_dir=args.raw_dir,
+            ingredient_raw_dir=args.ingredient_raw_dir,
             service_key=_require_key(args.service_key),
             permit_page_size=args.permit_page_size,
             dur_page_size=args.dur_page_size,
+            ingredient_page_size=args.ingredient_page_size,
             api_workers=args.workers,
             progress=not args.quiet,
         )
@@ -299,20 +292,21 @@ def main(argv=None) -> int:
         payload = assemble_integrated_databases(
             args.db,
             args.substance_db,
-            args.kids_dir,
             args.raw_dir,
             args.substance_raw_dir,
+            args.ingredient_raw_dir,
         )
     elif args.command == "integrated-rebuild":
         payload = build_integrated_databases(
             args.db,
             args.substance_db,
-            args.kids_dir,
             service_key=_require_key(args.service_key),
             canonical_raw_dir=args.raw_dir,
             substance_raw_dir=args.substance_raw_dir,
+            ingredient_raw_dir=args.ingredient_raw_dir,
             permit_page_size=args.permit_page_size,
             dur_page_size=args.dur_page_size,
+            ingredient_page_size=args.ingredient_page_size,
             api_workers=args.workers,
             progress=not args.quiet,
         )
@@ -325,13 +319,7 @@ def main(argv=None) -> int:
             category=args.category,
             limit=args.limit,
         )
-    elif args.command == "ingredient-criteria":
-        payload = canonical_product_ingredient_criteria(
-            args.db,
-            args.item_seq,
-            category=args.category,
-            limit=args.limit,
-        )
+
     elif args.command == "mobile-build":
         payload = build_mobile_database(
             args.db, args.output, manifest_path=args.manifest
@@ -358,9 +346,6 @@ def main(argv=None) -> int:
         payload = verify_substance_database(args.db)
         _emit(payload, args.json)
         return 0 if payload["status"] == "verified" else 2
-    elif args.command == "kids-sync":
-        progress = None if args.quiet else lambda message: print(message, file=sys.stderr, flush=True)
-        payload = sync_kids_xlsx_sources(args.output_dir, progress=progress)
     elif args.command == "mfds-ingredient-sync":
         payload = sync_mfds_ingredient_sources(
             args.raw_dir,

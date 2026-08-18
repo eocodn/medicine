@@ -9,13 +9,12 @@ from pathlib import Path
 from .inspection import verify_canonical_database
 
 
-MOBILE_DATA_POLICY_VERSION = "2"
+MOBILE_DATA_POLICY_VERSION = "3"
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
-    "product_ingredient_criterion_links", "product_ingredient_criterion_unresolved",
 )
-RUNTIME_VIEWS = ("product_rule_criteria", "product_ingredient_criteria")
+RUNTIME_VIEWS = ("product_rule_criteria",)
 # Mobile queries are intentionally narrower than canonical build/linking queries.
 # Keep only indexes that serve runtime lookup paths; copying every canonical
 # builder index adds hundreds of MB without helping on-device reads.
@@ -24,8 +23,6 @@ RUNTIME_INDEXES = (
     "idx_product_rules_item_category",
     "idx_product_rules_pair",
     "idx_product_flags_item_category",
-    "idx_product_ingredient_criteria_category_item",
-    "idx_product_ingredient_unresolved_category_item",
 )
 
 
@@ -82,8 +79,8 @@ def build_mobile_database(
         build_stage = src.execute(
             "SELECT value FROM canonical_meta WHERE key='build_stage'"
         ).fetchone()
-        if not schema_version or schema_version[0] != "8" or not build_stage or build_stage[0] != "complete":
-            raise ValueError("canonical runtime requires complete schema v8 database")
+        if not schema_version or schema_version[0] != "9" or not build_stage or build_stage[0] != "complete":
+            raise ValueError("canonical runtime requires complete schema v9 database")
         dataset_id = _dataset_id(src)
         objects = {
             (kind, name): sql
@@ -145,7 +142,7 @@ def build_mobile_database(
 
     payload = {
         "dataset_id": dataset_id,
-        "schema_version": "8",
+        "schema_version": "9",
         "sha256": _sha256(output),
         "size_bytes": output.stat().st_size,
     }
