@@ -11,39 +11,24 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from medicine_reference.mfds_sources import (
+    MFDS_DUR_ITEM_API_BASE,
+    MFDS_DUR_ITEM_SOURCES_BY_OPERATION,
+    MFDS_PERMIT_API_BASE,
+    PERMIT_SOURCE,
+)
+
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
-PERMIT_API_BASE = "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnInq07"
-DUR_API_BASE = "https://apis.data.go.kr/1471000/DURPrdlstInfoService03"
-PERMIT_DATASET_KEY = "mfds_permit:products"
+PERMIT_DATASET_KEY = PERMIT_SOURCE.dataset_key
 PERMIT_PAGE_SIZE_MAX = 500
 DUR_PAGE_SIZE_MAX = 500
-PERMIT_FILENAME = "mfds_permit_products.jsonl"
-
-
-@dataclass(frozen=True)
-class DurEndpoint:
-    category: str
-    kind: str  # rule | flags | split
-    filename: str
-
-
-DUR_ENDPOINTS: dict[str, DurEndpoint] = {
-    "getUsjntTabooInfoList03": DurEndpoint("combination_contraindication", "rule", "dur_combination.jsonl"),
-    "getSpcifyAgrdeTabooInfoList03": DurEndpoint("age_contraindication", "rule", "dur_age.jsonl"),
-    "getPwnmTabooInfoList03": DurEndpoint("pregnancy_contraindication", "rule", "dur_pregnancy.jsonl"),
-    "getCpctyAtentInfoList03": DurEndpoint("dose_caution", "rule", "dur_dose.jsonl"),
-    "getMdctnPdAtentInfoList03": DurEndpoint("duration_caution", "rule", "dur_duration.jsonl"),
-    "getOdsnAtentInfoList03": DurEndpoint("elderly_caution", "rule", "dur_elderly.jsonl"),
-    "getEfcyDplctInfoList03": DurEndpoint("therapeutic_duplication_caution", "rule", "dur_duplication.jsonl"),
-    "getDurPrdlstInfoList03": DurEndpoint("dur_product_info", "flags", "dur_product_info.jsonl"),
-    "getSeobangjeongPartitnAtentInfoList03": DurEndpoint("split_caution", "split", "dur_split.jsonl"),
-}
+PERMIT_FILENAME = PERMIT_SOURCE.filename
+DUR_ENDPOINTS = MFDS_DUR_ITEM_SOURCES_BY_OPERATION
 
 PermitFetchPage = Callable[[int, int], tuple[list[dict], int]]
 DurFetchPage = Callable[[str, int, int], tuple[list[dict], int]]
@@ -107,14 +92,17 @@ def fetch_permit_page(service_key: str, page: int, page_size: int) -> tuple[list
     params = urllib.parse.urlencode(
         {"serviceKey": service_key, "pageNo": page, "numOfRows": page_size, "type": "json"}, safe="%"
     )
-    return _extract_response(_request_json(f"{PERMIT_API_BASE}?{params}", label="MFDS permit API"), "MFDS permit API")
+    return _extract_response(
+        _request_json(f"{MFDS_PERMIT_API_BASE}?{params}", label="MFDS permit API"),
+        "MFDS permit API",
+    )
 
 
 def fetch_dur_page(service_key: str, operation: str, page: int, page_size: int) -> tuple[list[dict], int]:
     params = urllib.parse.urlencode(
         {"serviceKey": service_key, "pageNo": page, "numOfRows": page_size, "type": "json"}, safe="%"
     )
-    url = f"{DUR_API_BASE}/{operation}?{params}"
+    url = f"{MFDS_DUR_ITEM_API_BASE}/{operation}?{params}"
     return _extract_response(_request_json(url, label=f"MFDS DUR {operation}"), f"MFDS DUR {operation}")
 
 
@@ -289,10 +277,10 @@ def sync_canonical_api_sources(
     sources = []
     sources.append(
         _sync_paginated_jsonl(
-            root / PERMIT_FILENAME,
-            dataset_key=PERMIT_DATASET_KEY,
-            source_family="mfds_permit_api",
-            source_locator=PERMIT_API_BASE,
+            root / PERMIT_SOURCE.filename,
+            dataset_key=PERMIT_SOURCE.dataset_key,
+            source_family=PERMIT_SOURCE.source_family,
+            source_locator=PERMIT_SOURCE.source_locator,
             page_size=permit_page_size,
             workers=workers,
             fetch_page=permit_fetcher,
@@ -303,9 +291,9 @@ def sync_canonical_api_sources(
         sources.append(
             _sync_paginated_jsonl(
                 root / spec.filename,
-                dataset_key=f"mfds_dur:{operation}",
-                source_family="mfds_dur_item_api",
-                source_locator=f"{DUR_API_BASE}/{operation}",
+                dataset_key=spec.dataset_key,
+                source_family=spec.source_family,
+                source_locator=spec.source_locator,
                 page_size=dur_page_size,
                 workers=workers,
                 fetch_page=lambda page, size, operation=operation: dur_fetcher(operation, page, size),

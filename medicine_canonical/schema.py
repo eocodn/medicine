@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from medicine_reference.mfds_sources import MFDS_SOURCE_FAMILY_SET
+
+
 SCHEMA_VERSION = "9"
-CORE_SOURCE_FAMILIES = frozenset({"mfds_permit_api", "mfds_dur_item_api", "mfds_dur_ingredient_api"})
+CORE_SOURCE_FAMILIES = MFDS_SOURCE_FAMILY_SET
 
 SCHEMA = r"""
 PRAGMA journal_mode = DELETE;
