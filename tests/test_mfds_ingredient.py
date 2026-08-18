@@ -118,17 +118,17 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             },
         )
 
-    def test_reviewed_remark_registry_covers_exactly_current_69_strings(self) -> None:
-        self.assertEqual(reviewed_mfds_remark_count(), 69)
+    def test_reviewed_remark_registry_covers_exactly_current_110_strings(self) -> None:
+        self.assertEqual(reviewed_mfds_remark_count(), 110)
         self.assertEqual(
             reviewed_mfds_remark_counts_by_category(),
             {
-                "age_contraindication": 8,
-                "combination_contraindication": 11,
-                "dose_caution": 12,
-                "duration_caution": 4,
+                "age_contraindication": 12,
+                "combination_contraindication": 24,
+                "dose_caution": 16,
+                "duration_caution": 7,
                 "elderly_caution": 0,
-                "pregnancy_contraindication": 32,
+                "pregnancy_contraindication": 49,
                 "therapeutic_duplication_caution": 2,
             },
         )

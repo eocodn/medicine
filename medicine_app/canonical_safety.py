@@ -8,7 +8,9 @@ from typing import Any, Mapping
 
 from medicine_reference.mfds_remark_registry import ReviewedMfdsRemark, reviewed_mfds_remark
 
-from .canonical_runtime import has_unlinked_product_rule, item_seq, linked_product_rows
+from .canonical_runtime import (
+    has_unlinked_product_rule, item_seq, linked_product_rows, resolved_product_rows,
+)
 from .dosage_forms import infer_administration_route
 from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 from .safety import (
@@ -64,7 +66,11 @@ def _mfds_qualifiers(row: Mapping[str, Any]) -> list[dict[str, object]]:
 
 def _mfds_criterion_note_requires_review(row: Mapping[str, Any]) -> bool:
     qualifier = _mfds_remark(row)
-    return bool(qualifier and qualifier.requires_review)
+    if qualifier is None:
+        return False
+    if row.get("match_method") == "mfds_unanimous_value":
+        return True
+    return qualifier.requires_review
 
 
 def _details_with_professional_review(details: Any) -> str:
@@ -219,7 +225,11 @@ def _person_specific_risks(
         return []
     rows: list[dict[str, Any]] = []
     for category in ("age_contraindication", "pregnancy_contraindication", "elderly_caution"):
-        rows.extend(linked_product_rows(con, target, category))
+        rows.extend(
+            resolved_product_rows(con, target, category)
+            if category == "elderly_caution"
+            else linked_product_rows(con, target, category)
+        )
     risks: list[dict[str, Any]] = []
     evaluation_dates = _profile_evaluation_dates(candidate_course, as_of)
     pregnancy_rows = [row for row in rows if row.get("category") == "pregnancy_contraindication"]
@@ -251,6 +261,12 @@ def _person_specific_risks(
         if qualifiers:
             finding["qualifiers"] = qualifiers
         risks.append(finding)
+    unanimous_review_categories = {
+        str(candidate["category"])
+        for candidate in rows
+        if candidate.get("match_method") == "mfds_unanimous_value"
+        and _mfds_remark(candidate) is not None
+    }
     for row in rows:
         category = str(row["category"])
         rule_value = row.get("criterion_rule_value")
@@ -304,7 +320,10 @@ def _person_specific_risks(
         qualifiers = _mfds_qualifiers(row)
         if qualifiers:
             finding["qualifiers"] = qualifiers
-        mfds_note_review = _mfds_criterion_note_requires_review(row)
+        mfds_note_review = _mfds_criterion_note_requires_review(row) or (
+            row.get("match_method") == "mfds_unanimous_value"
+            and category in unanimous_review_categories
+        )
         if mfds_note_review:
             finding["evaluation_status"] = "conditional"
             finding["details"] = _details_with_professional_review(finding.get("details"))
@@ -321,7 +340,7 @@ def _duplication_groups(
     if not target:
         return {}
     groups: dict[str, dict[str, Any]] = {}
-    for row in linked_product_rows(con, target, "therapeutic_duplication_caution"):
+    for row in resolved_product_rows(con, target, "therapeutic_duplication_caution"):
         value = row.get("criterion_rule_value") or row.get("effect_name")
         if not value:
             continue

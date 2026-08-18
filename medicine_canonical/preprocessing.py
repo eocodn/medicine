@@ -51,9 +51,44 @@ def canonicalize_link_ingredient_code(value: object) -> str:
     return LINK_CODE_EQUIVALENCES.get(code, code)
 
 
+def _normalize_top_level_locant_slashes(text: str) -> str:
+    """Normalize only the reviewed `-N/S-` style chemical locant separator.
+
+    MFDS permit composition uses `/` both between ingredients and inside a small
+    chemical-locant spelling family.  The DUR item feed spells the latter with
+    a comma (for example Methyl-N,S-Diacetylcysteine).  Only a top-level slash
+    bracketed by one-letter locants is equivalent to that comma; every other
+    slash remains significant composition/source text.
+    """
+    chars = list(text)
+    stack: list[str] = []
+    closing = {")": "(", "]": "[", "}": "{"}
+    for index, char in enumerate(chars):
+        if char in "([{":
+            stack.append(char)
+            continue
+        if char in closing:
+            if stack and stack[-1] == closing[char]:
+                stack.pop()
+            continue
+        if (
+            char == "/"
+            and not stack
+            and index >= 2
+            and index + 2 < len(chars)
+            and chars[index - 2] == "-"
+            and chars[index - 1].isalpha()
+            and chars[index + 1].isalpha()
+            and chars[index + 2] == "-"
+        ):
+            chars[index] = ","
+    return "".join(chars)
+
+
 def normalize_ingredient_identity(value: object) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
     text = _ANNOTATION_RE.sub("", text)
+    text = _normalize_top_level_locant_slashes(text)
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"\s*([+/])\s*", r"\1", text)
     return text.strip()
@@ -95,13 +130,24 @@ def _split_expression(value: object) -> list[str]:
         return []
     parts: list[str] = []
     current: list[str] = []
-    depth = 0
-    for ch in text:
-        if ch == "(":
-            depth += 1
-        elif ch == ")" and depth:
-            depth -= 1
-        if depth == 0 and ch in "+/":
+    stack: list[str] = []
+    closing = {")": "(", "]": "[", "}": "{"}
+    for index, ch in enumerate(text):
+        if ch in "([{":
+            stack.append(ch)
+        elif ch in closing and stack and stack[-1] == closing[ch]:
+            stack.pop()
+        locant_slash = (
+            ch == "/"
+            and not stack
+            and index >= 2
+            and index + 2 < len(text)
+            and text[index - 2] == "-"
+            and text[index - 1].isalpha()
+            and text[index + 1].isalpha()
+            and text[index + 2] == "-"
+        )
+        if not stack and ch in "+/" and not locant_slash:
             piece = "".join(current).strip()
             if piece:
                 parts.append(piece)

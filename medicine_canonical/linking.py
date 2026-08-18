@@ -23,6 +23,13 @@ from .preprocessing import canonicalize_link_ingredient_code, normalize_ingredie
 
 
 DOSE_CATEGORY = "dose_caution"
+_STRUCTURED_VALUE_FALLBACK_CATEGORIES = frozenset({
+    "age_contraindication",
+    "pregnancy_contraindication",
+    "dose_caution",
+    "duration_caution",
+})
+_PLACEHOLDER_EVIDENCE = frozenset({"-", "_"})
 
 
 def _insert_links(
@@ -87,6 +94,76 @@ def _dose_text_equivalent(left: object, right: object) -> bool:
     return left_text == right_text
 
 
+def _normalized_whitespace(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    return " ".join(text.split())
+
+
+def _meaningful_evidence(value: object) -> str | None:
+    text = _normalized_whitespace(value)
+    if not text or text in _PLACEHOLDER_EVIDENCE:
+        return None
+    if not re.search(r"[0-9A-Za-z가-힣]", text):
+        return None
+    return text
+
+
+def _one_structured_value(candidates: list[CriterionCandidate]) -> str | None:
+    if not candidates:
+        return None
+    values: set[str] = set()
+    for candidate in candidates:
+        value = _meaningful_evidence(candidate.rule_value)
+        if value is None:
+            return None
+        values.add(value)
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _same_code_fallback_matches(
+    candidates: list[CriterionCandidate],
+    *,
+    category: str,
+    ingredient_code: object,
+    item_seq: object,
+    product_details: object,
+) -> list[tuple[int, str, None]]:
+    if category not in _STRUCTURED_VALUE_FALLBACK_CATEGORIES:
+        return []
+    eligible = [
+        candidate
+        for candidate in candidates
+        if _criterion_product_scope_applies(
+            candidate,
+            category=category,
+            ingredient_code=ingredient_code,
+            item_seq=item_seq,
+        )
+    ]
+    if not eligible:
+        return []
+
+    product_evidence = _meaningful_evidence(product_details)
+    if product_evidence is not None:
+        detail_matches = [
+            candidate
+            for candidate in eligible
+            if _meaningful_evidence(candidate.details) == product_evidence
+        ]
+        if detail_matches and _one_structured_value(detail_matches) is not None:
+            return [
+                (candidate.criterion_id, "mfds_details_exact", None)
+                for candidate in detail_matches
+            ]
+
+    if _one_structured_value(eligible) is not None:
+        return [
+            (candidate.criterion_id, "mfds_unanimous_value", None)
+            for candidate in eligible
+        ]
+    return []
+
+
 def _dose_candidate_method(
     candidate: CriterionCandidate,
     *,
@@ -124,6 +201,7 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
             category_item_signatures,
             single_signatures,
             pair_signatures,
+            same_code_candidates,
         ) = _load_bridge_maps(con)
 
         dur_forms_by_item: dict[str, set[str]] = defaultdict(set)
@@ -260,6 +338,19 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                     (criterion_id, method, None)
                     for criterion_id, method in found.items()
                 )
+
+            if not matches and category != COMBINATION_CATEGORY:
+                direct_code = canonicalize_link_ingredient_code(row["ingredient_code"])
+                if direct_code:
+                    matches.extend(
+                        _same_code_fallback_matches(
+                            same_code_candidates.get((category, direct_code), []),
+                            category=category,
+                            ingredient_code=row["ingredient_code"],
+                            item_seq=row["item_seq"],
+                            product_details=row["details"],
+                        )
+                    )
 
             if not matches:
                 continue

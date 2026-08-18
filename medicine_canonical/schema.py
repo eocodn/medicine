@@ -3,7 +3,7 @@ from __future__ import annotations
 from medicine_reference.mfds_sources import MFDS_SOURCE_FAMILY_SET
 
 
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 CORE_SOURCE_FAMILIES = MFDS_SOURCE_FAMILY_SET
 
 SCHEMA = r"""
@@ -242,7 +242,7 @@ CREATE INDEX idx_dur_pair_signatures_lookup
 CREATE TABLE product_criterion_links (
     product_rule_id INTEGER NOT NULL REFERENCES product_rules(id),
     criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
-    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','permit_composition')),
+    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','permit_composition','mfds_details_exact','mfds_unanimous_value')),
     pair_orientation TEXT CHECK(pair_orientation IN ('forward','reverse') OR pair_orientation IS NULL),
     PRIMARY KEY(product_rule_id, criterion_rule_id)
 ) WITHOUT ROWID;

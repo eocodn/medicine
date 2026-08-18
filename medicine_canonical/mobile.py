@@ -9,7 +9,7 @@ from pathlib import Path
 from .inspection import verify_canonical_database
 
 
-MOBILE_DATA_POLICY_VERSION = "3"
+MOBILE_DATA_POLICY_VERSION = "4"
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
@@ -79,8 +79,8 @@ def build_mobile_database(
         build_stage = src.execute(
             "SELECT value FROM canonical_meta WHERE key='build_stage'"
         ).fetchone()
-        if not schema_version or schema_version[0] != "9" or not build_stage or build_stage[0] != "complete":
-            raise ValueError("canonical runtime requires complete schema v9 database")
+        if not schema_version or schema_version[0] != "10" or not build_stage or build_stage[0] != "complete":
+            raise ValueError("canonical runtime requires complete schema v10 database")
         dataset_id = _dataset_id(src)
         objects = {
             (kind, name): sql
@@ -142,7 +142,7 @@ def build_mobile_database(
 
     payload = {
         "dataset_id": dataset_id,
-        "schema_version": "9",
+        "schema_version": "10",
         "sha256": _sha256(output),
         "size_bytes": output.stat().st_size,
     }

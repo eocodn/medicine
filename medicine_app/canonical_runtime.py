@@ -14,9 +14,21 @@ _RUNTIME_SOURCE_FAMILIES = MFDS_SOURCE_FAMILIES
 _RUNTIME_SOURCE_KEYS = MFDS_SOURCE_KEYS
 
 
-_CANONICAL_SCHEMA_VERSION = "9"
+_CANONICAL_SCHEMA_VERSION = "10"
 _REQUIRED_FAMILIES = set(_RUNTIME_SOURCE_FAMILIES.values())
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_DIRECT_ITEM_RULE_CATEGORIES = frozenset({
+    "elderly_caution", "therapeutic_duplication_caution"
+})
+
+
+def _direct_item_rule_is_resolved(row: Mapping[str, Any]) -> bool:
+    category = str(row.get("category") or "")
+    if category == "elderly_caution":
+        return True
+    if category == "therapeutic_duplication_caution":
+        return bool(str(row.get("effect_name") or "").strip())
+    return False
 
 
 def item_seq(product: Mapping[str, Any]) -> str | None:
@@ -127,8 +139,72 @@ def linked_product_rows(
     return result
 
 
+def resolved_product_rows(
+    con: sqlite3.Connection,
+    target_item_seq: str,
+    category: str,
+) -> list[dict[str, Any]]:
+    rows = linked_product_rows(con, target_item_seq, category)
+    if category not in _DIRECT_ITEM_RULE_CATEGORIES:
+        return rows
+    linked_product_keys = {
+        (row.get("product_source_dataset_key"), row.get("product_source_row"))
+        for row in rows
+    }
+    con.row_factory = sqlite3.Row
+    direct = con.execute(
+        """SELECT r.* FROM product_rules r
+           WHERE r.item_seq=? AND r.category=? ORDER BY r.source_dataset_key,r.source_row""",
+        (target_item_seq, category),
+    ).fetchall()
+    for raw in direct:
+        row = dict(raw)
+        source_key = (row.get("source_dataset_key"), row.get("source_row"))
+        # Therapeutic-duplication ingredient criteria may carry narrower qualifiers
+        # (for example a form exclusion).  They can enrich the exact ITEM_SEQ
+        # rule, but must never erase its authoritative effect group.  Elderly
+        # criteria have no executable narrowing today, so linked rows remain the
+        # enriched representation there and avoid duplicate findings.
+        if (
+            source_key in linked_product_keys
+            and category != "therapeutic_duplication_caution"
+        ):
+            continue
+        if not _direct_item_rule_is_resolved(row):
+            continue
+        rows.append({
+            **row,
+            "product_source_dataset_key": row.get("source_dataset_key"),
+            "product_source_row": row.get("source_row"),
+            "criterion_source_dataset_key": None,
+            "criterion_source_row": None,
+            "criterion_ingredient_name": None,
+            "criterion_paired_ingredient_name": None,
+            "criterion_rule_value": None,
+            "criterion_dosage_form": None,
+            "criterion_note": None,
+            "criterion_qualifier_note": None,
+            "criterion_details": None,
+            "product_dosage_form": row.get("dosage_form"),
+            "product_details": row.get("details"),
+            "dataset_key": row.get("source_dataset_key"),
+            "product_code": row.get("item_seq"),
+            "paired_product_code": row.get("paired_item_seq"),
+            "rule_value": None,
+            "maximum_daily_amount": None,
+            "maximum_daily_unit": None,
+            "dose_parse_status": None,
+            "dose_parse_reason": None,
+            "note": None,
+            "qualifier_note": None,
+            "match_method": "mfds_item_rule",
+            "pair_orientation": None,
+        })
+    return rows
+
+
 def linked_categories(con: sqlite3.Connection, target_item_seq: str) -> set[str]:
-    return {
+    categories = {
         str(row[0])
         for row in con.execute(
             "SELECT DISTINCT category FROM product_rule_criteria WHERE item_seq=?",
@@ -136,6 +212,14 @@ def linked_categories(con: sqlite3.Connection, target_item_seq: str) -> set[str]
         )
         if row[0]
     }
+    for category, effect_name in con.execute(
+        "SELECT category,effect_name FROM product_rules WHERE item_seq=?",
+        (target_item_seq,),
+    ):
+        direct_row = {"category": category, "effect_name": effect_name}
+        if _direct_item_rule_is_resolved(direct_row):
+            categories.add(str(category))
+    return categories
 
 
 def unlinked_product_rules(
@@ -168,12 +252,15 @@ def has_unlinked_product_rule(con: sqlite3.Connection, target_item_seq: str, cat
 def category_resolution_issues(con: sqlite3.Connection, target_item_seq: str) -> dict[str, list[dict[str, Any]]]:
     issues: dict[str, list[dict[str, Any]]] = {}
     for row in unlinked_product_rules(con, target_item_seq):
-        issues.setdefault(str(row["category"]), []).append(row)
+        category = str(row["category"])
+        if _direct_item_rule_is_resolved(row):
+            continue
+        issues.setdefault(category, []).append(row)
     return issues
 
 
 __all__ = [
     "canonical_manifest", "category_resolution_issues", "has_unlinked_product_rule",
     "item_seq", "linked_categories",
-    "linked_product_rows", "product_flags", "unlinked_product_rules",
+    "linked_product_rows", "resolved_product_rows", "product_flags", "unlinked_product_rules",
 ]
