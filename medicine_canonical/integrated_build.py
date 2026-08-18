@@ -15,6 +15,7 @@ from .linking import materialize_product_criterion_links
 from .schema import SCHEMA, SCHEMA_VERSION
 from .source_policy import CANONICAL_SOURCE_POLICY
 from .mfds_ingredient import IngredientFetchPage
+from .source_layout import MfdsSourceLayout
 from .sources import DurFetchPage, PermitFetchPage
 from .substance_build import assemble_substance_database
 from .substance_inspection import substance_stats, verify_substance_database
@@ -37,16 +38,13 @@ def _insert_source_stage_meta(con: sqlite3.Connection) -> None:
 def assemble_integrated_databases(
     canonical_db_path: str | Path,
     substance_db_path: str | Path,
-    canonical_raw_dir: str | Path,
+    source_layout: MfdsSourceLayout,
     substance_raw_dir: str | Path,
-    ingredient_raw_dir: str | Path,
 ) -> dict:
     """Build source → substance → DUR bridge → product links in that order."""
     canonical_db = Path(canonical_db_path)
     substance_db = Path(substance_db_path)
-    canonical_raw = Path(canonical_raw_dir)
     substance_raw = Path(substance_raw_dir)
-    ingredient_raw = Path(ingredient_raw_dir)
     canonical_db.parent.mkdir(parents=True, exist_ok=True)
     substance_db.parent.mkdir(parents=True, exist_ok=True)
     staged_canonical = canonical_db.with_name(canonical_db.name + ".integrated.tmp")
@@ -60,9 +58,7 @@ def assemble_integrated_databases(
         with closing(sqlite3.connect(staged_canonical)) as con:
             con.executescript(SCHEMA)
             con.execute("BEGIN")
-            source_result = populate_canonical_source_tables(
-                con, canonical_raw, ingredient_raw
-            )
+            source_result = populate_canonical_source_tables(con, source_layout)
             _insert_source_stage_meta(con)
             con.commit()
 
@@ -137,9 +133,8 @@ def build_integrated_databases(
     substance_db_path: str | Path,
     *,
     service_key: str,
-    canonical_raw_dir: str | Path,
+    source_layout: MfdsSourceLayout,
     substance_raw_dir: str | Path,
-    ingredient_raw_dir: str | Path,
     permit_page_size: int = 500,
     dur_page_size: int = 500,
     ingredient_page_size: int = 500,
@@ -150,8 +145,7 @@ def build_integrated_databases(
     ingredient_fetch_page: IngredientFetchPage | None = None,
 ) -> dict:
     sync_reference_sources(
-        canonical_raw_dir,
-        ingredient_raw_dir,
+        source_layout,
         service_key=service_key,
         permit_page_size=permit_page_size,
         dur_page_size=dur_page_size,
@@ -165,9 +159,8 @@ def build_integrated_databases(
     return assemble_integrated_databases(
         canonical_db_path,
         substance_db_path,
-        canonical_raw_dir,
+        source_layout,
         substance_raw_dir,
-        ingredient_raw_dir,
     )
 
 

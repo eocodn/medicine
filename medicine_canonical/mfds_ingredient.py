@@ -4,7 +4,6 @@ import json
 import re
 import urllib.parse
 import sqlite3
-from pathlib import Path
 from typing import Callable
 
 from medicine_reference.mfds_sources import (
@@ -14,6 +13,7 @@ from medicine_reference.mfds_sources import (
 )
 
 from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
+from .source_layout import MfdsSourceLayout
 from .snapshot_io import insert_source_snapshot, load_snapshot_metadata
 from .sources import _request_json, _sync_paginated_jsonl
 
@@ -97,7 +97,7 @@ def fetch_mfds_ingredient_page(
 
 
 def sync_mfds_ingredient_sources(
-    raw_dir: str | Path,
+    source_layout: MfdsSourceLayout,
     *,
     service_key: str,
     page_size: int = MFDS_INGREDIENT_PAGE_SIZE_MAX,
@@ -115,7 +115,7 @@ def sync_mfds_ingredient_sources(
     if not 1 <= workers <= 16:
         raise ValueError("workers must be between 1 and 16")
 
-    root = Path(raw_dir)
+    root = source_layout.ingredient_dir
     root.mkdir(parents=True, exist_ok=True)
     fetcher = fetch_page or (
         lambda operation, page, size: fetch_mfds_ingredient_page(key, operation, page, size)
@@ -124,7 +124,7 @@ def sync_mfds_ingredient_sources(
     for operation, spec in MFDS_INGREDIENT_ENDPOINTS.items():
         sources.append(
             _sync_paginated_jsonl(
-                root / spec.filename,
+                source_layout.path_for(spec),
                 dataset_key=spec.dataset_key,
                 source_family=spec.source_family,
                 source_locator=spec.source_locator,
@@ -245,16 +245,15 @@ def _canonical_rule(
 
 
 def import_mfds_ingredient_snapshots(
-    con: sqlite3.Connection, raw_dir: str | Path
+    con: sqlite3.Connection, source_layout: MfdsSourceLayout
 ) -> dict:
-    root = Path(raw_dir)
     source_rows = 0
     imported_rows = 0
     deleted_rows = 0
     category_counts: dict[str, int] = {}
 
     for operation, spec in MFDS_INGREDIENT_ENDPOINTS.items():
-        path = root / spec.filename
+        path = source_layout.path_for(spec)
         if not path.exists():
             raise FileNotFoundError(f"missing MFDS ingredient snapshot: {path}")
         meta = load_snapshot_metadata(path, label="MFDS ingredient snapshot")
