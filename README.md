@@ -45,9 +45,9 @@ docker compose down
   - EDI는 검색·표시용 보조 식별자로만 사용하고 안전성 identity로 사용하지 않음
 - 약 추가 전 자동 DUR 확인
   - 식약처 허가품목의 `ITEM_SEQ`를 canonical 제품 식별키로 사용
-  - MFDS ITEM_SEQ 제품규칙과 최신 XLSX 상세기준을 연결한 canonical product criterion을 직접 평가
+  - MFDS ITEM_SEQ 제품규칙과 MFDS 성분 DUR 기준을 공식 성분코드로 연결한 canonical product criterion을 직접 평가
   - 공식 제품규칙은 있으나 상세기준 연결이 확정되지 않은 경우 안전으로 추측하지 않고 `unknown`으로 표시
-  - 수유부주의는 canonical product→ingredient criterion applicability를 사용하며 미확정 범위는 `unknown`으로 표시
+  - 수유부주의는 현재 자동 DUR 지원 범위에서 제외
   - EDI/HIRA/제품명 fallback이나 ingredient alias graph를 사용하지 않음
   - 병용금기·효능군 중복은 `active` 플래그만 보지 않고 두 처방의 시작·종료일이 실제로 겹치는지 확인
   - `24/48시간 이내 병용금기`, `특정 성분 투여 중 및 종료 후 N일/N주`처럼 기간과 방향을 확정할 수 있는 원문은 구조화해 washout까지 적용
@@ -118,42 +118,47 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제�
 
 ### `data/db/canonical.sqlite` (앱 기준 DB)
 
-앱과 Android가 사용하는 단일 read-only 의약품/DUR 기준 DB입니다. 세 공식 원본 계열을 직접
+앱과 Android가 사용하는 단일 read-only 의약품/DUR 기준 DB입니다. 세 공식 MFDS 원본 계열을 직접
 보존하고 `ITEM_SEQ`를 제품 중심키로 사용합니다.
 
 - `mfds_permit_api`: 식약처 허가제품 API
 - `mfds_dur_item_api`: 식약처 DUR 품목 API 9개 endpoint
-- `kids_mfds_xlsx`: 최신 성분/기준 XLSX 8종
+- `mfds_dur_ingredient_api`: 식약처 DUR 성분 API 7개 endpoint
+
+지원하는 성분 기준은 병용금기, 특정연령대금기, 임부금기, 용량주의, 투여기간주의, 노인주의,
+효능군중복주의입니다. 성분 API에서 `DEL_YN=정상`인 행만 canonical 기준으로 가져오며 삭제 행은
+현재 근거로 사용하지 않습니다. 수유부주의는 지원하지 않습니다.
 
 제품 DUR은 `product_rules -> product_criterion_links -> ingredient_rules`로 연결하며
-`product_rule_criteria` view로 조회합니다. 수유부주의처럼 MFDS ITEM_SEQ 제품규칙 계열이 없는
-성분 기준은 `product_ingredient_criterion_links`에 별도 materialize합니다. 확정할 수 없는 성분 적용범위는
-`product_ingredient_criterion_unresolved`에 남기고 앱에서 `unknown`으로 표시합니다. 염·수화물·용매화물 등
-서로 다른 precise substance를 일반 문자열 규칙으로 합치지 않습니다.
+`product_rule_criteria` view로 조회합니다. Ingredient criterion은 MFDS 공식 `INGR_CODE` payload가
+반드시 있어야 하며, 코드가 없는 criterion을 성분명 유사도나 별칭으로 복구하는 fallback은 없습니다.
+복합제는 MFDS의 성분코드 조성과 허가제품 조성을 비교하고, 제형 범위와 검토된 소수의 명시적
+제품-scope override를 적용합니다. 염·수화물·용매화물 등 서로 다른 precise substance를 임의의
+문자열 규칙으로 합치지 않습니다.
+
+MFDS `REMARK`는 `qualifier_note`로 보존합니다. 앱에 적응증·농도 등 해당 조건을 판정할 authoritative
+입력이 없으면 REMARK 자연어를 실행 규칙으로 해석하지 않고 `conditional`/전문가 확인 필요로
+fail-closed합니다. 효능군중복의 `SERS_NAME` 같은 분류 설명은 일반 `note`로 분리해 REMARK와
+혼동하지 않습니다.
 
 앱 런타임은 EDI/HIRA/제품명 fallback이나 ingredient alias graph를 사용하지 않습니다. canonical에 존재하는
-제품에 해당 DUR 규칙이 없으면 해당 항목은 clear/not-applicable이고, 공식 제품규칙은 있지만 XLSX 상세기준
-연결이 안 된 경우에만 fail-closed `unknown`으로 남습니다. `product_code` API/개인 DB 호환 필드는 신규 등록에서
-ITEM_SEQ를 저장하며, 기존 개인 DB 재평가는 `catalog_item_seq`를 authoritative reference로 사용합니다.
+제품에 해당 DUR 제품규칙이 없으면 해당 항목은 clear/not-applicable이고, 공식 제품규칙은 있지만 대응하는
+MFDS 성분기준 링크를 확정할 수 없는 경우에만 fail-closed `unknown`으로 남습니다. `product_code` API/개인 DB
+호환 필드는 신규 등록에서 ITEM_SEQ를 저장하며, 기존 개인 DB 재평가는 `catalog_item_seq`를 authoritative
+reference로 사용합니다.
 
-현재 실데이터 빌드 기준(2026-08-13):
+Canonical source snapshot은 총 17개를 정확히 요구합니다: 허가 API 1개 + 품목 DUR API 9개 + 성분 DUR API
+7개입니다. 예상하지 않은 source family/key가 섞이거나 필수 snapshot이 빠지면 release/runtime verification이
+실패합니다.
 
-- schema version 7
-- 허가제품 42,956개 / 정상 35,239개
-- `ITEM_SEQ` 상세 제품규칙 834,286행
-- 품목 플래그 43,295행
-- XLSX 성분/기준 규칙 4,172행
-- 제품 DUR ↔ XLSX 기준 링크 1,080,696행 / 연결된 제품규칙 829,200행 / 미연결 5,086행
-- 수유부주의 등 제품↔성분기준 applicability 665행 / 활성 수유부주의 positive 제품 612개
-- 활성 unresolved 성분 applicability 94행
-- source snapshot 18개 = 허가 API 1 + DUR API 9 + XLSX 8
-- blocking product-link identity ambiguity 0건
-
-API 원본은 `data/canonical/raw/*.jsonl`, substance 원본은 `data/canonical/substances/`에 보존합니다.
-앱용 완전한 DB는 source → substance → DUR bridge → product/applicability 순서를 보장하는 integrated build로
-재생성합니다.
+API 원본은 `data/canonical/raw/*.jsonl`, 성분 DUR 원본은 `data/canonical/mfds_ingredient/*.jsonl`, substance
+원본은 `data/canonical/substances/`에 보존합니다. 앱용 완전한 DB는 source → substance → DUR bridge →
+product link 순서를 보장하는 integrated build로 재생성합니다.
 
 ```bash
+# 최신 MFDS 허가/품목 DUR/성분 DUR API를 동기화
+docker compose run --rm canonical sync --json
+
 # 최신 MFDS API를 동기화한 뒤 canonical + substance DB 전체 재구축
 docker compose run --rm canonical integrated-rebuild --json
 
@@ -165,26 +170,21 @@ docker compose run --rm canonical verify --json
 docker compose run --rm canonical substance-verify --json
 docker compose run --rm canonical stats --json
 
-# 특정 ITEM_SEQ의 제품 DUR / 성분-only 기준 확인
+# 특정 ITEM_SEQ의 제품 DUR ↔ MFDS 성분기준 링크 확인
 docker compose run --rm canonical criteria --item-seq 198600630 --json
-docker compose run --rm canonical ingredient-criteria --item-seq 198600630 --json
 
 # Android용 compact canonical snapshot 생성
 docker compose run --rm canonical mobile-build --json
-
-# KIDS 공식 DUR 페이지에서 최신 8종 XLSX를 직접 동기화
-docker compose run --rm canonical kids-sync --json
 ```
 
-Reference DB 배포 workflow는 KIDS XLSX를 Git이나 R2 source bundle에 보관하지 않습니다.
-실행 시 한국의약품안전관리원 공식 DUR 8개 페이지에서 현재 attachment를 찾아 XLSX를 직접 다운로드하고,
-각 파일의 카테고리별 header/effective date/SHA-256을 검증한 뒤 canonical build에 사용합니다. GitHub Actions에는
-기존 R2 4개 secret 외에 `DATA_GO_KR_SERVICE_KEY`가 필요합니다. API credential이 준비되기 전에는 실패하는
-정기 job을 만들지 않도록 배포 workflow를 수동 실행으로 유지합니다.
+Reference DB 배포 workflow는 fresh source run에서 MFDS API snapshot과 substance identity snapshot을
+동기화하고 검증한 뒤 integrated build와 mobile release를 생성합니다. GitHub Actions에는 R2 배포 secret과
+`DATA_GO_KR_SERVICE_KEY`가 필요합니다. API credential이 준비되기 전에는 실패하는 정기 job을 만들지 않도록
+배포 workflow를 수동 실행으로 유지합니다.
 
-`canonical verify`가 실패하거나 runtime manifest에 unresolved product-link ambiguity가 남아 있으면 앱은
-데이터셋을 verified로 취급하지 않습니다. Android 빌드는 `canonical mobile-build`를 먼저 실행해
-`data/db/mobile.sqlite`와 SHA-256 manifest를 만든 뒤 동일한 Python core를 APK에 패키징합니다.
+`canonical verify`가 실패하면 앱은 데이터셋을 verified로 취급하지 않습니다. Android 빌드는
+`canonical mobile-build`를 먼저 실행해 `data/db/mobile.sqlite`와 SHA-256 manifest를 만든 뒤 동일한 Python
+core를 APK에 패키징합니다.
 
 ## 앱 제어 CLI
 
@@ -359,5 +359,5 @@ DUR 결과는 금기·주의 여부를 확인하기 위한 안전 신호입니�
 
 ## 데이터 사용 주의
 
-KIDS DUR 페이지는 비상업적 연구·교육 목적 사용을 안내하며, 상업적 활용에는 별도 승인이
-필요하다고 고지합니다. 제품화 전에 각 데이터셋의 이용조건을 다시 확인해야 합니다.
+제품화·배포 전에 MFDS 및 함께 사용하는 외부 substance identity 데이터셋의 최신 이용조건과
+재배포 조건을 확인해야 합니다.

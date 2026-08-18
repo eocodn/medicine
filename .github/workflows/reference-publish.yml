@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       refresh_sources:
-        description: Fetch fresh KIDS/MFDS/FDA source snapshots instead of reusing the latest cached snapshot
+        description: Fetch fresh MFDS/FDA source snapshots instead of reusing the latest cached snapshot
         required: false
         default: false
         type: boolean
@@ -52,12 +52,12 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: |
-            data/kids
             data/canonical/raw
+            data/canonical/mfds_ingredient
             data/canonical/substances
-          key: reference-sources-v2-reuse-${{ github.run_id }}
+          key: reference-sources-v3-reuse-${{ github.run_id }}
           restore-keys: |
-            reference-sources-v2-
+            reference-sources-v3-
 
       - name: Resolve source snapshot state
         id: source-state
@@ -69,18 +69,11 @@ jobs:
           set -euo pipefail
           if [[ "$REFRESH_SOURCES" == "true" || -z "$MATCHED_KEY" ]]; then
             echo "sync=true" >> "$GITHUB_OUTPUT"
-            echo "key=reference-sources-v2-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "key=reference-sources-v3-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
           else
             echo "sync=false" >> "$GITHUB_OUTPUT"
             echo "key=$MATCHED_KEY" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Sync current official KIDS XLSX sources
-        if: ${{ steps.source-state.outputs.sync == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          medicine-canonical kids-sync --output-dir data/kids --json
 
       - name: Sync official substance identity snapshots
         if: ${{ steps.source-state.outputs.sync == 'true' }}
@@ -110,8 +103,8 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: |
-            data/kids
             data/canonical/raw
+            data/canonical/mfds_ingredient
             data/canonical/substances
           key: ${{ steps.source-state.outputs.key }}
 
@@ -164,8 +157,8 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: |
-            data/kids
             data/canonical/raw
+            data/canonical/mfds_ingredient
             data/canonical/substances
           key: ${{ needs.sources.outputs.cache_key }}
           fail-on-cache-miss: true
