@@ -8,18 +8,17 @@ from typing import Any, Mapping
 
 from .canonical_coverage import coverage_summary
 from .canonical_runtime import (
-    canonical_manifest, category_resolution_issues, item_seq, lactation_links,
-    lactation_unresolved, linked_categories, unlinked_product_rules,
+    canonical_manifest, category_resolution_issues, item_seq, linked_categories,
+    unlinked_product_rules,
 )
 from .canonical_safety import collect_qualitative_risks, evaluate_quantitative
 from .dur_status import build_dur_checks
-from .lactation_safety import collect_lactation_risks
 from .interaction_timing import courses_overlap
 from .product_flags import apply_product_flag_fallbacks, build_product_flag_checks
 from .safety import age_years
 
 
-EVALUATOR_VERSION = "11-conditional-combination-criteria"
+EVALUATOR_VERSION = "12-mfds-criterion-scope-no-lactation"
 
 
 def _fallback_product(medication: Mapping[str, Any]) -> dict[str, Any]:
@@ -66,10 +65,6 @@ def _profile_rule_categories(
     relevant: set[str] = set()
     if person.get("pregnancy_status") == "unknown" and "pregnancy_contraindication" in categories:
         relevant.add("pregnancy_contraindication")
-    if person.get("lactation_status", "unknown") == "unknown" and (
-        lactation_links(con, target) or lactation_unresolved(con, target)
-    ):
-        relevant.add("lactation_caution")
     return relevant
 
 
@@ -167,9 +162,6 @@ def assess_medication(
         product_risks = collect_qualitative_risks(
             canonical_con, product, person, current, as_of, candidate_course=draft
         )
-        lactation_risks, lactation_not_evaluable = collect_lactation_risks(
-            canonical_con, product, person
-        )
         quantitative = evaluate_quantitative(canonical_con, product, draft)
         pediatric = age_years(person["birth_date"], first_profile_date) < 19
         if pediatric and quantitative["dose"].get("result") in {"within", "not_applicable"}:
@@ -189,15 +181,9 @@ def assess_medication(
             relevant_profile_categories=relevant_profile_categories,
             category_issues=issues,
         )
-        for issue in lactation_not_evaluable:
-            if not any(
-                existing.get("category") == issue.get("category")
-                for existing in coverage["not_evaluable_checks"]
-            ):
-                coverage["not_evaluable_checks"].append(issue)
         detailed_product_categories = linked_categories(canonical_con, target) if target else set()
 
-    risks = _dedupe_risks(product_risks, lactation_risks)
+    risks = _dedupe_risks(product_risks)
     dur_checks = build_dur_checks(
         person=person,
         current=current,

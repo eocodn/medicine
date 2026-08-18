@@ -11,6 +11,11 @@ from .build import assemble_canonical_database, build_canonical_database, canoni
 from .inspection import canonical_product_criteria, canonical_product_ingredient_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .kids_sources import sync_kids_xlsx_sources
+from .mfds_ingredient import (
+    assemble_mfds_ingredient_preview,
+    build_mfds_ingredient_preview,
+    sync_mfds_ingredient_sources,
+)
 from .mobile import build_mobile_database
 from medicine_app.reference_update import verify_reference_database
 from .release import apply_chunk_patch, prepare_release
@@ -34,6 +39,8 @@ DEFAULT_RAW = Path("data/canonical/raw")
 DEFAULT_KIDS = Path("data/kids")
 DEFAULT_SUBSTANCE_DB = Path("data/db/canonical_substances.sqlite")
 DEFAULT_SUBSTANCE_RAW = Path("data/canonical/substances")
+DEFAULT_MFDS_INGREDIENT_DB = Path("data/db/mfds_ingredient_preview.sqlite")
+DEFAULT_MFDS_INGREDIENT_RAW = Path("data/canonical/mfds_ingredient")
 
 
 def _emit(payload: dict, as_json: bool) -> None:
@@ -183,6 +190,41 @@ def build_parser() -> argparse.ArgumentParser:
     kids_sync.add_argument("--quiet", action="store_true")
     kids_sync.add_argument("--json", action="store_true")
 
+    mfds_ingredient_common = argparse.ArgumentParser(add_help=False)
+    mfds_ingredient_common.add_argument(
+        "--service-key", default=os.environ.get("DATA_GO_KR_SERVICE_KEY", "")
+    )
+    mfds_ingredient_common.add_argument(
+        "--raw-dir", type=Path, default=DEFAULT_MFDS_INGREDIENT_RAW
+    )
+    mfds_ingredient_common.add_argument("--page-size", type=int, default=500)
+    mfds_ingredient_common.add_argument("--workers", type=int, default=8)
+    mfds_ingredient_common.add_argument("--quiet", action="store_true")
+    mfds_ingredient_common.add_argument("--json", action="store_true")
+
+    mfds_ingredient_sync = sub.add_parser(
+        "mfds-ingredient-sync",
+        parents=[mfds_ingredient_common],
+        help="Download the seven MFDS DUR ingredient-information snapshots",
+    )
+
+    mfds_ingredient_build = sub.add_parser(
+        "mfds-ingredient-build",
+        help="Convert preserved MFDS DUR ingredient snapshots into a canonical-shaped preview DB",
+    )
+    mfds_ingredient_build.add_argument("--db", type=Path, default=DEFAULT_MFDS_INGREDIENT_DB)
+    mfds_ingredient_build.add_argument(
+        "--raw-dir", type=Path, default=DEFAULT_MFDS_INGREDIENT_RAW
+    )
+    mfds_ingredient_build.add_argument("--json", action="store_true")
+
+    mfds_ingredient_rebuild = sub.add_parser(
+        "mfds-ingredient-rebuild",
+        parents=[mfds_ingredient_common],
+        help="Sync MFDS DUR ingredient snapshots and atomically rebuild the canonical-shaped preview DB",
+    )
+    mfds_ingredient_rebuild.add_argument("--db", type=Path, default=DEFAULT_MFDS_INGREDIENT_DB)
+
     release_create = sub.add_parser("release-create", help="Build verified full and exact-byte delta mobile DB artifacts")
     release_create.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
     release_create.add_argument("--mobile-manifest", type=Path, default=Path("data/db/mobile.manifest.json"))
@@ -319,6 +361,25 @@ def main(argv=None) -> int:
     elif args.command == "kids-sync":
         progress = None if args.quiet else lambda message: print(message, file=sys.stderr, flush=True)
         payload = sync_kids_xlsx_sources(args.output_dir, progress=progress)
+    elif args.command == "mfds-ingredient-sync":
+        payload = sync_mfds_ingredient_sources(
+            args.raw_dir,
+            service_key=_require_key(args.service_key),
+            page_size=args.page_size,
+            workers=args.workers,
+            progress=not args.quiet,
+        )
+    elif args.command == "mfds-ingredient-build":
+        payload = assemble_mfds_ingredient_preview(args.db, args.raw_dir)
+    elif args.command == "mfds-ingredient-rebuild":
+        payload = build_mfds_ingredient_preview(
+            args.db,
+            raw_dir=args.raw_dir,
+            service_key=_require_key(args.service_key),
+            page_size=args.page_size,
+            workers=args.workers,
+            progress=not args.quiet,
+        )
     elif args.command == "release-create":
         created_at = args.created_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         payload = prepare_release(

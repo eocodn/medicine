@@ -20,6 +20,20 @@ class DoseCriteriaTest(unittest.TestCase):
             ("0.024", "mg", "parsed", None),
         )
 
+    def test_normalizes_mfds_korean_mass_units(self) -> None:
+        self.assertEqual(
+            parse_daily_dose_threshold("트리아졸람 0.25밀리그램"),
+            ("0.25", "mg", "parsed", None),
+        )
+        self.assertEqual(
+            parse_daily_dose_threshold("아미카신 1.5그램"),
+            ("1500.0", "mg", "parsed", None),
+        )
+        self.assertEqual(
+            parse_daily_dose_threshold("폴리트로핀델타 24마이크로그램"),
+            ("0.024", "mg", "parsed", None),
+        )
+
     def test_rejects_multiple_or_conditional_thresholds(self) -> None:
         amount, unit, status, reason = parse_daily_dose_threshold(
             "나프록센 1,250mg 또는 나프록센나트륨 1,350mg"

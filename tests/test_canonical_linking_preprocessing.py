@@ -1,79 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
-import unittest
-
 from medicine_canonical import linking
-from medicine_canonical.schema import SCHEMA
+from tests.canonical_linking_test_support import CanonicalLinkingFixture
 
 
-class CanonicalLinkPreprocessingTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.con = sqlite3.connect(":memory:")
-        self.con.executescript(SCHEMA)
-        for key, family in (("permit", "mfds_permit_api"), ("mfds", "mfds_dur_item_api"), ("xlsx", "kids_mfds_xlsx")):
-            self.con.execute(
-                "INSERT INTO source_snapshots(dataset_key,source_family,source_locator,snapshot_path,row_count,sha256,metadata_json) VALUES(?,?,?,?,?,?,?)",
-                (key, family, key, key, 1, "0" * 64, "{}"),
-            )
-
-    def tearDown(self) -> None:
-        self.con.close()
-
-    def product(self, item_seq: str, ingredient_text: str, dosage_form: str = "필름코팅정") -> None:
-        self.con.execute(
-            """INSERT INTO products(
-                item_seq,source_row,product_name,ingredient_text,dosage_form,permit_status,source_dataset_key
-            ) VALUES(?,?,?,?,?,'active','permit')""",
-            (item_seq, len(list(self.con.execute("SELECT 1 FROM products"))) + 1, item_seq, ingredient_text, dosage_form),
-        )
-
-    def product_rule(
-        self,
-        row: int,
-        category: str,
-        item_seq: str,
-        code: str,
-        name_en: str,
-        *,
-        name_ko: str | None = None,
-        paired_item_seq: str | None = None,
-        paired_code: str | None = None,
-        paired_name_en: str | None = None,
-        paired_name_ko: str | None = None,
-        dosage_form: str | None = None,
-        effect_name: str | None = None,
-    ) -> None:
-        self.con.execute(
-            """INSERT INTO product_rules(
-                source_dataset_key,source_row,category,item_seq,ingredient_code,ingredient_name,ingredient_name_en,
-                paired_item_seq,paired_ingredient_code,paired_ingredient_name,paired_ingredient_name_en,
-                dosage_form,effect_name
-            ) VALUES('mfds',?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                row, category, item_seq, code, name_ko, name_en,
-                paired_item_seq, paired_code, paired_name_ko, paired_name_en,
-                dosage_form, effect_name,
-            ),
-        )
-
-    def criterion(
-        self,
-        row: int,
-        category: str,
-        ingredient: str,
-        *,
-        paired: str | None = None,
-        ingredient_ko: str | None = None,
-        rule_value: str | None = None,
-    ) -> None:
-        self.con.execute(
-            """INSERT INTO ingredient_rules(
-                source_dataset_key,source_row,category,ingredient_name,ingredient_name_ko,paired_ingredient_name,rule_value
-            ) VALUES('xlsx',?,?,?,?,?,?)""",
-            (row, category, ingredient, ingredient_ko, paired, rule_value),
-        )
-
+class CanonicalLinkPreprocessingTest(CanonicalLinkingFixture):
     def test_category_scoped_active_moiety_links_salt_name(self) -> None:
         self.product("P1", "Escitalopram Oxalate")
         self.product("P2", "Domperidone")
@@ -290,18 +221,3 @@ class CanonicalLinkPreprocessingTest(unittest.TestCase):
                                                               JOIN product_rules r ON r.id=l.product_rule_id""")}
         self.assertEqual(linked_items, {"P2"})
         self.assertEqual(result["unresolved_link_identity_count"], 0)
-
-    def test_criterion_ambiguity_without_a_blocked_product_rule_is_not_reported(self) -> None:
-        self.product("P1", "OtherDrug")
-        self.product_rule(1, "dose_caution", "P1", "D-O", "OtherDrug")
-        self.product_rule(2, "age_contraindication", "P1", "D-F1", "FutureDrug Hydrochloride")
-        self.product_rule(3, "pregnancy_contraindication", "P1", "D-F2", "FutureDrug Succinate")
-        self.criterion(1, "dose_caution", "FutureDrug")
-
-        result = linking.materialize_product_criterion_links(self.con)
-
-        self.assertEqual(result["unresolved_link_identity_count"], 0)
-
-
-if __name__ == "__main__":
-    unittest.main()

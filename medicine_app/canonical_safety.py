@@ -6,6 +6,11 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
+from medicine_canonical.mfds_scope_overrides import (
+    mfds_product_scope_allows,
+    mfds_product_scope_is_explicit,
+)
+
 from .canonical_runtime import has_unlinked_product_rule, item_seq, linked_product_rows
 from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
 from .safety import (
@@ -47,14 +52,58 @@ def _canonical_paired_ingredient(row: Mapping[str, Any]) -> str | None:
     return row.get("criterion_paired_ingredient_name") or row.get("paired_ingredient_name")
 
 
-def _pregnancy_rule_display(value: Any) -> str:
+def _automatic_criterion_note(row: Mapping[str, Any]) -> str | None:
+    dataset_key = str(row.get("criterion_source_dataset_key") or "")
+    if dataset_key.startswith("mfds_dur_ingredient:"):
+        return None
+    text = str(row.get("criterion_note") or "").strip()
+    return text or None
+
+
+def _mfds_unstructured_note_requires_review(row: Mapping[str, Any]) -> bool:
+    dataset_key = str(row.get("criterion_source_dataset_key") or "")
+    if not dataset_key.startswith("mfds_dur_ingredient:"):
+        return False
+    category = str(row.get("category") or "")
+    if category not in {"age_contraindication", "pregnancy_contraindication"}:
+        return False
+    if not str(row.get("criterion_note") or "").strip():
+        return False
+    ingredient_code = row.get("ingredient_code")
+    if mfds_product_scope_is_explicit(category, ingredient_code):
+        return not mfds_product_scope_allows(
+            category, ingredient_code, row.get("item_seq"), row.get("criterion_rule_value")
+        )
+    return True
+
+
+def _details_with_professional_review(details: Any) -> str:
+    advice = "세부 적용 조건이 있어 의사 또는 약사에게 확인하세요."
+    text = str(details or "").strip()
+    return f"{text} {advice}" if text else advice
+
+
+def _pregnancy_note_condition(note: Any) -> str | None:
+    text = str(note or "").strip()
+    if not text:
+        return None
+    if re.search(r"(?:단\s*,?|제외|경우|한함|사용\s*시|투여\s*시)", text):
+        return text
+    return None
+
+
+def _pregnancy_rule_display(value: Any, note: Any = None) -> str:
     text = str(value or "").strip()
     if text in {"1", "2"}:
-        return f"{text}등급"
-    return text or "등급 미표기"
+        text = f"{text}등급"
+    display = text or "등급 미표기"
+    condition = _pregnancy_note_condition(note)
+    if condition and condition not in display:
+        return f"{display} ({condition})"
+    return display
 
 
-def _pregnancy_rule_is_conditional(value: Any) -> bool:
+def _pregnancy_rule_is_conditional(value: Any, note: Any = None) -> bool:
     """Return whether the DUR grade itself carries an applicability qualifier.
 
     Canonical pregnancy criteria use plain ``1등급``/``2등급`` for unconditional
@@ -64,7 +113,7 @@ def _pregnancy_rule_is_conditional(value: Any) -> bool:
     fact, so they must stay review-required without being presented as a definite hit.
     """
     text = str(value or "").strip()
-    return bool(re.search(r"[12]\s*등급\s*\(", text))
+    return bool(re.search(r"[12]\s*등급\s*\(", text)) or _pregnancy_note_condition(note) is not None
 
 
 _DURATION_LIMIT_RE = re.compile(r"^\s*(?P<amount>\d+)\s*(?P<unit>일|주|개월)?\s*$")
@@ -103,7 +152,7 @@ def _combination_risks(
         for row in rows:
             candidate_side = "left" if row.get("item_seq") == target else "right"
             details = _canonical_details(row)
-            criterion_note = str(row.get("criterion_note") or "").strip()
+            criterion_note = _automatic_criterion_note(row) or ""
             timing_text = " ".join(part for part in (criterion_note, details) if part)
             timing = parse_interaction_timing(
                 timing_text, _canonical_ingredient(row), _canonical_paired_ingredient(row)
@@ -132,7 +181,7 @@ def _combination_risks(
             risks.append({
                 "type": "combination_contraindication", "severity": "info",
                 "title": f"{medication['product_name']}와 병용금기 기준 확인 필요",
-                "details": "MFDS ITEM_SEQ 병용금기 규칙은 있으나 XLSX 상세 기준 연결을 확정하지 못했습니다.",
+                "details": "MFDS ITEM_SEQ 병용금기 규칙은 있으나 상세 기준 연결을 확정하지 못했습니다. 의사 또는 약사에게 확인하세요.",
                 "related_medication_id": medication["id"],
                 "evaluation_status": "unknown", "source_scope": "canonical_product",
             })
@@ -174,6 +223,35 @@ def _person_specific_risks(
         rows.extend(linked_product_rows(con, target, category))
     risks: list[dict[str, Any]] = []
     evaluation_dates = _profile_evaluation_dates(candidate_course, as_of)
+    age_note_review_required = any(
+        _mfds_unstructured_note_requires_review(row)
+        for row in rows
+        if row.get("category") == "age_contraindication"
+    )
+    pregnancy_rows = [row for row in rows if row.get("category") == "pregnancy_contraindication"]
+    pregnancy_note_review_required = any(
+        _mfds_unstructured_note_requires_review(row) for row in pregnancy_rows
+    )
+    pregnancy_grades = {
+        match.group(1)
+        for row in pregnancy_rows
+        if (match := re.search(r"([12])\s*등급", str(row.get("criterion_rule_value") or "")))
+    }
+    conflicting_pregnancy_grades = (
+        person.get("pregnancy_status") == "pregnant" and len(pregnancy_grades) > 1
+    )
+    if conflicting_pregnancy_grades:
+        first = pregnancy_rows[0]
+        risks.append({
+            "type": "pregnancy_contraindication",
+            "severity": "info",
+            "title": "임부금기 기준 확인 필요",
+            "details": "서로 다른 임부금기 등급이 함께 적용되어 자동 판정하지 않습니다. 의사 또는 약사에게 확인하세요.",
+            "evaluation_status": "unknown",
+            "source_scope": "canonical_product",
+            "dataset_key": first.get("criterion_source_dataset_key"),
+            "source_row": first.get("criterion_source_row"),
+        })
     for row in rows:
         category = str(row["category"])
         rule_value = row.get("criterion_rule_value")
@@ -206,7 +284,10 @@ def _person_specific_risks(
         elif category == "pregnancy_contraindication":
             if person.get("pregnancy_status") != "pregnant":
                 continue
-            rule_display = _pregnancy_rule_display(rule_value)
+            if conflicting_pregnancy_grades:
+                continue
+            criterion_note = _automatic_criterion_note(row)
+            rule_display = _pregnancy_rule_display(rule_value, criterion_note)
             title, severity = f"임부금기 · {rule_display}", "danger"
         else:
             if not any(age_years(person["birth_date"], evaluation_date) >= 65 for evaluation_date in evaluation_dates):
@@ -218,7 +299,17 @@ def _person_specific_risks(
             "dataset_key": row.get("criterion_source_dataset_key"),
             "source_row": row.get("criterion_source_row"),
         }
-        if category == "pregnancy_contraindication" and _pregnancy_rule_is_conditional(rule_value):
+        mfds_note_review = (
+            category == "age_contraindication" and age_note_review_required
+        ) or (
+            category == "pregnancy_contraindication" and pregnancy_note_review_required
+        )
+        if mfds_note_review:
+            finding["evaluation_status"] = "conditional"
+            finding["details"] = _details_with_professional_review(finding.get("details"))
+        elif category == "pregnancy_contraindication" and _pregnancy_rule_is_conditional(
+            rule_value, _automatic_criterion_note(row)
+        ):
             finding["evaluation_status"] = "conditional"
         risks.append(finding)
     return risks

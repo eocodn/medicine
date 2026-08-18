@@ -61,8 +61,9 @@ class MobileDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(preview["product"]["product_mapping_method"], "item_seq_exact")
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "exceeded")
-        lactation = next(row for row in preview["dur_checks"] if row["category"] == "lactation_caution")
-        self.assertEqual(lactation["status"], "hit")
+        self.assertNotIn(
+            "lactation_caution", {row["category"] for row in preview["dur_checks"]}
+        )
 
     def test_mobile_build_rejects_incomplete_source_snapshot_set(self) -> None:
         with sqlite3.connect(self.canonical_db) as con:
