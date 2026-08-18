@@ -124,14 +124,27 @@ class ReferenceStore(
         state = activation.state
         recoveryReason = recoveryReason ?: activation.recoveryReason
 
+        // An established LKG is already byte-verified when staged, so compatible
+        // generations keep the cheap content-only startup path. An app upgrade can
+        // change the bundled/runtime schema, however; content validity alone does
+        // not make an older SQLite generation safe for the new Python evaluator.
+        fun startupCompatible(version: ReferenceVersion): Boolean =
+            version.schemaVersion == bundled.schemaVersion && isContentVerified(version)
+
+        val installedSchemaMismatch = listOfNotNull(state.active, state.previous).any {
+            it.schemaVersion != bundled.schemaVersion
+        }
         val selected = when {
-            state.active != null && isContentVerified(state.active) -> state.active
-            state.previous != null && isContentVerified(state.previous) -> {
+            state.active != null && startupCompatible(state.active) -> state.active
+            state.previous != null && startupCompatible(state.previous) -> {
                 recoveryReason = recoveryReason ?: "active reference invalid; using previous LKG"
                 state.previous
             }
             else -> {
-                if (state.active != null || state.previous != null) {
+                if (installedSchemaMismatch) {
+                    recoveryReason = recoveryReason
+                        ?: "installed reference schema incompatible; using bundled fallback"
+                } else if (state.active != null || state.previous != null) {
                     recoveryReason = recoveryReason ?: "installed reference LKG invalid; using bundled fallback"
                 }
                 ensureBundled(bundled, installBundled)

@@ -26,13 +26,18 @@ class ReferenceStoreTest {
         }
     }
 
-    private fun version(data: ByteArray, sequence: Long, dataset: String): ReferenceVersion = ReferenceVersion(
+    private fun version(
+        data: ByteArray,
+        sequence: Long,
+        dataset: String,
+        schemaVersion: String = "8",
+    ): ReferenceVersion = ReferenceVersion(
         datasetId = "sha256:" + MessageDigest.getInstance("SHA-256")
             .digest(dataset.toByteArray())
             .joinToString("") { "%02x".format(it) },
         sha256 = MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { "%02x".format(it) },
         sizeBytes = data.size.toLong(),
-        schemaVersion = "8",
+        schemaVersion = schemaVersion,
         releaseSequence = sequence,
     )
 
@@ -152,6 +157,42 @@ class ReferenceStoreTest {
 
             ReferenceStore(root, storage, verifier).openForStartup(bundled) { error("bundled exists") }
             assertEquals(1, verifier.calls)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun schemaUpgradeRejectsOldActiveLkgAndUsesBundledReference() {
+        val root = Files.createTempDirectory("reference-store-schema-upgrade").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val verifier = FakeDatabaseVerifier()
+            val oldBundledBytes = "bundled-v8".toByteArray()
+            val oldBundled = version(oldBundledBytes, 0, "bundled-v8", schemaVersion = "8")
+            val oldReleaseBytes = "release-v8-seven".toByteArray()
+            val oldRelease = version(oldReleaseBytes, 7, "release-v8-seven", schemaVersion = "8")
+
+            val first = ReferenceStore(root, storage, verifier)
+            first.openForStartup(oldBundled) { it.writeBytes(oldBundledBytes) }
+            first.stagePending(
+                oldRelease,
+                File(root, ".candidate-v8.sqlite").apply { writeBytes(oldReleaseBytes) },
+            )
+            ReferenceStore(root, storage, verifier)
+                .openForStartup(oldBundled) { error("old bundled reference already exists") }
+            assertEquals(7, ReferenceStore(root, storage, verifier).snapshot().highestActivatedSequence)
+
+            val newBundledBytes = "bundled-v10".toByteArray()
+            val newBundled = version(newBundledBytes, 0, "bundled-v10", schemaVersion = "10")
+            val upgradedStore = ReferenceStore(root, storage, verifier)
+            val selected = upgradedStore.openForStartup(newBundled) { it.writeBytes(newBundledBytes) }
+
+            assertEquals(newBundled, selected.version)
+            assertTrue(selected.recoveryReason!!.contains("schema"))
+            assertEquals(newBundled, upgradedStore.snapshot().active)
+            assertNull(upgradedStore.snapshot().previous)
+            assertEquals(7, upgradedStore.snapshot().highestActivatedSequence)
         } finally {
             root.deleteRecursively()
         }
