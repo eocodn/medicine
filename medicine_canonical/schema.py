@@ -118,6 +118,21 @@ CREATE INDEX idx_ingredient_rules_name ON ingredient_rules(ingredient_name);
 CREATE INDEX idx_ingredient_rules_name_ko ON ingredient_rules(ingredient_name_ko);
 CREATE INDEX idx_ingredient_rules_pair ON ingredient_rules(paired_ingredient_name);
 
+-- Build-time regulatory identifiers for ingredient criteria. KIDS XLSX rows do
+-- not publish these codes, while MFDS ingredient APIs do. Keep them separate
+-- from the mobile runtime row shape: they are authoritative linking evidence,
+-- not a chemical substance identity and are unnecessary after links are built.
+CREATE TABLE ingredient_rule_codes (
+    criterion_rule_id INTEGER PRIMARY KEY REFERENCES ingredient_rules(id),
+    ingredient_code TEXT NOT NULL,
+    paired_ingredient_code TEXT,
+    mixture_type TEXT CHECK(mixture_type IN ('단일','복합') OR mixture_type IS NULL),
+    mixture_ingredient_codes_json TEXT NOT NULL DEFAULT '[]',
+    mixture_ingredient_names_json TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX idx_ingredient_rule_codes_ingredient ON ingredient_rule_codes(ingredient_code);
+CREATE INDEX idx_ingredient_rule_codes_pair ON ingredient_rule_codes(paired_ingredient_code);
+
 CREATE TABLE dose_criteria (
     criterion_rule_id INTEGER PRIMARY KEY REFERENCES ingredient_rules(id),
     maximum_daily_amount TEXT,
@@ -178,6 +193,25 @@ CREATE TABLE dur_product_item_signatures (
 ) WITHOUT ROWID;
 CREATE INDEX idx_dur_product_item_signatures_lookup
     ON dur_product_item_signatures(signature_type, signature_key);
+
+-- MFDS ingredient criteria carry category-scoped DUR composition codes. The
+-- legacy global product signature remains for KIDS/lactation build-time paths;
+-- this table resolves permit composition only inside the product-rule category
+-- so a name reused with another DUR code in another category cannot erase
+-- otherwise authoritative composition evidence.
+CREATE TABLE dur_product_category_signatures (
+    item_seq TEXT NOT NULL,
+    category TEXT NOT NULL,
+    signature_key TEXT NOT NULL,
+    component_count INTEGER NOT NULL CHECK(component_count > 0),
+    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','permit_composition')),
+    evidence_kind TEXT NOT NULL CHECK(
+        evidence_kind IN ('category_permit_composition','category_single_component_rule')
+    ),
+    PRIMARY KEY(item_seq, category, signature_key)
+) WITHOUT ROWID;
+CREATE INDEX idx_dur_product_category_signatures_lookup
+    ON dur_product_category_signatures(category, signature_key);
 
 CREATE TABLE dur_criterion_signatures (
     criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),

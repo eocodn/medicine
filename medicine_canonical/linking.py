@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 import unicodedata
 from collections import defaultdict
-from dataclasses import dataclass
 from typing import Iterable
 
 from .dur_bridge import (
@@ -13,7 +11,16 @@ from .dur_bridge import (
     DOSE_CATEGORY,
     DUPLICATION_CATEGORY,
     ensure_dur_ingredient_bridge,
-    signature_key,
+)
+from .form_scope import mfds_form_scope_applies
+from .linking_candidates import (
+    AmbiguousSingleCandidate,
+    CriterionCandidate,
+    PairCriterionCandidate,
+    code_options as _code_options,
+    code_signature as _code_signature,
+    hybrid_options as _hybrid_options,
+    load_bridge_maps as _load_bridge_maps,
 )
 from .preprocessing import (
     canonicalize_link_ingredient_code,
@@ -21,40 +28,6 @@ from .preprocessing import (
     normalize_korean_identity,
     qualifier_applies,
 )
-
-
-@dataclass(frozen=True)
-class CriterionCandidate:
-    criterion_id: int
-    method: str
-    qualifier: str | None = None
-    rule_value: str | None = None
-    dosage_form: str | None = None
-
-
-@dataclass(frozen=True)
-class PairCriterionCandidate:
-    criterion_id: int
-    method: str
-    left_qualifier: str | None = None
-    right_qualifier: str | None = None
-
-
-@dataclass(frozen=True)
-class AmbiguousSingleCandidate:
-    criterion_id: int
-    record_key: tuple[str, str, tuple[str, ...], str]
-    record: dict
-    rule_value: str | None
-    dosage_form: str | None
-
-
-@dataclass(frozen=True)
-class ProductSignature:
-    signature_key: str
-    component_count: int
-    method: str
-    evidence_kind: str
 
 
 def _criterion_key(category: str, ingredient_name: object, rule_value: object) -> tuple[str, str, str]:
@@ -91,6 +64,17 @@ def _insert_links(
 
 def _form_text(*values: object) -> str:
     return " ".join(str(value or "").strip() for value in values if str(value or "").strip())
+
+
+def _criterion_form_applies(
+    candidate: CriterionCandidate | PairCriterionCandidate,
+    product_form: object,
+) -> bool:
+    if isinstance(candidate, CriterionCandidate) and candidate.all_forms_scope:
+        return True
+    if not candidate.strict_form_scope:
+        return True
+    return mfds_form_scope_applies(candidate.dosage_form, product_form)
 
 
 def _evidence_text(value: object) -> str:
@@ -134,7 +118,9 @@ def _dose_candidate_method(
     rule_value = candidate.rule_value
     dosage_form = candidate.dosage_form
     if details:
-        if _dose_text_equivalent(details, rule_value) or (
+        if _dose_text_equivalent(details, rule_value) or _dose_text_equivalent(
+            details, getattr(candidate, "details", None)
+        ) or (
             _evidence_text(details) and _evidence_text(details) == _evidence_text(dosage_form)
         ):
             return direct_method or "product_detail_evidence"
@@ -145,146 +131,6 @@ def _dose_candidate_method(
     if korean and korean in normalize_korean_identity(rule_value):
         return "rule_value_identity"
     return None
-
-
-def _record_key(category: str, ambiguity: dict) -> tuple[str, str, tuple[str, ...], str]:
-    return (
-        category,
-        str(ambiguity["ingredient_name"]),
-        tuple(ambiguity["candidate_codes"]),
-        str(ambiguity.get("reason", "active_moiety_multiple_codes")),
-    )
-
-
-def _load_bridge_maps(con: sqlite3.Connection):
-    code_map: dict[tuple[str, str], str] = {}
-    for row in con.execute(
-        """SELECT category,source_ingredient_code,canonical_ingredient_code
-           FROM dur_ingredient_code_map"""
-    ):
-        code_map[(str(row[0]), str(row[1]))] = str(row[2])
-
-    item_signatures: dict[tuple[str, str], list[ProductSignature]] = defaultdict(list)
-    for row in con.execute(
-        """SELECT item_seq,signature_type,signature_key,component_count,match_method,evidence_kind
-           FROM dur_product_item_signatures"""
-    ):
-        item_signatures[(str(row[0]), str(row[1]))].append(
-            ProductSignature(str(row[2]), int(row[3]), str(row[4]), str(row[5]))
-        )
-
-    single_signatures: dict[tuple[str, str, str], list[CriterionCandidate]] = defaultdict(list)
-    rule_value_signatures: dict[tuple[str, str], list[CriterionCandidate]] = defaultdict(list)
-    for row in con.execute(
-        """SELECT s.criterion_rule_id,s.category,s.effect_key,s.signature_type,s.signature_key,
-                  s.qualifier,s.match_method,i.rule_value,i.dosage_form
-           FROM dur_criterion_signatures s
-           JOIN ingredient_rules i ON i.id=s.criterion_rule_id"""
-    ):
-        candidate = CriterionCandidate(
-            int(row[0]), str(row[6]), row[5], row[7], row[8]
-        )
-        if row[3] == "rule_value":
-            rule_value_signatures[(str(row[1]), str(row[4]))].append(candidate)
-        else:
-            single_signatures[(str(row[1]), str(row[2]), str(row[4]))].append(candidate)
-
-    pair_signatures: dict[tuple[str, str], list[PairCriterionCandidate]] = defaultdict(list)
-    hybrid_pair_signatures: dict[tuple[str, str], list[PairCriterionCandidate]] = defaultdict(list)
-    for row in con.execute(
-        """SELECT criterion_rule_id,signature_type,left_signature_key,right_signature_key,
-                  left_qualifier,right_qualifier,match_method
-           FROM dur_criterion_pair_signatures"""
-    ):
-        candidate = PairCriterionCandidate(int(row[0]), str(row[6]), row[4], row[5])
-        target = hybrid_pair_signatures if row[1] == "hybrid" else pair_signatures
-        target[(str(row[2]), str(row[3]))].append(candidate)
-
-    ambiguous_single: dict[tuple[str, str, str], list[AmbiguousSingleCandidate]] = defaultdict(list)
-    for row in con.execute(
-        """SELECT criterion_rule_id,category,effect_key,signature_key,record_json,rule_value,dosage_form
-           FROM dur_single_ambiguities"""
-    ):
-        record = json.loads(row[4])
-        ambiguous_single[(str(row[1]), str(row[2]), str(row[3]))].append(
-            AmbiguousSingleCandidate(
-                int(row[0]), _record_key(str(row[1]), record), record, row[5], row[6]
-            )
-        )
-
-    ambiguous_pair: dict[tuple[str, str], dict[tuple[str, str, tuple[str, ...], str], dict]] = defaultdict(dict)
-    for row in con.execute(
-        "SELECT left_signature_key,right_signature_key,record_json FROM dur_pair_ambiguities"
-    ):
-        record = json.loads(row[2])
-        key = _record_key(str(record["category"]), record)
-        ambiguous_pair[(str(row[0]), str(row[1]))][key] = record
-
-    return (
-        code_map,
-        item_signatures,
-        single_signatures,
-        rule_value_signatures,
-        pair_signatures,
-        hybrid_pair_signatures,
-        ambiguous_single,
-        ambiguous_pair,
-    )
-
-
-def _code_signature(category: str, raw_code: object, code_map: dict[tuple[str, str], str]) -> ProductSignature | None:
-    source_code = str(raw_code or "").strip()
-    canonical_code = code_map.get((category, source_code))
-    if not canonical_code:
-        return None
-    return ProductSignature(
-        signature_key(frozenset({canonical_code})),
-        1,
-        "mfds_ingredient_code",
-        "mfds_code_scope",
-    )
-
-
-def _code_options(
-    category: str,
-    raw_code: object,
-    item_seq: object,
-    code_map: dict[tuple[str, str], str],
-    item_signatures: dict[tuple[str, str], list[ProductSignature]],
-) -> list[ProductSignature]:
-    values: list[ProductSignature] = []
-    direct = _code_signature(category, raw_code, code_map)
-    if direct:
-        values.append(direct)
-    values.extend(item_signatures.get((str(item_seq or ""), "code"), []))
-    deduped: dict[str, ProductSignature] = {}
-    for value in values:
-        deduped.setdefault(value.signature_key, value)
-    return list(deduped.values())
-
-
-def _hybrid_options(
-    category: str,
-    raw_code: object,
-    item_seq: object,
-    code_map: dict[tuple[str, str], str],
-    item_signatures: dict[tuple[str, str], list[ProductSignature]],
-) -> list[ProductSignature]:
-    values = item_signatures.get((str(item_seq or ""), "hybrid"), [])
-    if values:
-        return values
-    source_code = str(raw_code or "").strip()
-    canonical_code = code_map.get((category, source_code))
-    if not canonical_code:
-        return []
-    return [
-        ProductSignature(
-            signature_key(frozenset({"code:" + canonical_code})),
-            1,
-            "permit_composition",
-            "mfds_code_scope",
-        )
-    ]
 
 
 def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
@@ -302,6 +148,7 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
         (
             code_map,
             item_signatures,
+            category_item_signatures,
             single_signatures,
             rule_value_signatures,
             pair_signatures,
@@ -319,7 +166,11 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
         direct_single: dict[tuple[str, str, str], list[CriterionCandidate]] = defaultdict(list)
         direct_pairs: dict[tuple[str, str], list[int]] = defaultdict(list)
         for row in con.execute(
-            "SELECT id,category,ingredient_name,paired_ingredient_name,rule_value,dosage_form FROM ingredient_rules"
+            """SELECT i.id,i.category,i.ingredient_name,i.paired_ingredient_name,
+                      i.rule_value,i.dosage_form,i.details
+               FROM ingredient_rules i
+               LEFT JOIN ingredient_rule_codes c ON c.criterion_rule_id=i.id
+               WHERE c.criterion_rule_id IS NULL"""
         ):
             criterion_id = int(row["id"])
             category = str(row["category"])
@@ -340,6 +191,7 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                     "english_exact",
                     rule_value=row["rule_value"],
                     dosage_form=row["dosage_form"],
+                    details=row["details"],
                 )
             )
 
@@ -376,7 +228,12 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                     matches.extend((criterion_id, "english_exact", orientation) for criterion_id in ids)
 
                 left_code_options = _code_options(
-                    category, row["ingredient_code"], row["item_seq"], code_map, item_signatures
+                    category,
+                    row["ingredient_code"],
+                    row["item_seq"],
+                    code_map,
+                    item_signatures,
+                    category_item_signatures,
                 )
                 right_code_options = _code_options(
                     category,
@@ -384,6 +241,7 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                     row["paired_item_seq"],
                     code_map,
                     item_signatures,
+                    category_item_signatures,
                 )
                 left_form = _form_text(
                     row["dosage_form"],
@@ -394,6 +252,8 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                     row["paired_permit_dosage_form"],
                     " ".join(sorted(dur_forms_by_item.get(str(row["paired_item_seq"] or ""), set()))),
                 )
+                strict_left_form = row["dosage_form"] or row["permit_dosage_form"]
+                strict_right_form = row["paired_permit_dosage_form"]
                 if not matches:
                     found: dict[int, tuple[str, str]] = {}
                     for left_sig in left_code_options:
@@ -403,6 +263,11 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                                 ("reverse", (right_sig.signature_key, left_sig.signature_key)),
                             ):
                                 for candidate in pair_signatures.get(key, []):
+                                    scoped_product_form = (
+                                        strict_left_form if orientation == "forward" else strict_right_form
+                                    )
+                                    if not _criterion_form_applies(candidate, scoped_product_form):
+                                        continue
                                     if orientation == "forward":
                                         left_ok = qualifier_applies(candidate.left_qualifier, left_form)
                                         right_ok = qualifier_applies(candidate.right_qualifier, right_form)
@@ -443,6 +308,11 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                                 ("reverse", (right_sig.signature_key, left_sig.signature_key)),
                             ):
                                 for candidate in hybrid_pair_signatures.get(key, []):
+                                    scoped_product_form = (
+                                        strict_left_form if orientation == "forward" else strict_right_form
+                                    )
+                                    if not _criterion_form_applies(candidate, scoped_product_form):
+                                        continue
                                     if orientation == "forward":
                                         left_ok = qualifier_applies(candidate.left_qualifier, left_form)
                                         right_ok = qualifier_applies(candidate.right_qualifier, right_form)
@@ -484,15 +354,33 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                     matches.extend((candidate.criterion_id, "english_exact", None) for candidate in direct_candidates)
 
                 code_options = _code_options(
-                    category, row["ingredient_code"], row["item_seq"], code_map, item_signatures
+                    category,
+                    row["ingredient_code"],
+                    row["item_seq"],
+                    code_map,
+                    item_signatures,
+                    category_item_signatures,
                 )
                 form = _form_text(row["dosage_form"], row["permit_dosage_form"])
+                strict_form = row["dosage_form"] or row["permit_dosage_form"]
                 if not matches:
                     found: dict[int, str] = {}
                     for product_sig in code_options:
                         for candidate in single_signatures.get(
                             (category, effect, product_sig.signature_key), []
                         ):
+                            if (
+                                candidate.exact_composition_scope
+                                and product_sig.evidence_kind
+                                not in {
+                                    "permit_composition",
+                                    "category_permit_composition",
+                                    "category_single_component_rule",
+                                }
+                            ):
+                                continue
+                            if not _criterion_form_applies(candidate, strict_form):
+                                continue
                             if not qualifier_applies(candidate.qualifier, form):
                                 continue
                             method = candidate.method
@@ -516,6 +404,18 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                         for candidate in rule_value_signatures.get(
                             (category, product_sig.signature_key), []
                         ):
+                            if (
+                                candidate.exact_composition_scope
+                                and product_sig.evidence_kind
+                                not in {
+                                    "permit_composition",
+                                    "category_permit_composition",
+                                    "category_single_component_rule",
+                                }
+                            ):
+                                continue
+                            if not _criterion_form_applies(candidate, strict_form):
+                                continue
                             method = _dose_candidate_method(
                                 candidate,
                                 product_ingredient_name_ko=row["ingredient_name"],
@@ -527,11 +427,8 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                     matches.extend((criterion_id, method, None) for criterion_id, method in found.items())
 
                 if not matches and not direct_name_seen:
-                    direct_code_keys = {
-                        sig.signature_key
-                        for sig in code_options
-                        if sig.evidence_kind == "mfds_code_scope" and sig.component_count == 1
-                    }
+                    direct_code = _code_signature(category, row["ingredient_code"], code_map)
+                    direct_code_keys = {direct_code.signature_key} if direct_code else set()
                     for signature in direct_code_keys:
                         for candidate in ambiguous_single_by_signature.get(
                             (category, effect, signature), []

@@ -310,7 +310,11 @@ class IdentityResolver:
         signatures = {frozenset(choice) for choice in itertools.product(*per_atom_tokens) if choice}
         return ResolvedExpression(tuple(sorted(signatures, key=lambda s: tuple(sorted(s)))), qualifier, preprocessed, ())
 
-    def resolve_permit_composition(self, value: object) -> frozenset[str] | None:
+    def resolve_permit_composition(
+        self,
+        value: object,
+        category: str | None = None,
+    ) -> frozenset[str] | None:
         atoms = parse_ingredient_expression(value)
         if not atoms:
             return None
@@ -319,13 +323,23 @@ class IdentityResolver:
             if len(atom.names) != 1 or atom.qualifier:
                 return None
             name = atom.names[0]
-            exact = set(self._exact_global.get(name, set()))
+            exact = (
+                set(self._exact_category.get((category, name), set()))
+                if category is not None
+                else set(self._exact_global.get(name, set()))
+            )
             if len(exact) == 1:
                 codes.update(exact)
                 continue
             if exact:
                 return None
-            active = self._active_global.get(active_moiety_key(name), set()) if active_moiety_key(name) == name else set()
+            active_name = active_moiety_key(name)
+            if category is not None:
+                active = set(self._exact_category.get((category, active_name), set()))
+                active.update(self._active_category.get((category, active_name), set()))
+            else:
+                active = set(self._exact_global.get(active_name, set()))
+                active.update(self._active_global.get(active_name, set()))
             if len(active) != 1:
                 return None
             codes.update(active)

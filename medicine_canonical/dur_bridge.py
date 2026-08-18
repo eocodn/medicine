@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections import defaultdict
 from contextlib import closing
 from pathlib import Path
 
@@ -139,6 +140,7 @@ def materialize_dur_ingredient_bridge(
             "dur_single_ambiguities",
             "dur_criterion_pair_signatures",
             "dur_criterion_signatures",
+            "dur_product_category_signatures",
             "dur_product_item_signatures",
             "dur_concept_substances",
             "dur_ingredient_code_map",
@@ -168,6 +170,19 @@ def materialize_dur_ingredient_bridge(
                 row["paired_ingredient_code"],
                 row["paired_ingredient_name"],
             )
+
+        for row in con.execute(
+            """SELECT i.category,c.mixture_ingredient_codes_json,c.mixture_ingredient_names_json
+               FROM ingredient_rules i
+               JOIN ingredient_rule_codes c ON c.criterion_rule_id=i.id
+               WHERE c.mixture_type='복합'"""
+        ):
+            codes = json.loads(str(row["mixture_ingredient_codes_json"] or "[]"))
+            names = json.loads(str(row["mixture_ingredient_names_json"] or "[]"))
+            if not isinstance(codes, list) or not isinstance(names, list) or len(codes) != len(names):
+                raise ValueError("MFDS criterion has invalid mixture ingredient identity payload")
+            for code, name in zip(codes, names, strict=True):
+                resolver.add(row["category"], name, code)
 
         name_to_substance = _load_substance_names(substance_db_path)
         concepts: dict[tuple[str, str], str] = {}
@@ -233,21 +248,90 @@ def materialize_dur_ingredient_bridge(
                 evidence_kind="hybrid_permit_composition",
             )
 
+        product_categories: dict[str, set[str]] = defaultdict(set)
+        product_category_codes: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for row in product_rows:
+            item_seq = str(row["item_seq"])
+            category = str(row["category"])
+            product_categories[item_seq].add(category)
+            code = canonicalize_link_ingredient_code(row["ingredient_code"])
+            if code:
+                product_category_codes[(item_seq, category)].add(code)
+        for row in con.execute("SELECT item_seq,ingredient_text FROM products"):
+            item_seq = str(row["item_seq"])
+            for category in sorted(product_categories.get(item_seq, set())):
+                composition = resolver.resolve_permit_composition(
+                    row["ingredient_text"], category
+                )
+                evidence_kind = "category_permit_composition"
+                if not composition:
+                    atoms = parse_ingredient_expression(row["ingredient_text"])
+                    direct_codes = product_category_codes.get((item_seq, category), set())
+                    if len(atoms) == 1 and len(direct_codes) == 1:
+                        composition = frozenset(direct_codes)
+                        evidence_kind = "category_single_component_rule"
+                if not composition:
+                    continue
+                con.execute(
+                    """INSERT OR IGNORE INTO dur_product_category_signatures(
+                           item_seq,category,signature_key,component_count,match_method,evidence_kind
+                       ) VALUES(?,?,?,?,?,?)""",
+                    (
+                        item_seq,
+                        category,
+                        signature_key(composition),
+                        len(composition),
+                        "permit_composition" if len(composition) > 1 else "mfds_ingredient_code",
+                        evidence_kind,
+                    ),
+                )
+
         criterion_signatures = 0
         pair_signatures = 0
         ambiguity_rows = 0
         for row in con.execute(
-            """SELECT id,category,ingredient_name,paired_ingredient_name,rule_value,dosage_form
-               FROM ingredient_rules ORDER BY id"""
+            """SELECT i.id,i.category,i.ingredient_name,i.paired_ingredient_name,
+                      i.rule_value,i.dosage_form,
+                      c.ingredient_code AS criterion_ingredient_code,
+                      c.paired_ingredient_code AS criterion_paired_ingredient_code,
+                      c.mixture_type AS criterion_mixture_type,
+                      c.mixture_ingredient_codes_json AS criterion_mixture_ingredient_codes_json
+               FROM ingredient_rules i
+               LEFT JOIN ingredient_rule_codes c ON c.criterion_rule_id=i.id
+               ORDER BY i.id"""
         ):
             criterion_id = int(row["id"])
             category = str(row["category"])
             raw_left = str(row["ingredient_name"] or "").strip()
             if not raw_left:
                 continue
+            explicit_left_code = canonicalize_link_ingredient_code(
+                row["criterion_ingredient_code"]
+            )
             if category == COMBINATION_CATEGORY:
                 raw_right = str(row["paired_ingredient_name"] or "").strip()
                 if not raw_right:
+                    continue
+                explicit_right_code = canonicalize_link_ingredient_code(
+                    row["criterion_paired_ingredient_code"]
+                )
+                if explicit_left_code or explicit_right_code:
+                    if not (explicit_left_code and explicit_right_code):
+                        raise ValueError(
+                            f"combination criterion {criterion_id} has incomplete MFDS ingredient codes"
+                        )
+                    con.execute(
+                        """INSERT OR IGNORE INTO dur_criterion_pair_signatures(
+                               criterion_rule_id,signature_type,left_signature_key,right_signature_key,
+                               left_qualifier,right_qualifier,match_method,evidence_kind
+                           ) VALUES(?,'code',?,?,NULL,NULL,'mfds_ingredient_code','mfds_criterion_code')""",
+                        (
+                            criterion_id,
+                            signature_key(frozenset({explicit_left_code})),
+                            signature_key(frozenset({explicit_right_code})),
+                        ),
+                    )
+                    pair_signatures += 1
                     continue
                 left = resolver.resolve_expression(raw_left, category)
                 right = resolver.resolve_expression(raw_right, category)
@@ -365,6 +449,41 @@ def materialize_dur_ingredient_bridge(
                 if category == DUPLICATION_CATEGORY
                 else ""
             )
+            if explicit_left_code:
+                mixture_type = str(row["criterion_mixture_type"] or "").strip()
+                if mixture_type not in {"단일", "복합"}:
+                    raise ValueError(
+                        f"MFDS criterion {criterion_id} has invalid mixture type {mixture_type!r}"
+                    )
+                raw_mixture_codes = json.loads(
+                    str(row["criterion_mixture_ingredient_codes_json"] or "[]")
+                )
+                if not isinstance(raw_mixture_codes, list):
+                    raise ValueError(f"MFDS criterion {criterion_id} has invalid mixture code payload")
+                mixture_codes = {
+                    code
+                    for value in raw_mixture_codes
+                    if (code := canonicalize_link_ingredient_code(value))
+                }
+                if mixture_type == "단일" and mixture_codes:
+                    raise ValueError(f"MFDS criterion {criterion_id} marks 단일 with mixture codes")
+                if mixture_type == "복합" and not mixture_codes:
+                    raise ValueError(f"MFDS criterion {criterion_id} marks 복합 without mixture codes")
+                composition = frozenset({explicit_left_code, *mixture_codes})
+                con.execute(
+                    """INSERT OR IGNORE INTO dur_criterion_signatures(
+                           criterion_rule_id,category,effect_key,signature_type,signature_key,
+                           qualifier,match_method,evidence_kind
+                       ) VALUES(?,?,?,'code',?,NULL,'mfds_ingredient_code','mfds_criterion_composition')""",
+                    (
+                        criterion_id,
+                        category,
+                        effect_key,
+                        signature_key(composition),
+                    ),
+                )
+                criterion_signatures += 1
+                continue
             resolved = resolver.resolve_expression(raw_left, category)
             for signature in resolved.signatures:
                 method = _method_for_resolution(resolved.preprocessed, signature)

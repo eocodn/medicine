@@ -3,17 +3,18 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 import urllib.parse
 from contextlib import closing
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
 from .dose_criteria import materialize_dose_criteria
+from .mfds_ingredient_endpoints import MFDS_INGREDIENT_ENDPOINTS, MfdsIngredientEndpoint
 from .schema import SCHEMA, SCHEMA_VERSION
 from .sources import _request_json, _sync_paginated_jsonl
 
@@ -23,39 +24,8 @@ MFDS_INGREDIENT_API_BASE = "https://apis.data.go.kr/1471000/DURIrdntInfoService0
 MFDS_INGREDIENT_SOURCE_FAMILY = "mfds_dur_ingredient_api"
 MFDS_INGREDIENT_PAGE_SIZE_MAX = 500
 MFDS_INGREDIENT_SOURCE_POLICY = MFDS_INGREDIENT_SOURCE_FAMILY
-
-
-@dataclass(frozen=True)
-class MfdsIngredientEndpoint:
-    category: str
-    filename: str
-    rule_field: str | None = None
-    rule_required: bool = True
-
-
-MFDS_INGREDIENT_ENDPOINTS: dict[str, MfdsIngredientEndpoint] = {
-    "getUsjntTabooInfoList02": MfdsIngredientEndpoint(
-        "combination_contraindication", "dur_ingredient_combination.jsonl"
-    ),
-    "getSpcifyAgrdeTabooInfoList02": MfdsIngredientEndpoint(
-        "age_contraindication", "dur_ingredient_age.jsonl", "AGE_BASE"
-    ),
-    "getPwnmTabooInfoList02": MfdsIngredientEndpoint(
-        "pregnancy_contraindication", "dur_ingredient_pregnancy.jsonl", "GRADE"
-    ),
-    "getCpctyAtentInfoList02": MfdsIngredientEndpoint(
-        "dose_caution", "dur_ingredient_dose.jsonl", "MAX_QTY", False
-    ),
-    "getMdctnPdAtentInfoList02": MfdsIngredientEndpoint(
-        "duration_caution", "dur_ingredient_duration.jsonl", "MAX_DOSAGE_TERM"
-    ),
-    "getOdsnAtentInfoList02": MfdsIngredientEndpoint(
-        "elderly_caution", "dur_ingredient_elderly.jsonl"
-    ),
-    "getEfcyDplctInfoList02": MfdsIngredientEndpoint(
-        "therapeutic_duplication_caution", "dur_ingredient_duplication.jsonl", "EFFECT_CODE"
-    ),
-}
+_MIXTURE_CODE_RE = re.compile(r"\[([A-Z]\d{6})\]")
+_MIXTURE_KOREAN_NAME_RE = re.compile(r"\([^()]*[가-힣][^()]*\)\s*$")
 
 
 IngredientFetchPage = Callable[[str, int, int], tuple[list[dict], int]]
@@ -242,17 +212,72 @@ def _required_text(row: dict, field: str, *, dataset_key: str, source_row: int) 
     return value
 
 
+def _parse_mixture_ingredients(
+    value: object, *, dataset_key: str, source_row: int
+) -> tuple[tuple[str, str], ...]:
+    text = _text(value)
+    if not text:
+        return ()
+    matches = list(_MIXTURE_CODE_RE.finditer(text))
+    if not matches or text[: matches[0].start()].strip(" /\t\r\n"):
+        raise ValueError(f"{dataset_key} row {source_row} has malformed MIX_INGR")
+
+    by_code: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        raw_name = text[match.end() : end].strip().strip("/").strip()
+        name = _MIXTURE_KOREAN_NAME_RE.sub("", raw_name).strip().strip("/").strip()
+        if not name:
+            raise ValueError(f"{dataset_key} row {source_row} has MIX_INGR code without name")
+        code = match.group(1)
+        previous = by_code.get(code)
+        if previous is not None and previous != name:
+            raise ValueError(
+                f"{dataset_key} row {source_row} maps MIX_INGR code {code} to multiple names"
+            )
+        by_code.setdefault(code, name)
+    return tuple(by_code.items())
+
+
 def _canonical_rule(
     row: dict, spec: MfdsIngredientEndpoint, *, dataset_key: str, source_row: int
 ) -> dict:
+    ingredient_code = _required_text(
+        row, "INGR_CODE", dataset_key=dataset_key, source_row=source_row
+    )
     ingredient_name = _required_text(
         row, "INGR_ENG_NAME", dataset_key=dataset_key, source_row=source_row
     )
     paired_name = None
+    paired_code = None
     if spec.category == "combination_contraindication":
+        paired_code = _required_text(
+            row, "MIXTURE_INGR_CODE", dataset_key=dataset_key, source_row=source_row
+        )
         paired_name = _required_text(
             row, "MIXTURE_INGR_ENG_NAME", dataset_key=dataset_key, source_row=source_row
         )
+
+    mixture_type = None
+    mixture_codes: tuple[str, ...] = ()
+    mixture_names: tuple[str, ...] = ()
+    if spec.category != "combination_contraindication":
+        mixture_type = _required_text(
+            row, "MIX_TYPE", dataset_key=dataset_key, source_row=source_row
+        )
+        if mixture_type not in {"단일", "복합"}:
+            raise ValueError(
+                f"{dataset_key} row {source_row} has unsupported MIX_TYPE {mixture_type!r}"
+            )
+        mixture_entries = _parse_mixture_ingredients(
+            _field(row, "MIX_INGR"), dataset_key=dataset_key, source_row=source_row
+        )
+        mixture_codes = tuple(code for code, _name in mixture_entries)
+        mixture_names = tuple(name for _code, name in mixture_entries)
+        if mixture_type == "단일" and mixture_codes:
+            raise ValueError(f"{dataset_key} row {source_row} marks 단일 with MIX_INGR")
+        if mixture_type == "복합" and not mixture_codes:
+            raise ValueError(f"{dataset_key} row {source_row} marks 복합 without MIX_INGR")
     rule_value = None
     if spec.rule_field:
         rule_value = _text(_field(row, spec.rule_field))
@@ -271,9 +296,14 @@ def _canonical_rule(
     return {
         "category": spec.category,
         "sequence_text": _text(_field(row, "DUR_SEQ")),
+        "ingredient_code": ingredient_code,
         "ingredient_name": ingredient_name,
         "ingredient_name_ko": _text(_field(row, "INGR_NAME", "INGR_KOR_NAME")),
+        "paired_ingredient_code": paired_code,
         "paired_ingredient_name": paired_name,
+        "mixture_type": mixture_type,
+        "mixture_ingredient_codes": mixture_codes,
+        "mixture_ingredient_names": mixture_names,
         "rule_value": rule_value,
         "dosage_form": _text(_field(row, "FORM_NAME")),
         "note": "\n".join(note_parts) or None,
@@ -313,7 +343,7 @@ def import_mfds_ingredient_snapshots(
                     canonical = _canonical_rule(
                         row, spec, dataset_key=dataset_key, source_row=source_row
                     )
-                    con.execute(
+                    cursor = con.execute(
                         """
                         INSERT INTO ingredient_rules(
                             source_dataset_key,source_row,category,sequence_text,ingredient_name,
@@ -332,6 +362,29 @@ def import_mfds_ingredient_snapshots(
                             canonical["dosage_form"],
                             canonical["note"],
                             canonical["details"],
+                        ),
+                    )
+                    con.execute(
+                        """INSERT INTO ingredient_rule_codes(
+                               criterion_rule_id,ingredient_code,paired_ingredient_code,
+                               mixture_type,mixture_ingredient_codes_json,
+                               mixture_ingredient_names_json
+                           ) VALUES(?,?,?,?,?,?)""",
+                        (
+                            int(cursor.lastrowid),
+                            canonical["ingredient_code"],
+                            canonical["paired_ingredient_code"],
+                            canonical["mixture_type"],
+                            json.dumps(
+                                canonical["mixture_ingredient_codes"],
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                            json.dumps(
+                                canonical["mixture_ingredient_names"],
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
                         ),
                     )
                     imported_rows += 1

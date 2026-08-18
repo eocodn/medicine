@@ -41,6 +41,8 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             "PROHBT_CONTENT": "상세 주의",
             "REMARK": "비고",
             "DEL_YN": "정상",
+            "MIX_TYPE": "단일",
+            "MIX_INGR": "",
         }
         if operation == "getUsjntTabooInfoList02":
             common.update(
@@ -130,11 +132,21 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
 
         with closing(sqlite3.connect(self.db)) as con:
             combination = con.execute(
-                """SELECT sequence_text,ingredient_name,ingredient_name_ko,paired_ingredient_name,
-                          dosage_form,note,details
-                   FROM ingredient_rules WHERE category='combination_contraindication'"""
+                """SELECT i.sequence_text,i.ingredient_name,i.ingredient_name_ko,i.paired_ingredient_name,
+                          i.dosage_form,i.note,i.details,c.ingredient_code,c.paired_ingredient_code
+                   FROM ingredient_rules i
+                   JOIN ingredient_rule_codes c ON c.criterion_rule_id=i.id
+                   WHERE i.category='combination_contraindication'"""
             ).fetchone()
-            self.assertEqual(combination, ("101", "Alpha", "알파", "Beta", "정제", "비고", "상세 주의"))
+            self.assertEqual(
+                combination,
+                ("101", "Alpha", "알파", "Beta", "정제", "비고", "상세 주의", "D000101", "D000202"),
+            )
+
+            code_rows = con.execute(
+                "SELECT COUNT(*) FROM ingredient_rule_codes"
+            ).fetchone()[0]
+            self.assertEqual(code_rows, 7)
 
             age = con.execute(
                 "SELECT rule_value FROM ingredient_rules WHERE category='age_contraindication'"
@@ -164,6 +176,34 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
             meta = dict(con.execute("SELECT key,value FROM canonical_meta"))
             self.assertEqual(meta["source_policy"], "mfds_dur_ingredient_api")
             self.assertEqual(meta["build_stage"], "ingredient_preview")
+
+    def test_import_preserves_authoritative_mixture_code_name_pairs(self) -> None:
+        self._sync()
+        path = self.raw / MFDS_INGREDIENT_ENDPOINTS["getCpctyAtentInfoList02"].filename
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        rows[0]["MIX_TYPE"] = "복합"
+        rows[0]["MIX_INGR"] = (
+            "[D000202]Beta(베타)/[D000303]Gamma Hydrochloride(감마염산염)"
+        )
+        path.write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+            encoding="utf-8",
+        )
+        self._refresh_snapshot_hash(path)
+
+        assemble_mfds_ingredient_preview(self.db, self.raw)
+
+        with closing(sqlite3.connect(self.db)) as con:
+            row = con.execute(
+                """SELECT c.mixture_type,c.mixture_ingredient_codes_json,
+                          c.mixture_ingredient_names_json
+                   FROM ingredient_rule_codes c
+                   JOIN ingredient_rules i ON i.id=c.criterion_rule_id
+                   WHERE i.category='dose_caution'"""
+            ).fetchone()
+        self.assertEqual(row[0], "복합")
+        self.assertEqual(json.loads(row[1]), ["D000202", "D000303"])
+        self.assertEqual(json.loads(row[2]), ["Beta", "Gamma Hydrochloride"])
 
     def test_import_rejects_unknown_delete_state_instead_of_silently_using_it(self) -> None:
         self._sync()
