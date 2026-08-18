@@ -76,10 +76,10 @@ def _mapping_complete(category: str, coverage: Mapping[str, Any]) -> bool:
 def _mapping_reason(category: str, coverage: Mapping[str, Any]) -> str:
     unresolved = coverage.get("category_resolution") or {}
     if unresolved.get(category) == "unresolved":
-        return "canonical DUR 상세 기준 연결을 확정하지 못했습니다."
+        return "DUR 상세 기준을 자동으로 하나로 확정하지 못했습니다. 의사 또는 약사에게 확인하세요."
     if (coverage.get("product") or {}).get("status") != "matched":
         return "MFDS ITEM_SEQ 제품을 canonical 데이터에 연결하지 못했습니다."
-    return "canonical DUR 판정 범위를 완전히 확인하지 못했습니다."
+    return "DUR 판정 범위를 완전히 확인하지 못했습니다. 의사 또는 약사에게 확인하세요."
 
 
 def _current_mapping_issues(
@@ -142,10 +142,10 @@ def _friendly_quantitative_reason(category: str, check: Mapping[str, Any]) -> st
     ):
         return "1회 복용량과 1일 횟수를 입력하면 용량 기준을 확인할 수 있습니다."
     if "dosage form" in reason:
-        return "제품 제형을 확정하지 못해 자동 판정하지 못했습니다."
+        return "제품 제형을 확정하지 못해 자동 판정하지 못했습니다. 의사 또는 약사에게 확인하세요."
     if reason:
-        return "DUR 기준을 하나의 조건으로 확정하지 못해 자동 판정하지 못했습니다."
-    return "자동 판정하지 못했습니다."
+        return "DUR 기준을 하나의 조건으로 확정하지 못해 자동 판정하지 못했습니다. 의사 또는 약사에게 확인하세요."
+    return "자동 판정하지 못했습니다. 의사 또는 약사에게 확인하세요."
 
 
 def _quantitative_item(

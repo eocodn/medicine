@@ -34,7 +34,7 @@ def coverage_summary(
     for category, rows in sorted(issues.items()):
         if category == "lactation_caution":
             continue
-        reason = "MFDS ITEM_SEQ DUR 규칙은 있으나 상세 기준 연결을 확정하지 못했습니다."
+        reason = "MFDS ITEM_SEQ DUR 규칙은 있으나 상세 기준 연결을 확정하지 못했습니다. 의사 또는 약사에게 확인하세요."
         not_evaluable.append({
             "category": category, "result": "not_evaluable", "reason": reason,
             "source_rows": list(rows),
