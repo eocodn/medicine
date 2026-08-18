@@ -133,14 +133,14 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
         with closing(sqlite3.connect(self.db)) as con:
             combination = con.execute(
                 """SELECT i.sequence_text,i.ingredient_name,i.ingredient_name_ko,i.paired_ingredient_name,
-                          i.dosage_form,i.note,i.details,c.ingredient_code,c.paired_ingredient_code
+                          i.dosage_form,i.note,i.qualifier_note,i.details,c.ingredient_code,c.paired_ingredient_code
                    FROM ingredient_rules i
                    JOIN ingredient_rule_codes c ON c.criterion_rule_id=i.id
                    WHERE i.category='combination_contraindication'"""
             ).fetchone()
             self.assertEqual(
                 combination,
-                ("101", "Alpha", "알파", "Beta", "정제", "비고", "상세 주의", "D000101", "D000202"),
+                ("101", "Alpha", "알파", "Beta", "정제", None, "비고", "상세 주의", "D000101", "D000202"),
             )
 
             code_rows = con.execute(
@@ -161,13 +161,13 @@ class MfdsIngredientCanonicalTest(unittest.TestCase):
                 "SELECT rule_value FROM ingredient_rules WHERE category='duration_caution'"
             ).fetchone()[0]
             duplication = con.execute(
-                "SELECT rule_value,note FROM ingredient_rules WHERE category='therapeutic_duplication_caution'"
+                "SELECT rule_value,note,qualifier_note FROM ingredient_rules WHERE category='therapeutic_duplication_caution'"
             ).fetchone()
             self.assertEqual(age, "12세 미만")
             self.assertEqual(pregnancy, "2등급")
             self.assertEqual(dose, "240밀리그램")
             self.assertEqual(duration, "28일")
-            self.assertEqual(duplication, ("해열진통소염제", "비스테로이드성 소염제\n비고"))
+            self.assertEqual(duplication, ("해열진통소염제", "비스테로이드성 소염제", "비고"))
 
             source_families = {
                 row[0] for row in con.execute("SELECT DISTINCT source_family FROM source_snapshots")

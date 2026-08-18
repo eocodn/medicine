@@ -5,7 +5,6 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
-from unittest import mock
 
 from medicine_canonical.dur_bridge import materialize_dur_ingredient_bridge
 from medicine_canonical.linking import materialize_product_criterion_links
@@ -42,7 +41,7 @@ class DurConceptBridgeTest(unittest.TestCase):
     def _canonical(self) -> sqlite3.Connection:
         con = sqlite3.connect(":memory:")
         con.executescript(SCHEMA)
-        for key, family in (("mfds", "mfds_dur_item_api"), ("xlsx", "kids_mfds_xlsx")):
+        for key, family in (("mfds", "mfds_dur_item_api"), ("mfds_ing", "mfds_dur_ingredient_api")):
             con.execute(
                 """INSERT INTO source_snapshots(
                        dataset_key,source_family,source_locator,snapshot_path,row_count,sha256,metadata_json
@@ -90,7 +89,7 @@ class DurConceptBridgeTest(unittest.TestCase):
         finally:
             con.close()
 
-    def test_linker_consumes_materialized_bridge_without_running_identity_resolver(self) -> None:
+    def test_linker_consumes_materialized_mfds_code_bridge(self) -> None:
         con = self._canonical()
         try:
             con.execute(
@@ -102,27 +101,31 @@ class DurConceptBridgeTest(unittest.TestCase):
             con.execute(
                 """INSERT INTO ingredient_rules(
                        source_dataset_key,source_row,category,ingredient_name,ingredient_name_ko,rule_value
-                   ) VALUES('xlsx',1,'dose_caution','Alpha','알파','알파 100mg')"""
+                   ) VALUES('mfds_ing',1,'dose_caution','Alpha','알파','알파 100mg')"""
+            )
+            criterion_id = int(con.execute("SELECT id FROM ingredient_rules").fetchone()[0])
+            con.execute(
+                """INSERT INTO ingredient_rule_codes(
+                       criterion_rule_id,ingredient_code,mixture_type,
+                       mixture_ingredient_codes_json,mixture_ingredient_names_json
+                   ) VALUES(?, 'D-ALPHA', '단일', '[]', '[]')""",
+                (criterion_id,),
             )
             bridge = materialize_dur_ingredient_bridge(con, self.substance_db)
             self.assertEqual(bridge["criterion_signatures"], 1)
 
-            with mock.patch(
-                "medicine_canonical.preprocessing.IdentityResolver.resolve_expression",
-                side_effect=AssertionError("linker must not resolve ingredient identity after bridge materialization"),
-            ):
-                result = materialize_product_criterion_links(con)
+            result = materialize_product_criterion_links(con)
 
             self.assertEqual(result["linked_product_rules"], 1)
             self.assertEqual(
                 con.execute("SELECT match_method FROM product_criterion_links").fetchone()[0],
-                "ingredient_preprocessed",
+                "mfds_ingredient_code",
             )
             self.assertEqual(
                 con.execute(
                     "SELECT evidence_kind FROM dur_criterion_signatures WHERE criterion_rule_id=1"
                 ).fetchone()[0],
-                "dur_scope_inference",
+                "mfds_criterion_composition",
             )
         finally:
             con.close()

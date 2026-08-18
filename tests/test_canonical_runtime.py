@@ -8,7 +8,7 @@ from contextlib import closing
 from pathlib import Path
 
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
-from medicine_canonical.source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES
+from medicine_canonical.source_policy import CANONICAL_SOURCE_POLICY, EXPECTED_CANONICAL_SOURCE_FAMILIES
 from medicine_app.canonical_runtime import _RUNTIME_SOURCE_FAMILIES
 from tests.canonical_fixture_support import expected_source_snapshots
 from medicine_app.core import MedicationApp
@@ -33,9 +33,8 @@ def make_canonical_runtime_db(path: Path) -> None:
                 ("schema_version", SCHEMA_VERSION),
                 ("build_stage", "complete"),
                 ("built_at", "2026-08-13T15:00:00+09:00"),
-                ("source_policy", "mfds_permit_api+mfds_dur_item_api+kids_mfds_xlsx"),
-                ("unresolved_link_ambiguities", "[]"),
-            ],
+                ("source_policy", CANONICAL_SOURCE_POLICY),
+                ],
         )
         con.executemany(
             """INSERT INTO products(
@@ -66,25 +65,23 @@ def make_canonical_runtime_db(path: Path) -> None:
                    paired_ingredient_name,rule_value,dosage_form,note,details,sequence_text
                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             [
-                (1, "kids_mfds_xlsx:lactation_caution", 11, "duration_caution", "Zolpidem", "졸피뎀", None, "28일", "정제", None, "최대 28일", "1"),
-                (2, "kids_mfds_xlsx:lactation_caution", 12, "combination_contraindication", "Zolpidem", "졸피뎀", "Itraconazole", None, None, None, "병용금기", "2"),
-                (3, "kids_mfds_xlsx:lactation_caution", 13, "lactation_caution", "Zolpidem", "졸피뎀", None, None, None, None, "수유부주의", "3"),
-                (4, "kids_mfds_xlsx:lactation_caution", 14, "lactation_caution", "Osimertinib", "오시머티닙", None, None, None, None, "수유부주의", "4"),
+                (1, "mfds_dur_ingredient:getMdctnPdAtentInfoList02", 11, "duration_caution", "Zolpidem", "졸피뎀", None, "28일", "정제", None, "최대 28일", "1"),
+                (2, "mfds_dur_ingredient:getUsjntTabooInfoList02", 12, "combination_contraindication", "Zolpidem", "졸피뎀", "Itraconazole", None, None, None, "병용금기", "2"),
+            ],
+        )
+        con.executemany(
+            """INSERT INTO ingredient_rule_codes(
+                   criterion_rule_id,ingredient_code,paired_ingredient_code,mixture_type,
+                   mixture_ingredient_codes_json,mixture_ingredient_names_json
+               ) VALUES(?,?,?,?,?,?)""",
+            [
+                (1, "D-Z", None, "단일", "[]", "[]"),
+                (2, "D-Z", "D-I", None, "[]", "[]"),
             ],
         )
         con.executemany(
             "INSERT INTO product_criterion_links(product_rule_id,criterion_rule_id,match_method,pair_orientation) VALUES(?,?,?,?)",
-            [(1, 1, "english_exact", None), (2, 2, "english_exact", "forward")],
-        )
-        con.execute(
-            """INSERT INTO product_ingredient_criterion_links(
-                   item_seq,criterion_rule_id,category,match_method,evidence_kind,evidence_json
-               ) VALUES('P-Z',3,'lactation_caution','precise_substance_exact','precise_substance_identity','{}')"""
-        )
-        con.execute(
-            """INSERT INTO product_ingredient_criterion_unresolved(
-                   item_seq,criterion_rule_id,category,reason,evidence_json
-               ) VALUES('P-U',4,'lactation_caution','scope_relation_unproven','{}')"""
+            [(1, 1, "mfds_ingredient_code", None), (2, 2, "mfds_ingredient_code", "forward")],
         )
         con.execute(
             """INSERT INTO product_flags(
@@ -138,16 +135,12 @@ class CanonicalRuntimeTest(unittest.TestCase):
         self.assertEqual(preview["coverage"]["product"]["identity_method"], "item_seq_exact")
         self.assertEqual(preview["coverage"]["dataset"]["status"], "verified")
 
-    def test_unresolved_lactation_scope_is_not_a_supported_runtime_check(self) -> None:
-        app = MedicationApp(self.canonical, self.personal)
-        person = app.create_person(
-            "수유자", "1990-01-01", sex="female",
-            pregnancy_status="not_pregnant", lactation_status="breastfeeding",
-        )
-        preview = app.preview_medication(person["id"], {"product_ref": "P-U"})
-        self.assertNotIn(
-            "lactation_caution", {row["category"] for row in preview["dur_checks"]}
-        )
+    def test_lactation_specific_reference_tables_are_absent(self) -> None:
+        with closing(sqlite3.connect(self.canonical)) as con:
+            names = {row[0] for row in con.execute("SELECT name FROM sqlite_master")}
+        self.assertNotIn("product_ingredient_criterion_links", names)
+        self.assertNotIn("product_ingredient_criterion_unresolved", names)
+        self.assertNotIn("product_ingredient_criteria", names)
 
     def test_runtime_source_policy_matches_release_policy(self) -> None:
         self.assertEqual(_RUNTIME_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_FAMILIES)
@@ -155,22 +148,11 @@ class CanonicalRuntimeTest(unittest.TestCase):
     def test_runtime_manifest_requires_exact_source_snapshot_set(self) -> None:
         from medicine_app.canonical_runtime import canonical_manifest
         with closing(sqlite3.connect(self.canonical)) as con:
-            con.execute("DELETE FROM source_snapshots WHERE dataset_key='kids_mfds_xlsx:dose_caution'")
+            con.execute("DELETE FROM source_snapshots WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'")
             con.commit()
             manifest = canonical_manifest(con)
         self.assertEqual(manifest["status"], "not_verified")
 
-    def test_runtime_manifest_fails_closed_on_persisted_link_ambiguity(self) -> None:
-        from medicine_app.canonical_runtime import canonical_manifest
-        con = sqlite3.connect(self.canonical)
-        con.execute(
-            "UPDATE canonical_meta SET value=? WHERE key='unresolved_link_ambiguities'",
-            ('[{"reason":"ambiguous"}]',),
-        )
-        con.commit()
-        con.close()
-        with closing(sqlite3.connect(self.canonical)) as check:
-            self.assertEqual(canonical_manifest(check)["status"], "not_verified")
 
 
 if __name__ == "__main__":

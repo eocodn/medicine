@@ -35,7 +35,8 @@ class MobileDatabaseTest(unittest.TestCase):
             tables = {row[0] for row in mobile.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("products", tables)
             self.assertIn("product_rules", tables)
-            self.assertIn("product_ingredient_criterion_links", tables)
+            self.assertNotIn("product_ingredient_criterion_links", tables)
+            self.assertNotIn("product_ingredient_criterion_unresolved", tables)
             for legacy in ("product_dur", "ingredient_dur", "product_catalog", "product_code_bridge", "ingredient_aliases"):
                 self.assertNotIn(legacy, tables)
             runtime_indexes = {
@@ -67,7 +68,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_build_rejects_incomplete_source_snapshot_set(self) -> None:
         with sqlite3.connect(self.canonical_db) as con:
-            con.execute("DELETE FROM source_snapshots WHERE dataset_key='kids_mfds_xlsx:dose_caution'")
+            con.execute("DELETE FROM source_snapshots WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'")
             con.commit()
         with self.assertRaisesRegex(ValueError, "canonical verification failed"):
             build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
