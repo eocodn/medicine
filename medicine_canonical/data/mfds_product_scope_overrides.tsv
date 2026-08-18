@@ -1,0 +1,19 @@
+category	ingredient_code	item_seq	allowed_rule_value	rationale
+age_contraindication	D000656	199403253	12세 미만	MFDS product identity verified as atropine ophthalmic 1%
+age_contraindication	D000656	202007499	4세 미만	MFDS product identity verified as atropine ophthalmic 0.125%
+age_contraindication	D000656	202500932	4세 미만	MFDS product identity verified as atropine ophthalmic 0.125%
+age_contraindication	D000656	202501014	4세 미만	MFDS product identity verified as atropine ophthalmic 0.125%
+age_contraindication	D000656	202501460	4세 미만	MFDS product identity verified as atropine ophthalmic 0.125%
+age_contraindication	D000656	202502791	4세 미만	MFDS product identity verified as atropine ophthalmic 0.125%
+age_contraindication	D000656	202601846	4세 미만	MFDS product identity verified as atropine ophthalmic 0.125%
+age_contraindication	D001068	201100954	36개월 미만	MFDS product identity verified as propofol 2%
+age_contraindication	D001068	201100968	36개월 미만	MFDS product identity verified as propofol 2%
+age_contraindication	D001068	201100969	36개월 미만	MFDS product identity verified as propofol 2%
+age_contraindication	D001068	201101016	1개월 이하	MFDS product identity verified as propofol 1%
+age_contraindication	D001068	201101017	1개월 이하	MFDS product identity verified as propofol 1%
+age_contraindication	D001068	201101296	1개월 이하	MFDS product identity verified as propofol 1%
+age_contraindication	D001068	201101297	1개월 이하	MFDS product identity verified as propofol 1%
+age_contraindication	D001068	201500098	36개월 미만	MFDS product identity verified as propofol 2%
+age_contraindication	D001068	201601252	36개월 미만	MFDS product identity verified as propofol 2%
+age_contraindication	D001068	202106887	1개월 이하	MFDS product identity verified as propofol 1%
+age_contraindication	D001068	202106888	36개월 미만	MFDS product identity verified as propofol 2%

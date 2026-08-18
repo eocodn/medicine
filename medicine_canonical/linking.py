@@ -13,6 +13,7 @@ from .dur_bridge import (
     ensure_dur_ingredient_bridge,
 )
 from .form_scope import mfds_form_scope_applies
+from .mfds_scope_overrides import mfds_product_scope_allows
 from .linking_candidates import (
     AmbiguousSingleCandidate,
     CriterionCandidate,
@@ -75,6 +76,23 @@ def _criterion_form_applies(
     if not candidate.strict_form_scope:
         return True
     return mfds_form_scope_applies(candidate.dosage_form, product_form)
+
+
+def _criterion_product_scope_applies(
+    candidate: CriterionCandidate,
+    *,
+    category: object,
+    ingredient_code: object,
+    item_seq: object,
+) -> bool:
+    if not candidate.strict_form_scope:
+        return True
+    return mfds_product_scope_allows(
+        category,
+        ingredient_code,
+        item_seq,
+        candidate.rule_value,
+    )
 
 
 def _evidence_text(value: object) -> str:
@@ -369,6 +387,13 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                         for candidate in single_signatures.get(
                             (category, effect, product_sig.signature_key), []
                         ):
+                            if not _criterion_product_scope_applies(
+                                candidate,
+                                category=category,
+                                ingredient_code=row["ingredient_code"],
+                                item_seq=row["item_seq"],
+                            ):
+                                continue
                             if (
                                 candidate.exact_composition_scope
                                 and product_sig.evidence_kind
@@ -404,6 +429,13 @@ def materialize_product_criterion_links(con: sqlite3.Connection) -> dict:
                         for candidate in rule_value_signatures.get(
                             (category, product_sig.signature_key), []
                         ):
+                            if not _criterion_product_scope_applies(
+                                candidate,
+                                category=category,
+                                ingredient_code=row["ingredient_code"],
+                                item_seq=row["item_seq"],
+                            ):
+                                continue
                             if (
                                 candidate.exact_composition_scope
                                 and product_sig.evidence_kind
