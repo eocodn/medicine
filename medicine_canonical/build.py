@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sqlite3
@@ -21,6 +20,7 @@ from .mfds_ingredient import (
 )
 from .linking import materialize_product_criterion_links
 from .schema import SCHEMA, SCHEMA_VERSION
+from .snapshot_io import insert_source_snapshot, load_snapshot_metadata
 from .source_policy import CANONICAL_SOURCE_POLICY
 from .sources import (
     DUR_ENDPOINTS,
@@ -82,54 +82,6 @@ def _date_text(value) -> str | None:
     return value
 
 
-def _json(row: dict) -> str:
-    return json.dumps(row, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str)
-
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-def _load_meta(path: Path) -> dict:
-    meta = path.with_suffix(path.suffix + ".meta.json")
-    if not meta.exists():
-        raise FileNotFoundError(f"missing API snapshot metadata: {meta}")
-    payload = json.loads(meta.read_text(encoding="utf-8"))
-    required = {"dataset_key", "source_family", "source_locator", "row_count", "sha256"}
-    missing = required - payload.keys()
-    if missing:
-        raise ValueError(f"invalid API snapshot metadata {meta}: missing {sorted(missing)}")
-    actual_sha = _sha256(path)
-    if actual_sha != payload["sha256"]:
-        raise ValueError(f"sha256 mismatch for API snapshot {path}: expected {payload['sha256']}, got {actual_sha}")
-    return payload
-
-
-def _insert_source_snapshot(con: sqlite3.Connection, meta: dict, snapshot_path: Path) -> None:
-    con.execute(
-        """
-        INSERT INTO source_snapshots(
-            dataset_key,source_family,source_locator,snapshot_path,fetched_at,row_count,reported_row_count,sha256,metadata_json
-        ) VALUES(?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            meta["dataset_key"],
-            meta["source_family"],
-            meta["source_locator"],
-            str(snapshot_path),
-            meta.get("fetched_at"),
-            int(meta["row_count"]),
-            int(meta.get("reported_row_count") or 0),
-            meta["sha256"],
-            _json(meta),
-        ),
-    )
-
-
 def _normalize_permit_status(cancel_name, cancel_date=None) -> str:
     raw = _text(cancel_name)
     if raw in PERMIT_STATUS_BY_CANCEL_NAME:
@@ -139,13 +91,13 @@ def _normalize_permit_status(cancel_name, cancel_date=None) -> str:
 
 def _import_permit_snapshot(con: sqlite3.Connection, raw_dir: Path) -> int:
     path = raw_dir / PERMIT_FILENAME
-    meta = _load_meta(path)
+    meta = load_snapshot_metadata(path, label="API snapshot")
     if (
         meta["dataset_key"] != PERMIT_SOURCE.dataset_key
         or meta["source_family"] != PERMIT_SOURCE.source_family
     ):
         raise ValueError("permit snapshot provenance mismatch")
-    _insert_source_snapshot(con, meta, path)
+    insert_source_snapshot(con, meta, path)
     count = 0
     with path.open("r", encoding="utf-8") as handle:
         for source_row, line in enumerate(handle, start=1):
@@ -316,11 +268,11 @@ def _import_dur_snapshots(con: sqlite3.Connection, raw_dir: Path) -> tuple[int, 
     flag_rows = 0
     for operation, spec in DUR_ENDPOINTS.items():
         path = raw_dir / spec.filename
-        meta = _load_meta(path)
+        meta = load_snapshot_metadata(path, label="API snapshot")
         expected_key = spec.dataset_key
         if meta["dataset_key"] != expected_key or meta["source_family"] != spec.source_family:
             raise ValueError(f"DUR snapshot provenance mismatch for {operation}")
-        _insert_source_snapshot(con, meta, path)
+        insert_source_snapshot(con, meta, path)
         imported_source_rows = 0
         with path.open("r", encoding="utf-8") as handle:
             for source_row, line in enumerate(handle, start=1):
