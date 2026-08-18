@@ -21,7 +21,6 @@ from .substance_inspection import substance_stats, verify_substance_database
 
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
-SOURCE_POLICY = CANONICAL_SOURCE_POLICY
 
 
 def _insert_source_stage_meta(con: sqlite3.Connection) -> None:
@@ -29,7 +28,7 @@ def _insert_source_stage_meta(con: sqlite3.Connection) -> None:
         "INSERT INTO canonical_meta(key,value) VALUES(?,?)",
         [
             ("schema_version", SCHEMA_VERSION),
-            ("source_policy", SOURCE_POLICY),
+            ("source_policy", CANONICAL_SOURCE_POLICY),
             ("build_stage", "source"),
         ],
     )

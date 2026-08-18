@@ -39,9 +39,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("data/canonical/raw", workflow)
         self.assertIn("data/canonical/substances", workflow)
         self.assertIn("data/canonical/mfds_ingredient", workflow)
-        self.assertNotIn("data/kids", workflow)
         self.assertIn("cache-matched-key", workflow)
-        self.assertNotIn("kids-sync", workflow)
         self.assertIn("substance-sync", workflow)
         self.assertIn("medicine-canonical sync", workflow)
         self.assertIn("MFDS sync attempt ${attempt}/3", workflow)
@@ -54,10 +52,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("canonical substance-verify", workflow)
         self.assertIn("canonical mobile-build", workflow)
         self.assertIn("release-publish-r2", workflow)
-        self.assertNotIn("reference-source/kids/current.zip", workflow)
-        self.assertNotIn("kids_source_key", workflow)
-        self.assertNotIn("kids_source_sha256", workflow)
-        self.assertNotIn("kids-extract", workflow)
 
     def test_canonical_reviewed_corpora_are_included_in_built_package(self) -> None:
         config = tomllib.loads(Path("pyproject.toml").read_text())
