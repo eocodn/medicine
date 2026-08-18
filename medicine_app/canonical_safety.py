@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
-from medicine_canonical.mfds_remark_registry import ReviewedMfdsRemark, reviewed_mfds_remark
+from medicine_reference.mfds_remark_registry import ReviewedMfdsRemark, reviewed_mfds_remark
 
 from .canonical_runtime import has_unlinked_product_rule, item_seq, linked_product_rows
 from .dosage_forms import infer_administration_route

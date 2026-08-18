@@ -7,7 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from .dur_bridge import signature_key
-from .mfds_remark_registry import reviewed_mfds_remark
+from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
 
 
 @dataclass(frozen=True)

@@ -14,7 +14,7 @@ from medicine_canonical.mfds_ingredient import (
     import_mfds_ingredient_snapshots,
     sync_mfds_ingredient_sources,
 )
-from medicine_canonical.mfds_remark_registry import (
+from medicine_reference.mfds_remark_registry import (
     reviewed_mfds_remark,
     reviewed_mfds_remark_count,
     reviewed_mfds_remark_counts_by_category,

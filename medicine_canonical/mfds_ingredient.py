@@ -14,7 +14,7 @@ from medicine_reference.mfds_sources import (
     MfdsSourceSpec,
 )
 
-from .mfds_remark_registry import reviewed_mfds_remark
+from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
 from .sources import _request_json, _sync_paginated_jsonl
 
 
