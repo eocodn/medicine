@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -22,6 +21,8 @@ from medicine_reference.mfds_sources import (
     MFDS_PERMIT_API_BASE,
     PERMIT_SOURCE,
 )
+
+from .snapshot_io import canonical_json, sha256_file, snapshot_metadata_path
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
 PERMIT_DATASET_KEY = PERMIT_SOURCE.dataset_key
@@ -106,18 +107,6 @@ def fetch_dur_page(service_key: str, operation: str, page: int, page_size: int) 
     return _extract_response(_request_json(url, label=f"MFDS DUR {operation}"), f"MFDS DUR {operation}")
 
 
-def _canonical_json(row: dict) -> str:
-    return json.dumps(row, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str)
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _write_json_atomic(path: Path, payload: dict) -> None:
     temp = path.with_name(path.name + ".write")
     temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -128,7 +117,7 @@ def _write_page(path: Path, rows: list[dict]) -> int:
     temp = path.with_name(path.name + ".write")
     with temp.open("w", encoding="utf-8") as handle:
         for row in rows:
-            handle.write(_canonical_json(row) + "\n")
+            handle.write(canonical_json(row) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temp, path)
@@ -149,7 +138,7 @@ def _sync_paginated_jsonl(
     output.parent.mkdir(parents=True, exist_ok=True)
     pages_dir = output.with_name(output.name + ".pages")
     state_path = pages_dir / "state.json"
-    meta_path = output.with_suffix(output.suffix + ".meta.json")
+    meta_path = snapshot_metadata_path(output)
 
     resumed = False
     state: dict = {}
@@ -238,7 +227,7 @@ def _sync_paginated_jsonl(
         "fetched_at": fetched_at,
         "row_count": row_count,
         "reported_row_count": total,
-        "sha256": _sha256(output),
+        "sha256": sha256_file(output),
         "page_size": page_size,
         "total_pages": total_pages,
         "elapsed_seconds": round(time.monotonic() - started, 3),

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import urllib.parse
@@ -15,6 +14,7 @@ from medicine_reference.mfds_sources import (
 )
 
 from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
+from .snapshot_io import insert_source_snapshot, load_snapshot_metadata
 from .sources import _request_json, _sync_paginated_jsonl
 
 
@@ -40,18 +40,6 @@ def _field(row: dict, *names: str):
         if key in folded:
             return folded[key]
     return None
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _json(value: dict) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str)
 
 
 def _extract_ingredient_response(payload: dict, label: str) -> tuple[list[dict], int]:
@@ -151,55 +139,6 @@ def sync_mfds_ingredient_sources(
         "sources": sources,
         "source_rows": sum(int(source["row_count"]) for source in sources),
     }
-
-
-def _load_snapshot_meta(path: Path) -> dict:
-    meta_path = path.with_suffix(path.suffix + ".meta.json")
-    if not meta_path.exists():
-        raise FileNotFoundError(f"missing MFDS ingredient snapshot metadata: {meta_path}")
-    payload = json.loads(meta_path.read_text(encoding="utf-8"))
-    required = {"dataset_key", "source_family", "source_locator", "row_count", "sha256"}
-    missing = required - payload.keys()
-    if missing:
-        raise ValueError(f"invalid MFDS ingredient snapshot metadata: missing {sorted(missing)}")
-    actual_sha = _sha256(path)
-    if actual_sha != payload["sha256"]:
-        raise ValueError(
-            f"sha256 mismatch for MFDS ingredient snapshot {path}: "
-            f"expected {payload['sha256']}, got {actual_sha}"
-        )
-    return payload
-
-
-def _insert_source_snapshot(
-    con: sqlite3.Connection, meta: dict, path: Path, *, spec: MfdsSourceSpec
-) -> None:
-    operation = str(spec.operation)
-    if meta["dataset_key"] != spec.dataset_key:
-        raise ValueError(f"MFDS ingredient snapshot dataset mismatch for {operation}")
-    if meta["source_family"] != spec.source_family:
-        raise ValueError(f"MFDS ingredient snapshot family mismatch for {operation}")
-    if meta["source_locator"] != spec.source_locator:
-        raise ValueError(f"MFDS ingredient snapshot locator mismatch for {operation}")
-    con.execute(
-        """
-        INSERT INTO source_snapshots(
-            dataset_key,source_family,source_locator,snapshot_path,fetched_at,
-            row_count,reported_row_count,sha256,metadata_json
-        ) VALUES(?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            spec.dataset_key,
-            spec.source_family,
-            spec.source_locator,
-            str(path),
-            meta.get("fetched_at"),
-            int(meta["row_count"]),
-            int(meta.get("reported_row_count") or 0),
-            meta["sha256"],
-            _json(meta),
-        ),
-    )
 
 
 def _required_text(row: dict, field: str, *, dataset_key: str, source_row: int) -> str:
@@ -318,9 +257,16 @@ def import_mfds_ingredient_snapshots(
         path = root / spec.filename
         if not path.exists():
             raise FileNotFoundError(f"missing MFDS ingredient snapshot: {path}")
-        meta = _load_snapshot_meta(path)
+        meta = load_snapshot_metadata(path, label="MFDS ingredient snapshot")
         dataset_key = spec.dataset_key
-        _insert_source_snapshot(con, meta, path, spec=spec)
+        operation_name = str(spec.operation)
+        if meta["dataset_key"] != spec.dataset_key:
+            raise ValueError(f"MFDS ingredient snapshot dataset mismatch for {operation_name}")
+        if meta["source_family"] != spec.source_family:
+            raise ValueError(f"MFDS ingredient snapshot family mismatch for {operation_name}")
+        if meta["source_locator"] != spec.source_locator:
+            raise ValueError(f"MFDS ingredient snapshot locator mismatch for {operation_name}")
+        insert_source_snapshot(con, meta, path)
 
         imported_source_rows = 0
         with path.open("r", encoding="utf-8") as handle:
