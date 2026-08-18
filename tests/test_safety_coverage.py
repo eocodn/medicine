@@ -27,6 +27,7 @@ def make_canonical_db(path: Path) -> None:
     add_product(con, "MFDS-P1", "임부1등급제품", "PregnancyGradeOne", dosage_form="정제")
     add_product(con, "MFDS-P2", "임부2등급제품", "PregnancyGradeTwo", dosage_form="정제")
     add_product(con, "MFDS-PC", "조건부임부금기제품", "PregnancyConditional", dosage_form="정제")
+    add_product(con, "MFDS-PN", "비고조건임부금기제품", "PregnancyNoteConditional", dosage_form="정제")
     add_product(con, "MFDS-CW", "중단조건약", "ConditionalWashout", dosage_form="정제")
     add_product(con, "MFDS-CT", "중단조건대상약", "ConditionalTarget", dosage_form="정제")
     add_product(con, "MFDS-CN-A", "용량조건병용약", "ConditionalDoseA", dosage_form="정제")
@@ -73,6 +74,12 @@ def make_canonical_db(path: Path) -> None:
         con, category="pregnancy_contraindication", item_seq="MFDS-PC",
         ingredient="PregnancyConditional", rule_value="2등급(말라리아 치료시 제외)",
         details="말라리아 치료 목적이면 예외가 될 수 있음",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-PN",
+        ingredient="PregnancyNoteConditional", rule_value="2등급",
+        criterion_note="단, 강심제로 사용시 제외",
+        details="강심제 사용 여부에 따라 예외가 있음",
     )
     add_linked_rule(
         con, category="combination_contraindication", item_seq="MFDS-CW",
@@ -204,6 +211,24 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertTrue(current["dur_alert"])
         self.assertEqual(current_pregnancy["status"], "conditional")
 
+    def test_pregnancy_exception_in_criterion_note_remains_conditional(self) -> None:
+        pregnant = self.app.create_person(
+            "비고조건임부", "1990-01-01", "female", "pregnant", lactation_status="not_breastfeeding"
+        )
+
+        preview = self.app.preview_medication(
+            pregnant["id"], {"product_ref": "MFDS-PN", "long_term": True}
+        )
+
+        pregnancy = next(
+            row for row in preview["dur_checks"]
+            if row["category"] == "pregnancy_contraindication"
+        )
+        self.assertEqual(pregnancy["status"], "conditional")
+        self.assertIn("2등급", pregnancy["summary"])
+        self.assertIn("강심제로 사용시 제외", pregnancy["summary"])
+        self.assertEqual(pregnancy["findings"][0]["evaluation_status"], "conditional")
+
     def test_known_interaction_with_unresolved_timing_is_conditional(self) -> None:
         person = self.app.create_person(
             "병용조건", "1990-01-01", "male", "not_applicable", lactation_status="not_applicable"
@@ -271,25 +296,21 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "not_evaluable")
         duration = next(row for row in preview["dur_checks"] if row["category"] == "duration_caution")
         self.assertEqual(duration["status"], "unknown")
-    def test_lactation_caution_applies_only_when_breastfeeding(self) -> None:
+    def test_lactation_caution_is_not_exposed_even_when_legacy_data_exists(self) -> None:
         breastfeeding = self.app.create_person(
             "수유", "1990-01-01", "female", "not_pregnant", lactation_status="breastfeeding"
         )
         active = self.app.preview_medication(breastfeeding["id"], {"product_ref": "MFDS-Z"})
         inactive = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-Z"})
-        active_check = next(row for row in active["dur_checks"] if row["category"] == "lactation_caution")
-        inactive_check = next(row for row in inactive["dur_checks"] if row["category"] == "lactation_caution")
-        self.assertEqual(active_check["status"], "hit")
-        self.assertEqual(inactive_check["status"], "not_applicable")
+        self.assertNotIn("lactation_caution", {row["category"] for row in active["dur_checks"]})
+        self.assertNotIn("lactation_caution", {row["category"] for row in inactive["dur_checks"]})
 
-    def test_unresolved_lactation_scope_is_unknown(self) -> None:
+    def test_unresolved_lactation_scope_does_not_create_a_supported_check(self) -> None:
         breastfeeding = self.app.create_person(
             "수유", "1990-01-01", "female", "not_pregnant", lactation_status="breastfeeding"
         )
         preview = self.app.preview_medication(breastfeeding["id"], {"product_ref": "MFDS-LU"})
-        check = next(row for row in preview["dur_checks"] if row["category"] == "lactation_caution")
-        self.assertEqual(check["status"], "unknown")
-        self.assertTrue(preview["warning_token"])
+        self.assertNotIn("lactation_caution", {row["category"] for row in preview["dur_checks"]})
 
     def test_profile_gap_is_reported_only_for_relevant_canonical_rule(self) -> None:
         # Legacy profiles may still contain unanswered reproductive fields. New
@@ -309,7 +330,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
             "lactation_caution",
             {row["category"] for row in unrelated["coverage"]["not_evaluable_checks"]},
         )
-        self.assertIn(
+        self.assertNotIn(
             "lactation_caution",
             {row["category"] for row in lactation["coverage"]["not_evaluable_checks"]},
         )
@@ -348,7 +369,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
         con.commit()
         con.close()
         second = self.app.preview_medication(breastfeeding["id"], {"product_ref": "MFDS-Z"})
-        self.assertNotEqual(first["warning_token"], second["warning_token"])
+        self.assertEqual(first["warning_token"], second["warning_token"])
 
     def test_item_seq_combination_rule_requires_course_overlap(self) -> None:
         self.app.add_medication(
@@ -363,14 +384,13 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertIn("combination_contraindication", {row["type"] for row in overlapping["risks"]})
         self.assertNotIn("combination_contraindication", {row["type"] for row in separated["risks"]})
 
-    def test_complete_preview_keeps_fixed_eight_category_order(self) -> None:
+    def test_complete_preview_keeps_fixed_supported_category_order(self) -> None:
         preview = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-M", "prescription_days": 7})
         self.assertEqual(
             [row["category"] for row in preview["dur_checks"]],
             [
                 "combination_contraindication", "age_contraindication", "pregnancy_contraindication",
-                "lactation_caution", "elderly_caution", "dose_caution", "duration_caution",
-                "therapeutic_duplication_caution",
+                "elderly_caution", "dose_caution", "duration_caution", "therapeutic_duplication_caution",
             ],
         )
 

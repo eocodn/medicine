@@ -122,7 +122,7 @@ class CanonicalRuntimeTest(unittest.TestCase):
         self.assertNotIn("product_code_bridge", names)
         self.assertNotIn("ingredient_aliases", names)
 
-    def test_app_uses_canonical_product_and_lactation_criteria(self) -> None:
+    def test_app_uses_canonical_product_criteria_without_lactation_support(self) -> None:
         app = MedicationApp(self.canonical, self.personal)
         person = app.create_person(
             "수유자", "1990-01-01", sex="female",
@@ -133,22 +133,21 @@ class CanonicalRuntimeTest(unittest.TestCase):
             "prescription_days": 30,
         })
         by_category = {row["category"]: row for row in preview["dur_checks"]}
-        self.assertEqual(by_category["lactation_caution"]["status"], "hit")
+        self.assertNotIn("lactation_caution", by_category)
         self.assertEqual(by_category["duration_caution"]["status"], "hit")
         self.assertEqual(preview["coverage"]["product"]["identity_method"], "item_seq_exact")
         self.assertEqual(preview["coverage"]["dataset"]["status"], "verified")
 
-    def test_unresolved_lactation_scope_is_explicit_unknown(self) -> None:
+    def test_unresolved_lactation_scope_is_not_a_supported_runtime_check(self) -> None:
         app = MedicationApp(self.canonical, self.personal)
         person = app.create_person(
             "수유자", "1990-01-01", sex="female",
             pregnancy_status="not_pregnant", lactation_status="breastfeeding",
         )
         preview = app.preview_medication(person["id"], {"product_ref": "P-U"})
-        lactation = next(row for row in preview["dur_checks"] if row["category"] == "lactation_caution")
-        self.assertEqual(lactation["status"], "unknown")
-        self.assertIn("확인", lactation["summary"])
-        self.assertIsNotNone(preview["warning_token"])
+        self.assertNotIn(
+            "lactation_caution", {row["category"] for row in preview["dur_checks"]}
+        )
 
     def test_runtime_source_policy_matches_release_policy(self) -> None:
         self.assertEqual(_RUNTIME_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_FAMILIES)

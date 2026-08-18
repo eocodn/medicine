@@ -10,7 +10,6 @@ DUR_CATEGORIES = (
     ("combination_contraindication", "병용금기"),
     ("age_contraindication", "연령금기"),
     ("pregnancy_contraindication", "임부금기"),
-    ("lactation_caution", "수유부주의"),
     ("elderly_caution", "노인주의"),
     ("dose_caution", "용량주의"),
     ("duration_caution", "투여기간주의"),
@@ -62,10 +61,6 @@ def _profile_not_applicable(
     if category == "pregnancy_contraindication":
         return person.get("sex") == "male" or person.get("pregnancy_status") in {
             "not_pregnant", "not_applicable"
-        }
-    if category == "lactation_caution":
-        return person.get("sex") == "male" or person.get("lactation_status") in {
-            "not_breastfeeding", "not_applicable"
         }
     if category == "elderly_caution":
         return current_age < 65
@@ -330,7 +325,6 @@ def build_dur_checks(
             "combination_contraindication": "병용금기 없음",
             "age_contraindication": "연령금기 해당 없음",
             "pregnancy_contraindication": "임부금기 해당 없음",
-            "lactation_caution": "수유부주의 해당 없음",
             "elderly_caution": "노인주의 해당 없음",
             "therapeutic_duplication_caution": "중복 없음",
         }[category]

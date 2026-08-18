@@ -47,14 +47,27 @@ def _canonical_paired_ingredient(row: Mapping[str, Any]) -> str | None:
     return row.get("criterion_paired_ingredient_name") or row.get("paired_ingredient_name")
 
 
-def _pregnancy_rule_display(value: Any) -> str:
+def _pregnancy_note_condition(note: Any) -> str | None:
+    text = str(note or "").strip()
+    if not text:
+        return None
+    if re.search(r"(?:단\s*,?|제외|경우|한함|사용\s*시|투여\s*시)", text):
+        return text
+    return None
+
+
+def _pregnancy_rule_display(value: Any, note: Any = None) -> str:
     text = str(value or "").strip()
     if text in {"1", "2"}:
-        return f"{text}등급"
-    return text or "등급 미표기"
+        text = f"{text}등급"
+    display = text or "등급 미표기"
+    condition = _pregnancy_note_condition(note)
+    if condition and condition not in display:
+        return f"{display} ({condition})"
+    return display
 
 
-def _pregnancy_rule_is_conditional(value: Any) -> bool:
+def _pregnancy_rule_is_conditional(value: Any, note: Any = None) -> bool:
     """Return whether the DUR grade itself carries an applicability qualifier.
 
     Canonical pregnancy criteria use plain ``1등급``/``2등급`` for unconditional
@@ -64,7 +77,7 @@ def _pregnancy_rule_is_conditional(value: Any) -> bool:
     fact, so they must stay review-required without being presented as a definite hit.
     """
     text = str(value or "").strip()
-    return bool(re.search(r"[12]\s*등급\s*\(", text))
+    return bool(re.search(r"[12]\s*등급\s*\(", text)) or _pregnancy_note_condition(note) is not None
 
 
 _DURATION_LIMIT_RE = re.compile(r"^\s*(?P<amount>\d+)\s*(?P<unit>일|주|개월)?\s*$")
@@ -206,7 +219,8 @@ def _person_specific_risks(
         elif category == "pregnancy_contraindication":
             if person.get("pregnancy_status") != "pregnant":
                 continue
-            rule_display = _pregnancy_rule_display(rule_value)
+            criterion_note = row.get("criterion_note")
+            rule_display = _pregnancy_rule_display(rule_value, criterion_note)
             title, severity = f"임부금기 · {rule_display}", "danger"
         else:
             if not any(age_years(person["birth_date"], evaluation_date) >= 65 for evaluation_date in evaluation_dates):
@@ -218,7 +232,9 @@ def _person_specific_risks(
             "dataset_key": row.get("criterion_source_dataset_key"),
             "source_row": row.get("criterion_source_row"),
         }
-        if category == "pregnancy_contraindication" and _pregnancy_rule_is_conditional(rule_value):
+        if category == "pregnancy_contraindication" and _pregnancy_rule_is_conditional(
+            rule_value, row.get("criterion_note")
+        ):
             finding["evaluation_status"] = "conditional"
         risks.append(finding)
     return risks
