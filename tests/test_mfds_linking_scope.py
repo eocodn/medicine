@@ -81,11 +81,11 @@ class MfdsLinkingScopeTest(CanonicalLinkingFixture):
         self.product_rule(3, "age_contraindication", "202600107", "D000656", "Atropine Sulfate", dosage_form="점안용액제")
         self.mfds_criterion(
             1, "age_contraindication", "Atropine", "D000656",
-            rule_value="12세 미만", dosage_form="점안용액제", note="점안제(1%)",
+            rule_value="12세 미만", dosage_form="점안용액제", qualifier_note="점안제(1%)",
         )
         self.mfds_criterion(
             2, "age_contraindication", "Atropine", "D000656",
-            rule_value="4세 미만", dosage_form="점안용액제", note="점안제(0.125%)",
+            rule_value="4세 미만", dosage_form="점안용액제", qualifier_note="점안제(0.125%)",
         )
 
         linking.materialize_product_criterion_links(self.con)
@@ -108,12 +108,12 @@ class MfdsLinkingScopeTest(CanonicalLinkingFixture):
         self.mfds_criterion(
             1, "age_contraindication", "Propofol", "D001068",
             rule_value="1개월 이하", dosage_form="유화주사제",
-            note="1개월 이하(1%) (전신마취), 36개월 미만(2%) (전신마취)",
+            qualifier_note="1개월 이하(1%) (전신마취), 36개월 미만(2%) (전신마취)",
         )
         self.mfds_criterion(
             2, "age_contraindication", "Propofol", "D001068",
             rule_value="36개월 미만", dosage_form="유화주사제",
-            note="1개월 이하(1%) (전신마취), 36개월 미만(2%) (전신마취)",
+            qualifier_note="1개월 이하(1%) (전신마취), 36개월 미만(2%) (전신마취)",
         )
 
         linking.materialize_product_criterion_links(self.con)
@@ -308,7 +308,7 @@ class MfdsLinkingScopeTest(CanonicalLinkingFixture):
             mixture_type="단일",
             rule_value="아세트아미노펜 4,000밀리그램",
             dosage_form="고형제/반고형제/액제",
-            note="단일제·복합제 포함",
+            qualifier_note="단일제·복합제 포함",
             details="모든 제형",
         )
 
@@ -397,16 +397,6 @@ class MfdsLinkingScopeTest(CanonicalLinkingFixture):
         ).fetchone()
         self.assertEqual(category_signature, ('["D000152"]', "category_permit_composition"))
 
-    def test_criterion_ambiguity_without_a_blocked_product_rule_is_not_reported(self) -> None:
-        self.product("P1", "OtherDrug")
-        self.product_rule(1, "dose_caution", "P1", "D-O", "OtherDrug")
-        self.product_rule(2, "age_contraindication", "P1", "D-F1", "FutureDrug Hydrochloride")
-        self.product_rule(3, "pregnancy_contraindication", "P1", "D-F2", "FutureDrug Succinate")
-        self.criterion(1, "dose_caution", "FutureDrug")
-
-        result = linking.materialize_product_criterion_links(self.con)
-
-        self.assertEqual(result["unresolved_link_identity_count"], 0)
 
 
 if __name__ == "__main__":

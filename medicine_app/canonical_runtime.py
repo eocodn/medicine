@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import sqlite3
 from typing import Any, Mapping
@@ -20,19 +19,18 @@ _RUNTIME_SOURCE_FAMILIES = {
     "mfds_dur:getEfcyDplctInfoList03": "mfds_dur_item_api",
     "mfds_dur:getDurPrdlstInfoList03": "mfds_dur_item_api",
     "mfds_dur:getSeobangjeongPartitnAtentInfoList03": "mfds_dur_item_api",
-    "kids_mfds_xlsx:combination_contraindication": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:age_contraindication": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:pregnancy_contraindication": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:dose_caution": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:duration_caution": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:elderly_caution": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:therapeutic_duplication_caution": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:lactation_caution": "kids_mfds_xlsx",
+    "mfds_dur_ingredient:getUsjntTabooInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getSpcifyAgrdeTabooInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getPwnmTabooInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getCpctyAtentInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getMdctnPdAtentInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getOdsnAtentInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getEfcyDplctInfoList02": "mfds_dur_ingredient_api",
 }
 _RUNTIME_SOURCE_KEYS = frozenset(_RUNTIME_SOURCE_FAMILIES)
 
 
-_CANONICAL_SCHEMA_VERSION = "8"
+_CANONICAL_SCHEMA_VERSION = "9"
 _REQUIRED_FAMILIES = set(_RUNTIME_SOURCE_FAMILIES.values())
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -70,10 +68,6 @@ def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
         digest.update(
             f"{row['dataset_key']}\0{str(row['sha256']).lower()}\0{row['row_count']}\n".encode("utf-8")
         )
-    try:
-        unresolved_link_ambiguities = json.loads(meta.get("unresolved_link_ambiguities", "null"))
-    except json.JSONDecodeError:
-        unresolved_link_ambiguities = None
     verified = (
         bool(rows)
         and meta.get("schema_version") == _CANONICAL_SCHEMA_VERSION
@@ -82,7 +76,6 @@ def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
         and not missing_sources
         and not unexpected_sources
         and not misclassified_sources
-        and unresolved_link_ambiguities == []
         and not invalid
     )
     return {
@@ -141,6 +134,7 @@ def linked_product_rows(
             "dose_parse_status": row.get("criterion_dose_parse_status"),
             "dose_parse_reason": row.get("criterion_dose_parse_reason"),
             "note": row.get("criterion_note"),
+            "qualifier_note": row.get("criterion_qualifier_note"),
             # MFDS product detail retains product-specific timing/quantity evidence.
             "details": row.get("product_details") or row.get("criterion_details"),
             "notice_no": None,
@@ -187,46 +181,15 @@ def has_unlinked_product_rule(con: sqlite3.Connection, target_item_seq: str, cat
     return bool(unlinked_product_rules(con, target_item_seq, category))
 
 
-def lactation_links(con: sqlite3.Connection, target_item_seq: str) -> list[dict[str, Any]]:
-    con.row_factory = sqlite3.Row
-    return [dict(row) for row in con.execute(
-        """SELECT * FROM product_ingredient_criteria
-           WHERE item_seq=? AND category='lactation_caution'
-           ORDER BY criterion_source_dataset_key,criterion_source_row""",
-        (target_item_seq,),
-    )]
-
-
-def lactation_unresolved(con: sqlite3.Connection, target_item_seq: str) -> list[dict[str, Any]]:
-    con.row_factory = sqlite3.Row
-    return [dict(row) for row in con.execute(
-        """SELECT u.item_seq,u.criterion_rule_id,u.category,u.reason,u.evidence_json,
-                  i.source_dataset_key AS criterion_source_dataset_key,
-                  i.source_row AS criterion_source_row,
-                  i.ingredient_name AS criterion_ingredient_name,
-                  i.ingredient_name_ko AS criterion_ingredient_name_ko,
-                  i.rule_value AS criterion_rule_value,i.dosage_form AS criterion_dosage_form,
-                  i.note AS criterion_note,i.details AS criterion_details
-           FROM product_ingredient_criterion_unresolved u
-           JOIN ingredient_rules i ON i.id=u.criterion_rule_id
-           WHERE u.item_seq=? AND u.category='lactation_caution'
-           ORDER BY i.source_dataset_key,i.source_row""",
-        (target_item_seq,),
-    )]
-
-
 def category_resolution_issues(con: sqlite3.Connection, target_item_seq: str) -> dict[str, list[dict[str, Any]]]:
     issues: dict[str, list[dict[str, Any]]] = {}
     for row in unlinked_product_rules(con, target_item_seq):
         issues.setdefault(str(row["category"]), []).append(row)
-    unresolved = lactation_unresolved(con, target_item_seq)
-    if unresolved:
-        issues["lactation_caution"] = unresolved
     return issues
 
 
 __all__ = [
     "canonical_manifest", "category_resolution_issues", "has_unlinked_product_rule",
-    "item_seq", "lactation_links", "lactation_unresolved", "linked_categories",
+    "item_seq", "linked_categories",
     "linked_product_rows", "product_flags", "unlinked_product_rules",
 ]

@@ -6,20 +6,24 @@ from typing import Any, Iterable
 
 from medicine_canonical.dose_criteria import parse_daily_dose_threshold
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
+from medicine_canonical.mfds_ingredient_endpoints import MFDS_INGREDIENT_ENDPOINTS
+from medicine_canonical.source_policy import CANONICAL_SOURCE_POLICY
 from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY
-from medicine_canonical.xlsx import XLSX_DATASETS
 
 
 PERMIT_SOURCE = PERMIT_DATASET_KEY
 DUR_SOURCE = "mfds_dur:getUsjntTabooInfoList03"
-XLSX_SOURCE = "kids_mfds_xlsx:lactation_caution"
+CRITERION_SOURCE_BY_CATEGORY = {
+    spec.category: f"mfds_dur_ingredient:{operation}"
+    for operation, spec in MFDS_INGREDIENT_ENDPOINTS.items()
+}
 
 
 def expected_source_snapshots() -> list[tuple[str, str]]:
     return (
         [(PERMIT_DATASET_KEY, "mfds_permit_api")]
         + [(f"mfds_dur:{operation}", "mfds_dur_item_api") for operation in DUR_ENDPOINTS]
-        + [(f"kids_mfds_xlsx:{category}", "kids_mfds_xlsx") for category in XLSX_DATASETS.values()]
+        + [(f"mfds_dur_ingredient:{operation}", "mfds_dur_ingredient_api") for operation in MFDS_INGREDIENT_ENDPOINTS]
     )
 
 
@@ -39,8 +43,7 @@ def create_canonical_fixture(path: Path) -> sqlite3.Connection:
             ("schema_version", SCHEMA_VERSION),
             ("build_stage", "complete"),
             ("built_at", "2026-08-13T15:00:00+09:00"),
-            ("source_policy", "mfds_permit_api+mfds_dur_item_api+kids_mfds_xlsx"),
-            ("unresolved_link_ambiguities", "[]"),
+            ("source_policy", CANONICAL_SOURCE_POLICY),
         ],
     )
     return con
@@ -93,7 +96,7 @@ def add_linked_rule(
     product_dosage_form: str | None = None,
     criterion_dosage_form: str | None = None,
     effect_name: str | None = None,
-    criterion_note: str | None = None,
+    criterion_qualifier_note: str | None = None,
 ) -> tuple[int, int]:
     product_dosage_form = dosage_form if product_dosage_form is None else product_dosage_form
     criterion_dosage_form = dosage_form if criterion_dosage_form is None else criterion_dosage_form
@@ -115,13 +118,27 @@ def add_linked_rule(
     cur = con.execute(
         """INSERT INTO ingredient_rules(
                source_dataset_key,source_row,category,ingredient_name,ingredient_name_ko,
-               paired_ingredient_name,rule_value,dosage_form,note,details,sequence_text
+               paired_ingredient_name,rule_value,dosage_form,qualifier_note,details,sequence_text
            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-        (XLSX_SOURCE, criterion_source_row, category, ingredient, ingredient,
-         paired_ingredient, rule_value or effect_name, criterion_dosage_form, criterion_note, details,
+        (CRITERION_SOURCE_BY_CATEGORY[category], criterion_source_row, category, ingredient, ingredient,
+         paired_ingredient, rule_value or effect_name, criterion_dosage_form, criterion_qualifier_note, details,
          str(criterion_source_row)),
     )
     criterion_rule_id = int(cur.lastrowid)
+    con.execute(
+        """INSERT INTO ingredient_rule_codes(
+               criterion_rule_id,ingredient_code,paired_ingredient_code,
+               mixture_type,mixture_ingredient_codes_json,mixture_ingredient_names_json
+           ) VALUES(?,?,?,?,?,?)""",
+        (
+            criterion_rule_id,
+            ingredient_code,
+            paired_code,
+            None if category == "combination_contraindication" else "단일",
+            "[]",
+            "[]",
+        ),
+    )
     if category == "dose_caution":
         amount, unit, status, reason = parse_daily_dose_threshold(rule_value or effect_name)
         con.execute(
@@ -134,7 +151,7 @@ def add_linked_rule(
         """INSERT INTO product_criterion_links(
                product_rule_id,criterion_rule_id,match_method,pair_orientation
            ) VALUES(?,?,?,?)""",
-        (product_rule_id, criterion_rule_id, "english_exact",
+        (product_rule_id, criterion_rule_id, "mfds_ingredient_code",
          "forward" if paired_item_seq else None),
     )
     return product_rule_id, criterion_rule_id
@@ -163,40 +180,6 @@ def add_unlinked_rule(
     )
     return int(cur.lastrowid)
 
-def add_lactation(
-    con: sqlite3.Connection,
-    *,
-    item_seq: str,
-    ingredient: str,
-    details: str = "수유부주의",
-    unresolved: bool = False,
-) -> int:
-    source_row = con.execute("SELECT COUNT(*)+1 FROM ingredient_rules").fetchone()[0]
-    cur = con.execute(
-        """INSERT INTO ingredient_rules(
-               source_dataset_key,source_row,category,ingredient_name,ingredient_name_ko,
-               details,sequence_text
-           ) VALUES(?,?,'lactation_caution',?,?,?,?)""",
-        (XLSX_SOURCE, source_row, ingredient, ingredient, details, str(source_row)),
-    )
-    criterion_id = int(cur.lastrowid)
-    if unresolved:
-        con.execute(
-            """INSERT INTO product_ingredient_criterion_unresolved(
-                   item_seq,criterion_rule_id,category,reason,evidence_json
-               ) VALUES(?,?,'lactation_caution','scope_relation_unproven','{}')""",
-            (item_seq, criterion_id),
-        )
-    else:
-        con.execute(
-            """INSERT INTO product_ingredient_criterion_links(
-                   item_seq,criterion_rule_id,category,match_method,evidence_kind,evidence_json
-               ) VALUES(?,?,'lactation_caution','precise_substance_exact','precise_substance_identity','{}')""",
-            (item_seq, criterion_id),
-        )
-    return criterion_id
-
-
 def add_flag(
     con: sqlite3.Connection,
     *,
@@ -215,5 +198,5 @@ def add_flag(
 
 __all__ = [
     "create_canonical_fixture", "add_product", "add_linked_rule", "add_unlinked_rule",
-    "add_lactation", "add_flag", "PERMIT_SOURCE", "DUR_SOURCE", "XLSX_SOURCE",
+    "add_flag", "PERMIT_SOURCE", "DUR_SOURCE", "CRITERION_SOURCE_BY_CATEGORY",
 ]

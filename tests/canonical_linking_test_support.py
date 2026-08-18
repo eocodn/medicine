@@ -14,7 +14,6 @@ class CanonicalLinkingFixture(unittest.TestCase):
         for key, family in (
             ("permit", "mfds_permit_api"),
             ("mfds", "mfds_dur_item_api"),
-            ("xlsx", "kids_mfds_xlsx"),
             ("mfds_ing", "mfds_dur_ingredient_api"),
         ):
             self.con.execute(
@@ -62,23 +61,6 @@ class CanonicalLinkingFixture(unittest.TestCase):
             ),
         )
 
-    def criterion(
-        self,
-        row: int,
-        category: str,
-        ingredient: str,
-        *,
-        paired: str | None = None,
-        ingredient_ko: str | None = None,
-        rule_value: str | None = None,
-    ) -> None:
-        self.con.execute(
-            """INSERT INTO ingredient_rules(
-                source_dataset_key,source_row,category,ingredient_name,ingredient_name_ko,paired_ingredient_name,rule_value
-            ) VALUES('xlsx',?,?,?,?,?,?)""",
-            (row, category, ingredient, ingredient_ko, paired, rule_value),
-        )
-
     def mfds_criterion(
         self,
         row: int,
@@ -94,14 +76,14 @@ class CanonicalLinkingFixture(unittest.TestCase):
         rule_value: str | None = None,
         dosage_form: str | None = None,
         details: str | None = None,
-        note: str | None = None,
+        qualifier_note: str | None = None,
     ) -> int:
         cur = self.con.execute(
             """INSERT INTO ingredient_rules(
                 source_dataset_key,source_row,category,ingredient_name,paired_ingredient_name,
-                rule_value,dosage_form,note,details
+                rule_value,dosage_form,qualifier_note,details
             ) VALUES('mfds_ing',?,?,?,?,?,?,?,?)""",
-            (row, category, ingredient, paired, rule_value, dosage_form, note, details),
+            (row, category, ingredient, paired, rule_value, dosage_form, qualifier_note, details),
         )
         criterion_id = int(cur.lastrowid)
         self.con.execute(

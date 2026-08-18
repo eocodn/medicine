@@ -12,9 +12,14 @@ from zoneinfo import ZoneInfo
 
 from .dose_criteria import materialize_dose_criteria
 from .inspection import canonical_stats, verify_canonical_database
+from .mfds_ingredient import (
+    IngredientFetchPage,
+    import_mfds_ingredient_snapshots,
+    sync_mfds_ingredient_sources,
+)
 from .linking import materialize_product_criterion_links
-from .product_ingredient_applicability import materialize_product_ingredient_criterion_links
 from .schema import SCHEMA, SCHEMA_VERSION
+from .source_policy import CANONICAL_SOURCE_POLICY
 from .sources import (
     DUR_ENDPOINTS,
     PERMIT_DATASET_KEY,
@@ -23,7 +28,6 @@ from .sources import (
     PermitFetchPage,
     sync_canonical_api_sources,
 )
-from .xlsx import import_xlsx_sources
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
 FLAG_CATEGORY_BY_CODE = {
@@ -335,33 +339,86 @@ def _import_dur_snapshots(con: sqlite3.Connection, raw_dir: Path) -> tuple[int, 
     return rule_rows, flag_rows
 
 
+def _default_ingredient_raw_dir(raw_root: Path) -> Path:
+    return raw_root.parent / "mfds_ingredient"
+
+
+def sync_reference_sources(
+    raw_dir: str | Path,
+    ingredient_raw_dir: str | Path,
+    *,
+    service_key: str,
+    permit_page_size: int = 500,
+    dur_page_size: int = 500,
+    ingredient_page_size: int = 500,
+    workers: int = 8,
+    progress: bool = True,
+    permit_fetch_page: PermitFetchPage | None = None,
+    dur_fetch_page: DurFetchPage | None = None,
+    ingredient_fetch_page: IngredientFetchPage | None = None,
+) -> dict:
+    """Sync the complete authoritative MFDS source set used by canonical builds."""
+    product_sources = sync_canonical_api_sources(
+        raw_dir,
+        service_key=service_key,
+        permit_page_size=permit_page_size,
+        dur_page_size=dur_page_size,
+        workers=workers,
+        progress=progress,
+        permit_fetch_page=permit_fetch_page,
+        dur_fetch_page=dur_fetch_page,
+    )
+    ingredient_sources = sync_mfds_ingredient_sources(
+        ingredient_raw_dir,
+        service_key=service_key,
+        page_size=ingredient_page_size,
+        workers=workers,
+        progress=progress,
+        fetch_page=ingredient_fetch_page,
+    )
+    return {
+        "product_sources": product_sources,
+        "ingredient_sources": ingredient_sources,
+        "source_rows": int(product_sources["source_rows"])
+        + int(ingredient_sources["source_rows"]),
+    }
+
+
 def populate_canonical_source_tables(
     con: sqlite3.Connection,
-    kids_dir: str | Path,
     raw_dir: str | Path,
+    ingredient_raw_dir: str | Path,
 ) -> dict:
-    """Populate authoritative MFDS/KIDS source tables without identity linking."""
+    """Populate authoritative MFDS source tables without identity linking."""
     raw_root = Path(raw_dir)
+    ingredient_root = Path(ingredient_raw_dir)
     permit_rows = _import_permit_snapshot(con, raw_root)
     product_rule_rows, product_flag_rows = _import_dur_snapshots(con, raw_root)
-    xlsx_result = import_xlsx_sources(con, Path(kids_dir))
+    ingredient_result = import_mfds_ingredient_snapshots(con, ingredient_root)
     dose_result = materialize_dose_criteria(con)
     return {
         "permit_source_rows": permit_rows,
         "product_rule_rows_imported": product_rule_rows,
         "product_flag_rows_imported": product_flag_rows,
-        "ingredient_rule_rows_imported": xlsx_result["ingredient_rules"],
+        "ingredient_rule_rows_imported": ingredient_result["ingredient_rules"],
+        "ingredient_source_rows": ingredient_result["source_rows"],
+        "ingredient_deleted_rows_skipped": ingredient_result["deleted_rows_skipped"],
         **dose_result,
     }
 
 
 def assemble_canonical_database(
     db_path: str | Path,
-    kids_dir: str | Path,
     raw_dir: str | Path,
+    ingredient_raw_dir: str | Path | None = None,
 ) -> dict:
     db_path = Path(db_path)
     raw_root = Path(raw_dir)
+    ingredient_root = (
+        Path(ingredient_raw_dir)
+        if ingredient_raw_dir is not None
+        else _default_ingredient_raw_dir(raw_root)
+    )
     db_path.parent.mkdir(parents=True, exist_ok=True)
     temp = db_path.with_name(db_path.name + ".tmp")
     temp.unlink(missing_ok=True)
@@ -370,25 +427,15 @@ def assemble_canonical_database(
         with closing(sqlite3.connect(temp)) as con:
             con.executescript(SCHEMA)
             con.execute("BEGIN")
-            source_result = populate_canonical_source_tables(con, kids_dir, raw_root)
+            source_result = populate_canonical_source_tables(con, raw_root, ingredient_root)
             link_result = materialize_product_criterion_links(con)
-            ingredient_applicability_result = materialize_product_ingredient_criterion_links(con)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(
                 "INSERT INTO canonical_meta(key,value) VALUES(?,?)",
                 [
                     ("schema_version", SCHEMA_VERSION),
                     ("built_at", built_at),
-                    ("source_policy", "mfds_permit_api+mfds_dur_item_api+kids_mfds_xlsx"),
-                    (
-                        "unresolved_link_ambiguities",
-                        json.dumps(
-                            link_result["unresolved_link_ambiguities"],
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        ),
-                    ),
+                    ("source_policy", CANONICAL_SOURCE_POLICY),
                 ],
             )
             con.commit()
@@ -407,9 +454,9 @@ def assemble_canonical_database(
         {
             **source_result,
             **link_result,
-            **ingredient_applicability_result,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "raw_dir": str(raw_root),
+            "ingredient_raw_dir": str(ingredient_root),
         }
     )
     return stats
@@ -417,27 +464,45 @@ def assemble_canonical_database(
 
 def build_canonical_database(
     db_path: str | Path,
-    kids_dir: str | Path,
     *,
     service_key: str,
     raw_dir: str | Path | None = None,
+    ingredient_raw_dir: str | Path | None = None,
     permit_page_size: int = 500,
     dur_page_size: int = 500,
+    ingredient_page_size: int = 500,
     api_workers: int = 8,
     progress: bool = True,
     permit_fetch_page: PermitFetchPage | None = None,
     dur_fetch_page: DurFetchPage | None = None,
+    ingredient_fetch_page: IngredientFetchPage | None = None,
 ) -> dict:
     db_path = Path(db_path)
     raw_root = Path(raw_dir) if raw_dir is not None else db_path.parent / f"{db_path.stem}.sources"
-    sync_canonical_api_sources(
+    ingredient_root = (
+        Path(ingredient_raw_dir)
+        if ingredient_raw_dir is not None
+        else _default_ingredient_raw_dir(raw_root)
+    )
+    sync_reference_sources(
         raw_root,
+        ingredient_root,
         service_key=service_key,
         permit_page_size=permit_page_size,
         dur_page_size=dur_page_size,
+        ingredient_page_size=ingredient_page_size,
         workers=api_workers,
         progress=progress,
         permit_fetch_page=permit_fetch_page,
         dur_fetch_page=dur_fetch_page,
+        ingredient_fetch_page=ingredient_fetch_page,
     )
-    return assemble_canonical_database(db_path, kids_dir, raw_root)
+    return assemble_canonical_database(db_path, raw_root, ingredient_root)
+
+
+__all__ = [
+    "assemble_canonical_database",
+    "build_canonical_database",
+    "populate_canonical_source_tables",
+    "sync_reference_sources",
+]

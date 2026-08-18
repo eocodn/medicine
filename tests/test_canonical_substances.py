@@ -76,7 +76,7 @@ class CanonicalSubstanceTest(unittest.TestCase):
             snapshots = [
                 ("mfds_permit:products", "mfds_permit_api"),
                 ("mfds_dur:age", "mfds_dur_item_api"),
-                ("kids_mfds_xlsx:age", "kids_mfds_xlsx"),
+                ("mfds_dur_ingredient:getSpcifyAgrdeTabooInfoList02", "mfds_dur_ingredient_api"),
             ]
             for key, family in snapshots:
                 con.execute(
@@ -112,7 +112,7 @@ class CanonicalSubstanceTest(unittest.TestCase):
             con.executemany(
                 """INSERT INTO ingredient_rules(
                        source_dataset_key,source_row,category,ingredient_name,ingredient_name_ko
-                   ) VALUES('kids_mfds_xlsx:age',?,'age_contraindication',?,?)""",
+                   ) VALUES('mfds_dur_ingredient:getSpcifyAgrdeTabooInfoList02',?,'age_contraindication',?,?)""",
                 [
                     (1, "Alpha", "알파"),
                     (2, "Ambiguous", "모호"),
@@ -330,7 +330,7 @@ class CanonicalSubstanceTest(unittest.TestCase):
             con.execute(
                 """INSERT INTO ingredient_rules(
                        source_dataset_key,source_row,category,ingredient_name,ingredient_name_ko
-                   ) VALUES('kids_mfds_xlsx:age',16,'age_contraindication',?,?)""",
+                   ) VALUES('mfds_dur_ingredient:getSpcifyAgrdeTabooInfoList02',16,'age_contraindication',?,?)""",
                 ("Atorvastatin Calcium Hydrate", "아토르바스타틴칼슘수화물"),
             )
             con.commit()

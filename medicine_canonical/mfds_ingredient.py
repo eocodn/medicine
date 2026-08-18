@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from .dose_criteria import materialize_dose_criteria
 from .mfds_ingredient_endpoints import MFDS_INGREDIENT_ENDPOINTS, MfdsIngredientEndpoint
+from .mfds_remark_registry import reviewed_mfds_remark
 from .schema import SCHEMA, SCHEMA_VERSION
 from .sources import _request_json, _sync_paginated_jsonl
 
@@ -284,14 +285,10 @@ def _canonical_rule(
         if spec.rule_required and not rule_value:
             raise ValueError(f"{dataset_key} row {source_row} missing {spec.rule_field}")
 
-    note_parts: list[str] = []
+    series_note = None
     if spec.category == "therapeutic_duplication_caution":
-        series = _text(_field(row, "SERS_NAME"))
-        if series:
-            note_parts.append(series)
+        series_note = _text(_field(row, "SERS_NAME"))
     remark = _text(_field(row, "REMARK"))
-    if remark and remark not in note_parts:
-        note_parts.append(remark)
 
     return {
         "category": spec.category,
@@ -306,7 +303,8 @@ def _canonical_rule(
         "mixture_ingredient_names": mixture_names,
         "rule_value": rule_value,
         "dosage_form": _text(_field(row, "FORM_NAME")),
-        "note": "\n".join(note_parts) or None,
+        "note": series_note,
+        "qualifier_note": remark,
         "details": _text(_field(row, "PROHBT_CONTENT")),
     }
 
@@ -336,6 +334,7 @@ def import_mfds_ingredient_snapshots(
                 row = json.loads(line)
                 if not isinstance(row, dict):
                     raise ValueError(f"{dataset_key} row {source_row} is not a JSON object")
+                reviewed_mfds_remark(spec.category, _text(_field(row, "REMARK")))
                 state = _text(_field(row, "DEL_YN"))
                 if state == "삭제":
                     deleted_rows += 1
@@ -347,8 +346,8 @@ def import_mfds_ingredient_snapshots(
                         """
                         INSERT INTO ingredient_rules(
                             source_dataset_key,source_row,category,sequence_text,ingredient_name,
-                            ingredient_name_ko,paired_ingredient_name,rule_value,dosage_form,note,details
-                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                            ingredient_name_ko,paired_ingredient_name,rule_value,dosage_form,note,qualifier_note,details
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             dataset_key,
@@ -361,6 +360,7 @@ def import_mfds_ingredient_snapshots(
                             canonical["rule_value"],
                             canonical["dosage_form"],
                             canonical["note"],
+                            canonical["qualifier_note"],
                             canonical["details"],
                         ),
                     )
@@ -469,6 +469,14 @@ def verify_mfds_ingredient_preview(db_path: str | Path) -> dict:
         dose_criteria = int(con.execute("SELECT COUNT(*) FROM dose_criteria").fetchone()[0])
         if dose_rules != dose_criteria:
             errors.append("dose criteria coverage mismatch")
+        for category, qualifier_note, source_row in con.execute(
+            """SELECT category,qualifier_note,source_row FROM ingredient_rules
+               WHERE qualifier_note IS NOT NULL AND TRIM(qualifier_note) != ''"""
+        ):
+            try:
+                reviewed_mfds_remark(category, qualifier_note)
+            except ValueError as exc:
+                errors.append(f"{exc} (source row {source_row})")
         meta = dict(con.execute("SELECT key,value FROM canonical_meta"))
         if meta.get("schema_version") != SCHEMA_VERSION:
             errors.append("schema version mismatch")

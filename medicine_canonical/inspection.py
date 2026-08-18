@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from .mfds_remark_registry import reviewed_mfds_remark
 from .schema import CORE_SOURCE_FAMILIES, SCHEMA_VERSION
 from .source_policy import EXPECTED_CANONICAL_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_KEYS
 
@@ -89,43 +89,6 @@ def canonical_stats(db_path: str | Path) -> dict:
             "SELECT COUNT(*) FROM dur_criterion_pair_signatures"
         ).fetchone()[0]
         product_criterion_links = con.execute("SELECT COUNT(*) FROM product_criterion_links").fetchone()[0]
-        product_ingredient_criterion_links = con.execute(
-            "SELECT COUNT(*) FROM product_ingredient_criterion_links"
-        ).fetchone()[0]
-        linked_product_ingredient_items = con.execute(
-            "SELECT COUNT(DISTINCT item_seq) FROM product_ingredient_criterion_links"
-        ).fetchone()[0]
-        active_linked_product_ingredient_items = con.execute(
-            """SELECT COUNT(DISTINCT l.item_seq)
-               FROM product_ingredient_criterion_links l
-               JOIN products p ON p.item_seq=l.item_seq
-               WHERE p.permit_status='active'"""
-        ).fetchone()[0]
-        ingredient_criterion_link_methods = {
-            row[0]: row[1]
-            for row in con.execute(
-                """SELECT match_method,COUNT(*)
-                   FROM product_ingredient_criterion_links
-                   GROUP BY match_method ORDER BY match_method"""
-            )
-        }
-        unresolved_product_ingredient_criteria = con.execute(
-            "SELECT COUNT(*) FROM product_ingredient_criterion_unresolved"
-        ).fetchone()[0]
-        active_unresolved_product_ingredient_criteria = con.execute(
-            """SELECT COUNT(*)
-               FROM product_ingredient_criterion_unresolved u
-               JOIN products p ON p.item_seq=u.item_seq
-               WHERE p.permit_status='active'"""
-        ).fetchone()[0]
-        unresolved_product_ingredient_reasons = {
-            row[0]: row[1]
-            for row in con.execute(
-                """SELECT reason,COUNT(*)
-                   FROM product_ingredient_criterion_unresolved
-                   GROUP BY reason ORDER BY reason"""
-            )
-        }
         linked_product_rules = con.execute(
             "SELECT COUNT(DISTINCT product_rule_id) FROM product_criterion_links"
         ).fetchone()[0]
@@ -194,7 +157,6 @@ def canonical_stats(db_path: str | Path) -> dict:
             "SELECT COUNT(*) FROM product_flags f LEFT JOIN products p ON p.item_seq=f.item_seq WHERE p.item_seq IS NULL"
         ).fetchone()[0]
         meta = dict(con.execute("SELECT key,value FROM canonical_meta").fetchall())
-        unresolved_link_ambiguities = json.loads(meta.get("unresolved_link_ambiguities", "[]"))
     return {
         "db_path": str(path),
         "schema_version": meta.get("schema_version"),
@@ -217,23 +179,12 @@ def canonical_stats(db_path: str | Path) -> dict:
         "dur_criterion_signatures": dur_criterion_signatures,
         "dur_criterion_pair_signatures": dur_criterion_pair_signatures,
         "product_criterion_links": product_criterion_links,
-        "product_ingredient_criterion_links": product_ingredient_criterion_links,
-        "linked_product_ingredient_items": linked_product_ingredient_items,
-        "active_linked_product_ingredient_items": active_linked_product_ingredient_items,
-        "ingredient_criterion_link_methods": ingredient_criterion_link_methods,
-        "unresolved_product_ingredient_criteria": unresolved_product_ingredient_criteria,
-        "active_unresolved_product_ingredient_criteria": active_unresolved_product_ingredient_criteria,
-        "unresolved_product_ingredient_reasons": unresolved_product_ingredient_reasons,
         "linked_product_rules": linked_product_rules,
         "unlinked_product_rules": product_rules - linked_product_rules,
         "criterion_link_methods": criterion_link_methods,
         "criterion_link_coverage": criterion_link_coverage,
         "product_rules_missing_ingredient_identity": missing_product_rule_identity,
         "paired_product_rules_missing_ingredient_identity": missing_paired_rule_identity,
-        "unresolved_link_ambiguities": unresolved_link_ambiguities,
-        "unresolved_link_ambiguity_count": len(unresolved_link_ambiguities),
-        "unresolved_link_identities": unresolved_link_ambiguities,
-        "unresolved_link_identity_count": len(unresolved_link_ambiguities),
         "source_snapshots": source_snapshots,
         "source_families": source_families,
         "orphan_product_rules": orphan_rules,
@@ -291,67 +242,6 @@ def canonical_product_criteria(
     }
 
 
-def canonical_product_ingredient_criteria(
-    db_path: str | Path,
-    item_seq: str,
-    *,
-    category: str | None = None,
-    limit: int = 100,
-) -> dict:
-    path = Path(db_path)
-    if not path.exists():
-        raise FileNotFoundError(f"canonical database not found: {path}")
-    item_seq = str(item_seq or "").strip()
-    if not item_seq:
-        raise ValueError("item_seq is required")
-    if limit < 1:
-        raise ValueError("limit must be positive")
-    with closing(sqlite3.connect(path)) as con:
-        con.row_factory = sqlite3.Row
-        params: list[object] = [item_seq]
-        where = "item_seq=?"
-        if category:
-            where += " AND category=?"
-            params.append(category)
-        criteria_params = [*params, limit]
-        criteria = [
-            dict(row)
-            for row in con.execute(
-                f"""SELECT * FROM product_ingredient_criteria
-                    WHERE {where}
-                    ORDER BY category,criterion_source_dataset_key,criterion_source_row
-                    LIMIT ?""",
-                criteria_params,
-            )
-        ]
-        unresolved_params = [*params, limit]
-        unresolved = [
-            dict(row)
-            for row in con.execute(
-                f"""SELECT u.item_seq,u.criterion_rule_id,u.category,u.reason,u.evidence_json,
-                           i.ingredient_name AS criterion_ingredient_name,
-                           i.ingredient_name_ko AS criterion_ingredient_name_ko,
-                           i.note AS criterion_note,i.details AS criterion_details
-                    FROM product_ingredient_criterion_unresolved u
-                    JOIN ingredient_rules i ON i.id=u.criterion_rule_id
-                    WHERE {where.replace('item_seq', 'u.item_seq').replace('category', 'u.category')}
-                    ORDER BY u.category,i.source_dataset_key,i.source_row
-                    LIMIT ?""",
-                unresolved_params,
-            )
-        ]
-    return {
-        "db_path": str(path),
-        "item_seq": item_seq,
-        "category": category,
-        "limit": limit,
-        "count": len(criteria),
-        "criteria": criteria,
-        "unresolved_count": len(unresolved),
-        "unresolved": unresolved,
-    }
-
-
 def verify_canonical_database(db_path: str | Path) -> dict:
     path = Path(db_path)
     errors: list[str] = []
@@ -403,6 +293,15 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 errors.append("no product rules imported")
             if stats["ingredient_rules"] == 0:
                 errors.append("no ingredient rules imported")
+            for category, qualifier_note, source_row in con.execute(
+                """SELECT category,qualifier_note,source_row FROM ingredient_rules
+                   WHERE source_dataset_key LIKE 'mfds_dur_ingredient:%'
+                     AND qualifier_note IS NOT NULL AND TRIM(qualifier_note) != ''"""
+            ):
+                try:
+                    reviewed_mfds_remark(category, qualifier_note)
+                except ValueError as exc:
+                    errors.append(f"{exc} (source row {source_row})")
             dose_rule_count = con.execute(
                 "SELECT COUNT(*) FROM ingredient_rules WHERE category='dose_caution'"
             ).fetchone()[0]
@@ -429,7 +328,7 @@ def verify_canonical_database(db_path: str | Path) -> dict:
             ):
                 errors.append("no DUR criterion bridge signatures materialized")
             if stats["product_criterion_links"] == 0:
-                errors.append("no product/XLSX criterion links materialized")
+                errors.append("no product/ingredient criterion links materialized")
             foreign_key_errors = con.execute("PRAGMA foreign_key_check").fetchall()
             if foreign_key_errors:
                 errors.append(f"foreign key violations: {len(foreign_key_errors)}")
@@ -443,40 +342,7 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 """
             ).fetchone()[0]
             if category_mismatches:
-                errors.append(f"product/XLSX criterion category mismatches: {category_mismatches}")
-            ingredient_category_mismatches = con.execute(
-                """SELECT COUNT(*)
-                   FROM product_ingredient_criterion_links l
-                   JOIN ingredient_rules i ON i.id=l.criterion_rule_id
-                   WHERE l.category != i.category"""
-            ).fetchone()[0]
-            unresolved_ingredient_category_mismatches = con.execute(
-                """SELECT COUNT(*)
-                   FROM product_ingredient_criterion_unresolved u
-                   JOIN ingredient_rules i ON i.id=u.criterion_rule_id
-                   WHERE u.category != i.category"""
-            ).fetchone()[0]
-            if ingredient_category_mismatches or unresolved_ingredient_category_mismatches:
-                errors.append(
-                    "ingredient applicability category mismatches: "
-                    f"{ingredient_category_mismatches + unresolved_ingredient_category_mismatches}"
-                )
-            ingredient_resolution_overlap = con.execute(
-                """SELECT COUNT(*)
-                   FROM product_ingredient_criterion_links l
-                   JOIN product_ingredient_criterion_unresolved u
-                     ON u.item_seq=l.item_seq AND u.criterion_rule_id=l.criterion_rule_id"""
-            ).fetchone()[0]
-            if ingredient_resolution_overlap:
-                errors.append(
-                    "resolved/unresolved ingredient applicability overlap: "
-                    f"{ingredient_resolution_overlap}"
-                )
-            lactation_criteria = con.execute(
-                "SELECT COUNT(*) FROM ingredient_rules WHERE category='lactation_caution'"
-            ).fetchone()[0]
-            if lactation_criteria and stats["product_ingredient_criterion_links"] == 0:
-                errors.append("no lactation product applicability links materialized")
+                errors.append(f"product/ingredient criterion category mismatches: {category_mismatches}")
             invalid_orientations = con.execute(
                 """
                 SELECT COUNT(*)
@@ -487,7 +353,7 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 """
             ).fetchone()[0]
             if invalid_orientations:
-                errors.append(f"invalid product/XLSX pair orientations: {invalid_orientations}")
+                errors.append(f"invalid product/ingredient criterion pair orientations: {invalid_orientations}")
             if stats["orphan_product_rules"]:
                 warnings.append(f"product rules with ITEM_SEQ absent from permit snapshot: {stats['orphan_product_rules']}")
             if stats["orphan_paired_product_rules"]:
@@ -503,15 +369,6 @@ def verify_canonical_database(db_path: str | Path) -> dict:
                 warnings.append(
                     "paired product rules missing MFDS ingredient code/English identity: "
                     f"{stats['paired_product_rules_missing_ingredient_identity']}"
-                )
-            if stats["unresolved_link_ambiguities"]:
-                rendered = "; ".join(
-                    f"{row['category']}:{row['ingredient_name']}=>{','.join(row['candidate_codes'])}"
-                    for row in stats["unresolved_link_ambiguities"][:20]
-                )
-                errors.append(
-                    "unresolved XLSX link identity ambiguities: "
-                    f"{stats['unresolved_link_ambiguity_count']} ({rendered})"
                 )
     except sqlite3.DatabaseError as exc:
         errors.append(f"database error: {exc}")

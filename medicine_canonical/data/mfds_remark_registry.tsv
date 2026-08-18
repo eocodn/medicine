@@ -1,0 +1,70 @@
+category	remark	mode	qualifier_type	display_text	value	rationale
+age_contraindication	1개월 이하(1%) (전신마취), 36개월 미만(2%) (전신마취)	review_required	indication	전신마취		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+age_contraindication	구강용 액제, 구강용 스프레이제	informational	source_note	구강용 액제, 구강용 스프레이제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+age_contraindication	구강용액제(2%)	informational	source_note	구강용액제(2%)		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+age_contraindication	다만, '주요 우울장애의 치료'에 한함	review_required	indication	주요 우울장애의 치료에 한함		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+age_contraindication	다만, 다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여	review_required	clinical_context	다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+age_contraindication	점안제(0.125%)	informational	source_note	점안제(0.125%)		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+age_contraindication	점안제(1%)	informational	source_note	점안제(1%)		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+age_contraindication	질용좌제, 외용액제, 연고제	informational	source_note	질용좌제, 외용액제, 연고제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+combination_contraindication	24시간 이내 병용금기	interaction_window	timing	24시간 이내 병용금기	24	REMARK에만 있는 명시적 병용 간격을 수동 구조화
+combination_contraindication	48시간 이내 병용금기	interaction_window	timing	48시간 이내 병용금기	48	REMARK에만 있는 명시적 병용 간격을 수동 구조화
+combination_contraindication	methotrexate (1週에 15mg 이상 투여시)	review_required	dose_context	메토트렉세이트 주 15mg 이상 투여 시		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+combination_contraindication	methotrexate 1週에 15mg 이상 투여시	review_required	dose_context	메토트렉세이트 주 15mg 이상 투여 시		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+combination_contraindication	methotrexate(1週에 20mg 이상 투여시)	review_required	dose_context	메토트렉세이트 주 20mg 이상 투여 시		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+combination_contraindication	분류번호 : [06140], [06150] 중 경구제와 주사제 등 전신제제에 한함	informational	source_note	분류번호 : [06140], [06150] 중 경구제와 주사제 등 전신제제에 한함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+combination_contraindication	상품명 : 스트리빌드정	informational	source_note	상품명 : 스트리빌드정		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+combination_contraindication	상품명 : 트루바다정	informational	source_note	상품명 : 트루바다정		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+combination_contraindication	상픔명 : 스트리빌드정	informational	source_note	상픔명 : 스트리빌드정		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+combination_contraindication	소생 등의 위급상황 제외	review_required	clinical_context	소생 등의 위급상황 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+combination_contraindication	소생 등의 응급상황 제외	review_required	clinical_context	소생 등의 응급상황 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+dose_caution	1일최대용량 : 펠로디핀 5mg 및 라미프릴 5mg(복합제)	informational	source_note	1일최대용량 : 펠로디핀 5mg 및 라미프릴 5mg(복합제)		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+dose_caution	FGF23 관련 저인산혈증성 구루병 및 골연화증의 경우 부로수맙 90mg, 주사제	review_required	indication	FGF23 관련 저인산혈증성 구루병 및 골연화증		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+dose_caution	단일제·복합제 포함	composition_scope	composition	단일제·복합제 포함	all	단일제와 복합제 모두에 적용되는 명시적 조성 범위
+dose_caution	만성면역성(특발성) 혈소판 감소증 : 엘트롬보팍 50mg,  만성 C형 간염 : 엘트롬보팍 75mg,  중증 재생불량성 빈혈 : 엘트롬보팍 100mg	review_required	indication	적응증에 따라 엘트롬보팍 1일 최대용량이 다름		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+dose_caution	복합제	informational	source_note	복합제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+dose_caution	점비액제	informational	source_note	점비액제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+dose_caution	정제	informational	source_note	정제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+dose_caution	주사제	informational	source_note	주사제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+dose_caution	주성분 3성분	informational	source_note	주성분 3성분		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+dose_caution	캡슐제	informational	source_note	캡슐제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+dose_caution	허혈성 심질환 : 20,000IU, 증상적 정맥 혈전색전증을 보이는 암환자 : 18,000IU	review_required	indication	적응증에 따라 달테파린 1일 최대용량이 다름		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+dose_caution	흡입제	informational	source_note	흡입제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+duration_caution	주성분 함량 10g/100mL, 주사제	informational	source_note	주성분 함량 10g/100mL, 주사제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+duration_caution	주성분 함량 10mg, 30mg, 100mg, 캡슐제, 산제	informational	source_note	주성분 함량 10mg, 30mg, 100mg, 캡슐제, 산제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+duration_caution	주성분 함량 20g/100mL, 주사제	informational	source_note	주성분 함량 20g/100mL, 주사제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+duration_caution	항암제 투여로 인한 구역 및 구토의 방지에 쓰는 제품에 한함	review_required	indication	항암제 투여로 인한 구역 및 구토 방지에 한함		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	"""(정제) 임신 초기 4개월동안 투여시 기형아 출산 가능성(태아의 수족기형현상 4.7배 높게 보고됨).(현탁액)임부 투여시 태아에 치명적인 위해 가능성.동물실험에서 수컷 새끼의 번식능력 손상, 태자의 체중감소, 생존출생 태자수의 감소, 수컷 태자의 여성화 등 보고."""	informational	source_note	제형별 임부 위해 정보가 MFDS 금기내용에 별도 기재됨		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	"""1등급( 황체기능부전에 의한 불임치료, 황체호르몬 부족으로 인한 유·조산 치료시 제외)"""	review_required	indication	황체기능부전에 의한 불임치료 또는 황체호르몬 부족으로 인한 유·조산 치료 시 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	"""1등급(분만유도/촉진, 불가피한 사유로 인한 인공임신중절 시 제외)"""	review_required	indication	분만유도·촉진 또는 불가피한 인공임신중절 시 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	"""1등급(항암치료 제외)2등급(항암치료)"""	review_required	indication	항암치료 여부에 따라 임부금기 등급이 다름		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	"""2등급(말라리아 치료시 제외)"""	review_required	indication	말라리아 치료 시 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	"""2등급(정제:항암치료시)1등급(현탁액:암 또는 AIDS 환자의 식욕부진, 악액질 또는 원인불명의 현저한 체중감소의 치료)"""	review_required	indication	제형과 항암·암/AIDS 관련 적응증에 따라 임부금기 등급이 다름		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	"""2등급(폐경전  유방암환자)1등급(자궁내막증/자궁내막축소증 환자)"""	review_required	indication	폐경 전 유방암과 자궁내막증·자궁내막축소증에서 임부금기 등급이 다름		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	2013-07-12 정제,주사제에만 해당, 2020-12-28 좌제 포함, 2025-07-14 직장용 반고형제 포함	informational	source_note	2013-07-12 정제,주사제에만 해당, 2020-12-28 좌제 포함, 2025-07-14 직장용 반고형제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	2025-07-14 직장용 반고형제 포함	informational	source_note	2025-07-14 직장용 반고형제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	겔제, 첩부제 포함	informational	source_note	겔제, 첩부제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	경구	informational	source_note	경구		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	관장제 포함	informational	source_note	관장제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	구강용 스프레이제, 구강용 액제, 겔제, 점안제, 첩부제, 카타플라마제, 크림제 포함	informational	source_note	구강용 스프레이제, 구강용 액제, 겔제, 점안제, 첩부제, 카타플라마제, 크림제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	금기내용 변경(2022.6.30.)	informational	source_note	금기내용 변경(2022.6.30.)		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	단, 강심제 제외	review_required	indication	강심제로 사용 시 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	단, 강심제로 사용시 제외	review_required	indication	강심제로 사용 시 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	단일제에 한함	informational	source_note	단일제에 한함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	로션제, 크림제 포함	informational	source_note	로션제, 크림제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	비만 및 과체중 환자 체중관리	review_required	indication	비만 및 과체중 환자 체중관리		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	외용 (모발용제)	informational	source_note	외용 (모발용제)		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	외용액제 포함	informational	source_note	외용액제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	인슐린 데글루덱 (Insulin Degludec), 인슐린 데글루덱/아스파트 (Insulin Degludec/Aspart) 고시일자 2016-01-29	informational	source_note	인슐린 데글루덱 (Insulin Degludec), 인슐린 데글루덱/아스파트 (Insulin Degludec/Aspart) 고시일자 2016-01-29		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	점안제 포	informational	source_note	점안제 포		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	점안제 포함	informational	source_note	점안제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	제2형 당뇨병	review_required	indication	제2형 당뇨병		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	주사제(안과용)	informational	source_note	주사제(안과용)		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	직작용 반고형제 포함	informational	source_note	직작용 반고형제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	직장용 반고형제 포함	informational	source_note	직장용 반고형제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	질용좌제, 외용액제, 가글제, 구강용 스프레이제, 연고제, 에어로솔제 포함	informational	source_note	질용좌제, 외용액제, 가글제, 구강용 스프레이제, 연고제, 에어로솔제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	크림제 포함	informational	source_note	크림제 포함		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+pregnancy_contraindication	폐동맥고혈압 치료시 제외	review_required	indication	폐동맥고혈압 치료 시 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+pregnancy_contraindication	황체기능부전에 의한 불임치료, 황체호르몬 부족으로 인한 유·조산 치료시 제외	review_required	indication	황체기능부전에 의한 불임치료 또는 황체호르몬 부족으로 인한 유·조산 치료 시 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
+therapeutic_duplication_caution	외용제는 제외	form_exclusion	dosage_form	외용제는 제외	topical	제품 제형으로 해석 가능한 명시적 제외 조건
+therapeutic_duplication_caution	용량 Aspirin > 325mg	informational	source_note	용량 Aspirin > 325mg		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고

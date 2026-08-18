@@ -38,16 +38,16 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("actions/cache/save@v5", workflow)
         self.assertIn("data/canonical/raw", workflow)
         self.assertIn("data/canonical/substances", workflow)
-        self.assertIn("data/kids", workflow)
+        self.assertIn("data/canonical/mfds_ingredient", workflow)
+        self.assertNotIn("data/kids", workflow)
         self.assertIn("cache-matched-key", workflow)
-        self.assertIn("kids-sync", workflow)
+        self.assertNotIn("kids-sync", workflow)
         self.assertIn("substance-sync", workflow)
         self.assertIn("medicine-canonical sync", workflow)
         self.assertIn("MFDS sync attempt ${attempt}/3", workflow)
         self.assertIn("for attempt in 1 2 3", workflow)
         self.assertIn("integrated-build", workflow)
         self.assertNotIn("integrated-rebuild", workflow)
-        self.assertLess(workflow.index("kids-sync"), workflow.index("substance-sync"))
         self.assertLess(workflow.index("substance-sync"), workflow.index("medicine-canonical sync"))
         self.assertLess(workflow.index("medicine-canonical sync"), workflow.index("integrated-build"))
         self.assertIn("canonical verify", workflow)
@@ -80,6 +80,11 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("head_object", workflow)
         self.assertIn("delete_object", workflow)
         self.assertIn("medicine-r2-smoke/", workflow)
+
+    def test_android_packages_mfds_remark_runtime_registry(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        self.assertIn('include("medicine_canonical/mfds_remark_registry.py")', gradle)
+        self.assertIn('include("medicine_canonical/data/mfds_remark_registry.tsv")', gradle)
 
     def test_android_build_packages_canonical_snapshot_without_alias_refresh(self) -> None:
         compose = Path("compose.yaml").read_text()

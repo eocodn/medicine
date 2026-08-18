@@ -35,24 +35,24 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
         )
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["dataset_id"], self.release["dataset_id"])
-        self.assertEqual(result["schema_version"], "8")
+        self.assertEqual(result["schema_version"], "9")
 
     def test_runtime_verifier_rejects_dataset_identity_mismatch(self) -> None:
         with self.assertRaisesRegex(ValueError, "dataset identity"):
             verify_reference_database(
                 self.mobile,
-                expected_schema_version="8",
+                expected_schema_version="9",
                 expected_dataset_id="sha256:" + "0" * 64,
             )
 
     def test_runtime_verifier_rejects_runtime_source_policy_tampering(self) -> None:
         with sqlite3.connect(self.mobile) as con:
-            con.execute("DELETE FROM source_snapshots WHERE dataset_key='kids_mfds_xlsx:dose_caution'")
+            con.execute("DELETE FROM source_snapshots WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'")
             con.commit()
         with self.assertRaisesRegex(ValueError, "runtime policy"):
             verify_reference_database(
                 self.mobile,
-                expected_schema_version="8",
+                expected_schema_version="9",
                 expected_dataset_id=self.release["dataset_id"],
             )
 
@@ -65,7 +65,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
             code = canonical_main([
                 "mobile-verify-runtime",
                 "--db", str(self.mobile),
-                "--schema-version", "8",
+                "--schema-version", "9",
                 "--dataset-id", self.release["dataset_id"],
                 "--json",
             ])

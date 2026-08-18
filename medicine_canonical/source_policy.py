@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 
+CANONICAL_SOURCE_POLICY = (
+    "mfds_permit_api+mfds_dur_item_api+mfds_dur_ingredient_api"
+)
+
 # Release/runtime allowlist for one complete canonical snapshot. Freshness is a
 # separate update policy; this invariant only prevents partial or substituted sources.
 EXPECTED_CANONICAL_SOURCE_FAMILIES = {
@@ -14,16 +18,19 @@ EXPECTED_CANONICAL_SOURCE_FAMILIES = {
     "mfds_dur:getEfcyDplctInfoList03": "mfds_dur_item_api",
     "mfds_dur:getDurPrdlstInfoList03": "mfds_dur_item_api",
     "mfds_dur:getSeobangjeongPartitnAtentInfoList03": "mfds_dur_item_api",
-    "kids_mfds_xlsx:combination_contraindication": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:age_contraindication": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:pregnancy_contraindication": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:dose_caution": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:duration_caution": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:elderly_caution": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:therapeutic_duplication_caution": "kids_mfds_xlsx",
-    "kids_mfds_xlsx:lactation_caution": "kids_mfds_xlsx",
+    "mfds_dur_ingredient:getUsjntTabooInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getSpcifyAgrdeTabooInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getPwnmTabooInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getCpctyAtentInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getMdctnPdAtentInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getOdsnAtentInfoList02": "mfds_dur_ingredient_api",
+    "mfds_dur_ingredient:getEfcyDplctInfoList02": "mfds_dur_ingredient_api",
 }
 EXPECTED_CANONICAL_SOURCE_KEYS = frozenset(EXPECTED_CANONICAL_SOURCE_FAMILIES)
 
 
-__all__ = ["EXPECTED_CANONICAL_SOURCE_FAMILIES", "EXPECTED_CANONICAL_SOURCE_KEYS"]
+__all__ = [
+    "CANONICAL_SOURCE_POLICY",
+    "EXPECTED_CANONICAL_SOURCE_FAMILIES",
+    "EXPECTED_CANONICAL_SOURCE_KEYS",
+]

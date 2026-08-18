@@ -7,11 +7,13 @@ from datetime import date
 from pathlib import Path
 
 from medicine_app.canonical_safety import (
-    _automatic_criterion_note, _mfds_unstructured_note_requires_review,
+    _duplication_groups,
+    _mfds_criterion_note_requires_review,
+    _remark_interaction_timing,
 )
 from medicine_app.core import ConfirmationRequired, MedicationApp
 from tests.canonical_fixture_support import (
-    add_lactation, add_linked_rule, add_product, add_unlinked_rule, create_canonical_fixture,
+    add_linked_rule, add_product, add_unlinked_rule, create_canonical_fixture,
 )
 
 
@@ -69,7 +71,7 @@ def make_canonical_db(path: Path) -> None:
     )
     add_linked_rule(
         con, category="age_contraindication", item_seq="MFDS-AGE-N",
-        ingredient="DoxyLike", rule_value="12세 미만", criterion_note="다만, 다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여",
+        ingredient="DoxyLike", rule_value="12세 미만", criterion_qualifier_note="다만, 다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여",
         details="12세 미만 소아 주의", dosage_form="정제",
     )
     add_linked_rule(
@@ -88,7 +90,7 @@ def make_canonical_db(path: Path) -> None:
     add_linked_rule(
         con, category="pregnancy_contraindication", item_seq="MFDS-PN",
         ingredient="PregnancyNoteConditional", rule_value="2등급",
-        criterion_note="단, 강심제로 사용시 제외",
+        criterion_qualifier_note="단, 강심제로 사용시 제외",
         details="강심제 사용 여부에 따라 예외가 있음",
     )
     add_linked_rule(
@@ -109,7 +111,7 @@ def make_canonical_db(path: Path) -> None:
         con, category="combination_contraindication", item_seq="MFDS-CN-A",
         ingredient="ConditionalDoseA", paired_item_seq="MFDS-CN-B",
         paired_ingredient="ConditionalDoseB", details="혈액학적 독성 증가",
-        criterion_note="ConditionalDoseB 1주에 20mg 이상 투여시",
+        criterion_qualifier_note="methotrexate(1週에 20mg 이상 투여시)",
     )
     add_unlinked_rule(
         con, category="duration_caution", item_seq="MFDS-ZU", ingredient="Zolpidem",
@@ -118,8 +120,6 @@ def make_canonical_db(path: Path) -> None:
     add_unlinked_rule(
         con, category="pregnancy_contraindication", item_seq="MFDS-U", ingredient="FutureDrug Salt",
     )
-    add_lactation(con, item_seq="MFDS-Z", ingredient="Zolpidem", details="수유 중 주의")
-    add_lactation(con, item_seq="MFDS-LU", ingredient="Osimertinib", unresolved=True)
     # The mobile release gate verifies bridge materialization, so this synthetic
     # canonical fixture carries representative bridge rows instead of bypassing
     # release verification in tests.
@@ -134,8 +134,8 @@ def make_canonical_db(path: Path) -> None:
     )
     con.execute(
         """INSERT INTO dur_criterion_signatures(
-               criterion_rule_id,category,effect_key,signature_type,signature_key,match_method,evidence_kind
-           ) VALUES(?,'duration_caution','','code','D-MFDS-Z','ingredient_preprocessed','fixture')""",
+               criterion_rule_id,category,effect_key,signature_key,match_method,evidence_kind
+           ) VALUES(?,'duration_caution','','D-MFDS-Z','mfds_ingredient_code','fixture')""",
         (criterion_id,),
     )
     con.commit()
@@ -158,34 +158,105 @@ class SafetyCoverageV2Test(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_mfds_ingredient_remark_is_not_used_as_automatic_condition(self) -> None:
-        self.assertIsNone(_automatic_criterion_note({
+    def test_mfds_ingredient_remark_requires_review_without_becoming_executable_logic(self) -> None:
+        self.assertTrue(_mfds_criterion_note_requires_review({
             "criterion_source_dataset_key": "mfds_dur_ingredient:getPwnmTabooInfoList02",
-            "criterion_note": "단, 강심제로 사용시 제외",
+            "category": "pregnancy_contraindication",
+            "criterion_qualifier_note": "단, 강심제로 사용시 제외",
         }))
-        self.assertEqual(
-            _automatic_criterion_note({
-                "criterion_source_dataset_key": "kids_mfds_xlsx:pregnancy_contraindication",
-                "criterion_note": "단, 강심제로 사용시 제외",
-            }),
-            "단, 강심제로 사용시 제외",
-        )
-        self.assertTrue(_mfds_unstructured_note_requires_review({
+        self.assertTrue(_mfds_criterion_note_requires_review({
             "criterion_source_dataset_key": "mfds_dur_ingredient:getSpcifyAgrdeTabooInfoList02",
             "category": "age_contraindication",
             "ingredient_code": "D000503",
             "item_seq": "198000105",
             "criterion_rule_value": "12세 미만",
-            "criterion_note": "다만, 다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여",
+            "criterion_qualifier_note": "다만, 다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여",
         }))
-        self.assertFalse(_mfds_unstructured_note_requires_review({
+        self.assertFalse(_mfds_criterion_note_requires_review({
             "criterion_source_dataset_key": "mfds_dur_ingredient:getSpcifyAgrdeTabooInfoList02",
             "category": "age_contraindication",
             "ingredient_code": "D000656",
             "item_seq": "199403253",
             "criterion_rule_value": "12세 미만",
-            "criterion_note": "점안제(1%)",
+            "criterion_qualifier_note": "점안제(1%)",
         }))
+        self.assertFalse(_mfds_criterion_note_requires_review({
+            "criterion_source_dataset_key": "mfds_dur_ingredient:getPwnmTabooInfoList02",
+            "category": "pregnancy_contraindication",
+            "criterion_qualifier_note": "경구",
+        }))
+        self.assertTrue(_mfds_criterion_note_requires_review({
+            "criterion_source_dataset_key": "mfds_dur_ingredient:getSpcifyAgrdeTabooInfoList02",
+            "category": "age_contraindication",
+            "ingredient_code": "D001068",
+            "item_seq": "201100954",
+            "criterion_rule_value": "36개월 미만",
+            "criterion_qualifier_note": "1개월 이하(1%) (전신마취), 36개월 미만(2%) (전신마취)",
+        }))
+
+    def test_reviewed_interaction_window_is_structured_without_free_text_parsing(self) -> None:
+        timing = _remark_interaction_timing(
+            {
+                "criterion_source_dataset_key": "mfds_dur_ingredient:getUsjntTabooInfoList02",
+                "category": "combination_contraindication",
+                "criterion_qualifier_note": "24시간 이내 병용금기",
+                "criterion_ingredient_name": "A",
+                "criterion_paired_ingredient_name": "B",
+            },
+            "시간 정보가 없는 금기 사유",
+        )
+        self.assertEqual(timing["status"], "structured")
+        self.assertEqual(timing["kind"], "minimum_separation")
+        self.assertEqual(timing["hours"], 24)
+
+    def test_reviewed_form_exclusion_removes_topical_duplication_scope(self) -> None:
+        with sqlite3.connect(self.canonical_db) as con:
+            add_product(con, "MFDS-MINO-T", "미녹시딜외용", "Minoxidil", dosage_form="피부액제")
+            add_product(con, "MFDS-MINO-O", "미녹시딜경구", "Minoxidil", dosage_form="정제")
+            for item_seq, form in (("MFDS-MINO-T", "피부액제"), ("MFDS-MINO-O", "정제")):
+                add_linked_rule(
+                    con, category="therapeutic_duplication_caution", item_seq=item_seq,
+                    ingredient="Minoxidil", effect_name="혈압강하작용의약품", dosage_form=form,
+                    criterion_qualifier_note="외용제는 제외",
+                )
+            con.commit()
+            topical = _duplication_groups(
+                con, {"product_ref": "MFDS-MINO-T", "dosage_form": "피부액제"}
+            )
+            oral = _duplication_groups(
+                con, {"product_ref": "MFDS-MINO-O", "dosage_form": "정제"}
+            )
+        self.assertEqual(topical, {})
+        self.assertIn("혈압강하작용의약품", oral)
+        self.assertEqual(
+            oral["혈압강하작용의약품"]["qualifiers"][0]["text"], "외용제는 제외"
+        )
+
+    def test_indication_dependent_dose_qualifier_is_conditional_and_visible(self) -> None:
+        with sqlite3.connect(self.canonical_db) as con:
+            add_product(con, "MFDS-DOSE-Q", "적응증용량제품", "Eltrombopag", dosage_form="정제")
+            add_linked_rule(
+                con, category="dose_caution", item_seq="MFDS-DOSE-Q", ingredient="Eltrombopag",
+                rule_value="100밀리그램", details="엘트롬보팍 1일 최대용량", dosage_form="정제",
+                criterion_qualifier_note="만성면역성(특발성) 혈소판 감소증 : 엘트롬보팍 50mg,  만성 C형 간염 : 엘트롬보팍 75mg,  중증 재생불량성 빈혈 : 엘트롬보팍 100mg",
+            )
+            con.commit()
+        preview = self.app.preview_medication(
+            self.person["id"],
+            {
+                "product_ref": "MFDS-DOSE-Q",
+                "dose_amount": 1,
+                "dose_unit": "정",
+                "frequency_per_day": 1,
+                "long_term": True,
+            },
+        )
+        dose = next(row for row in preview["dur_checks"] if row["category"] == "dose_caution")
+        self.assertEqual(dose["status"], "conditional")
+        self.assertEqual(
+            dose["qualifiers"][0]["text"], "적응증에 따라 엘트롬보팍 1일 최대용량이 다름"
+        )
+
     def test_canonical_product_rule_drives_duration_without_ingredient_classifier(self) -> None:
         preview = self.app.preview_medication(
             self.person["id"], {"product_ref": "MFDS-Z", "prescription_days": 35}
@@ -211,6 +282,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertIn("의사", age["details"])
         self.assertIn("약사", age["details"])
         self.assertNotIn("다만", age["summary"])
+        self.assertEqual(age["findings"][0]["qualifiers"][0]["text"], "다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여")
 
     def test_known_product_with_no_rule_is_clear_not_classifier_unknown(self) -> None:
         preview = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-X"})
@@ -276,7 +348,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertTrue(current["dur_alert"])
         self.assertEqual(current_pregnancy["status"], "conditional")
 
-    def test_pregnancy_exception_in_criterion_note_remains_conditional(self) -> None:
+    def test_pregnancy_exception_in_mfds_qualifier_remains_conditional(self) -> None:
         pregnant = self.app.create_person(
             "비고조건임부", "1990-01-01", "female", "pregnant", lactation_status="not_breastfeeding"
         )
@@ -291,8 +363,11 @@ class SafetyCoverageV2Test(unittest.TestCase):
         )
         self.assertEqual(pregnancy["status"], "conditional")
         self.assertIn("2등급", pregnancy["summary"])
-        self.assertIn("강심제로 사용시 제외", pregnancy["summary"])
+        self.assertNotIn("강심제로 사용시 제외", pregnancy["summary"])
+        self.assertIn("의사", pregnancy["details"])
+        self.assertIn("약사", pregnancy["details"])
         self.assertEqual(pregnancy["findings"][0]["evaluation_status"], "conditional")
+        self.assertEqual(pregnancy["findings"][0]["qualifiers"][0]["text"], "강심제로 사용 시 제외")
 
     def test_conflicting_pregnancy_grades_require_review_instead_of_definitive_hit(self) -> None:
         pregnant = self.app.create_person(
@@ -327,7 +402,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(interaction["findings"][0]["timing"]["status"], "not_evaluable")
         self.assertTrue(preview["warning_token"])
 
-    def test_interaction_with_unmodeled_criterion_note_is_conditional(self) -> None:
+    def test_interaction_with_unmodeled_mfds_qualifier_is_conditional(self) -> None:
         person = self.app.create_person(
             "병용용량조건", "1990-01-01", "male", "not_applicable", lactation_status="not_applicable"
         )
@@ -375,22 +450,6 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "not_evaluable")
         duration = next(row for row in preview["dur_checks"] if row["category"] == "duration_caution")
         self.assertEqual(duration["status"], "unknown")
-    def test_lactation_caution_is_not_exposed_even_when_legacy_data_exists(self) -> None:
-        breastfeeding = self.app.create_person(
-            "수유", "1990-01-01", "female", "not_pregnant", lactation_status="breastfeeding"
-        )
-        active = self.app.preview_medication(breastfeeding["id"], {"product_ref": "MFDS-Z"})
-        inactive = self.app.preview_medication(self.person["id"], {"product_ref": "MFDS-Z"})
-        self.assertNotIn("lactation_caution", {row["category"] for row in active["dur_checks"]})
-        self.assertNotIn("lactation_caution", {row["category"] for row in inactive["dur_checks"]})
-
-    def test_unresolved_lactation_scope_does_not_create_a_supported_check(self) -> None:
-        breastfeeding = self.app.create_person(
-            "수유", "1990-01-01", "female", "not_pregnant", lactation_status="breastfeeding"
-        )
-        preview = self.app.preview_medication(breastfeeding["id"], {"product_ref": "MFDS-LU"})
-        self.assertNotIn("lactation_caution", {row["category"] for row in preview["dur_checks"]})
-
     def test_profile_gap_is_reported_only_for_relevant_canonical_rule(self) -> None:
         # Legacy profiles may still contain unanswered reproductive fields. New
         # writes reject these states, but runtime evaluation must remain fail-closed
@@ -404,14 +463,14 @@ class SafetyCoverageV2Test(unittest.TestCase):
         con.close()
         unknown = self.app.get_person("legacy-unknown")
         unrelated = self.app.preview_medication(unknown["id"], {"product_ref": "MFDS-I"})
-        lactation = self.app.preview_medication(unknown["id"], {"product_ref": "MFDS-Z"})
+        pregnancy_rule = self.app.preview_medication(unknown["id"], {"product_ref": "MFDS-P1"})
         self.assertNotIn(
-            "lactation_caution",
+            "pregnancy_contraindication",
             {row["category"] for row in unrelated["coverage"]["not_evaluable_checks"]},
         )
-        self.assertNotIn(
-            "lactation_caution",
-            {row["category"] for row in lactation["coverage"]["not_evaluable_checks"]},
+        self.assertIn(
+            "pregnancy_contraindication",
+            {row["category"] for row in pregnancy_rule["coverage"]["not_evaluable_checks"]},
         )
 
     def test_male_profile_has_no_reproductive_coverage_gap(self) -> None:
@@ -419,7 +478,6 @@ class SafetyCoverageV2Test(unittest.TestCase):
         preview = self.app.preview_medication(male["id"], {"product_ref": "MFDS-Z"})
         categories = {row["category"] for row in preview["coverage"]["not_evaluable_checks"]}
         self.assertNotIn("pregnancy_contraindication", categories)
-        self.assertNotIn("lactation_caution", categories)
     def test_warning_token_is_bound_to_canonical_dataset_identity(self) -> None:
         breastfeeding = self.app.create_person(
             "수유", "1990-01-01", "female", "not_pregnant", lactation_status="breastfeeding"
@@ -435,20 +493,6 @@ class SafetyCoverageV2Test(unittest.TestCase):
         con.close()
         second = self.app.preview_medication(breastfeeding["id"], draft)
         self.assertNotEqual(first["warning_token"], second["warning_token"])
-
-    def test_warning_token_changes_when_canonical_finding_changes(self) -> None:
-        breastfeeding = self.app.create_person(
-            "수유", "1990-01-01", "female", "not_pregnant", lactation_status="breastfeeding"
-        )
-        first = self.app.preview_medication(breastfeeding["id"], {"product_ref": "MFDS-Z"})
-        con = sqlite3.connect(self.canonical_db)
-        con.execute(
-            "UPDATE ingredient_rules SET details='변경된 수유 주의' WHERE category='lactation_caution' AND ingredient_name='Zolpidem'"
-        )
-        con.commit()
-        con.close()
-        second = self.app.preview_medication(breastfeeding["id"], {"product_ref": "MFDS-Z"})
-        self.assertEqual(first["warning_token"], second["warning_token"])
 
     def test_item_seq_combination_rule_requires_course_overlap(self) -> None:
         self.app.add_medication(
