@@ -13,9 +13,9 @@ from medicine_reference.mfds_sources import (
 )
 
 from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
+from .mfds_sync import request_json, sync_paginated_jsonl
 from .source_layout import MfdsSourceLayout
 from .snapshot_io import insert_source_snapshot, load_snapshot_metadata
-from .sources import _request_json, _sync_paginated_jsonl
 
 
 MFDS_INGREDIENT_PAGE_SIZE_MAX = 500
@@ -90,7 +90,7 @@ def fetch_mfds_ingredient_page(
         safe="%",
     )
     label = f"MFDS DUR ingredient {operation}"
-    payload = _request_json(
+    payload = request_json(
         f"{MFDS_DUR_INGREDIENT_API_BASE}/{operation}?{params}", label=label
     )
     return _extract_ingredient_response(payload, label)
@@ -123,7 +123,7 @@ def sync_mfds_ingredient_sources(
     sources = []
     for operation, spec in MFDS_INGREDIENT_ENDPOINTS.items():
         sources.append(
-            _sync_paginated_jsonl(
+            sync_paginated_jsonl(
                 source_layout.path_for(spec),
                 dataset_key=spec.dataset_key,
                 source_family=spec.source_family,

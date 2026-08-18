@@ -21,6 +21,7 @@ from medicine_canonical.mfds_ingredient import (
     MFDS_INGREDIENT_ENDPOINTS,
     MFDS_INGREDIENT_PAGE_SIZE_MAX,
 )
+from medicine_canonical.mfds_sync import request_json, sync_paginated_jsonl
 from medicine_canonical.schema import SCHEMA
 from medicine_canonical.source_layout import MfdsSourceLayout
 from medicine_canonical.source_policy import (
@@ -32,8 +33,6 @@ from medicine_canonical.sources import (
     DUR_ENDPOINTS,
     PERMIT_DATASET_KEY,
     PERMIT_PAGE_SIZE_MAX,
-    _request_json,
-    _sync_paginated_jsonl,
     sync_canonical_api_sources,
 )
 
@@ -368,14 +367,14 @@ class CanonicalDatabaseTest(unittest.TestCase):
         stderr = io.StringIO()
         with (
             mock.patch(
-                "medicine_canonical.sources.urllib.request.urlopen",
+                "medicine_canonical.mfds_sync.urllib.request.urlopen",
                 side_effect=urllib.error.URLError("timed out"),
             ),
-            mock.patch("medicine_canonical.sources.time.sleep"),
+            mock.patch("medicine_canonical.mfds_sync.time.sleep"),
             redirect_stderr(stderr),
             self.assertRaisesRegex(RuntimeError, "MFDS permit API failed after 2 attempts"),
         ):
-            _request_json(
+            request_json(
                 "https://apis.data.go.kr/example?serviceKey=do-not-log-me",
                 label="MFDS permit API",
                 attempts=2,
@@ -387,7 +386,7 @@ class CanonicalDatabaseTest(unittest.TestCase):
     def test_paginated_sync_reports_first_page_before_network_fetch(self) -> None:
         stderr = io.StringIO()
         with redirect_stderr(stderr):
-            _sync_paginated_jsonl(
+            sync_paginated_jsonl(
                 self.root / "progress.jsonl",
                 dataset_key="mfds_permit:products",
                 source_family="mfds_permit_api",
