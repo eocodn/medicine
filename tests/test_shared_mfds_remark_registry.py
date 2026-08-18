@@ -14,16 +14,16 @@ from medicine_reference.mfds_remark_registry import (
 
 class SharedMfdsRemarkRegistryTest(unittest.TestCase):
     def test_shared_registry_preserves_exact_reviewed_contract(self) -> None:
-        self.assertEqual(reviewed_mfds_remark_count(), 69)
+        self.assertEqual(reviewed_mfds_remark_count(), 110)
         self.assertEqual(
             reviewed_mfds_remark_counts_by_category(),
             {
-                "age_contraindication": 8,
-                "combination_contraindication": 11,
-                "dose_caution": 12,
-                "duration_caution": 4,
+                "age_contraindication": 12,
+                "combination_contraindication": 24,
+                "dose_caution": 16,
+                "duration_caution": 7,
                 "elderly_caution": 0,
-                "pregnancy_contraindication": 32,
+                "pregnancy_contraindication": 49,
                 "therapeutic_duplication_caution": 2,
             },
         )
@@ -31,6 +31,40 @@ class SharedMfdsRemarkRegistryTest(unittest.TestCase):
         self.assertIsInstance(qualifier, ReviewedMfdsRemark)
         self.assertEqual(qualifier.mode, "composition_scope")
         self.assertEqual(qualifier.value, "all")
+        no_space_24h = reviewed_mfds_remark(
+            "combination_contraindication", "24시간이내 병용금기"
+        )
+        self.assertEqual(no_space_24h.mode, "interaction_window")
+        self.assertEqual(no_space_24h.value, "24")
+        for remark, hours in (
+            ("병용 시 최소 한 시간 이상 간격을 두고 투여함", "1"),
+            ("36시간 이내 병용금기", "36"),
+            ("1주이내 병용금기", "168"),
+        ):
+            timing = reviewed_mfds_remark("combination_contraindication", remark)
+            self.assertEqual(timing.mode, "interaction_window")
+            self.assertEqual(timing.value, hours)
+        self.assertTrue(
+            reviewed_mfds_remark(
+                "combination_contraindication", "75세 이상 남성"
+            ).requires_review
+        )
+        self.assertTrue(
+            reviewed_mfds_remark(
+                "pregnancy_contraindication", "단, VitA(레티놀)로서 5000 I.U/1일 이상"
+            ).requires_review
+        )
+        exact_multiline = (
+            '"(정제) \n'
+            '임신 초기 4개월동안 투여시 기형아 출산 가능성(태아의 수족기형현상 4.7배 높게 보고됨).\n'
+            '(현탁액)\n'
+            '임부 투여시 태아에 치명적인 위해 가능성.\n'
+            '동물실험에서 수컷 새끼의 번식능력 손상, 태자의 체중감소, 생존출생 태자수의 감소, 수컷 태자의 여성화 등 보고."'
+        )
+        self.assertEqual(
+            reviewed_mfds_remark("pregnancy_contraindication", exact_multiline).mode,
+            "informational",
+        )
         with self.assertRaisesRegex(ValueError, "unreviewed MFDS REMARK"):
             reviewed_mfds_remark("dose_caution", "새로운 미검토 비고")
 

@@ -18,7 +18,7 @@ from .product_flags import apply_product_flag_fallbacks, build_product_flag_chec
 from .safety import age_years
 
 
-EVALUATOR_VERSION = "12-mfds-criterion-scope-no-lactation"
+EVALUATOR_VERSION = "13-mfds-reviewed-fallbacks-no-lactation"
 
 
 def _fallback_product(medication: Mapping[str, Any]) -> dict[str, Any]:

@@ -35,13 +35,13 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
         )
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["dataset_id"], self.release["dataset_id"])
-        self.assertEqual(result["schema_version"], "9")
+        self.assertEqual(result["schema_version"], "10")
 
     def test_runtime_verifier_rejects_dataset_identity_mismatch(self) -> None:
         with self.assertRaisesRegex(ValueError, "dataset identity"):
             verify_reference_database(
                 self.mobile,
-                expected_schema_version="9",
+                expected_schema_version="10",
                 expected_dataset_id="sha256:" + "0" * 64,
             )
 
@@ -52,7 +52,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "runtime policy"):
             verify_reference_database(
                 self.mobile,
-                expected_schema_version="9",
+                expected_schema_version="10",
                 expected_dataset_id=self.release["dataset_id"],
             )
 
@@ -65,7 +65,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
             code = canonical_main([
                 "mobile-verify-runtime",
                 "--db", str(self.mobile),
-                "--schema-version", "9",
+                "--schema-version", "10",
                 "--dataset-id", self.release["dataset_id"],
                 "--json",
             ])

@@ -7,6 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from .dur_bridge import signature_key
+from .preprocessing import canonicalize_link_ingredient_code
 from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
 
 
@@ -17,6 +18,7 @@ class CriterionCandidate:
     rule_value: str | None = None
     dosage_form: str | None = None
     details: str | None = None
+    qualifier_note: str | None = None
     exact_composition_scope: bool = False
     all_forms_scope: bool = False
 
@@ -84,12 +86,42 @@ def load_bridge_maps(con: sqlite3.Connection):
             rule_value=row[5],
             dosage_form=row[6],
             details=row[7],
+            qualifier_note=row[8],
             exact_composition_scope=(
                 str(row[9]) == "mfds_criterion_composition" and not all_compositions
             ),
             all_forms_scope=_evidence_text(row[7]) == "모든제형",
         )
         single_signatures[(str(row[1]), str(row[2]), str(row[3]))].append(candidate)
+
+    same_code_candidates: dict[tuple[str, str], list[CriterionCandidate]] = defaultdict(list)
+    for row in con.execute(
+        """SELECT i.id,i.category,c.ingredient_code,i.rule_value,i.dosage_form,
+                  i.details,i.qualifier_note,c.mixture_type,c.mixture_ingredient_codes_json
+           FROM ingredient_rules i
+           JOIN ingredient_rule_codes c ON c.criterion_rule_id=i.id"""
+    ):
+        source_code = canonicalize_link_ingredient_code(row[2])
+        if not source_code:
+            continue
+        qualifier = reviewed_mfds_remark(row[1], row[6])
+        all_compositions = bool(
+            qualifier and qualifier.mode == "composition_scope" and qualifier.value == "all"
+        )
+        mixture_codes = str(row[8] or "[]")
+        exact_composition = str(row[7] or "").strip() == "복합" and mixture_codes != "[]"
+        same_code_candidates[(str(row[1]), source_code)].append(
+            CriterionCandidate(
+                criterion_id=int(row[0]),
+                method="mfds_ingredient_code",
+                rule_value=row[3],
+                dosage_form=row[4],
+                details=row[5],
+                qualifier_note=row[6],
+                exact_composition_scope=exact_composition and not all_compositions,
+                all_forms_scope=_evidence_text(row[5]) == "모든제형",
+            )
+        )
 
     pair_signatures: dict[tuple[str, str], list[PairCriterionCandidate]] = defaultdict(list)
     for row in con.execute(
@@ -102,7 +134,10 @@ def load_bridge_maps(con: sqlite3.Connection):
             PairCriterionCandidate(int(row[0]), str(row[3]), row[4])
         )
 
-    return code_map, item_signatures, category_item_signatures, single_signatures, pair_signatures
+    return (
+        code_map, item_signatures, category_item_signatures, single_signatures,
+        pair_signatures, same_code_candidates,
+    )
 
 
 def code_signature(

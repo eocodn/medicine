@@ -209,7 +209,7 @@ class SafetyCoverageV2Test(unittest.TestCase):
         self.assertEqual(timing["kind"], "minimum_separation")
         self.assertEqual(timing["hours"], 24)
 
-    def test_reviewed_form_exclusion_removes_topical_duplication_scope(self) -> None:
+    def test_item_level_duplication_rule_is_not_suppressed_by_ingredient_form_exclusion(self) -> None:
         with sqlite3.connect(self.canonical_db) as con:
             add_product(con, "MFDS-MINO-T", "미녹시딜외용", "Minoxidil", dosage_form="피부액제")
             add_product(con, "MFDS-MINO-O", "미녹시딜경구", "Minoxidil", dosage_form="정제")
@@ -226,7 +226,8 @@ class SafetyCoverageV2Test(unittest.TestCase):
             oral = _duplication_groups(
                 con, {"product_ref": "MFDS-MINO-O", "dosage_form": "정제"}
             )
-        self.assertEqual(topical, {})
+        self.assertIn("혈압강하작용의약품", topical)
+        self.assertEqual(topical["혈압강하작용의약품"]["qualifiers"], [])
         self.assertIn("혈압강하작용의약품", oral)
         self.assertEqual(
             oral["혈압강하작용의약품"]["qualifiers"][0]["text"], "외용제는 제외"

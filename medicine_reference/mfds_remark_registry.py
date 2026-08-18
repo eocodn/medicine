@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass
 from importlib.resources import files
 
@@ -59,7 +60,21 @@ def _load_registry() -> dict[tuple[str, str], ReviewedMfdsRemark]:
             raise RuntimeError("invalid MFDS REMARK registry header")
         for line_number, row in enumerate(reader, start=2):
             category = str(row["category"] or "").strip()
-            remark = str(row["remark"] or "").strip()
+            raw_remark = str(row["remark"] or "")
+            if raw_remark.startswith("@json:"):
+                try:
+                    decoded_remark = json.loads(raw_remark[len("@json:") :])
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"invalid JSON-escaped MFDS REMARK at row {line_number}"
+                    ) from exc
+                if not isinstance(decoded_remark, str):
+                    raise RuntimeError(
+                        f"invalid JSON-escaped MFDS REMARK at row {line_number}"
+                    )
+                remark = decoded_remark.strip()
+            else:
+                remark = raw_remark.strip()
             mode = str(row["mode"] or "").strip()
             qualifier_type = str(row["qualifier_type"] or "").strip()
             display_text = str(row["display_text"] or "").strip()

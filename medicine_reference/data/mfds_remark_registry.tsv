@@ -8,6 +8,7 @@ age_contraindication	점안제(0.125%)	informational	source_note	점안제(0.125
 age_contraindication	점안제(1%)	informational	source_note	점안제(1%)		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
 age_contraindication	질용좌제, 외용액제, 연고제	informational	source_note	질용좌제, 외용액제, 연고제		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
 combination_contraindication	24시간 이내 병용금기	interaction_window	timing	24시간 이내 병용금기	24	REMARK에만 있는 명시적 병용 간격을 수동 구조화
+combination_contraindication	24시간이내 병용금기	interaction_window	timing	24시간 이내 병용금기	24	기존 24시간 이내 병용금기와 동일 의미인 MFDS 공백 변형을 별도 exact 문자열로 검토
 combination_contraindication	48시간 이내 병용금기	interaction_window	timing	48시간 이내 병용금기	48	REMARK에만 있는 명시적 병용 간격을 수동 구조화
 combination_contraindication	methotrexate (1週에 15mg 이상 투여시)	review_required	dose_context	메토트렉세이트 주 15mg 이상 투여 시		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
 combination_contraindication	methotrexate 1週에 15mg 이상 투여시	review_required	dose_context	메토트렉세이트 주 15mg 이상 투여 시		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
@@ -68,3 +69,58 @@ pregnancy_contraindication	폐동맥고혈압 치료시 제외	review_required	i
 pregnancy_contraindication	황체기능부전에 의한 불임치료, 황체호르몬 부족으로 인한 유·조산 치료시 제외	review_required	indication	황체기능부전에 의한 불임치료 또는 황체호르몬 부족으로 인한 유·조산 치료 시 제외		현재 앱 입력에 없는 임상 맥락/적응증/상대 용량 조건
 therapeutic_duplication_caution	외용제는 제외	form_exclusion	dosage_form	외용제는 제외	topical	제품 제형으로 해석 가능한 명시적 제외 조건
 therapeutic_duplication_caution	용량 Aspirin > 325mg	informational	source_note	용량 Aspirin > 325mg		구조화 필드·정확한 품목/성분 근거와 중복되거나 판정 비실행 비고
+age_contraindication	5% 구강용겔제	informational	source_note	5% 구강용겔제		제형·농도 정보가 구조화 MFDS 필드와 함께 제공되는 판정 비실행 비고
+age_contraindication	겔제(5%)	informational	source_note	겔제(5%)		제형·농도 정보가 구조화 MFDS 필드와 함께 제공되는 판정 비실행 비고
+age_contraindication	에어로솔제	informational	source_note	에어로솔제		제형 정보가 구조화 MFDS 필드와 함께 제공되는 판정 비실행 비고
+age_contraindication	연고제(침윤거즈)	informational	source_note	연고제(침윤거즈)		제형 정보가 구조화 MFDS 필드와 함께 제공되는 판정 비실행 비고
+combination_contraindication	1주에 15mg 이상 투여시	review_required	dose_context	메토트렉세이트 주 15mg 이상 투여 시		상대 약물의 용량 조건을 현재 앱 입력만으로 자동 판정할 수 없음
+combination_contraindication	1주이내 병용금기	interaction_window	timing	1주 이내 병용금기	168	REMARK에 명시된 1주 병용 간격을 168시간으로 수동 구조화
+combination_contraindication	36시간 이내 병용금기	interaction_window	timing	36시간 이내 병용금기	36	REMARK에만 있는 명시적 병용 간격을 수동 구조화
+combination_contraindication	75세 이상 남성	review_required	patient_context	75세 이상 남성		연령과 성별이 결합된 적용 조건으로 별도 임상 맥락 확인이 필요함
+combination_contraindication	HIV-1 감염 치료를 위한 Rilpivirine 주사와의 병용요법에 한함	review_required	indication	HIV-1 감염 치료를 위한 Rilpivirine 주사 병용요법에 한함		현재 앱 입력에 없는 적응증·병용요법 조건
+combination_contraindication	경구	informational	source_note	경구		투여경로 정보가 구조화 품목/제형 근거와 함께 제공되는 판정 비실행 비고
+combination_contraindication	경구용	informational	source_note	경구용		투여경로 정보가 구조화 품목/제형 근거와 함께 제공되는 판정 비실행 비고
+combination_contraindication	만성 림프구성 백혈병 환자에서 치료 시작 시와 용량 증량 기간 동안 병용금기	review_required	clinical_context	만성 림프구성 백혈병에서 치료 시작·용량 증량 기간 동안 병용금기		질환과 치료 단계에 따라 달라지는 적용 조건을 현재 앱이 자동 판정하지 않음
+combination_contraindication	병용 시 최소 한 시간 이상 간격을 두고 투여함	interaction_window	timing	병용 시 최소 1시간 간격	1	REMARK에 명시된 최소 1시간 투여 간격을 수동 구조화
+combination_contraindication	상품명 : 미레나20마이크로그람/일	informational	source_note	상품명 : 미레나20마이크로그람/일		삭제 source row의 명시적 상품명 범위 비고를 exact 문자열로 검토
+combination_contraindication	상품명 : 컴플레라정	informational	source_note	상품명 : 컴플레라정		명시적 상품명 범위 비고이며 품목 ITEM_SEQ 근거와 별도로 표시만 함
+combination_contraindication	주사제	informational	source_note	주사제		투여제형 정보가 구조화 품목/제형 근거와 함께 제공되는 판정 비실행 비고
+dose_caution	65세 이상: 100mg	review_required	dose_context	65세 이상: 100mg		연령에 따라 달라지는 용량 조건이며 현재 앱의 용량 기준 하나로 자동 확정하지 않음
+dose_caution	D-소르비톨 함유 아미노산 복합제	informational	source_note	D-소르비톨 함유 아미노산 복합제		조성 정보가 구조화 MFDS 조성 필드와 함께 제공되는 판정 비실행 비고
+dose_caution	모든제형, 단일제·복합제 포함	composition_scope	composition	모든제형, 단일제·복합제 포함	all	삭제 source row의 명시적 단일·복합제 전체 조성 범위를 exact 문자열로 검토
+dose_caution	설피속사졸로써 6g	informational	source_note	설피속사졸로써 6g		삭제 source row에서 MAX_QTY 구조화 값과 중복되는 성분별 용량 표기
+duration_caution	복합제	informational	source_note	복합제		MIX_TYPE/MIX_INGR 구조화 조성 필드와 중복되는 판정 비실행 비고
+duration_caution	주성분함량: 산제 3g	informational	source_note	주성분함량: 산제 3g		제형·함량 상세 조건을 표시하되 자유문장 실행 로직으로 해석하지 않음
+duration_caution	주성분함량: 좌제 10mg, 관장제 0.01g/30mL	informational	source_note	주성분함량: 좌제 10mg, 관장제 0.01g/30mL		삭제 source row의 제형·함량 상세 조건을 exact 문자열로 검토
+pregnancy_contraindication	"@json:""\""(정제) \n임신 초기 4개월동안 투여시 기형아 출산 가능성(태아의 수족기형현상 4.7배 높게 보고됨).\n(현탁액)\n임부 투여시 태아에 치명적인 위해 가능성.\n동물실험에서 수컷 새끼의 번식능력 손상, 태자의 체중감소, 생존출생 태자수의 감소, 수컷 태자의 여성화 등 보고.\"""""	informational	source_note	제형별 임부 위해 정보가 MFDS 금기내용에 별도 기재됨		기존 검토 문구와 동일 내용인 MFDS 줄바꿈 변형을 별도 exact 문자열로 검토
+pregnancy_contraindication	"""1등급
+( 황체기능부전에 의한 불임치료, 황체호르몬 부족으로 인한 유·조산 치료시 제외)"""	review_required	indication	황체기능부전에 의한 불임치료 또는 황체호르몬 부족으로 인한 유·조산 치료 시 제외		기존 검토 문구와 동일 의미인 MFDS 줄바꿈 변형
+pregnancy_contraindication	"""1등급
+(다만 황체기능부전에 의한 불임치료, 황체호르몬 부족으로 인한 유·조산 치료시 제외)"""	review_required	indication	황체기능부전에 의한 불임치료 또는 황체호르몬 부족으로 인한 유·조산 치료 시 제외		현재 앱 입력에 없는 적응증 예외 조건
+pregnancy_contraindication	"""1등급
+(분만유도/촉진, 불가피한 사유로 인한 인공임신중절 시 제외)"""	review_required	indication	분만유도·촉진 또는 불가피한 인공임신중절 시 제외		기존 검토 문구와 동일 의미인 MFDS 줄바꿈 변형
+pregnancy_contraindication	"""1등급
+(항암치료 제외)
+2등급
+(항암치료)"""	review_required	indication	항암치료 여부에 따라 임부금기 등급이 다름		기존 검토 문구와 동일 의미인 MFDS 줄바꿈 변형
+pregnancy_contraindication	"""2등급
+(말라리아 치료시 제외)"""	review_required	indication	말라리아 치료 시 제외		기존 검토 문구와 동일 의미인 MFDS 줄바꿈 변형
+pregnancy_contraindication	"""2등급
+(윌슨병, 납·수은중독, 특정 시스틴뇨증시)"""	review_required	indication	윌슨병·납/수은중독·특정 시스틴뇨증 치료 시 예외		현재 앱 입력에 없는 적응증 예외 조건
+pregnancy_contraindication	"""2등급
+(정제:항암치료시)
+1등급
+(현탁액:암 또는 AIDS 환자의 식욕부진, 악액질 또는 원인불명의 현저한 체중감소의 치료)"""	review_required	indication	제형과 항암·암/AIDS 관련 적응증에 따라 임부금기 등급이 다름		기존 검토 문구와 동일 의미인 MFDS 줄바꿈 변형
+pregnancy_contraindication	"""2등급
+(클로로퀸 저항성 말라리아 치료시 제외)"""	review_required	indication	클로로퀸 저항성 말라리아 치료 시 제외		현재 앱 입력에 없는 적응증 예외 조건
+pregnancy_contraindication	"""2등급
+(폐경전  유방암환자)
+1등급
+(자궁내막증/자궁내막축소증 환자)"""	review_required	indication	폐경 전 유방암과 자궁내막증·자궁내막축소증에서 임부금기 등급이 다름		기존 검토 문구와 동일 의미인 MFDS 줄바꿈 변형
+pregnancy_contraindication	(다만 임신 기간 38주 이상인, 분만의 유도가 의학적 또는 산과적으로 지시된 환자의 분만 유도 시 제외)	review_required	indication	임신 38주 이상에서 의학적·산과적 분만 유도 시 제외		임신 주수와 분만 유도 적응증을 현재 앱이 자동 판정하지 않음
+pregnancy_contraindication	test	informational	source_note	test		삭제 source row에만 존재하는 시험성 비고를 fail-closed import를 위해 exact 문자열로 검토
+pregnancy_contraindication	단, VitA(레티놀)로서 5000 I.U/1일 이상	review_required	dose_context	비타민 A(레티놀)로서 1일 5,000 IU 이상		임부금기 적용이 성분별 일일 용량 조건에 의존하여 현재 앱이 자동 판정하지 않음
+pregnancy_contraindication	단, VitA(레티놀)로서 5000I.U/1일 이상	review_required	dose_context	비타민 A(레티놀)로서 1일 5,000 IU 이상		동일 용량 조건의 MFDS 띄어쓰기 변형을 별도 exact 문자열로 검토
+pregnancy_contraindication	점비제	informational	source_note	점비제		제형 정보가 구조화 MFDS 필드와 함께 제공되는 판정 비실행 비고
+pregnancy_contraindication	주사제에 한함	informational	source_note	주사제에 한함		제형 범위 정보가 구조화 MFDS 필드와 함께 제공되는 판정 비실행 비고
+pregnancy_contraindication	캡슐제	informational	source_note	캡슐제		제형 정보가 구조화 MFDS 필드와 함께 제공되는 판정 비실행 비고
