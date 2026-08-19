@@ -77,6 +77,71 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertFalse(self.mobile_db.exists())
         self.assertFalse(self.manifest.exists())
 
+    def test_mobile_product_rules_omits_source_identity_unique_index(self) -> None:
+        build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
+        with sqlite3.connect(self.mobile_db) as con:
+            indexes = con.execute("PRAGMA index_list('product_rules')").fetchall()
+        self.assertFalse(
+            any(str(row[3]) == "u" for row in indexes),
+            f"mobile product_rules unexpectedly retains a UNIQUE index: {indexes!r}",
+        )
+
+    def test_mobile_build_rejects_duplicate_product_rule_source_identity(self) -> None:
+        duplicate_source = self.canonical_db.with_name("canonical-duplicate-rule.sqlite")
+        with sqlite3.connect(self.canonical_db) as source:
+            dump = "\n".join(source.iterdump())
+        unique_clause = ",\n    UNIQUE(source_dataset_key, source_row)\n)"
+        self.assertIn(unique_clause, dump)
+        # iterdump() orders tables by name, so ingredient_rules appears before
+        # product_rules. Remove this build-time identity constraint from the
+        # synthetic source tables so the fixture can represent corrupt input.
+        dump = dump.replace(unique_clause, "\n)")
+        with sqlite3.connect(duplicate_source) as con:
+            con.executescript(dump)
+            columns = [
+                str(row[1])
+                for row in con.execute("PRAGMA table_info('product_rules')")
+            ]
+            source_row = con.execute(
+                "SELECT * FROM product_rules ORDER BY id LIMIT 1"
+            ).fetchone()
+            assert source_row is not None
+            duplicate = list(source_row)
+            duplicate[columns.index("id")] = int(
+                con.execute("SELECT MAX(id) FROM product_rules").fetchone()[0]
+            ) + 1
+            placeholders = ",".join("?" for _ in columns)
+            con.execute(
+                f"INSERT INTO product_rules ({','.join(columns)}) VALUES ({placeholders})",
+                duplicate,
+            )
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "product_rules source identity is not unique"):
+            build_mobile_database(duplicate_source, self.mobile_db, manifest_path=self.manifest)
+        self.assertFalse(self.mobile_db.exists())
+        self.assertFalse(self.manifest.exists())
+
+    def test_mobile_preserves_product_rule_ids_and_criterion_links(self) -> None:
+        build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
+        with sqlite3.connect(self.canonical_db) as source, sqlite3.connect(self.mobile_db) as mobile:
+            source_rules = source.execute(
+                "SELECT id,source_dataset_key,source_row FROM product_rules ORDER BY id"
+            ).fetchall()
+            mobile_rules = mobile.execute(
+                "SELECT id,source_dataset_key,source_row FROM product_rules ORDER BY id"
+            ).fetchall()
+            source_links = source.execute(
+                "SELECT product_rule_id,criterion_rule_id,match_method,pair_orientation "
+                "FROM product_criterion_links ORDER BY product_rule_id,criterion_rule_id"
+            ).fetchall()
+            mobile_links = mobile.execute(
+                "SELECT product_rule_id,criterion_rule_id,match_method,pair_orientation "
+                "FROM product_criterion_links ORDER BY product_rule_id,criterion_rule_id"
+            ).fetchall()
+        self.assertEqual(mobile_rules, source_rules)
+        self.assertEqual(mobile_links, source_links)
+
     def test_dataset_id_changes_when_mobile_data_policy_changes(self) -> None:
         first = build_mobile_database(
             self.canonical_db, self.mobile_db, manifest_path=self.manifest

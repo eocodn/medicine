@@ -9,7 +9,7 @@ from pathlib import Path
 from .inspection import verify_canonical_database
 
 
-MOBILE_DATA_POLICY_VERSION = "4"
+MOBILE_DATA_POLICY_VERSION = "5"
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
@@ -24,6 +24,31 @@ RUNTIME_INDEXES = (
     "idx_product_rules_pair",
     "idx_product_flags_item_category",
 )
+
+# The canonical DB enforces source-row uniqueness with a persistent UNIQUE
+# b-tree because build/linking code mutates that database. The installed mobile
+# DB is immutable, so retaining that b-tree spends tens of MB without serving a
+# runtime lookup. Keep the same runtime-facing columns and stable rule ids, but
+# enforce source identity before copy instead of storing the constraint on-device.
+MOBILE_PRODUCT_RULES_DDL = """CREATE TABLE product_rules (
+    id INTEGER PRIMARY KEY,
+    source_dataset_key TEXT NOT NULL REFERENCES source_snapshots(dataset_key),
+    source_row INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    item_seq TEXT NOT NULL,
+    ingredient_code TEXT,
+    ingredient_name TEXT,
+    ingredient_name_en TEXT,
+    paired_item_seq TEXT,
+    paired_ingredient_code TEXT,
+    paired_ingredient_name TEXT,
+    paired_ingredient_name_en TEXT,
+    effect_name TEXT,
+    dosage_form TEXT,
+    details TEXT,
+    notification_date TEXT,
+    change_date TEXT
+)"""
 
 
 def _dataset_id(con: sqlite3.Connection) -> str:
@@ -49,6 +74,21 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _assert_product_rule_source_identity_unique(con: sqlite3.Connection) -> None:
+    duplicate = con.execute(
+        """SELECT source_dataset_key,source_row,COUNT(*) AS row_count
+           FROM product_rules
+           GROUP BY source_dataset_key,source_row
+           HAVING COUNT(*) > 1
+           LIMIT 1"""
+    ).fetchone()
+    if duplicate:
+        raise ValueError(
+            "product_rules source identity is not unique: "
+            f"{duplicate[0]} row {duplicate[1]} appears {duplicate[2]} times"
+        )
 
 
 def build_mobile_database(
@@ -81,6 +121,7 @@ def build_mobile_database(
         ).fetchone()
         if not schema_version or schema_version[0] != "10" or not build_stage or build_stage[0] != "complete":
             raise ValueError("canonical runtime requires complete schema v10 database")
+        _assert_product_rule_source_identity_unique(src)
         dataset_id = _dataset_id(src)
         objects = {
             (kind, name): sql
@@ -93,7 +134,11 @@ def build_mobile_database(
         try:
             dst.execute("PRAGMA foreign_keys=OFF")
             for table in RUNTIME_TABLES:
-                ddl = objects.get(("table", table))
+                ddl = (
+                    MOBILE_PRODUCT_RULES_DDL
+                    if table == "product_rules"
+                    else objects.get(("table", table))
+                )
                 if not ddl:
                     raise ValueError(f"canonical runtime table missing: {table}")
                 dst.execute(ddl)
