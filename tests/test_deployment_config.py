@@ -102,6 +102,31 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("MEDICINE_REFERENCE_UPDATE_BASE_URL", compose)
         self.assertIn("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", compose)
 
+    def test_android_release_enables_code_and_resource_shrinking(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        release = gradle.split('getByName("release") {', 1)[1].split("\n        }", 1)[0]
+        debug = gradle.split('getByName("debug") {', 1)[1].split("\n        }", 1)[0]
+
+        self.assertIn("isMinifyEnabled = true", release)
+        self.assertIn("isShrinkResources = true", release)
+        self.assertIn('getDefaultProguardFile("proguard-android-optimize.txt")', release)
+        self.assertIn('"proguard-rules.pro"', release)
+        self.assertNotIn("isMinifyEnabled = true", debug)
+        self.assertNotIn("isShrinkResources = true", debug)
+
+        proguard = Path("android/app/proguard-rules.pro").read_text()
+        self.assertIn("@android.webkit.JavascriptInterface", proguard)
+
+    def test_android_package_excludes_agent_control_cli_but_repo_cli_remains(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        compose = Path("compose.yaml").read_text()
+
+        self.assertIn('include("medicine_app/**/*.py")', gradle)
+        self.assertIn('exclude("medicine_app/cli.py")', gradle)
+        self.assertTrue(Path("medicine_app/cli.py").is_file())
+        app_service = compose.split("\n  app:\n", 1)[1].split("\n  web:\n", 1)[0]
+        self.assertIn('entrypoint: ["python", "-m", "medicine_app.cli"]', app_service)
+
     def test_android_bootstrap_schema_matches_embedded_runtime_schema(self) -> None:
         kotlin = Path(
             "android/app/src/main/java/com/medicine/android/ReferenceRuntimeAdapters.kt"
