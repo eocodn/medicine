@@ -1,6 +1,7 @@
 package com.medicine.android
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,14 +13,11 @@ class ReferenceStoreTest {
     private class MemoryStateStorage : ReferenceStateStorage {
         var bytes: ByteArray? = null
         override fun read(): ByteArray? = bytes?.copyOf()
-        override fun write(value: ByteArray) {
-            bytes = value.copyOf()
-        }
+        override fun write(value: ByteArray) { bytes = value.copyOf() }
     }
 
     private class FakeDatabaseVerifier : ReferenceDatabaseVerifier {
         var calls = 0
-
         override fun verify(file: File, version: ReferenceVersion) {
             calls += 1
             require(!file.readText().startsWith("invalid")) { "runtime database invalid" }
@@ -30,7 +28,7 @@ class ReferenceStoreTest {
         data: ByteArray,
         sequence: Long,
         dataset: String,
-        schemaVersion: String = "8",
+        schemaVersion: String = "10",
     ): ReferenceVersion = ReferenceVersion(
         datasetId = "sha256:" + MessageDigest.getInstance("SHA-256")
             .digest(dataset.toByteArray())
@@ -42,178 +40,177 @@ class ReferenceStoreTest {
     )
 
     @Test
-    fun pendingReleaseActivatesOnlyOnNextStartupAndKeepsPreviousLkg() {
-        val root = Files.createTempDirectory("reference-store").toFile()
+    fun emptyStoreHasNoStartupReferenceWithoutBundledFallback() {
+        val root = Files.createTempDirectory("reference-store-empty").toFile()
         try {
             val storage = MemoryStateStorage()
-            val verifier = FakeDatabaseVerifier()
-            val bundledBytes = "bundled".toByteArray()
-            val bundled = version(bundledBytes, 0, "sha256:bundled")
-            val first = ReferenceStore(root, storage, verifier)
-            val startup = first.openForStartup(bundled) { target -> target.writeBytes(bundledBytes) }
-            assertEquals(bundled, startup.version)
-
-            val updateBytes = "release-seven".toByteArray()
-            val update = version(updateBytes, 7, "sha256:seven")
-            val candidate = File(root, ".candidate-seven.sqlite").apply { writeBytes(updateBytes) }
-            first.stagePending(update, candidate)
-
-            val staged = first.snapshot()
-            assertEquals(bundled, staged.active)
-            assertEquals(update, staged.pending)
-            assertEquals(0, staged.highestActivatedSequence)
-
-            val second = ReferenceStore(root, storage, verifier)
-            val activated = second.openForStartup(bundled) { error("bundled copy should already exist") }
-            assertEquals(update, activated.version)
-            assertEquals(update, second.snapshot().active)
-            assertEquals(bundled, second.snapshot().previous)
-            assertNull(second.snapshot().pending)
-            assertEquals(7, second.snapshot().highestActivatedSequence)
+            val selected = ReferenceStore(root, storage, FakeDatabaseVerifier()).openForStartup("10")
+            assertNull(selected)
+            assertEquals(0, ReferenceStore(root, storage, FakeDatabaseVerifier()).snapshot().highestActivatedSequence)
         } finally {
             root.deleteRecursively()
         }
     }
 
     @Test
-    fun corruptedActiveFallsBackButDoesNotLowerAntiRollbackHighWater() {
+    fun initialNetworkReferenceBecomesActiveImmediatelyAndSetsHighWater() {
+        val root = Files.createTempDirectory("reference-store-initial").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val verifier = FakeDatabaseVerifier()
+            val bytes = "network-initial".toByteArray()
+            val initial = version(bytes, 12, "network-initial")
+            val store = ReferenceStore(root, storage, verifier)
+
+            val installed = store.installInitial(
+                initial,
+                File(root, ".candidate-initial.sqlite").apply { writeBytes(bytes) },
+            )
+
+            assertEquals(initial, installed.version)
+            assertEquals(initial, store.snapshot().active)
+            assertNull(store.snapshot().previous)
+            assertNull(store.snapshot().pending)
+            assertEquals(12, store.snapshot().highestActivatedSequence)
+            assertEquals(initial, ReferenceStore(root, storage, verifier).openForStartup("10")!!.version)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun initialInstallAdoptsAlreadyVerifiedContentAddressedTargetAfterInterruptedStateWrite() {
+        val root = Files.createTempDirectory("reference-store-adopt").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val verifier = FakeDatabaseVerifier()
+            val bytes = "network-adopt".toByteArray()
+            val initial = version(bytes, 14, "network-adopt")
+            val store = ReferenceStore(root, storage, verifier)
+            store.fileFor(initial).writeBytes(bytes)
+
+            val installed = store.installInitial(initial, candidate = null)
+
+            assertEquals(initial, installed.version)
+            assertEquals(14, store.snapshot().highestActivatedSequence)
+            assertEquals(initial, store.snapshot().active)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun pendingReleaseActivatesOnlyOnNextStartupAndKeepsPreviousLkg() {
+        val root = Files.createTempDirectory("reference-store-pending").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val verifier = FakeDatabaseVerifier()
+            val currentBytes = "release-one".toByteArray()
+            val current = version(currentBytes, 1, "one")
+            val store = ReferenceStore(root, storage, verifier)
+            store.installInitial(current, File(root, ".one.sqlite").apply { writeBytes(currentBytes) })
+
+            val updateBytes = "release-seven".toByteArray()
+            val update = version(updateBytes, 7, "seven")
+            store.stagePending(update, File(root, ".seven.sqlite").apply { writeBytes(updateBytes) })
+
+            assertEquals(current, store.snapshot().active)
+            assertEquals(update, store.snapshot().pending)
+            assertEquals(1, store.snapshot().highestActivatedSequence)
+
+            val activated = ReferenceStore(root, storage, verifier).openForStartup("10")!!
+            assertEquals(update, activated.version)
+            assertEquals(update, ReferenceStore(root, storage, verifier).snapshot().active)
+            assertEquals(current, ReferenceStore(root, storage, verifier).snapshot().previous)
+            assertEquals(7, ReferenceStore(root, storage, verifier).snapshot().highestActivatedSequence)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun corruptedActiveFallsBackToPreviousWithoutLoweringHighWater() {
         val root = Files.createTempDirectory("reference-store-fallback").toFile()
         try {
             val storage = MemoryStateStorage()
             val verifier = FakeDatabaseVerifier()
-            val bundledBytes = "bundled".toByteArray()
-            val bundled = version(bundledBytes, 0, "sha256:bundled")
-            val updateBytes = "release-seven".toByteArray()
-            val update = version(updateBytes, 7, "sha256:seven")
+            val currentBytes = "release-one".toByteArray()
+            val current = version(currentBytes, 1, "one")
+            val sevenBytes = "release-seven".toByteArray()
+            val seven = version(sevenBytes, 7, "seven")
+            val store = ReferenceStore(root, storage, verifier)
+            store.installInitial(current, File(root, ".one.sqlite").apply { writeBytes(currentBytes) })
+            store.stagePending(seven, File(root, ".seven.sqlite").apply { writeBytes(sevenBytes) })
+            ReferenceStore(root, storage, verifier).openForStartup("10")
 
-            val first = ReferenceStore(root, storage, verifier)
-            first.openForStartup(bundled) { it.writeBytes(bundledBytes) }
-            first.stagePending(update, File(root, ".candidate.sqlite").apply { writeBytes(updateBytes) })
-            ReferenceStore(root, storage, verifier).openForStartup(bundled) { error("bundled exists") }
-
-            ReferenceStore(root, storage, verifier).fileFor(update).apply {
+            ReferenceStore(root, storage, verifier).fileFor(seven).apply {
                 assertTrue(setWritable(true))
                 writeText("invalid-corruption")
             }
-            val recoveredStore = ReferenceStore(root, storage, verifier)
-            val recovered = recoveredStore.openForStartup(bundled) { error("bundled exists") }
-            assertEquals(bundled, recovered.version)
-            assertEquals(7, recoveredStore.snapshot().highestActivatedSequence)
+            val recovered = ReferenceStore(root, storage, verifier).openForStartup("10")!!
 
-            val oldBytes = "release-six".toByteArray()
-            val old = version(oldBytes, 6, "sha256:six")
-            val oldCandidate = File(root, ".candidate-six.sqlite").apply { writeBytes(oldBytes) }
-            val error = runCatching { recoveredStore.stagePending(old, oldCandidate) }.exceptionOrNull()
-            assertTrue(error is IllegalArgumentException)
-            assertTrue(error!!.message!!.contains("rollback"))
+            assertEquals(current, recovered.version)
+            assertTrue(recovered.recoveryReason!!.contains("previous"))
+            assertEquals(7, ReferenceStore(root, storage, verifier).snapshot().highestActivatedSequence)
         } finally {
             root.deleteRecursively()
         }
     }
 
     @Test
-    fun sameHighWaterReleaseCanRepairLocalCorruptionWithoutPermittingOlderReplay() {
-        val root = Files.createTempDirectory("reference-store-repair").toFile()
-        try {
-            val storage = MemoryStateStorage()
-            val verifier = FakeDatabaseVerifier()
-            val bundledBytes = "bundled".toByteArray()
-            val bundled = version(bundledBytes, 0, "sha256:bundled")
-            val updateBytes = "release-seven".toByteArray()
-            val update = version(updateBytes, 7, "sha256:seven")
-
-            val first = ReferenceStore(root, storage, verifier)
-            first.openForStartup(bundled) { it.writeBytes(bundledBytes) }
-            first.stagePending(update, File(root, ".candidate.sqlite").apply { writeBytes(updateBytes) })
-            val activeStore = ReferenceStore(root, storage, verifier)
-            activeStore.openForStartup(bundled) { error("bundled exists") }
-            activeStore.fileFor(update).apply {
-                assertTrue(setWritable(true))
-                writeText("invalid-corruption")
-            }
-            val recovered = ReferenceStore(root, storage, verifier)
-            recovered.openForStartup(bundled) { error("bundled exists") }
-
-            val repair = File(root, ".candidate-repair.sqlite").apply { writeBytes(updateBytes) }
-            recovered.stagePending(update, repair)
-            val repaired = ReferenceStore(root, storage, verifier)
-            assertEquals(update, repaired.openForStartup(bundled) { error("bundled exists") }.version)
-            assertEquals(7, repaired.snapshot().highestActivatedSequence)
-        } finally {
-            root.deleteRecursively()
-        }
-    }
-    @Test
-    fun establishedLkgUsesContentVerificationWithoutRepeatingFullRuntimeCheck() {
+    fun establishedLkgUsesContentVerificationWithoutRepeatingRuntimeCheck() {
         val root = Files.createTempDirectory("reference-store-lkg-fast").toFile()
         try {
             val storage = MemoryStateStorage()
             val verifier = FakeDatabaseVerifier()
-            val bundledBytes = "bundled".toByteArray()
-            val bundled = version(bundledBytes, 0, "bundled")
+            val bytes = "release-one".toByteArray()
+            val current = version(bytes, 1, "one")
+            ReferenceStore(root, storage, verifier).installInitial(
+                current,
+                File(root, ".one.sqlite").apply { writeBytes(bytes) },
+            )
+            val callsAfterInstall = verifier.calls
 
-            ReferenceStore(root, storage, verifier).openForStartup(bundled) { it.writeBytes(bundledBytes) }
-            assertEquals(1, verifier.calls)
+            ReferenceStore(root, storage, verifier).openForStartup("10")
 
-            ReferenceStore(root, storage, verifier).openForStartup(bundled) { error("bundled exists") }
-            assertEquals(1, verifier.calls)
+            assertEquals(callsAfterInstall, verifier.calls)
         } finally {
             root.deleteRecursively()
         }
     }
 
     @Test
-    fun schemaUpgradeRejectsOldActiveLkgAndUsesBundledReference() {
-        val root = Files.createTempDirectory("reference-store-schema-upgrade").toFile()
+    fun incompatibleInstalledSchemaDoesNotBecomeCurrentRuntimeLkg() {
+        val root = Files.createTempDirectory("reference-store-schema").toFile()
         try {
             val storage = MemoryStateStorage()
             val verifier = FakeDatabaseVerifier()
-            val oldBundledBytes = "bundled-v8".toByteArray()
-            val oldBundled = version(oldBundledBytes, 0, "bundled-v8", schemaVersion = "8")
-            val oldReleaseBytes = "release-v8-seven".toByteArray()
-            val oldRelease = version(oldReleaseBytes, 7, "release-v8-seven", schemaVersion = "8")
-
-            val first = ReferenceStore(root, storage, verifier)
-            first.openForStartup(oldBundled) { it.writeBytes(oldBundledBytes) }
-            first.stagePending(
-                oldRelease,
-                File(root, ".candidate-v8.sqlite").apply { writeBytes(oldReleaseBytes) },
+            val bytes = "release-old-schema".toByteArray()
+            val old = version(bytes, 4, "old", schemaVersion = "9")
+            ReferenceStore(root, storage, verifier).installInitial(
+                old,
+                File(root, ".old.sqlite").apply { writeBytes(bytes) },
             )
-            ReferenceStore(root, storage, verifier)
-                .openForStartup(oldBundled) { error("old bundled reference already exists") }
-            assertEquals(7, ReferenceStore(root, storage, verifier).snapshot().highestActivatedSequence)
 
-            val newBundledBytes = "bundled-v10".toByteArray()
-            val newBundled = version(newBundledBytes, 0, "bundled-v10", schemaVersion = "10")
-            val upgradedStore = ReferenceStore(root, storage, verifier)
-            val selected = upgradedStore.openForStartup(newBundled) { it.writeBytes(newBundledBytes) }
-
-            assertEquals(newBundled, selected.version)
-            assertTrue(selected.recoveryReason!!.contains("schema"))
-            assertEquals(newBundled, upgradedStore.snapshot().active)
-            assertNull(upgradedStore.snapshot().previous)
-            assertEquals(7, upgradedStore.snapshot().highestActivatedSequence)
+            assertNull(ReferenceStore(root, storage, verifier).openForStartup("10"))
+            assertEquals(4, ReferenceStore(root, storage, verifier).snapshot().highestActivatedSequence)
         } finally {
             root.deleteRecursively()
         }
     }
 
     @Test
-    fun corruptStateFallsBackToBundledAndReportsRecovery() {
-        val root = Files.createTempDirectory("reference-store-state-recovery").toFile()
+    fun corruptStateFailsClosedInsteadOfResettingAntiRollbackState() {
+        val root = Files.createTempDirectory("reference-store-state").toFile()
         try {
             val storage = MemoryStateStorage().apply { bytes = "corrupt-state".toByteArray() }
-            val verifier = FakeDatabaseVerifier()
-            val bundledBytes = "bundled".toByteArray()
-            val bundled = version(bundledBytes, 0, "bundled")
+            val error = runCatching {
+                ReferenceStore(root, storage, FakeDatabaseVerifier()).openForStartup("10")
+            }.exceptionOrNull()
 
-            val selected = ReferenceStore(root, storage, verifier)
-                .openForStartup(bundled) { it.writeBytes(bundledBytes) }
-
-            assertEquals(bundled, selected.version)
-            assertTrue(selected.recoveryReason!!.contains("state"))
-            assertEquals(1, verifier.calls)
-            assertEquals(Long.MAX_VALUE, ReferenceStore(root, storage, verifier).snapshot().highestActivatedSequence)
+            assertNotNull(error)
+            assertTrue(error is IllegalArgumentException)
+            assertTrue(error!!.message!!.contains("invalid reference state"))
         } finally {
             root.deleteRecursively()
         }

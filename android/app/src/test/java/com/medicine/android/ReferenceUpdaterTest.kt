@@ -42,7 +42,7 @@ class ReferenceUpdaterTest {
     private class FakeRebuilder(private val targetBytes: ByteArray) : ReferenceArtifactRebuilder {
         var usedArtifact: ReferenceReleaseArtifact? = null
         override fun rebuild(
-            current: InstalledReferenceVersion,
+            current: InstalledReferenceVersion?,
             artifact: ReferenceReleaseArtifact,
             downloaded: File,
             output: File,
@@ -106,10 +106,13 @@ class ReferenceUpdaterTest {
             val storage = MemoryStateStorage()
             val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
             val currentBytes = "current".toByteArray()
-            val current = version(currentBytes, 0, "bundled")
-            val installed = store.openForStartup(current) { it.writeBytes(currentBytes) }
+            val current = version(currentBytes, 1, "current")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
             val targetBytes = "target-one".toByteArray()
-            val release = release(targetBytes, 1, "one", current, includeMatchingPatch = true)
+            val release = release(targetBytes, 2, "one", current, includeMatchingPatch = true)
             val source = FakeSource(release)
             val rebuilder = FakeRebuilder(targetBytes)
 
@@ -119,7 +122,7 @@ class ReferenceUpdaterTest {
             assertEquals(ReferenceArtifactKind.CHUNK_PATCH, source.downloads.single().kind)
             assertEquals(ReferenceArtifactKind.CHUNK_PATCH, rebuilder.usedArtifact!!.kind)
             assertEquals(current, store.snapshot().active)
-            assertEquals(1, store.snapshot().pending!!.releaseSequence)
+            assertEquals(2, store.snapshot().pending!!.releaseSequence)
             assertEquals(current, installed.version)
         } finally {
             root.deleteRecursively()
@@ -133,8 +136,11 @@ class ReferenceUpdaterTest {
             val storage = MemoryStateStorage()
             val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
             val currentBytes = "current".toByteArray()
-            val current = version(currentBytes, 0, "bundled")
-            val installed = store.openForStartup(current) { it.writeBytes(currentBytes) }
+            val current = version(currentBytes, 1, "current")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
             val targetBytes = "target-two".toByteArray()
             val release = release(targetBytes, 2, "two", current, includeMatchingPatch = false)
             val source = FakeSource(release)
@@ -156,14 +162,17 @@ class ReferenceUpdaterTest {
         try {
             val storage = MemoryStateStorage()
             val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
-            val bundledBytes = "bundled".toByteArray()
-            val bundled = version(bundledBytes, 0, "bundled")
-            store.openForStartup(bundled) { it.writeBytes(bundledBytes) }
+            val bundledBytes = "initial".toByteArray()
+            val bundled = version(bundledBytes, 1, "initial")
+            store.installInitial(
+                bundled,
+                File(root, ".initial.sqlite").apply { writeBytes(bundledBytes) },
+            )
             val sevenBytes = "release-seven".toByteArray()
             val seven = version(sevenBytes, 7, "seven")
             store.stagePending(seven, File(root, ".seven.sqlite").apply { writeBytes(sevenBytes) })
             val installed = ReferenceStore(root, storage, FakeDatabaseVerifier())
-                .openForStartup(bundled) { error("bundled exists") }
+                .openForStartup("8")!!
             val oldBytes = "release-six".toByteArray()
             val oldRelease = release(oldBytes, 6, "six", installed.version, includeMatchingPatch = false)
             val source = FakeSource(oldRelease)
@@ -186,8 +195,11 @@ class ReferenceUpdaterTest {
             val storage = MemoryStateStorage()
             val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
             val currentBytes = "current".toByteArray()
-            val current = version(currentBytes, 0, "bundled")
-            val installed = store.openForStartup(current) { it.writeBytes(currentBytes) }
+            val current = version(currentBytes, 1, "current")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
             val targetBytes = "target-failure".toByteArray()
             val source = FakeSource(
                 release(targetBytes, 3, "failure", current, includeMatchingPatch = false),

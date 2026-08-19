@@ -87,7 +87,7 @@ interface ReferenceReleaseSource {
 
 interface ReferenceArtifactRebuilder {
     fun rebuild(
-        current: InstalledReferenceVersion,
+        current: InstalledReferenceVersion?,
         artifact: ReferenceReleaseArtifact,
         downloaded: File,
         output: File,

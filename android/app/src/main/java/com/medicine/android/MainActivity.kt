@@ -18,6 +18,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.LinearLayout
+import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -26,9 +27,13 @@ import androidx.core.content.FileProvider
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.security.KeyStore
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
@@ -38,6 +43,7 @@ class MainActivity : ComponentActivity() {
     private var pendingCaptureUri: Uri? = null
     private var pendingCaptureFile: File? = null
     private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val startupRunning = AtomicBoolean(false)
     private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val callback = fileChooserCallback
         fileChooserCallback = null
@@ -57,10 +63,41 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        showStartupView("안전 데이터 준비 중…")
+        startApplication()
+    }
+
+    private fun startApplication() {
+        if (!startupRunning.compareAndSet(false, true)) return
+        showStartupView("안전 데이터 확인 중…")
         startupExecutor.execute {
             runCatching {
-                val reference = ReferenceAssetInstaller(this).install()
+                val reference = AndroidReferenceInstaller(
+                    this,
+                    object : ReferenceUpdateObserver {
+                        override fun phase(name: String) {
+                            val message = when (name) {
+                                "manifest" -> "안전 데이터 확인 중…"
+                                "full-download" -> "안전 데이터 다운로드 중…"
+                                "rebuild" -> "안전 데이터 설치 중…"
+                                "verify-and-install" -> "안전 데이터 검증 중…"
+                                else -> return
+                            }
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) showStartupView(message)
+                            }
+                        }
+
+                        override fun progress(name: String, completedBytes: Long, totalBytes: Long) {
+                            if (name != "download" || totalBytes <= 0) return
+                            val percent = ((completedBytes * 100L) / totalBytes).coerceIn(0L, 100L).toInt()
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) {
+                                    showStartupView("안전 데이터 다운로드 중…", progressPercent = percent)
+                                }
+                            }
+                        }
+                    },
+                ).install()
                 reference.recoveryReason?.let { reason ->
                     Log.w(TAG, "Reference store recovery: $reason")
                 }
@@ -76,19 +113,42 @@ class MainActivity : ComponentActivity() {
                     reference = reference,
                 )
             }.onSuccess { session ->
+                startupRunning.set(false)
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) setupWebView(session.bridge)
                 }
                 scheduleReferenceUpdate(session.reference)
             }.onFailure { error ->
+                startupRunning.set(false)
                 Log.e(TAG, "Application startup failed", error)
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
-                        showStartupView("앱 데이터를 준비하지 못했습니다.\n앱을 다시 실행해주세요.")
+                        showStartupView(startupFailureMessage(error), retry = true)
                     }
                 }
             }
         }
+    }
+
+    private fun startupFailureMessage(error: Throwable): String = when {
+        error is ReferenceBootstrapStorageException ->
+            "안전 데이터를 저장할 공간이 부족합니다.\n공간을 확보한 뒤 다시 시도해주세요."
+        error.hasCause<UnknownHostException>() ||
+            error.hasCause<ConnectException>() ||
+            error.hasCause<SocketTimeoutException>() ->
+            "안전 데이터를 받으려면 인터넷 연결이 필요합니다.\n연결 후 다시 시도해주세요."
+        error is IllegalArgumentException || error is IllegalStateException ->
+            "안전 데이터 검증에 실패했습니다.\n다시 시도해주세요."
+        else -> "앱 데이터를 준비하지 못했습니다.\n다시 시도해주세요."
+    }
+
+    private inline fun <reified T : Throwable> Throwable.hasCause(): Boolean {
+        var current: Throwable? = this
+        while (current != null) {
+            if (current is T) return true
+            current = current.cause
+        }
+        return false
     }
 
     private fun scheduleReferenceUpdate(reference: InstalledReference) {
@@ -238,12 +298,24 @@ class MainActivity : ComponentActivity() {
     private fun isAllowedOrigin(uri: Uri): Boolean =
         uri.scheme == "https" && uri.host == APP_ASSET_DOMAIN
 
-    private fun showStartupView(message: String) {
+    private fun showStartupView(
+        message: String,
+        progressPercent: Int? = null,
+        retry: Boolean = false,
+    ) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(48, 48, 48, 48)
-            addView(ProgressBar(this@MainActivity))
+            addView(ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
+                isIndeterminate = progressPercent == null
+                max = 100
+                if (progressPercent != null) progress = progressPercent
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            })
             addView(TextView(this@MainActivity).apply {
                 text = message
                 gravity = Gravity.CENTER
@@ -254,6 +326,13 @@ class MainActivity : ComponentActivity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 )
             })
+            if (retry) {
+                addView(Button(this@MainActivity).apply {
+                    text = "다시 시도"
+                    setPadding(32, 16, 32, 16)
+                    setOnClickListener { startApplication() }
+                })
+            }
         }
         setContentView(root)
     }

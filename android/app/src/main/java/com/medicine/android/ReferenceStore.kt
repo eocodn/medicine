@@ -104,54 +104,35 @@ class ReferenceStore(
 
     fun snapshot(): ReferenceStoreState = decodeState(stateStorage.read())
 
-    fun openForStartup(
-        bundled: ReferenceVersion,
-        installBundled: (File) -> Unit,
-    ): InstalledReferenceVersion {
-        require(bundled.releaseSequence == 0L) { "bundled reference must use release sequence zero" }
-        var recoveryReason: String? = null
-        var state = try {
-            snapshot()
-        } catch (_: Exception) {
-            // A corrupted state file makes the last accepted release sequence unknowable.
-            // Keep the app usable from its bundled DB, but fail closed for future network
-            // updates rather than silently resetting anti-rollback state to zero.
-            recoveryReason = "reference state invalid; network updates are blocked until app data is reset"
-            ReferenceStoreState(highestActivatedSequence = Long.MAX_VALUE).also(::writeState)
+    fun openForStartup(expectedSchemaVersion: String): InstalledReferenceVersion? {
+        require(expectedSchemaVersion.matches(Regex("[1-9][0-9]*"))) {
+            "invalid expected reference schema version"
         }
+        var recoveryReason: String? = null
+        var state = snapshot()
 
-        val activation = activatePendingIfValid(state)
+        val activation = activatePendingIfValid(state, expectedSchemaVersion)
         state = activation.state
         recoveryReason = recoveryReason ?: activation.recoveryReason
 
-        // An established LKG is already byte-verified when staged, so compatible
-        // generations keep the cheap content-only startup path. An app upgrade can
-        // change the bundled/runtime schema, however; content validity alone does
-        // not make an older SQLite generation safe for the new Python evaluator.
+        // An established LKG was runtime-verified before installation, so normal
+        // startup only rechecks immutable content identity. Schema compatibility is
+        // still checked before exposing it to the current embedded Python runtime.
         fun startupCompatible(version: ReferenceVersion): Boolean =
-            version.schemaVersion == bundled.schemaVersion && isContentVerified(version)
+            version.schemaVersion == expectedSchemaVersion && isContentVerified(version)
 
-        val installedSchemaMismatch = listOfNotNull(state.active, state.previous).any {
-            it.schemaVersion != bundled.schemaVersion
-        }
         val selected = when {
             state.active != null && startupCompatible(state.active) -> state.active
             state.previous != null && startupCompatible(state.previous) -> {
                 recoveryReason = recoveryReason ?: "active reference invalid; using previous LKG"
                 state.previous
             }
-            else -> {
-                if (installedSchemaMismatch) {
-                    recoveryReason = recoveryReason
-                        ?: "installed reference schema incompatible; using bundled fallback"
-                } else if (state.active != null || state.previous != null) {
-                    recoveryReason = recoveryReason ?: "installed reference LKG invalid; using bundled fallback"
-                }
-                ensureBundled(bundled, installBundled)
-                bundled
-            }
+            else -> null
         }
-        check(isContentVerified(selected)) { "no verified reference database is available" }
+        if (selected == null) {
+            cleanupUnreferenced(state)
+            return null
+        }
 
         val normalized = if (selected == state.active) {
             state
@@ -159,8 +140,47 @@ class ReferenceStore(
             state.copy(active = selected, previous = null)
         }
         if (normalized != state) writeState(normalized)
-        cleanupUnreferenced(normalized, bundled)
+        cleanupUnreferenced(normalized)
         return InstalledReferenceVersion(selected, fileFor(selected), recoveryReason)
+    }
+
+    fun installInitial(version: ReferenceVersion, candidate: File?): InstalledReferenceVersion {
+        require(version.releaseSequence > 0) { "downloaded reference release sequence must be positive" }
+        candidate?.let {
+            require(it.parentFile?.canonicalFile == root.canonicalFile) {
+                "reference candidate must be staged in the reference directory"
+            }
+        }
+
+        val state = snapshot()
+        require(version.releaseSequence >= state.highestActivatedSequence) {
+            "reference rollback is not allowed"
+        }
+        val target = fileFor(version)
+        if (!isDatabaseVerified(target, version)) {
+            if (target.exists()) check(target.delete()) {
+                "cannot remove corrupted content-addressed reference target"
+            }
+            val source = requireNotNull(candidate) {
+                "verified initial reference candidate is required"
+            }
+            check(isDatabaseVerified(source, version)) { "reference candidate verification failed" }
+            check(source.renameTo(target)) { "cannot atomically install initial reference candidate" }
+        } else {
+            candidate?.delete()
+        }
+        check(target.setReadOnly()) { "cannot make initial reference read-only" }
+        check(isDatabaseVerified(target, version)) { "installed initial reference verification failed" }
+
+        val activated = ReferenceStoreState(
+            active = version,
+            previous = null,
+            pending = null,
+            highestActivatedSequence = maxOf(state.highestActivatedSequence, version.releaseSequence),
+        )
+        writeState(activated)
+        cleanupUnreferenced(activated)
+        return InstalledReferenceVersion(version, target)
     }
 
     fun stagePending(version: ReferenceVersion, candidate: File) {
@@ -200,42 +220,23 @@ class ReferenceStore(
         writeState(state.copy(pending = version))
     }
 
-    private fun ensureBundled(bundled: ReferenceVersion, installBundled: (File) -> Unit) {
-        val target = fileFor(bundled)
-        if (isContentVerified(target, bundled)) {
-            check(runCatching { databaseVerifier.verify(target, bundled) }.isSuccess) {
-                "bundled reference runtime verification failed"
-            }
-            return
-        }
-        if (target.exists()) check(target.delete()) { "cannot remove invalid bundled reference copy" }
-        val temporary = File(root, ".bundled-${bundled.sha256}.tmp")
-        temporary.delete()
-        try {
-            installBundled(temporary)
-            check(isDatabaseVerified(temporary, bundled)) { "bundled reference verification failed" }
-            check(temporary.renameTo(target)) { "cannot atomically install bundled reference" }
-            check(target.setReadOnly()) { "cannot make bundled reference read-only" }
-            check(isContentVerified(target, bundled)) { "installed bundled reference verification failed" }
-        } finally {
-            temporary.delete()
-        }
-    }
-
     private data class PendingActivation(
         val state: ReferenceStoreState,
         val recoveryReason: String? = null,
     )
 
-    private fun activatePendingIfValid(state: ReferenceStoreState): PendingActivation {
+    private fun activatePendingIfValid(
+        state: ReferenceStoreState,
+        expectedSchemaVersion: String,
+    ): PendingActivation {
         val pending = state.pending ?: return PendingActivation(state)
-        if (!isDatabaseVerified(pending)) {
+        if (pending.schemaVersion != expectedSchemaVersion || !isDatabaseVerified(pending)) {
             fileFor(pending).delete()
             val cleared = state.copy(pending = null)
             writeState(cleared)
             return PendingActivation(
                 cleared,
-                "pending reference failed re-verification; retained current LKG",
+                "pending reference is incompatible or failed re-verification; retained current LKG",
             )
         }
         val canAdvance = pending.releaseSequence > state.highestActivatedSequence
@@ -263,8 +264,8 @@ class ReferenceStore(
         return PendingActivation(activated)
     }
 
-    private fun cleanupUnreferenced(state: ReferenceStoreState, bundled: ReferenceVersion) {
-        val keep = setOfNotNull(state.active, state.previous, state.pending, bundled)
+    private fun cleanupUnreferenced(state: ReferenceStoreState) {
+        val keep = setOfNotNull(state.active, state.previous, state.pending)
             .map { fileFor(it).name }
             .toSet()
         root.listFiles()?.forEach { file ->
