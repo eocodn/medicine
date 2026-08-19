@@ -186,9 +186,10 @@ R2 bucket은 public 개발 URL을 켜기 전에 `medicine-canonical r2-public-au
 `reference/v1/` 외 객체가 없는지 확인합니다.
 
 개발 단계의 Android reference update endpoint는 Cloudflare R2의 non-production `r2.dev` URL을 사용합니다.
-Compose/Gradle release 빌드에는 `MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL=https://pub-….r2.dev/`를 전달하고,
-debug 빌드는 기본적으로 update URL이 비어 있습니다. `MEDICINE_REFERENCE_UPDATE_BASE_URL`은 테스트나 명시적
-build override에만 사용합니다. 출시 준비 시에는 `r2.dev` 대신 custom domain으로 교체합니다.
+현재 개발 endpoint는 `https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/`이며 Gradle release 빌드의
+기본값으로 내장합니다. `MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL`로 개발 endpoint를 교체할 수 있고, debug
+빌드는 기본적으로 update URL이 비어 있습니다. `MEDICINE_REFERENCE_UPDATE_BASE_URL`은 두 variant 모두를 덮어쓰는
+명시적 테스트/build override입니다. 출시 준비 시에는 `r2.dev` 대신 custom domain으로 교체합니다.
 
 `canonical verify`가 실패하면 앱은 데이터셋을 verified로 취급하지 않습니다. Android 빌드는
 `canonical mobile-build`를 먼저 실행해 `data/db/mobile.sqlite`와 SHA-256 manifest를 만든 뒤 동일한 Python

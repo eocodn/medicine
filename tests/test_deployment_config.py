@@ -66,6 +66,7 @@ class DeploymentConfigTest(unittest.TestCase):
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
 
+        self.assertIn("https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/", gradle)
         self.assertIn("REFERENCE_UPDATE_BASE_URL", gradle)
         self.assertIn("releaseReferenceUpdateBaseUrl", gradle)
         self.assertIn("debug", gradle)

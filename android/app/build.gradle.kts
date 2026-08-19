@@ -64,7 +64,11 @@ require((mobileDatabaseOverride == null) == (mobileManifestOverride == null)) {
 val mobileDatabaseFile = rootProject.file(mobileDatabaseOverride ?: "../data/db/mobile.sqlite")
 val mobileManifestFile = rootProject.file(mobileManifestOverride ?: "../data/db/mobile.manifest.json")
 val referenceUpdateBaseUrlOverride = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")?.trim()?.takeIf { it.isNotEmpty() }
-val releaseReferenceUpdateBaseUrl = System.getenv("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL")?.trim().orEmpty()
+val defaultReleaseReferenceUpdateBaseUrl = "https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/"
+val releaseReferenceUpdateBaseUrl = System.getenv("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: defaultReleaseReferenceUpdateBaseUrl
 
 fun validateReferenceUpdateBaseUrl(value: String) {
     if (value.isEmpty()) return
