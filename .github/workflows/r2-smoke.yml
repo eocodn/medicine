@@ -3,7 +3,8 @@ name: R2 smoke
 on:
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   private-bucket-write:

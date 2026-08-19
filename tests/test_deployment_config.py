@@ -84,6 +84,7 @@ class DeploymentConfigTest(unittest.TestCase):
         workflow = Path(".github/workflows/r2-smoke.yml").read_text()
 
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("contents: read", workflow)
         for secret in (
             "R2_ACCESS_KEY_ID",
             "R2_SECRET_ACCESS_KEY",
