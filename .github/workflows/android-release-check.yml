@@ -1,0 +1,86 @@
+name: Android Release Check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-android:
+    name: Check signed Android arm64 release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+      ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+      ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+      ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+    steps:
+      - name: Check out selected ref
+        uses: actions/checkout@v6
+
+      - name: Validate release signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in \
+            ANDROID_RELEASE_KEYSTORE_BASE64 \
+            ANDROID_RELEASE_KEYSTORE_PASSWORD \
+            ANDROID_RELEASE_KEY_ALIAS \
+            ANDROID_RELEASE_KEY_PASSWORD
+          do
+            if [[ -z "${!name:-}" ]]; then
+              printf '::error::%s is not configured\n' "${name}"
+              exit 1
+            fi
+          done
+
+      - name: Resolve Android release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(./scripts/current-android-release-tag.sh)"
+          version_name="$(sed -n 's/^versionName=//p' android/release.properties | head -n 1)"
+          version_code="$(sed -n 's/^versionCode=//p' android/release.properties | head -n 1)"
+          printf 'tag=%s\n' "${tag}" >> "${GITHUB_OUTPUT}"
+          printf 'version_name=%s\n' "${version_name}" >> "${GITHUB_OUTPUT}"
+          printf 'version_code=%s\n' "${version_code}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and verify signed Android release
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="medicine-android-release:${GITHUB_SHA}"
+          docker build --file Dockerfile.android --tag "${image}" .
+
+          keystore="${RUNNER_TEMP}/medicine-release.jks"
+          umask 077
+          printf '%s' "${ANDROID_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
+          cleanup() { rm -f "${keystore}"; }
+          trap cleanup EXIT
+
+          rm -rf dist
+          mkdir -p dist
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -e GRADLE_USER_HOME=/tmp/gradle-cache \
+            -e MEDICINE_ANDROID_VERSION_CODE="${{ steps.version.outputs.version_code }}" \
+            -e MEDICINE_ANDROID_VERSION_NAME="${{ steps.version.outputs.version_name }}" \
+            -e MEDICINE_ANDROID_KEYSTORE_PASSWORD="${ANDROID_RELEASE_KEYSTORE_PASSWORD}" \
+            -e MEDICINE_ANDROID_KEY_ALIAS="${ANDROID_RELEASE_KEY_ALIAS}" \
+            -e MEDICINE_ANDROID_KEY_PASSWORD="${ANDROID_RELEASE_KEY_PASSWORD}" \
+            -e MEDICINE_ANDROID_KEYSTORE_PATH=/run/secrets/medicine-release.jks \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v "${keystore}:/run/secrets/medicine-release.jks:ro" \
+            "${image}" \
+            bash /workspace/scripts/check-android-release.sh \
+              "${{ steps.version.outputs.tag }}" /workspace/dist
+
+      - name: Preserve validated Android APK for this run
+        uses: actions/cache/save@v5
+        with:
+          path: dist
+          key: android-release-${{ github.sha }}-${{ github.run_id }}-arm64-v8a

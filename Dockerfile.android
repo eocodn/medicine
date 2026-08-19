@@ -37,7 +37,7 @@ RUN apt-get update \
 COPY --from=ocr-assets /out /opt/medicine-ocr-assets
 
 WORKDIR /workspace/android
-COPY android/settings.gradle.kts android/build.gradle.kts android/gradle.properties ./
+COPY android/settings.gradle.kts android/build.gradle.kts android/gradle.properties android/release.properties ./
 COPY android/gradle ./gradle
 COPY android/app ./app
 
