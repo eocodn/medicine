@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f6f7f4">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
   <title>약봄</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260819ux1">
+  <link rel="stylesheet" href="/static/styles.css?v=20260819ux2">
   <link rel="stylesheet" href="/static/prescription.css?v=20260817ux2">
 </head>
 <body>
@@ -14,7 +14,7 @@
     <header class="topbar">
       <div>
         <p class="eyebrow">MEDICINE</p>
-        <h1 id="page-title">오늘의 복약</h1>
+        <h1 id="page-title" tabindex="-1">오늘의 복약</h1>
       </div>
       <button class="profile-switcher" id="profile-shortcut" type="button" aria-label="프로필 선택">
         <span class="profile-switcher-avatar" id="profile-shortcut-avatar" aria-hidden="true">+</span>
@@ -47,10 +47,11 @@
             <h2>약을 검색하세요</h2>
             <p class="muted">식약처 허가 의약품에서 검색하고, 현재 복용약과 프로필을 함께 확인해 DUR 위험 범위를 알려줘요.</p>
           </div>
-          <label class="search-box">
+          <div class="search-box" role="search">
             <span aria-hidden="true">⌕</span>
-            <input id="drug-query" type="search" placeholder="제품명, 성분명, 제품코드" autocomplete="off">
-          </label>
+            <input id="drug-query" type="search" aria-label="약 검색" placeholder="제품명, 성분명, 제품코드" autocomplete="off">
+            <button id="drug-query-clear" class="search-clear" type="button" aria-label="검색어 지우기">×</button>
+          </div>
           <div class="ocr-import-card">
             <label class="secondary-button wide ocr-file-button" for="ocr-image-input">처방전 사진으로 불러오기</label>
             <input id="ocr-image-input" class="visually-hidden" type="file" accept="image/*" capture="environment">
@@ -92,7 +93,7 @@
   <section id="person-sheet" class="bottom-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="person-form-title">
     <div class="sheet-handle"></div>
     <div class="sheet-header">
-      <div><p class="eyebrow">NEW PROFILE</p><h2 id="person-form-title">프로필 추가</h2></div>
+      <div><p class="eyebrow">NEW PROFILE</p><h2 id="person-form-title" data-sheet-focus tabindex="-1">프로필 추가</h2></div>
       <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
     </div>
     <form id="person-form" class="form-stack">
@@ -135,7 +136,7 @@
   <section id="delete-person-sheet" class="bottom-sheet destructive-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="delete-person-title">
     <div class="sheet-handle"></div>
     <div class="sheet-header">
-      <div><p class="eyebrow">DELETE PROFILE</p><h2 id="delete-person-title">프로필을 삭제할까요?</h2></div>
+      <div><p class="eyebrow">DELETE PROFILE</p><h2 id="delete-person-title" data-sheet-focus tabindex="-1">프로필을 삭제할까요?</h2></div>
       <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
     </div>
     <div class="delete-person-content">
@@ -147,14 +148,30 @@
     </div>
   </section>
 
+  <section id="stop-medication-sheet" class="bottom-sheet destructive-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="stop-medication-title">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <div><p class="eyebrow">STOP MEDICATION</p><h2 id="stop-medication-title" data-sheet-focus tabindex="-1">복용을 종료할까요?</h2></div>
+      <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
+    </div>
+    <div class="delete-person-content">
+      <p id="stop-medication-copy" class="muted"></p>
+      <div class="delete-person-actions">
+        <button class="secondary-button" data-close-sheet type="button">취소</button>
+        <button id="confirm-stop-medication" class="danger-button" type="button">복용 종료</button>
+      </div>
+    </div>
+  </section>
+
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/static/native-api.js?v=20260817err1" defer></script>
-  <script src="/static/dialog.js?v=20260817ux7" defer></script>
+  <script src="/static/dialog.js?v=20260819ux3" defer></script>
+  <script src="/static/app-state.js?v=20260819ux4" defer></script>
   <script src="/static/prescription-dur.js?v=20260818dur1" defer></script>
-  <script src="/static/prescription.js?v=20260819ux1" defer></script>
-  <script src="/static/people.js?v=20260819ux1" defer></script>
+  <script src="/static/prescription.js?v=20260819ux4" defer></script>
+  <script src="/static/people.js?v=20260819ux4" defer></script>
   <script src="/static/timeline.js?v=20260811b" defer></script>
-  <script src="/static/app.js?v=20260819ux1" defer></script>
+  <script src="/static/app.js?v=20260819ux4" defer></script>
   <script src="/static/ocr-review.js?v=20260817ux7" defer></script>
 </body>
 </html>

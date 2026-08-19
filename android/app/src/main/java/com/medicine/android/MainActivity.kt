@@ -22,6 +22,7 @@ import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import androidx.webkit.WebViewAssetLoader
@@ -43,6 +44,7 @@ class MainActivity : ComponentActivity() {
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCaptureUri: Uri? = null
     private var pendingCaptureFile: File? = null
+    private val backDispatchGate = BackDispatchGate()
     private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val startupRunning = AtomicBoolean(false)
     private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -64,7 +66,31 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                handleAppBack(this)
+            }
+        })
         startApplication()
+    }
+
+    private fun handleAppBack(callback: OnBackPressedCallback) {
+        val view = webView
+        if (view == null) {
+            dispatchDefaultBack(callback)
+            return
+        }
+        if (!backDispatchGate.tryBegin()) return
+        view.evaluateJavascript("window.MedicineDialog?.handleNativeBack?.() === true") { handled ->
+            val dispatchDefault = backDispatchGate.complete(handled, isFinishing || isDestroyed)
+            if (dispatchDefault) dispatchDefaultBack(callback)
+        }
+    }
+
+    private fun dispatchDefaultBack(callback: OnBackPressedCallback) {
+        callback.isEnabled = false
+        onBackPressedDispatcher.onBackPressed()
+        callback.isEnabled = true
     }
 
     private fun startApplication() {

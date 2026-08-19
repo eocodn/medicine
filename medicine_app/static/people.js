@@ -73,7 +73,7 @@ async function selectPerson(personId) {
   localStorage.setItem("medicine.currentPersonId", personId);
   await loadDashboard();
   renderAll();
-  showScreen("home");
+  showScreen("home", { focus: true });
 }
 
 function syncReproductiveFields() {
@@ -169,21 +169,35 @@ async function submitPerson(event) {
     payload.lactation_status = "not_applicable";
   }
   const editingId = state.editingPersonId;
+  let person;
   try {
-    const person = await api(editingId ? `/api/people/${editingId}` : "/api/people", {
+    person = await api(editingId ? `/api/people/${editingId}` : "/api/people", {
       method: editingId ? "PATCH" : "POST",
       body: JSON.stringify(payload),
     });
-    if (!editingId) {
-      state.currentPersonId = person.id;
-      localStorage.setItem("medicine.currentPersonId", person.id);
-    }
-    state.editingPersonId = null;
-    formElement.reset();
-    closeSheets();
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+
+  const targetScreen = editingId ? "people" : "home";
+  const dashboardAffected = reconcileCommittedPerson(person, { select: !editingId });
+  if (dashboardAffected) markDashboardStale();
+  state.editingPersonId = null;
+  formElement.reset();
+  closeSheetsAfterMutation();
+  renderAll();
+  showScreen(targetScreen, { focus: true });
+  try {
     await loadPeople();
-    showScreen(editingId ? "people" : "home");
-  } catch (error) { toast(error.message); }
+    showScreen(targetScreen, { focus: true });
+  } catch (error) {
+    console.error("people refresh after profile save failed", error);
+    if (dashboardAffected) markDashboardStale();
+    renderAll();
+    showScreen(targetScreen, { focus: true });
+    toast("프로필은 저장됐지만 화면을 새로고침하지 못했어요. 앱을 다시 열면 저장된 프로필을 확인할 수 있어요.");
+  }
 }
 
 async function deletePerson(personId) {
@@ -199,16 +213,28 @@ async function confirmDeletePerson() {
   if (!personId) return;
   try {
     await api(`/api/people/${personId}`, { method: "DELETE" });
-    if (state.currentPersonId === personId) {
-      if (typeof resetOcrTransientState === "function") resetOcrTransientState({ clearSearch: true });
-      state.currentPersonId = null;
-      localStorage.removeItem("medicine.currentPersonId");
-    }
-    state.pendingDeletePersonId = null;
-    closeSheets();
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+
+  const dashboardAffected = reconcileDeletedPerson(personId);
+  if (dashboardAffected) markDashboardStale();
+  const targetScreen = state.people.length ? "people" : "home";
+  state.pendingDeletePersonId = null;
+  closeSheetsAfterMutation();
+  renderAll();
+  showScreen(targetScreen, { focus: true });
+  try {
     await loadPeople();
-    showScreen(state.people.length ? "people" : "home");
-  } catch (error) { toast(error.message); }
+    showScreen(state.people.length ? "people" : "home", { focus: true });
+  } catch (error) {
+    console.error("people refresh after profile delete failed", error);
+    if (dashboardAffected) markDashboardStale();
+    renderAll();
+    showScreen(targetScreen, { focus: true });
+    toast("프로필은 삭제됐지만 화면을 새로고침하지 못했어요. 앱을 다시 열면 최신 상태를 확인할 수 있어요.");
+  }
 }
 
 function bindPeopleEvents() {

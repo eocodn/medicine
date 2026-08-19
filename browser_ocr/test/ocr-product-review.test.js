@@ -46,9 +46,10 @@ test("product shell exposes local-only image review without an OCR backend route
 
 test("OCR row selection only seeds canonical search and editable prescription draft", () => {
   const app = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/app.js"), "utf8");
+  const appState = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/app-state.js"), "utf8");
   const prescription = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/prescription.js"), "utf8");
 
-  assert.match(app, /pendingOcrDraft/);
+  assert.match(appState, /pendingOcrDraft/);
   assert.match(app, /medicine:ocr-select/);
   assert.match(app, /ocr-review-panel/);
   assert.match(app, /scrollIntoView/);

@@ -1,22 +1,3 @@
-const state = {
-  people: [],
-  currentPersonId: localStorage.getItem("medicine.currentPersonId"),
-  dashboard: null,
-  dashboardDate: null,
-  fullCatalog: false,
-  pendingProduct: null,
-  pendingRequestId: null,
-  pendingOcrDraft: null,
-  pendingOcrPersonId: null,
-  ocrSearchActive: false,
-  warningToken: null,
-  reviewedDraftKey: null,
-  editingMedicationId: null,
-  editingPersonId: null,
-  pendingDeletePersonId: null,
-  searchTimer: null,
-  searchRequestId: 0,
-};
 const titles = {
   home: "오늘의 복약",
   meds: "복용 관리",
@@ -99,8 +80,15 @@ function resetOcrTransientState({ clearSearch = false } = {}) {
   updateSearchMode();
 }
 
-function showScreen(name) {
-  const previousScreen = $(".screen.active")?.dataset.screen || null;
+function focusSearchFromBox(event) {
+  if (event.target?.closest?.("#drug-query-clear")) return;
+  $("#drug-query")?.focus();
+}
+
+function showScreen(name, { focus = false } = {}) {
+  const previousScreenNode = $(".screen.active");
+  const previousScreen = previousScreenNode?.dataset.screen || null;
+  const focusWasInPrevious = Boolean(previousScreenNode?.contains?.(document.activeElement));
   if (previousScreen === "search" && name !== "search") resetOcrTransientState({ clearSearch: true });
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
   $$(".nav-item").forEach((node) => {
@@ -110,6 +98,7 @@ function showScreen(name) {
     else node.removeAttribute("aria-current");
   });
   $("#page-title").textContent = titles[name] || "약봄";
+  if (focus || focusWasInPrevious) focusPageTitle();
 }
 
 function permitStatusLabel(value, raw) {
@@ -159,6 +148,7 @@ function medicationRegimenSummaryHtml(med) {
 function currentPerson() {
   return state.people.find((person) => person.id === state.currentPersonId) || null;
 }
+
 async function loadPeople() {
   const previousPersonId = state.currentPersonId;
   state.people = await api("/api/people");
@@ -181,8 +171,10 @@ async function loadHealth() {
 }
 async function loadDashboard() {
   if (!state.currentPersonId) return;
-  state.dashboard = await api(`/api/people/${state.currentPersonId}/dashboard`);
-  state.dashboardDate = state.dashboard?.daily_plan?.date || todayInKorea();
+  const dashboard = await api(`/api/people/${state.currentPersonId}/dashboard`);
+  state.dashboard = dashboard;
+  state.dashboardDate = dashboard?.daily_plan?.date || todayInKorea();
+  state.dashboardStale = false;
 }
 
 function renderAll() {
@@ -204,6 +196,16 @@ function renderHome() {
         <button class="primary-button wide" id="home-add-person" type="button">프로필 추가</button>
       </div>`;
     $("#home-add-person").addEventListener("click", () => openPersonForm());
+    return;
+  }
+
+  if (state.dashboardStale) {
+    root.innerHTML = `
+      <div class="hero-card">
+        <p class="eyebrow">REFRESH REQUIRED</p>
+        <h2>${escapeHtml(person.name)}님의<br>변경사항은 저장됐어요.</h2>
+        <p class="muted">최신 복약 정보는 다시 확인이 필요합니다. 앱을 다시 열어 최신 상태를 확인해주세요.</p>
+      </div>`;
     return;
   }
 
@@ -270,6 +272,11 @@ function permitChangeCardHtml(medication) {
 function renderMedications() {
   const medsRoot = $("#medications-list");
   const historyRoot = $("#dose-history");
+  if (state.dashboardStale) {
+    medsRoot.innerHTML = `<div class="empty-state"><strong>변경사항은 저장됐어요</strong>최신 복약 정보는 다시 확인이 필요합니다. 앱을 다시 열어 최신 상태를 확인해주세요.</div>`;
+    historyRoot.innerHTML = "";
+    return;
+  }
   const meds = state.dashboard?.medications || [];
   const logs = state.dashboard?.recent_logs || [];
 
@@ -364,16 +371,43 @@ async function cancelDoseInstance(instanceId) {
   } catch (error) { toast(error.message); }
 }
 
-async function stopMedication(medicationId) {
-  if (!confirm("이 약의 복용을 종료할까요? 기존 복용 기록은 그대로 남습니다.")) return;
+function stopMedication(medicationId) {
+  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  if (!medication) return;
+  state.pendingStopMedicationId = medicationId;
+  $("#stop-medication-copy").textContent = `${medication.product_name} 복용을 종료합니다. 기존 복용 기록은 그대로 남습니다.`;
+  openSheet("#stop-medication-sheet");
+}
+
+async function confirmStopMedication() {
+  const medicationId = state.pendingStopMedicationId;
+  if (!medicationId) return;
+  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  const query = medication ? `?expected_revision=${medication.revision}` : "";
+  let stopped;
   try {
-    const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
-    const query = medication ? `?expected_revision=${medication.revision}` : "";
-    await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
+    stopped = await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+
+  reconcileCommittedMedication(stopped);
+  markDashboardStale();
+  state.pendingStopMedicationId = null;
+  closeSheetsAfterMutation();
+  renderAll();
+  showScreen("meds", { focus: true });
+  try {
     await loadDashboard();
     renderAll();
     toast("복용을 종료했어요");
-  } catch (error) { toast(error.message); }
+  } catch (error) {
+    console.error("dashboard refresh after medication stop failed", error);
+    markDashboardStale();
+    renderAll();
+    toast("복용은 종료됐지만 목록을 새로고침하지 못했어요. 앱을 다시 열면 최신 상태를 확인할 수 있어요.");
+  }
 }
 
 function formatTime(value) {
@@ -456,6 +490,14 @@ function bindEvents() {
   bindPeopleEvents();
   $("#sheet-backdrop").addEventListener("click", closeSheets);
   $$('[data-close-sheet]').forEach((button) => button.addEventListener("click", closeSheets));
+  $("#confirm-stop-medication").addEventListener("click", confirmStopMedication);
+  $(".search-box").addEventListener("click", focusSearchFromBox);
+  $("#drug-query-clear").addEventListener("click", () => {
+    const query = $("#drug-query");
+    if (!query.value) return;
+    query.value = "";
+    query.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   $("#drug-query").addEventListener("input", () => {
     resetOcrTransientState();
     $("#search-status").textContent = "";
@@ -463,6 +505,9 @@ function bindEvents() {
     updateSearchMode();
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runDrugSearch, 280);
+  });
+  document.addEventListener("medicine:sheet-closed", (event) => {
+    if (event.detail?.id === "stop-medication-sheet") state.pendingStopMedicationId = null;
   });
   window.addEventListener("medicine:ocr-select", async (event) => {
     const row = event.detail;
