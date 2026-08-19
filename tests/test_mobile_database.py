@@ -86,10 +86,10 @@ class MobileDatabaseTest(unittest.TestCase):
     def test_mobile_product_rules_omits_source_identity_unique_index(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
         with sqlite3.connect(self.mobile_db) as con:
-            indexes = con.execute("PRAGMA index_list('product_rules')").fetchall()
+            indexes = con.execute("PRAGMA index_list('mobile_product_rules')").fetchall()
         self.assertFalse(
-            any(str(row[3]) == "u" for row in indexes),
-            f"mobile product_rules unexpectedly retains a UNIQUE index: {indexes!r}",
+            any(bool(row[2]) for row in indexes),
+            f"mobile_product_rules unexpectedly retains a UNIQUE index: {indexes!r}",
         )
 
     def test_mobile_product_rules_uses_one_runtime_composite_index(self) -> None:
