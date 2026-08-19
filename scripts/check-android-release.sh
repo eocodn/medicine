@@ -16,26 +16,44 @@ fi
 
 versionName="$(sed -n 's/^versionName=//p' android/release.properties | head -n 1)"
 versionCode="$(sed -n 's/^versionCode=//p' android/release.properties | head -n 1)"
-if [[ "${MEDICINE_ANDROID_VERSION_NAME:-}" != "${versionName}" ]]; then
-    printf 'MEDICINE_ANDROID_VERSION_NAME must match android/release.properties (%s)\n' "${versionName}" >&2
-    exit 1
-fi
-if [[ "${MEDICINE_ANDROID_VERSION_CODE:-}" != "${versionCode}" ]]; then
-    printf 'MEDICINE_ANDROID_VERSION_CODE must match android/release.properties (%s)\n' "${versionCode}" >&2
-    exit 1
-fi
+(
+    cd android
+    gradle --no-daemon --dependency-verification strict testDebugUnitTest lintDebug assembleDebug
+)
 
-./scripts/android_release_build.sh
-
-source_apk="android/app/build/outputs/apk/release/app-release.apk"
+source_apk="android/app/build/outputs/apk/debug/app-debug.apk"
 if [[ ! -f "${source_apk}" ]]; then
-    printf 'verified Android release APK is missing: %s\n' "${source_apk}" >&2
+    printf 'debug-signed Android APK is missing: %s\n' "${source_apk}" >&2
     exit 1
 fi
+
+: "${ANDROID_HOME:?ANDROID_HOME is required to verify the debug APK}"
+aapt="${ANDROID_HOME}/build-tools/36.0.0/aapt"
+apksigner="${ANDROID_HOME}/build-tools/36.0.0/apksigner"
+if [[ ! -x "${aapt}" ]]; then
+    printf 'aapt is unavailable at %s\n' "${aapt}" >&2
+    exit 1
+fi
+if [[ ! -x "${apksigner}" ]]; then
+    printf 'apksigner is unavailable at %s\n' "${apksigner}" >&2
+    exit 1
+fi
+
+badging="$("${aapt}" dump badging "${source_apk}")"
+if ! printf '%s\n' "${badging}" | grep -F "versionCode='${versionCode}'" >/dev/null; then
+    printf 'debug APK versionCode does not match android/release.properties\n' >&2
+    exit 1
+fi
+if ! printf '%s\n' "${badging}" | grep -F "versionName='${versionName}'" >/dev/null; then
+    printf 'debug APK versionName does not match android/release.properties\n' >&2
+    exit 1
+fi
+
+"${apksigner}" verify --verbose --print-certs "${source_apk}"
 
 mkdir -p "${output_dir}"
 artifact="${output_dir}/medicine-${tag}-arm64-v8a.apk"
 install -m 0644 "${source_apk}" "${artifact}"
 cmp --silent "${source_apk}" "${artifact}"
-printf 'validated Android release artifact: %s (versionName=%s versionCode=%s)\n' \
+printf 'validated debug-signed Android release artifact: %s (versionName=%s versionCode=%s)\n' \
     "${artifact}" "${versionName}" "${versionCode}"

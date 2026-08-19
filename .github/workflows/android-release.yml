@@ -1,4 +1,4 @@
-name: Android Release
+name: Android Developer Release
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   prepare-release:
-    name: Resolve validated Android Release Check
+    name: Resolve validated Android Developer Release Check
     runs-on: ubuntu-latest
     outputs:
       run_id: ${{ steps.validation.outputs.run_id }}
@@ -22,7 +22,7 @@ jobs:
       - name: Verify tag matches Android release version
         run: ./scripts/verify-android-release-version.sh "${GITHUB_REF_NAME}"
 
-      - name: Resolve successful Android Release Check for this commit
+      - name: Resolve successful Android Developer Release Check for this commit
         id: validation
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,7 +35,7 @@ jobs:
               --jq '.workflow_runs[0].id // empty'
           )"
           if [[ -z "${run_id}" ]]; then
-            printf 'no successful Android Release Check found for tag commit %s\n' "${GITHUB_SHA}" >&2
+            printf 'no successful Android Developer Release Check found for tag commit %s\n' "${GITHUB_SHA}" >&2
             exit 1
           fi
           printf 'run_id=%s\n' "${run_id}" >> "${GITHUB_OUTPUT}"

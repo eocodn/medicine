@@ -82,15 +82,16 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), expected_tag)
 
-    def test_release_check_builds_and_preserves_one_verified_signed_apk(self) -> None:
+    def test_release_check_builds_and_preserves_one_verified_debug_signed_apk_without_secrets(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "android-release-check.yml").read_text()
 
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("contents: read", workflow)
-        self.assertIn("ANDROID_RELEASE_KEYSTORE_BASE64", workflow)
-        self.assertIn("ANDROID_RELEASE_KEYSTORE_PASSWORD", workflow)
-        self.assertIn("ANDROID_RELEASE_KEY_ALIAS", workflow)
-        self.assertIn("ANDROID_RELEASE_KEY_PASSWORD", workflow)
+        self.assertNotIn("secrets.", workflow)
+        self.assertNotIn("ANDROID_RELEASE_KEYSTORE_BASE64", workflow)
+        self.assertNotIn("ANDROID_RELEASE_KEYSTORE_PASSWORD", workflow)
+        self.assertNotIn("ANDROID_RELEASE_KEY_ALIAS", workflow)
+        self.assertNotIn("ANDROID_RELEASE_KEY_PASSWORD", workflow)
         self.assertIn("./scripts/current-android-release-tag.sh", workflow)
         self.assertIn("check-android-release.sh", workflow)
         self.assertIn("Dockerfile.android", workflow)
@@ -124,9 +125,13 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn('workspace=$(CDPATH= cd "$(dirname "$0")/.." && pwd)', script)
         self.assertIn('cd "${workspace}"', script)
         self.assertIn("./scripts/verify-android-release-version.sh", script)
-        self.assertIn("./scripts/android_release_build.sh", script)
+        self.assertIn("testDebugUnitTest lintDebug assembleDebug", script)
+        self.assertNotIn("./scripts/android_release_build.sh", script)
+        self.assertNotIn("MEDICINE_ANDROID_KEYSTORE", script)
         self.assertIn("medicine-${tag}-arm64-v8a.apk", script)
-        self.assertIn("app-release.apk", script)
+        self.assertIn("app-debug.apk", script)
+        self.assertIn("aapt", script)
+        self.assertIn("apksigner", script)
         self.assertIn("versionCode", script)
         self.assertIn("versionName", script)
 
@@ -150,7 +155,9 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("Release Check", docs)
         self.assertIn("exact commit SHA", docs)
         self.assertIn("does not rebuild", docs)
-        self.assertIn("ANDROID_RELEASE_KEYSTORE_BASE64", docs)
+        self.assertIn("debug-signed", docs)
+        self.assertIn("does not require GitHub signing secrets", docs)
+        self.assertNotIn("ANDROID_RELEASE_KEYSTORE_BASE64", docs)
         self.assertIn("v0.2.0", docs)
         self.assertIn("docs/android-releasing.md", readme)
 
