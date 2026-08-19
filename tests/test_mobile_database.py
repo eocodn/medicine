@@ -86,6 +86,39 @@ class MobileDatabaseTest(unittest.TestCase):
             f"mobile product_rules unexpectedly retains a UNIQUE index: {indexes!r}",
         )
 
+    def test_mobile_product_rules_uses_one_runtime_composite_index(self) -> None:
+        build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
+        with sqlite3.connect(self.mobile_db) as con:
+            columns = [
+                str(row[2])
+                for row in con.execute("PRAGMA index_info('idx_product_rules_runtime')")
+            ]
+            self.assertEqual(columns, ["item_seq", "category", "paired_item_seq"])
+            pair = con.execute(
+                "SELECT item_seq,category,paired_item_seq FROM product_rules "
+                "WHERE paired_item_seq IS NOT NULL LIMIT 1"
+            ).fetchone()
+            self.assertIsNotNone(pair)
+            assert pair is not None
+            item_plan = " ".join(
+                str(row[3])
+                for row in con.execute(
+                    "EXPLAIN QUERY PLAN SELECT * FROM product_rules "
+                    "WHERE item_seq=? AND category=?",
+                    (pair[0], pair[1]),
+                )
+            )
+            pair_plan = " ".join(
+                str(row[3])
+                for row in con.execute(
+                    "EXPLAIN QUERY PLAN SELECT * FROM product_rules "
+                    "WHERE item_seq=? AND category=? AND paired_item_seq=?",
+                    pair,
+                )
+            )
+        self.assertIn("idx_product_rules_runtime", item_plan)
+        self.assertIn("idx_product_rules_runtime", pair_plan)
+
     def test_mobile_build_rejects_duplicate_product_rule_source_identity(self) -> None:
         duplicate_source = self.canonical_db.with_name("canonical-duplicate-rule.sqlite")
         with sqlite3.connect(self.canonical_db) as source:

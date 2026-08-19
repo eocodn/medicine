@@ -9,7 +9,7 @@ from pathlib import Path
 from .inspection import verify_canonical_database
 
 
-MOBILE_DATA_POLICY_VERSION = "5"
+MOBILE_DATA_POLICY_VERSION = "6"
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
@@ -20,10 +20,15 @@ RUNTIME_VIEWS = ("product_rule_criteria",)
 # builder index adds hundreds of MB without helping on-device reads.
 RUNTIME_INDEXES = (
     "idx_products_status",
-    "idx_product_rules_item_category",
-    "idx_product_rules_pair",
+    "idx_product_rules_runtime",
     "idx_product_flags_item_category",
 )
+MOBILE_RUNTIME_INDEX_DDL = {
+    "idx_product_rules_runtime": (
+        "CREATE INDEX idx_product_rules_runtime "
+        "ON product_rules(item_seq, category, paired_item_seq)"
+    ),
+}
 
 # The canonical DB enforces source-row uniqueness with a persistent UNIQUE
 # b-tree because build/linking code mutates that database. The installed mobile
@@ -154,13 +159,17 @@ def build_mobile_database(
                     "SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
                 )
             }
-            missing_indexes = [name for name in RUNTIME_INDEXES if name not in source_indexes]
+            missing_indexes = [
+                name
+                for name in RUNTIME_INDEXES
+                if name not in MOBILE_RUNTIME_INDEX_DDL and name not in source_indexes
+            ]
             if missing_indexes:
                 raise ValueError(
                     f"canonical runtime index missing: {', '.join(missing_indexes)}"
                 )
             for name in RUNTIME_INDEXES:
-                dst.execute(source_indexes[name])
+                dst.execute(MOBILE_RUNTIME_INDEX_DDL.get(name, source_indexes.get(name)))
             for view in RUNTIME_VIEWS:
                 ddl = objects.get(("view", view))
                 if not ddl:
