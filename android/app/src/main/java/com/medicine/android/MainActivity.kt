@@ -22,6 +22,7 @@ import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import androidx.webkit.WebViewAssetLoader
@@ -43,6 +44,7 @@ class MainActivity : ComponentActivity() {
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCaptureUri: Uri? = null
     private var pendingCaptureFile: File? = null
+    private var backDispatchPending = false
     private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val startupRunning = AtomicBoolean(false)
     private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -64,7 +66,33 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                handleAppBack(this)
+            }
+        })
         startApplication()
+    }
+
+    private fun handleAppBack(callback: OnBackPressedCallback) {
+        if (backDispatchPending) return
+        val view = webView
+        if (view == null) {
+            dispatchDefaultBack(callback)
+            return
+        }
+        backDispatchPending = true
+        view.evaluateJavascript("window.MedicineDialog?.handleNativeBack?.() === true") { handled ->
+            backDispatchPending = false
+            if (handled == "true" || isFinishing || isDestroyed) return@evaluateJavascript
+            dispatchDefaultBack(callback)
+        }
+    }
+
+    private fun dispatchDefaultBack(callback: OnBackPressedCallback) {
+        callback.isEnabled = false
+        onBackPressedDispatcher.onBackPressed()
+        callback.isEnabled = true
     }
 
     private fun startApplication() {

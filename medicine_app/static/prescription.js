@@ -64,10 +64,14 @@ function setScheduleTimeControls(root, values) {
     updateScheduleTimeGuidance(root);
   }));
   $$('[data-remove-schedule-time]', root).forEach((button) => button.addEventListener("click", () => {
+    const removedIndex = Number(button.dataset.removeScheduleTime);
     const next = scheduleTimeInputs(root).map((input) => input.value);
-    next.splice(Number(button.dataset.removeScheduleTime), 1);
+    next.splice(removedIndex, 1);
     setScheduleTimeControls(root, next);
     syncPrnFields(root);
+    const remaining = $$('[data-remove-schedule-time]', root);
+    const focusTarget = remaining[Math.min(removedIndex, remaining.length - 1)] || $("[data-add-schedule-time]", root);
+    focusTarget?.focus({ preventScroll: true });
   }));
   updateScheduleTimeGuidance(root);
 }
@@ -165,6 +169,11 @@ function prescriptionPayloadFromForm() {
 }
 
 
+function refocusRiskSheetIfOpen() {
+  const sheet = $("#risk-sheet");
+  if (sheet && !sheet.classList.contains("hidden")) focusSheetContent(sheet);
+}
+
 function applyOcrDraftToForm(draft) {
   if (!draft || typeof draft !== "object") return;
   const root = $("#risk-sheet-content");
@@ -244,7 +253,7 @@ function renderRiskSheet(preview, medication = null) {
   const entryLabel = medication ? "처방 정보 수정" : "복용정보 입력";
   root.innerHTML = `
     <div class="sheet-header">
-      <div><p class="eyebrow">DUR CHECK · 1/2</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>
+      <div><p class="eyebrow">DUR CHECK · 1/2</p><h2 id="risk-title" data-sheet-focus tabindex="-1">${escapeHtml(preview.product.product_name)}</h2></div>
       <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
     </div>
     <div class="risk-summary">
@@ -275,13 +284,14 @@ function renderRiskSheet(preview, medication = null) {
       state.pendingOcrPersonId = null;
     }
   });
+  refocusRiskSheetIfOpen();
 }
 
 function renderPrescriptionForm(preview, medication = null) {
   const root = $("#risk-sheet-content");
   root.innerHTML = `
     <div class="sheet-header">
-      <div><p class="eyebrow">MEDICATION DETAILS · 2/2</p><h2 id="risk-title">${escapeHtml(preview.product.product_name)}</h2></div>
+      <div><p class="eyebrow">MEDICATION DETAILS · 2/2</p><h2 id="risk-title" data-sheet-focus tabindex="-1">${escapeHtml(preview.product.product_name)}</h2></div>
       <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
     </div>
     <div class="entry-intro">
@@ -385,6 +395,7 @@ function renderPrescriptionForm(preview, medication = null) {
   $("#pending-long-term", root).addEventListener("change", () => syncLongTermFields(root));
   syncPrnFields(root);
   syncLongTermFields(root);
+  refocusRiskSheetIfOpen();
 }
 
 function medicationSafetyPreview(medication) {
@@ -453,9 +464,10 @@ async function confirmEditMedication() {
     state.editingMedicationId = null;
     state.warningToken = null;
     state.reviewedDraftKey = null;
-    closeSheets();
+    closeSheets({ restoreFocus: false });
     await loadDashboard();
     renderAll();
+    showScreen("meds", { focus: true });
   } catch (error) {
     if (handleConfirmationRequired(error, "confirm-edit-med")) return;
     toast(error.message);
@@ -503,9 +515,9 @@ async function confirmAddMedication() {
   state.pendingOcrPersonId = null;
   state.warningToken = null;
   state.reviewedDraftKey = null;
-  closeSheets();
+  closeSheets({ restoreFocus: false });
   renderAll();
-  showScreen("meds");
+  showScreen("meds", { focus: true });
 
   try {
     await loadDashboard();

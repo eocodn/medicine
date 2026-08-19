@@ -104,6 +104,6 @@ test("changed error-handling assets use fresh cache keys", () => {
 
   assert.match(index, /native-api\.js\?v=20260817err1/);
   assert.match(index, /prescription-dur\.js\?v=20260818dur1/);
-  assert.match(index, /prescription\.js\?v=20260819ux1/);
-  assert.match(index, /app\.js\?v=20260819ux1/);
+  assert.match(index, /prescription\.js\?v=20260819ux2/);
+  assert.match(index, /app\.js\?v=20260819ux2/);
 });

@@ -53,7 +53,7 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('aria-label="프로필 선택"', response.text)
         self.assertIn('<span class="profile-switcher-copy"><small>프로필</small>', response.text)
         self.assertIn('type="button">+ 프로필 추가</button>', response.text)
-        self.assertIn('<h2 id="person-form-title">프로필 추가</h2>', response.text)
+        self.assertIn('<h2 id="person-form-title" data-sheet-focus tabindex="-1">프로필 추가</h2>', response.text)
         self.assertNotIn("관리 대상", response.text)
         script = self.client.get("/static/app.js")
         self.assertEqual(script.status_code, 200)

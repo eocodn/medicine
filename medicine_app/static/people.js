@@ -73,7 +73,7 @@ async function selectPerson(personId) {
   localStorage.setItem("medicine.currentPersonId", personId);
   await loadDashboard();
   renderAll();
-  showScreen("home");
+  showScreen("home", { focus: true });
 }
 
 function syncReproductiveFields() {
@@ -180,9 +180,9 @@ async function submitPerson(event) {
     }
     state.editingPersonId = null;
     formElement.reset();
-    closeSheets();
+    closeSheets({ restoreFocus: false });
     await loadPeople();
-    showScreen(editingId ? "people" : "home");
+    showScreen(editingId ? "people" : "home", { focus: true });
   } catch (error) { toast(error.message); }
 }
 
@@ -205,9 +205,9 @@ async function confirmDeletePerson() {
       localStorage.removeItem("medicine.currentPersonId");
     }
     state.pendingDeletePersonId = null;
-    closeSheets();
+    closeSheets({ restoreFocus: false });
     await loadPeople();
-    showScreen(state.people.length ? "people" : "home");
+    showScreen(state.people.length ? "people" : "home", { focus: true });
   } catch (error) { toast(error.message); }
 }
 

@@ -135,6 +135,17 @@ class ManifestContractTest {
         assertFalse(activity.contains("\${error.message"))
     }
 
+
+    @Test
+    fun androidBackDelegatesToOpenSharedModalBeforeActivityExit() {
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val dialog = java.io.File("../../medicine_app/static/dialog.js").readText()
+        assertTrue(activity.contains("OnBackPressedCallback"))
+        assertTrue(activity.contains("MedicineDialog?.handleNativeBack"))
+        assertTrue(activity.contains("evaluateJavascript"))
+        assertTrue(dialog.contains("function handleNativeBack"))
+        assertTrue(dialog.contains("if (!activeSheet()) return false"))
+    }
     @Test
     fun applicationDefinesLauncherIcon() {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()

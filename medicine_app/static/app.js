@@ -14,6 +14,7 @@ const state = {
   editingMedicationId: null,
   editingPersonId: null,
   pendingDeletePersonId: null,
+  pendingStopMedicationId: null,
   searchTimer: null,
   searchRequestId: 0,
 };
@@ -99,8 +100,10 @@ function resetOcrTransientState({ clearSearch = false } = {}) {
   updateSearchMode();
 }
 
-function showScreen(name) {
-  const previousScreen = $(".screen.active")?.dataset.screen || null;
+function showScreen(name, { focus = false } = {}) {
+  const previousScreenNode = $(".screen.active");
+  const previousScreen = previousScreenNode?.dataset.screen || null;
+  const focusWasInPrevious = Boolean(previousScreenNode?.contains?.(document.activeElement));
   if (previousScreen === "search" && name !== "search") resetOcrTransientState({ clearSearch: true });
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
   $$(".nav-item").forEach((node) => {
@@ -110,6 +113,7 @@ function showScreen(name) {
     else node.removeAttribute("aria-current");
   });
   $("#page-title").textContent = titles[name] || "약봄";
+  if (focus || focusWasInPrevious) focusPageTitle();
 }
 
 function permitStatusLabel(value, raw) {
@@ -364,14 +368,26 @@ async function cancelDoseInstance(instanceId) {
   } catch (error) { toast(error.message); }
 }
 
-async function stopMedication(medicationId) {
-  if (!confirm("이 약의 복용을 종료할까요? 기존 복용 기록은 그대로 남습니다.")) return;
+function stopMedication(medicationId) {
+  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  if (!medication) return;
+  state.pendingStopMedicationId = medicationId;
+  $("#stop-medication-copy").textContent = `${medication.product_name} 복용을 종료합니다. 기존 복용 기록은 그대로 남습니다.`;
+  openSheet("#stop-medication-sheet");
+}
+
+async function confirmStopMedication() {
+  const medicationId = state.pendingStopMedicationId;
+  if (!medicationId) return;
   try {
     const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
     const query = medication ? `?expected_revision=${medication.revision}` : "";
     await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
+    state.pendingStopMedicationId = null;
+    closeSheets({ restoreFocus: false });
     await loadDashboard();
     renderAll();
+    showScreen("meds", { focus: true });
     toast("복용을 종료했어요");
   } catch (error) { toast(error.message); }
 }
@@ -456,6 +472,13 @@ function bindEvents() {
   bindPeopleEvents();
   $("#sheet-backdrop").addEventListener("click", closeSheets);
   $$('[data-close-sheet]').forEach((button) => button.addEventListener("click", closeSheets));
+  $("#confirm-stop-medication").addEventListener("click", confirmStopMedication);
+  $("#drug-query-clear").addEventListener("click", () => {
+    const query = $("#drug-query");
+    if (!query.value) return;
+    query.value = "";
+    query.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   $("#drug-query").addEventListener("input", () => {
     resetOcrTransientState();
     $("#search-status").textContent = "";
@@ -463,6 +486,9 @@ function bindEvents() {
     updateSearchMode();
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runDrugSearch, 280);
+  });
+  document.addEventListener("medicine:sheet-closed", (event) => {
+    if (event.detail?.id === "stop-medication-sheet") state.pendingStopMedicationId = null;
   });
   window.addEventListener("medicine:ocr-select", async (event) => {
     const row = event.detail;
