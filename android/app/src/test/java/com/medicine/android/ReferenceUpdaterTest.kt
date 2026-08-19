@@ -8,6 +8,9 @@ import org.junit.Test
 import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class ReferenceUpdaterTest {
     private class MemoryStateStorage : ReferenceStateStorage {
@@ -24,15 +27,27 @@ class ReferenceUpdaterTest {
         private val release: VerifiedReferenceRelease,
         private val artifactBytes: ByteArray = "artifact".toByteArray(),
         private val failDownload: Boolean = false,
+        private val fetchEntered: CountDownLatch? = null,
+        private val downloadEntered: CountDownLatch? = null,
+        private val continueDownload: CountDownLatch? = null,
     ) : ReferenceReleaseSource {
+        var fetches = 0
         val downloads = mutableListOf<ReferenceReleaseArtifact>()
-        override fun fetchLatest(): VerifiedReferenceRelease = release
+        override fun fetchLatest(): VerifiedReferenceRelease {
+            fetches += 1
+            fetchEntered?.countDown()
+            return release
+        }
         override fun download(
             artifact: ReferenceReleaseArtifact,
             target: File,
             progress: (Long, Long) -> Unit,
         ) {
             downloads += artifact
+            downloadEntered?.countDown()
+            continueDownload?.let { latch ->
+                check(latch.await(5, TimeUnit.SECONDS)) { "timed out waiting to continue fake download" }
+            }
             target.writeBytes(artifactBytes)
             progress(artifactBytes.size.toLong(), artifactBytes.size.toLong())
             if (failDownload) error("network interrupted")
@@ -215,6 +230,64 @@ class ReferenceUpdaterTest {
             assertFalse(root.listFiles().orEmpty().any { it.name.startsWith(".candidate-") })
             assertTrue(root.listFiles().orEmpty().any { it.name.startsWith(".artifact-") && it.name.endsWith(".part") })
         } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun separateUpdaterInstancesSerializeSharedReferenceIo() {
+        val root = Files.createTempDirectory("reference-updater-concurrent").toFile()
+        val executor = Executors.newFixedThreadPool(2)
+        val firstDownloadEntered = CountDownLatch(1)
+        val continueFirstDownload = CountDownLatch(1)
+        val secondFetchEntered = CountDownLatch(1)
+        try {
+            val storage = MemoryStateStorage()
+            val currentBytes = "current-concurrent".toByteArray()
+            val current = version(currentBytes, 1, "current-concurrent")
+            val initialStore = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val installed = initialStore.installInitial(
+                current,
+                File(root, ".current-concurrent.sqlite").apply { writeBytes(currentBytes) },
+            )
+            val targetBytes = "target-concurrent".toByteArray()
+            val nextRelease = release(
+                targetBytes,
+                2,
+                "concurrent",
+                current,
+                includeMatchingPatch = false,
+            )
+            val firstSource = FakeSource(
+                nextRelease,
+                downloadEntered = firstDownloadEntered,
+                continueDownload = continueFirstDownload,
+            )
+            val secondSource = FakeSource(nextRelease, fetchEntered = secondFetchEntered)
+            val firstUpdater = ReferenceUpdater(
+                root,
+                ReferenceStore(root, storage, FakeDatabaseVerifier()),
+                firstSource,
+                FakeRebuilder(targetBytes),
+            )
+            val secondUpdater = ReferenceUpdater(
+                root,
+                ReferenceStore(root, storage, FakeDatabaseVerifier()),
+                secondSource,
+                FakeRebuilder(targetBytes),
+            )
+
+            val firstFuture = executor.submit<ReferenceUpdateResult> { firstUpdater.checkForUpdate(installed) }
+            assertTrue(firstDownloadEntered.await(2, TimeUnit.SECONDS))
+            val secondFuture = executor.submit<ReferenceUpdateResult> { secondUpdater.checkForUpdate(installed) }
+
+            assertFalse(secondFetchEntered.await(200, TimeUnit.MILLISECONDS))
+            continueFirstDownload.countDown()
+            assertEquals(ReferenceUpdateStatus.STAGED, firstFuture.get(2, TimeUnit.SECONDS).status)
+            assertEquals(ReferenceUpdateStatus.STAGED, secondFuture.get(2, TimeUnit.SECONDS).status)
+        } finally {
+            continueFirstDownload.countDown()
+            executor.shutdownNow()
             root.deleteRecursively()
         }
     }

@@ -33,6 +33,7 @@ import java.net.UnknownHostException
 import java.security.KeyStore
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -157,30 +158,37 @@ class MainActivity : ComponentActivity() {
             Log.i(TAG, "Reference updater is disabled: no distribution base URL configured")
             return
         }
-        startupExecutor.execute {
-            val result = runCatching {
-                val source = HttpsReferenceReleaseSource(
-                    baseUrl,
-                    ReferenceManifestVerifier(ReferenceTrust.trustedPublicKeys),
-                )
-                ReferenceUpdater(
-                    reference.referenceDir,
-                    reference.store,
-                    source,
-                    PythonReferenceArtifactRebuilder(),
-                    ReferenceUpdateLogObserver(),
-                ).checkForUpdate(InstalledReferenceVersion(reference.version, reference.database))
-            }.getOrElse { error ->
-                ReferenceUpdateResult(
-                    status = ReferenceUpdateStatus.FAILED,
-                    detail = error.message ?: error.javaClass.simpleName,
-                )
+        if (isDestroyed || startupExecutor.isShutdown) return
+        try {
+            startupExecutor.execute {
+                val result = runCatching {
+                    val source = HttpsReferenceReleaseSource(
+                        baseUrl,
+                        ReferenceManifestVerifier(ReferenceTrust.trustedPublicKeys),
+                    )
+                    ReferenceUpdater(
+                        reference.referenceDir,
+                        reference.store,
+                        source,
+                        PythonReferenceArtifactRebuilder(),
+                        ReferenceUpdateLogObserver(),
+                    ).checkForUpdate(InstalledReferenceVersion(reference.version, reference.database))
+                }.getOrElse { error ->
+                    ReferenceUpdateResult(
+                        status = ReferenceUpdateStatus.FAILED,
+                        detail = error.message ?: error.javaClass.simpleName,
+                    )
+                }
+                if (result.status == ReferenceUpdateStatus.FAILED) {
+                    Log.e(TAG, "Reference update failed: ${result.detail}")
+                } else {
+                    Log.i(TAG, "Reference update result=${result.status} sequence=${result.releaseSequence}")
+                }
             }
-            if (result.status == ReferenceUpdateStatus.FAILED) {
-                Log.e(TAG, "Reference update failed: ${result.detail}")
-            } else {
-                Log.i(TAG, "Reference update result=${result.status} sequence=${result.releaseSequence}")
-            }
+        } catch (_: RejectedExecutionException) {
+            // Activity destruction can race a completed startup worker. Reference
+            // state is already safe; simply avoid queueing lifecycle-owned OTA work.
+            Log.i(TAG, "Reference updater skipped because Activity executor is closed")
         }
     }
 

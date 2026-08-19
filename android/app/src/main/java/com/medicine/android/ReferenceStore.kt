@@ -130,7 +130,6 @@ class ReferenceStore(
             else -> null
         }
         if (selected == null) {
-            cleanupUnreferenced(state)
             return null
         }
 
@@ -142,6 +141,10 @@ class ReferenceStore(
         if (normalized != state) writeState(normalized)
         cleanupUnreferenced(normalized)
         return InstalledReferenceVersion(selected, fileFor(selected), recoveryReason)
+    }
+
+    fun cleanupForBootstrap(version: ReferenceVersion) {
+        cleanupUnreferenced(snapshot(), extraKeep = setOf(version))
     }
 
     fun installInitial(version: ReferenceVersion, candidate: File?): InstalledReferenceVersion {
@@ -264,8 +267,11 @@ class ReferenceStore(
         return PendingActivation(activated)
     }
 
-    private fun cleanupUnreferenced(state: ReferenceStoreState) {
-        val keep = setOfNotNull(state.active, state.previous, state.pending)
+    private fun cleanupUnreferenced(
+        state: ReferenceStoreState,
+        extraKeep: Set<ReferenceVersion> = emptySet(),
+    ) {
+        val keep = (setOfNotNull(state.active, state.previous, state.pending) + extraKeep)
             .map { fileFor(it).name }
             .toSet()
         root.listFiles()?.forEach { file ->

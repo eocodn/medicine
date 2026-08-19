@@ -124,8 +124,12 @@ class ReferenceUpdater(
     private val rebuilder: ReferenceArtifactRebuilder,
     private val observer: ReferenceUpdateObserver = NoOpReferenceUpdateObserver,
 ) {
-    @Synchronized
-    fun checkForUpdate(current: InstalledReferenceVersion): ReferenceUpdateResult {
+    fun checkForUpdate(current: InstalledReferenceVersion): ReferenceUpdateResult =
+        ReferenceOperationCoordinator.exclusive {
+            checkForUpdateExclusive(current)
+        }
+
+    private fun checkForUpdateExclusive(current: InstalledReferenceVersion): ReferenceUpdateResult {
         var releaseSequence: Long? = null
         var candidate: File? = null
         var downloaded: File? = null

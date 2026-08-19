@@ -74,7 +74,10 @@ class ManifestContractTest {
     @Test
     fun referenceUpdaterPackagesSharedPatchCoreAndUsesDevelopmentDistributionEndpoint() {
         val build = java.io.File("build.gradle.kts").readText()
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val bootstrapper = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapper.kt").readText()
         val updater = java.io.File("src/main/java/com/medicine/android/ReferenceUpdater.kt").readText()
+        val coordinator = java.io.File("src/main/java/com/medicine/android/ReferenceOperationCoordinator.kt").readText()
         val source = java.io.File("src/main/java/com/medicine/android/ReferenceReleaseHttpSource.kt").readText()
         assertTrue(build.contains("MEDICINE_REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
@@ -82,6 +85,11 @@ class ManifestContractTest {
         assertTrue(build.contains("include(\"medicine_canonical/release.py\")"))
         assertTrue(updater.contains("ReferenceUpdateStatus.STAGED"))
         assertTrue(updater.contains(".artifact-"))
+        assertTrue(bootstrapper.contains("ReferenceOperationCoordinator.exclusive"))
+        assertTrue(updater.contains("ReferenceOperationCoordinator.exclusive"))
+        assertTrue(coordinator.contains("ReentrantLock"))
+        assertTrue(activity.contains("RejectedExecutionException"))
+        assertTrue(activity.contains("startupExecutor.isShutdown"))
         assertTrue(source.contains("Range"))
         assertTrue(source.contains("Content-Range"))
         assertTrue(source.contains("HttpsURLConnection"))

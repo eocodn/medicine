@@ -40,9 +40,14 @@ class ReferenceBootstrapper(
     private val storageCapacity: ReferenceStorageCapacity,
     private val observer: ReferenceUpdateObserver = NoOpReferenceBootstrapObserver,
 ) {
-    @Synchronized
-    fun ensureInstalled(expectedSchemaVersion: String): InstalledReferenceVersion {
+    fun ensureInstalled(expectedSchemaVersion: String): InstalledReferenceVersion =
+        ReferenceOperationCoordinator.exclusive {
+            ensureInstalledExclusive(expectedSchemaVersion)
+        }
+
+    private fun ensureInstalledExclusive(expectedSchemaVersion: String): InstalledReferenceVersion {
         store.openForStartup(expectedSchemaVersion)?.let {
+            cleanupBootstrapFiles()
             observer.phase("ready")
             return it
         }
@@ -63,6 +68,13 @@ class ReferenceBootstrapper(
             schemaVersion = release.schemaVersion,
             releaseSequence = release.releaseSequence,
         )
+        val artifact = release.full
+        val downloaded = File(
+            referenceDir,
+            ".bootstrap-artifact-${release.releaseSequence}-${artifact.sha256}.part",
+        )
+        cleanupBootstrapFiles(keepArtifact = downloaded)
+        store.cleanupForBootstrap(version)
 
         // A process may die after the content-addressed DB rename but before the
         // AtomicFile state commit. Adopt that fully verified target instead of
@@ -76,11 +88,6 @@ class ReferenceBootstrapper(
                 }
         }
 
-        val artifact = release.full
-        val downloaded = File(
-            referenceDir,
-            ".bootstrap-artifact-${release.releaseSequence}-${artifact.sha256}.part",
-        )
         val candidate = File(
             referenceDir,
             ".bootstrap-candidate-${release.releaseSequence}-${release.targetSha256}.sqlite",
@@ -107,6 +114,7 @@ class ReferenceBootstrapper(
             observer.phase("verify-and-install")
             val installed = store.installInitial(version, candidate)
             downloaded.delete()
+            cleanupBootstrapFiles()
             observer.phase("ready")
             return installed
         } finally {
@@ -143,6 +151,19 @@ class ReferenceBootstrapper(
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun cleanupBootstrapFiles(keepArtifact: File? = null) {
+        val keep = keepArtifact?.canonicalFile
+        referenceDir.listFiles()?.forEach { file ->
+            if (!file.isFile) return@forEach
+            val artifact = file.name.startsWith(".bootstrap-artifact-") && file.name.endsWith(".part")
+            val candidate = file.name.startsWith(".bootstrap-candidate-") && file.name.endsWith(".sqlite")
+            val shouldDelete = candidate || (artifact && file.canonicalFile != keep)
+            if (shouldDelete) {
+                check(file.delete()) { "cannot remove stale reference bootstrap file ${file.name}" }
+            }
+        }
     }
 }
 
