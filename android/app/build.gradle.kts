@@ -1,9 +1,11 @@
 import org.gradle.api.DefaultTask
+import org.gradle.api.artifacts.dsl.LockMode
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
+import java.io.File
 import java.net.URI
 import javax.inject.Inject
 
@@ -29,6 +31,71 @@ abstract class PrepareOcrAssets : DefaultTask() {
 plugins {
     id("com.android.application")
     id("com.chaquo.python")
+}
+
+data class AndroidReleaseEnvironment(
+    val versionCode: Int,
+    val versionName: String,
+    val keystorePath: String,
+    val keystorePassword: String,
+    val keyAlias: String,
+    val keyPassword: String,
+)
+
+val releaseEnvironmentNames = listOf(
+    "MEDICINE_ANDROID_VERSION_CODE",
+    "MEDICINE_ANDROID_VERSION_NAME",
+    "MEDICINE_ANDROID_KEYSTORE_PATH",
+    "MEDICINE_ANDROID_KEYSTORE_PASSWORD",
+    "MEDICINE_ANDROID_KEY_ALIAS",
+    "MEDICINE_ANDROID_KEY_PASSWORD",
+)
+
+fun requireReleaseEnvironment(): AndroidReleaseEnvironment {
+    fun required(name: String): String = System.getenv(name)
+        ?.takeIf { it.isNotEmpty() }
+        ?: error("$name is required for Android release tasks")
+
+    val versionCodeText = required("MEDICINE_ANDROID_VERSION_CODE")
+    val versionCode = versionCodeText.toIntOrNull()
+        ?: error("MEDICINE_ANDROID_VERSION_CODE must be a positive integer")
+    require(versionCode > 0) { "MEDICINE_ANDROID_VERSION_CODE must be a positive integer" }
+    val versionName = required("MEDICINE_ANDROID_VERSION_NAME").trim()
+    require(versionName.isNotEmpty()) { "MEDICINE_ANDROID_VERSION_NAME must not be blank" }
+
+    return AndroidReleaseEnvironment(
+        versionCode = versionCode,
+        versionName = versionName,
+        keystorePath = required("MEDICINE_ANDROID_KEYSTORE_PATH"),
+        keystorePassword = required("MEDICINE_ANDROID_KEYSTORE_PASSWORD"),
+        keyAlias = required("MEDICINE_ANDROID_KEY_ALIAS"),
+        keyPassword = required("MEDICINE_ANDROID_KEY_PASSWORD"),
+    )
+}
+
+val releaseEnvironment = if (releaseEnvironmentNames.all { !System.getenv(it).isNullOrEmpty() }) {
+    requireReleaseEnvironment()
+} else {
+    null
+}
+
+val verifyReleaseEnvironment = tasks.register("verifyReleaseEnvironment") {
+    group = "verification"
+    description = "Validates Android release version and signing inputs before release tasks run."
+    doLast {
+        val release = requireReleaseEnvironment()
+        require(File(release.keystorePath).isFile) {
+            "MEDICINE_ANDROID_KEYSTORE_PATH does not point to a readable file"
+        }
+    }
+}
+
+// Gradle accepts abbreviated task names (for example, `assRel`), so guard the
+// resolved release tasks rather than trying to infer intent from raw CLI names.
+tasks.configureEach {
+    if (name != verifyReleaseEnvironment.name && name.contains("Release", ignoreCase = true)) {
+        dependsOn(verifyReleaseEnvironment)
+    }
 }
 
 val referenceUpdateBaseUrlOverride = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")?.trim()?.takeIf { it.isNotEmpty() }
@@ -73,11 +140,22 @@ android {
         applicationId = "com.medicine.android"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.2.0"
+        versionCode = releaseEnvironment?.versionCode ?: 1
+        versionName = releaseEnvironment?.versionName ?: "0.2.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            releaseEnvironment?.let { release ->
+                storeFile = File(release.keystorePath)
+                storePassword = release.keystorePassword
+                keyAlias = release.keyAlias
+                keyPassword = release.keyPassword
+            }
         }
     }
 
@@ -87,6 +165,7 @@ android {
         }
         getByName("release") {
             buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$effectiveReferenceUpdateBaseUrl\"")
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -143,4 +222,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.webkit:webkit:1.13.0")
     testImplementation("junit:junit:4.13.2")
+}
+
+dependencyLocking {
+    lockAllConfigurations()
+    lockMode.set(LockMode.STRICT)
 }

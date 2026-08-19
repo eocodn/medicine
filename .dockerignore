@@ -6,4 +6,6 @@ __pycache__
 android/.gradle
 android/build
 android/app/build
+android/**/*.jks
+android/**/*.keystore
 browser_ocr/node_modules

@@ -14,6 +14,8 @@ data/canonical/
 android/.gradle/
 android/build/
 android/app/build/
+android/**/*.jks
+android/**/*.keystore
 
 # OCR fine-tuning private corpora, exports, and checkpoints.
 browser_ocr/finetune/work/
