@@ -144,6 +144,13 @@ class ManifestContractTest {
     }
 
     @Test
+    fun lightAppThemeUsesReadableDarkStatusBarForeground() {
+        val styles = java.io.File("src/main/res/values/styles.xml").readText()
+        assertTrue(styles.contains("<item name=\"android:statusBarColor\">#F3F5F1</item>"))
+        assertTrue(styles.contains("<item name=\"android:windowLightStatusBar\">true</item>"))
+    }
+
+    @Test
     fun healthDataIsExcludedFromCloudBackupAndDeviceTransfer() {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
         val modernRules = java.io.File("src/main/res/xml/data_extraction_rules.xml")

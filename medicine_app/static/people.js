@@ -85,17 +85,64 @@ function syncReproductiveFields() {
   $$('[data-reproductive-field]', form).forEach((node) => node.classList.toggle("hidden", !female));
 }
 
+function populateBirthDateOptions() {
+  const form = $("#person-form");
+  const currentYear = Number(todayInKorea().slice(0, 4));
+  form.elements.birth_year.max = String(currentYear);
+  form.elements.birth_month.innerHTML = [
+    `<option value="" selected disabled>월</option>`,
+    ...Array.from({ length: 12 }, (_, index) => index + 1)
+      .map((month) => `<option value="${String(month).padStart(2, "0")}">${month}월</option>`),
+  ].join("");
+  updateBirthDayOptions();
+}
+
+function updateBirthDayOptions(preferredDay = "") {
+  const form = $("#person-form");
+  const yearText = form.elements.birth_year.value;
+  const year = /^\d{4}$/.test(yearText) ? Number(yearText) : 0;
+  const month = Number(form.elements.birth_month.value);
+  const maxDay = year && month ? new Date(year, month, 0).getDate() : 31;
+  const previousDay = preferredDay || form.elements.birth_day.value;
+  form.elements.birth_day.innerHTML = [
+    `<option value="" selected disabled>일</option>`,
+    ...Array.from({ length: maxDay }, (_, index) => index + 1)
+      .map((day) => `<option value="${String(day).padStart(2, "0")}">${day}일</option>`),
+  ].join("");
+  if (previousDay && Number(previousDay) <= maxDay) form.elements.birth_day.value = previousDay;
+}
+
+function syncBirthDateFields() {
+  const form = $("#person-form");
+  const year = form.elements.birth_year.value;
+  const month = form.elements.birth_month.value;
+  const day = form.elements.birth_day.value;
+  const currentYear = Number(todayInKorea().slice(0, 4));
+  const validYear = /^\d{4}$/.test(year) && Number(year) >= 1000 && Number(year) <= currentYear;
+  form.elements.birth_date.value = validYear && month && day ? `${year}-${month}-${day}` : "";
+}
+
+function setBirthDateFields(value = null) {
+  const form = $("#person-form");
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  form.elements.birth_year.value = match?.[1] || "";
+  form.elements.birth_month.value = match?.[2] || "";
+  updateBirthDayOptions(match?.[3] || "");
+  form.elements.birth_day.value = match?.[3] || "";
+  syncBirthDateFields();
+}
+
 
 function openPersonForm(personId = null) {
   const form = $("#person-form");
   const person = state.people.find((item) => item.id === personId) || null;
   state.editingPersonId = person?.id || null;
   form.reset();
+  setBirthDateFields(person?.birth_date || null);
   $("#person-form-title").textContent = person ? "프로필 정보 수정" : "프로필 추가";
   $("#person-submit").textContent = person ? "변경 내용 저장" : "프로필 저장";
   if (person) {
     form.elements.name.value = person.name;
-    form.elements.birth_date.value = person.birth_date;
     form.elements.sex.value = person.sex;
     form.elements.pregnancy_status.value = person.pregnancy_status;
     form.elements.lactation_status.value = person.lactation_status || "unknown";
@@ -108,7 +155,15 @@ function openPersonForm(personId = null) {
 async function submitPerson(event) {
   event.preventDefault();
   const formElement = event.currentTarget;
+  syncBirthDateFields();
   const payload = Object.fromEntries(new FormData(formElement).entries());
+  delete payload.birth_year;
+  delete payload.birth_month;
+  delete payload.birth_day;
+  if (!payload.birth_date || payload.birth_date > todayInKorea()) {
+    toast("생년월일은 오늘 또는 이전 날짜로 선택해주세요.");
+    return;
+  }
   if (payload.sex === "male") {
     payload.pregnancy_status = "not_applicable";
     payload.lactation_status = "not_applicable";
@@ -134,7 +189,14 @@ async function submitPerson(event) {
 async function deletePerson(personId) {
   const person = state.people.find((item) => item.id === personId);
   if (!person) return;
-  if (!confirm(`${person.name}님의 복용약, 복용 기록과 일정을 모두 삭제할까요? 이 작업은 되돌릴 수 없어요.`)) return;
+  state.pendingDeletePersonId = personId;
+  $("#delete-person-copy").textContent = `${person.name}님의 복용약, 복용 기록과 일정을 모두 삭제합니다. 이 작업은 되돌릴 수 없어요.`;
+  openSheet("#delete-person-sheet");
+}
+
+async function confirmDeletePerson() {
+  const personId = state.pendingDeletePersonId;
+  if (!personId) return;
   try {
     await api(`/api/people/${personId}`, { method: "DELETE" });
     if (state.currentPersonId === personId) {
@@ -142,6 +204,8 @@ async function deletePerson(personId) {
       state.currentPersonId = null;
       localStorage.removeItem("medicine.currentPersonId");
     }
+    state.pendingDeletePersonId = null;
+    closeSheets();
     await loadPeople();
     showScreen(state.people.length ? "people" : "home");
   } catch (error) { toast(error.message); }
@@ -149,16 +213,22 @@ async function deletePerson(personId) {
 
 function bindPeopleEvents() {
   const form = $("#person-form");
-  const birthInput = form.elements.birth_date;
-  birthInput.max = todayInKorea();
+  populateBirthDateOptions();
   $("#profile-shortcut").addEventListener("click", () => state.people.length ? showScreen("people") : openPersonForm());
   $("#open-person-form").addEventListener("click", () => openPersonForm());
+  $("#confirm-delete-person").addEventListener("click", confirmDeletePerson);
   form.addEventListener("submit", submitPerson);
+  form.elements.birth_year.addEventListener("input", () => { updateBirthDayOptions(); syncBirthDateFields(); });
+  form.elements.birth_month.addEventListener("change", () => { updateBirthDayOptions(); syncBirthDateFields(); });
+  form.elements.birth_day.addEventListener("change", syncBirthDateFields);
   form.elements.sex.addEventListener("change", syncReproductiveFields);
   document.addEventListener("medicine:sheet-closed", (event) => {
-    if (event.detail?.id !== "person-sheet") return;
-    state.editingPersonId = null;
-    form.reset();
-    syncReproductiveFields();
+    if (event.detail?.id === "person-sheet") {
+      state.editingPersonId = null;
+      form.reset();
+      setBirthDateFields(null);
+      syncReproductiveFields();
+    }
+    if (event.detail?.id === "delete-person-sheet") state.pendingDeletePersonId = null;
   });
 }

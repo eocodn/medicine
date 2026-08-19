@@ -259,7 +259,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   color: var(--warning);
   font-weight: 800;
 }
-.secondary-button, .danger-ghost, .primary-button {
+.secondary-button, .danger-ghost, .danger-button, .primary-button {
   min-height: 46px;
   border-radius: 15px;
   border: 0;
@@ -268,6 +268,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .primary-button { background: var(--brand); color: white; padding: 0 18px; }
 .secondary-button { background: var(--brand-soft); color: var(--brand); }
 .danger-ghost { background: var(--danger-soft); color: var(--danger); }
+.danger-button { background: var(--danger); color: white; padding: 0 18px; }
+.dose-primary-action:disabled, .dose-skip-action:disabled { opacity: .6; cursor: wait; }
 .wide { width: 100%; }
 
 .history-row {
@@ -475,7 +477,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .risk-disclaimer { margin: 12px 2px 0; font-size: 11px; line-height: 1.5; color: var(--muted); }
 
 .form-stack { display: grid; gap: 13px; }
-.form-stack label { display: grid; gap: 7px; font-size: 13px; font-weight: 800; color: #536059; }
+.form-stack label, .birth-date-group { display: grid; gap: 7px; font-size: 13px; font-weight: 800; color: #536059; }
+.birth-date-group { margin: 0; padding: 0; border: 0; min-width: 0; }
+.birth-date-group legend { margin: 0 0 7px; padding: 0; }
 .form-stack input, .form-stack select {
   width: 100%;
   min-height: 52px;
@@ -485,6 +489,16 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   background: #fbfcfb;
   color: var(--text);
 }
+.birth-date-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, .8fr) minmax(0, .8fr);
+  gap: 8px;
+}
+.birth-date-fields select { padding: 0 10px; }
+.destructive-sheet { padding-bottom: calc(26px + env(safe-area-inset-bottom)); }
+.delete-person-content { display: grid; gap: 18px; }
+.delete-person-content p { margin: 0; line-height: 1.65; }
+.delete-person-actions { display: grid; grid-template-columns: 1fr 1.15fr; gap: 9px; }
 
 .toast {
   position: fixed;
