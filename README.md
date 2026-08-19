@@ -349,8 +349,36 @@ APK는 `android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. �
 별도 웹 서버 없이 동작합니다. 최초 bootstrap 완료 후에는 reference LKG를 로컬에서 사용합니다. 현재 Gradle 설정은
 개인 기기 우선으로 `arm64-v8a`만 패키징합니다.
 
-release 변형도 동일한 온디바이스 구조로 빌드할 수 있지만 실제 배포 전에 Android 서명키와 release signing
-configuration을 별도로 설정해야 합니다. 데이터 이용조건 검토 역시 제품 배포 전 별도 release 절차로 남아 있습니다.
+release 변형은 배포 실수 방지를 위해 서명키와 버전을 명시하지 않으면 빌드하지 않습니다. 서명키 파일은 저장소에
+두지 말고 컨테이너에 read-only로 마운트합니다. 아래 환경변수의 비밀번호 값은 shell history나 문서에 기록하지 않습니다.
+
+```bash
+export MEDICINE_ANDROID_VERSION_CODE=2
+export MEDICINE_ANDROID_VERSION_NAME=0.3.0
+export MEDICINE_ANDROID_KEYSTORE_PASSWORD='...'
+export MEDICINE_ANDROID_KEY_ALIAS='...'
+export MEDICINE_ANDROID_KEY_PASSWORD='...'
+export ANDROID_RELEASE_KEYSTORE=/absolute/path/to/release.jks
+
+docker compose -p medicine_android_release build android
+docker compose -p medicine_android_release run --rm \
+  -v "$ANDROID_RELEASE_KEYSTORE:/run/secrets/medicine-release.jks:ro" \
+  -e MEDICINE_ANDROID_VERSION_CODE \
+  -e MEDICINE_ANDROID_VERSION_NAME \
+  -e MEDICINE_ANDROID_KEYSTORE_PASSWORD \
+  -e MEDICINE_ANDROID_KEY_ALIAS \
+  -e MEDICINE_ANDROID_KEY_PASSWORD \
+  -e MEDICINE_ANDROID_KEYSTORE_PATH=/run/secrets/medicine-release.jks \
+  android sh /workspace/scripts/android_release_build.sh
+```
+
+이 release gate는 Android 단위 테스트와 release lint를 실행한 뒤 signed APK를 만들고, APK의 versionCode/versionName과
+서명을 다시 읽어 요청한 값과 일치하는지 확인합니다. Gradle 의존성은 `android/app/gradle.lockfile`로 고정하고
+`android/gradle/verification-metadata.xml`의 SHA-256으로 검증합니다. Android command-line tools 다운로드 역시
+Docker 이미지 빌드 중 고정 SHA-256을 확인합니다. 의존성을 의도적으로 변경할 때만 고정된 Android Docker 환경에서
+`--write-locks --write-verification-metadata sha256`로 두 파일을 함께 갱신하고 변경 내용을 검토합니다.
+
+데이터 이용조건 검토는 제품 배포 전 별도 release 절차로 남아 있습니다.
 
 ## 의료 정보 주의
 

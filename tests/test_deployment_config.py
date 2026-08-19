@@ -117,6 +117,168 @@ class DeploymentConfigTest(unittest.TestCase):
         proguard = Path("android/app/proguard-rules.pro").read_text()
         self.assertIn("@android.webkit.JavascriptInterface", proguard)
 
+    def test_android_release_requires_explicit_version_and_signing_inputs(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+
+        for name in (
+            "MEDICINE_ANDROID_VERSION_CODE",
+            "MEDICINE_ANDROID_VERSION_NAME",
+            "MEDICINE_ANDROID_KEYSTORE_PATH",
+            "MEDICINE_ANDROID_KEYSTORE_PASSWORD",
+            "MEDICINE_ANDROID_KEY_ALIAS",
+            "MEDICINE_ANDROID_KEY_PASSWORD",
+        ):
+            self.assertIn(name, gradle)
+
+        self.assertIn("signingConfigs", gradle)
+        release = gradle.split('getByName("release") {', 1)[1].split("\n        }", 1)[0]
+        self.assertIn("signingConfig", release)
+        self.assertIn("releaseRequested", gradle)
+        self.assertIn("requireReleaseEnvironment", gradle)
+
+    def test_android_dependencies_are_locked_and_checksum_verified(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        self.assertIn("dependencyLocking", gradle)
+        self.assertIn("lockAllConfigurations()", gradle)
+
+        lockfile = Path("android/app/gradle.lockfile")
+        verification = Path("android/gradle/verification-metadata.xml")
+        self.assertTrue(lockfile.is_file())
+        self.assertTrue(verification.is_file())
+        self.assertIn("sha256", verification.read_text())
+
+    def test_android_sdk_archive_is_checksum_verified(self) -> None:
+        dockerfile = Path("Dockerfile.android").read_text()
+        self.assertIn(
+            "gradle:9.4.1-jdk17@sha256:549ab76a04fc532f37945d689207a3fb2642350b1235901eb652c93dae218dd0",
+            dockerfile,
+        )
+        self.assertIn("commandlinetools-linux-13114758_latest.zip", dockerfile)
+        self.assertIn(
+            "7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee",
+            dockerfile,
+        )
+        self.assertIn("sha256sum -c", dockerfile)
+
+    def test_android_release_script_rejects_missing_release_configuration_before_gradle(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "android_release_build.sh"
+        self.assertTrue(script.is_file())
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_dir = Path(temp_dir) / "bin"
+            bin_dir.mkdir()
+            log_path = Path(temp_dir) / "calls.log"
+            gradle_stub = bin_dir / "gradle"
+            gradle_stub.write_text(
+                "#!/bin/sh\n"
+                "printf 'gradle:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
+            )
+            gradle_stub.chmod(0o755)
+
+            env = os.environ.copy()
+            for name in (
+                "MEDICINE_ANDROID_VERSION_CODE",
+                "MEDICINE_ANDROID_VERSION_NAME",
+                "MEDICINE_ANDROID_KEYSTORE_PATH",
+                "MEDICINE_ANDROID_KEYSTORE_PASSWORD",
+                "MEDICINE_ANDROID_KEY_ALIAS",
+                "MEDICINE_ANDROID_KEY_PASSWORD",
+            ):
+                env.pop(name, None)
+            env["ANDROID_RELEASE_TEST_LOG"] = str(log_path)
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            result = subprocess.run(
+                ["sh", str(script)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            gradle_calls = log_path.read_text() if log_path.exists() else ""
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("MEDICINE_ANDROID_VERSION_CODE", result.stderr)
+        self.assertEqual(gradle_calls, "")
+
+    def test_android_release_script_builds_and_verifies_signed_versioned_apk(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        release_script = (repo_root / "scripts" / "android_release_build.sh").read_text()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir) / "workspace"
+            scripts_dir = workspace / "scripts"
+            android_dir = workspace / "android"
+            scripts_dir.mkdir(parents=True)
+            android_dir.mkdir()
+            script = scripts_dir / "android_release_build.sh"
+            script.write_text(release_script)
+
+            keystore = Path(temp_dir) / "release.jks"
+            keystore.write_bytes(b"test keystore placeholder")
+            log_path = Path(temp_dir) / "calls.log"
+            bin_dir = Path(temp_dir) / "bin"
+            bin_dir.mkdir()
+            gradle_stub = bin_dir / "gradle"
+            gradle_stub.write_text(
+                "#!/bin/sh\n"
+                "printf 'gradle:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
+                "mkdir -p \"$ANDROID_RELEASE_TEST_WORKSPACE/android/app/build/outputs/apk/release\"\n"
+                ": > \"$ANDROID_RELEASE_TEST_WORKSPACE/android/app/build/outputs/apk/release/app-release.apk\"\n"
+            )
+            gradle_stub.chmod(0o755)
+
+            android_home = Path(temp_dir) / "android-sdk"
+            build_tools = android_home / "build-tools" / "36.0.0"
+            build_tools.mkdir(parents=True)
+            aapt_stub = build_tools / "aapt"
+            aapt_stub.write_text(
+                "#!/bin/sh\n"
+                "printf 'aapt:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
+                "printf \"package: name='com.medicine.android' versionCode='23' versionName='1.4.0'\\n\"\n"
+            )
+            aapt_stub.chmod(0o755)
+            apksigner_stub = build_tools / "apksigner"
+            apksigner_stub.write_text(
+                "#!/bin/sh\n"
+                "printf 'apksigner:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
+            )
+            apksigner_stub.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ANDROID_HOME": str(android_home),
+                    "ANDROID_RELEASE_TEST_LOG": str(log_path),
+                    "ANDROID_RELEASE_TEST_WORKSPACE": str(workspace),
+                    "MEDICINE_ANDROID_VERSION_CODE": "23",
+                    "MEDICINE_ANDROID_VERSION_NAME": "1.4.0",
+                    "MEDICINE_ANDROID_KEYSTORE_PATH": str(keystore),
+                    "MEDICINE_ANDROID_KEYSTORE_PASSWORD": "store-secret",
+                    "MEDICINE_ANDROID_KEY_ALIAS": "medicine-release",
+                    "MEDICINE_ANDROID_KEY_PASSWORD": "key-secret",
+                    "PATH": f"{bin_dir}:{env['PATH']}",
+                }
+            )
+            result = subprocess.run(
+                ["sh", str(script)],
+                cwd=workspace,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = log_path.read_text().splitlines()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            calls[0],
+            "gradle:--no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease",
+        )
+        self.assertTrue(any(call.startswith("aapt:dump badging ") for call in calls))
+        self.assertTrue(any(call.startswith("apksigner:verify --verbose --print-certs ") for call in calls))
+
     def test_android_package_excludes_agent_control_cli_but_repo_cli_remains(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
@@ -286,7 +448,10 @@ class DeploymentConfigTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = log_path.read_text().splitlines()
 
-        self.assertEqual(calls, ["gradle:--no-daemon testDebugUnitTest assembleDebug"])
+        self.assertEqual(
+            calls,
+            ["gradle:--no-daemon --dependency-verification strict testDebugUnitTest assembleDebug"],
+        )
 
     def test_local_web_packages_the_approved_on_device_ocr_runtime(self) -> None:
         compose = Path("compose.yaml").read_text()

@@ -13,7 +13,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund \
 COPY browser_ocr/mobile ./mobile
 RUN node mobile/export_runtime.mjs /downloads /out
 
-FROM gradle:9.4.1-jdk17
+FROM gradle:9.4.1-jdk17@sha256:549ab76a04fc532f37945d689207a3fb2642350b1235901eb652c93dae218dd0
 
 ENV ANDROID_HOME=/opt/android-sdk \
     ANDROID_SDK_ROOT=/opt/android-sdk \
@@ -26,6 +26,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p "$ANDROID_HOME/cmdline-tools" \
     && wget -q -O /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+    && echo "7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee  /tmp/cmdline-tools.zip" | sha256sum -c - \
     && unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools" \
     && mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest" \
     && rm /tmp/cmdline-tools.zip \
@@ -39,4 +40,4 @@ WORKDIR /workspace/android
 COPY android/settings.gradle.kts android/build.gradle.kts android/gradle.properties ./
 COPY android/app ./app
 
-CMD ["gradle", "--no-daemon", "testDebugUnitTest", "assembleDebug"]
+CMD ["gradle", "--no-daemon", "--dependency-verification", "strict", "testDebugUnitTest", "assembleDebug"]
