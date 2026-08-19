@@ -67,7 +67,17 @@ class FakeS3:
             "Metadata": dict(record["Metadata"]),
         }
 
-    def put_object(self, *, Bucket: str, Key: str, Body, ContentType=None, Metadata=None, custom_headers=None) -> dict:
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body,
+        ContentType=None,
+        CacheControl=None,
+        Metadata=None,
+        custom_headers=None,
+    ) -> dict:
         if Key.endswith("latest.json") and self.before_latest_put is not None:
             callback, self.before_latest_put = self.before_latest_put, None
             callback()
@@ -87,6 +97,7 @@ class FakeS3:
             "Body": body,
             "Metadata": dict(Metadata or {}),
             "ContentType": ContentType,
+            "CacheControl": CacheControl,
         }
         self.put_order.append(Key)
         return {}
@@ -311,6 +322,28 @@ class R2ReleasePublisherTest(unittest.TestCase):
         self.assertEqual(latest["patches"][0]["from_dataset_id"], "sha256:one")
         self.assertEqual(latest["patches"][0]["from_sha256"], sha256_file(first_db))
         self.assertEqual(self.client.put_order[-1], "reference/v1/latest.json")
+
+    def test_public_release_objects_have_explicit_cache_semantics(self) -> None:
+        db, manifest = self.mobile("cache-policy", b"A" * 500_000, "sha256:cache-policy")
+        result = self.publish_release(
+            self.client,
+            self.bucket,
+            db,
+            manifest,
+            self.root / "dist-cache-policy",
+            created_at="2026-08-19T01:00:00Z",
+            release_sequence=70,
+        )
+
+        full_key = result["manifest"]["full"]["key"]
+        self.assertEqual(
+            self.client.objects[(self.bucket, full_key)]["CacheControl"],
+            "public, max-age=31536000, immutable",
+        )
+        self.assertEqual(
+            self.client.objects[(self.bucket, "reference/v1/latest.json")]["CacheControl"],
+            "no-store",
+        )
 
     def test_new_release_builds_direct_patches_from_recent_history_bases(self) -> None:
         base = bytearray(os.urandom(1_000_000))

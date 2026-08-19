@@ -17,6 +17,8 @@ from .release_signing import (
 from .release_signing_runtime import release_sequence_from_env, release_signer_from_env
 
 LATEST_KEY = f"{RELEASE_PREFIX}/latest.json"
+LATEST_CACHE_CONTROL = "no-store"
+IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 MAX_PATCH_BASES = 3
 # Current full + at most two history fulls. Older clients fall back to the current full gzip.
 FULL_SNAPSHOT_RETENTION = 3
@@ -155,6 +157,7 @@ def _put_immutable(client, bucket: str, key: str, path: Path, *, content_type: s
                 Key=key,
                 Body=handle,
                 ContentType=content_type,
+                CacheControl=IMMUTABLE_CACHE_CONTROL,
                 Metadata={"sha256": expected_sha},
                 custom_headers={"If-None-Match": "*"},
             )
@@ -180,6 +183,7 @@ def _put_latest(
             Key=latest_key,
             Body=body,
             ContentType="application/json",
+            CacheControl=LATEST_CACHE_CONTROL,
             Metadata={"sha256": _sha256_bytes(body)},
             custom_headers=conditional,
         )

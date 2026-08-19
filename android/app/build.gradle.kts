@@ -63,16 +63,29 @@ require((mobileDatabaseOverride == null) == (mobileManifestOverride == null)) {
 }
 val mobileDatabaseFile = rootProject.file(mobileDatabaseOverride ?: "../data/db/mobile.sqlite")
 val mobileManifestFile = rootProject.file(mobileManifestOverride ?: "../data/db/mobile.manifest.json")
-val referenceUpdateBaseUrl = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")?.trim().orEmpty()
-if (referenceUpdateBaseUrl.isNotEmpty()) {
-    val uri = URI(referenceUpdateBaseUrl)
+val referenceUpdateBaseUrlOverride = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")?.trim()?.takeIf { it.isNotEmpty() }
+val releaseReferenceUpdateBaseUrl = System.getenv("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL")?.trim().orEmpty()
+
+fun validateReferenceUpdateBaseUrl(value: String) {
+    if (value.isEmpty()) return
+    val uri = URI(value)
     require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.path.endsWith("/")) {
         "MEDICINE_REFERENCE_UPDATE_BASE_URL must be an HTTPS origin/base path ending in /"
     }
-    require(uri.query == null && uri.fragment == null && '"' !in referenceUpdateBaseUrl && '\\' !in referenceUpdateBaseUrl) {
+    require(uri.query == null && uri.fragment == null && '"' !in value && '\\' !in value) {
         "MEDICINE_REFERENCE_UPDATE_BASE_URL cannot contain query, fragment, quotes, or backslashes"
     }
 }
+validateReferenceUpdateBaseUrl(referenceUpdateBaseUrlOverride.orEmpty())
+validateReferenceUpdateBaseUrl(releaseReferenceUpdateBaseUrl)
+if (releaseReferenceUpdateBaseUrl.isNotEmpty()) {
+    val releaseUri = URI(releaseReferenceUpdateBaseUrl)
+    require(releaseUri.host.endsWith(".r2.dev")) {
+        "MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL must use the development r2.dev endpoint"
+    }
+}
+val debugReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride.orEmpty()
+val releaseEffectiveReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride ?: releaseReferenceUpdateBaseUrl
 val prepareMobileAssets = tasks.register<PrepareMobileAssets>("prepareMobileAssets") {
     mobileDatabase.set(layout.file(providers.provider { mobileDatabaseFile }))
     mobileManifest.set(layout.file(providers.provider { mobileManifestFile }))
@@ -96,10 +109,18 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.2.0"
-        buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$referenceUpdateBaseUrl\"")
 
         ndk {
             abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$debugReferenceUpdateBaseUrl\"")
+        }
+        getByName("release") {
+            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$releaseEffectiveReferenceUpdateBaseUrl\"")
         }
     }
 

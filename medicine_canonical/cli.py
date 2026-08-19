@@ -19,6 +19,7 @@ from .mobile import build_mobile_database
 from medicine_app.reference_update import verify_reference_database
 from .release import apply_chunk_patch, prepare_release
 from .release_r2 import download_object_from_env, publish_release_from_env
+from .release_r2_public import audit_public_bucket_from_env
 from .release_signing import verify_signed_envelope
 from .source_layout import MfdsSourceLayout
 from .substance_build import (
@@ -203,6 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
     r2_download.add_argument("--output", type=Path, required=True)
     r2_download.add_argument("--json", action="store_true")
 
+    r2_public_audit = sub.add_parser(
+        "r2-public-audit",
+        help="Fail unless the configured R2 bucket contains only the public reference release namespace",
+    )
+    r2_public_audit.add_argument("--json", action="store_true")
+
     release_publish = sub.add_parser("release-publish-r2", help="Prepare and atomically publish a mobile DB release to R2")
     release_publish.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
     release_publish.add_argument("--mobile-manifest", type=Path, default=Path("data/db/mobile.manifest.json"))
@@ -332,6 +339,8 @@ def main(argv=None) -> int:
         }
     elif args.command == "r2-download":
         payload = download_object_from_env(args.key, args.output)
+    elif args.command == "r2-public-audit":
+        payload = audit_public_bucket_from_env()
     elif args.command == "release-publish-r2":
         payload = publish_release_from_env(
             args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at

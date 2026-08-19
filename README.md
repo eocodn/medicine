@@ -179,8 +179,16 @@ docker compose run --rm canonical mobile-build --json
 
 Reference DB 배포 workflow는 fresh source run에서 MFDS API snapshot과 substance identity snapshot을
 동기화하고 검증한 뒤 integrated build와 mobile release를 생성합니다. GitHub Actions에는 R2 배포 secret과
-`DATA_GO_KR_SERVICE_KEY`가 필요합니다. API credential이 준비되기 전에는 실패하는 정기 job을 만들지 않도록
-배포 workflow를 수동 실행으로 유지합니다.
+`DATA_GO_KR_SERVICE_KEY`가 필요합니다. 수동 실행은 필요하면 검증된 source cache를 재사용할 수 있고,
+정기 실행은 매일 03:17 `Asia/Seoul`에 항상 fresh source sync를 수행합니다. 정기 실행은 repository variable
+`REFERENCE_PUBLISH_SCHEDULE_ENABLED=true`일 때만 실제 job을 실행하므로 rollout 검증 전에는 `false`로 둡니다.
+R2 bucket은 public 개발 URL을 켜기 전에 `medicine-canonical r2-public-audit --json`으로
+`reference/v1/` 외 객체가 없는지 확인합니다.
+
+개발 단계의 Android reference update endpoint는 Cloudflare R2의 non-production `r2.dev` URL을 사용합니다.
+Compose/Gradle release 빌드에는 `MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL=https://pub-….r2.dev/`를 전달하고,
+debug 빌드는 기본적으로 update URL이 비어 있습니다. `MEDICINE_REFERENCE_UPDATE_BASE_URL`은 테스트나 명시적
+build override에만 사용합니다. 출시 준비 시에는 `r2.dev` 대신 custom domain으로 교체합니다.
 
 `canonical verify`가 실패하면 앱은 데이터셋을 verified로 취급하지 않습니다. Android 빌드는
 `canonical mobile-build`를 먼저 실행해 `data/db/mobile.sqlite`와 SHA-256 manifest를 만든 뒤 동일한 Python
