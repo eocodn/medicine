@@ -9,29 +9,133 @@ from pathlib import Path
 from .inspection import verify_canonical_database
 
 
-MOBILE_DATA_POLICY_VERSION = "4"
+MOBILE_DATA_POLICY_VERSION = "8"
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
 )
 RUNTIME_VIEWS = ("product_rule_criteria",)
+COPIED_RUNTIME_TABLES = (
+    "canonical_meta", "source_snapshots", "products", "product_identifiers",
+    "product_flags", "ingredient_rules", "dose_criteria",
+)
 # Mobile queries are intentionally narrower than canonical build/linking queries.
 # Keep only indexes that serve runtime lookup paths; copying every canonical
 # builder index adds hundreds of MB without helping on-device reads.
 RUNTIME_INDEXES = (
     "idx_products_status",
-    "idx_product_rules_item_category",
-    "idx_product_rules_pair",
+    "idx_product_rules_runtime",
     "idx_product_flags_item_category",
+)
+MOBILE_RUNTIME_INDEX_DDL = {
+    "idx_product_rules_runtime": (
+        "CREATE INDEX idx_product_rules_runtime "
+        "ON mobile_product_rules(item_seq, category_text_id, paired_item_seq)"
+    ),
+}
+
+# Product rules dominate the mobile DB and repeat a small vocabulary of source,
+# category, ingredient, form, detail and date strings hundreds of thousands of
+# times. Keep ITEM_SEQ strings directly in the lookup table because they are the
+# runtime identity and hot lookup keys, but dictionary-code the repeated payload.
+# A compatibility view named product_rules restores the canonical row shape so
+# the shared runtime SQL remains identical between canonical and mobile DBs.
+MOBILE_RULE_SOURCES_DDL = """CREATE TABLE mobile_rule_sources (
+    id INTEGER PRIMARY KEY,
+    dataset_key TEXT NOT NULL UNIQUE REFERENCES source_snapshots(dataset_key)
+)"""
+MOBILE_RULE_TEXTS_DDL = """CREATE TABLE mobile_rule_texts (
+    id INTEGER PRIMARY KEY,
+    value TEXT NOT NULL UNIQUE
+)"""
+MOBILE_PRODUCT_RULES_DDL = """CREATE TABLE mobile_product_rules (
+    id INTEGER PRIMARY KEY,
+    source_dataset_id INTEGER NOT NULL REFERENCES mobile_rule_sources(id),
+    source_row INTEGER NOT NULL,
+    category_text_id INTEGER NOT NULL REFERENCES mobile_rule_texts(id),
+    item_seq TEXT NOT NULL,
+    ingredient_code_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    ingredient_name_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    ingredient_name_en_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    paired_item_seq TEXT,
+    paired_ingredient_code_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    paired_ingredient_name_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    paired_ingredient_name_en_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    effect_name_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    dosage_form_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    details_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    notification_date_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    change_date_text_id INTEGER REFERENCES mobile_rule_texts(id)
+)"""
+MOBILE_PRODUCT_CRITERION_LINKS_DDL = """CREATE TABLE mobile_product_criterion_links (
+    product_rule_id INTEGER NOT NULL REFERENCES mobile_product_rules(id),
+    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
+    match_method_code INTEGER NOT NULL CHECK(match_method_code BETWEEN 0 AND 3),
+    pair_orientation_code INTEGER CHECK(pair_orientation_code IN (0,1) OR pair_orientation_code IS NULL),
+    PRIMARY KEY(product_rule_id, criterion_rule_id)
+) WITHOUT ROWID"""
+MOBILE_PRODUCT_CRITERION_LINKS_VIEW_DDL = """CREATE VIEW product_criterion_links AS
+SELECT
+    product_rule_id,
+    criterion_rule_id,
+    CASE match_method_code
+        WHEN 0 THEN 'mfds_ingredient_code'
+        WHEN 1 THEN 'permit_composition'
+        WHEN 2 THEN 'mfds_details_exact'
+        WHEN 3 THEN 'mfds_unanimous_value'
+    END AS match_method,
+    CASE pair_orientation_code
+        WHEN 0 THEN 'forward'
+        WHEN 1 THEN 'reverse'
+        ELSE NULL
+    END AS pair_orientation
+FROM mobile_product_criterion_links"""
+MOBILE_PRODUCT_RULES_VIEW_DDL = """CREATE VIEW product_rules AS
+SELECT
+    r.id,
+    src.dataset_key AS source_dataset_key,
+    r.source_row,
+    category.value AS category,
+    r.item_seq,
+    ingredient_code.value AS ingredient_code,
+    ingredient_name.value AS ingredient_name,
+    ingredient_name_en.value AS ingredient_name_en,
+    r.paired_item_seq,
+    paired_ingredient_code.value AS paired_ingredient_code,
+    paired_ingredient_name.value AS paired_ingredient_name,
+    paired_ingredient_name_en.value AS paired_ingredient_name_en,
+    effect_name.value AS effect_name,
+    dosage_form.value AS dosage_form,
+    details.value AS details,
+    notification_date.value AS notification_date,
+    change_date.value AS change_date
+FROM mobile_product_rules r
+JOIN mobile_rule_sources src ON src.id=r.source_dataset_id
+JOIN mobile_rule_texts category ON category.id=r.category_text_id
+LEFT JOIN mobile_rule_texts ingredient_code ON ingredient_code.id=r.ingredient_code_text_id
+LEFT JOIN mobile_rule_texts ingredient_name ON ingredient_name.id=r.ingredient_name_text_id
+LEFT JOIN mobile_rule_texts ingredient_name_en ON ingredient_name_en.id=r.ingredient_name_en_text_id
+LEFT JOIN mobile_rule_texts paired_ingredient_code ON paired_ingredient_code.id=r.paired_ingredient_code_text_id
+LEFT JOIN mobile_rule_texts paired_ingredient_name ON paired_ingredient_name.id=r.paired_ingredient_name_text_id
+LEFT JOIN mobile_rule_texts paired_ingredient_name_en ON paired_ingredient_name_en.id=r.paired_ingredient_name_en_text_id
+LEFT JOIN mobile_rule_texts effect_name ON effect_name.id=r.effect_name_text_id
+LEFT JOIN mobile_rule_texts dosage_form ON dosage_form.id=r.dosage_form_text_id
+LEFT JOIN mobile_rule_texts details ON details.id=r.details_text_id
+LEFT JOIN mobile_rule_texts notification_date ON notification_date.id=r.notification_date_text_id
+LEFT JOIN mobile_rule_texts change_date ON change_date.id=r.change_date_text_id"""
+MOBILE_RULE_TEXT_COLUMNS = (
+    "category", "ingredient_code", "ingredient_name", "ingredient_name_en",
+    "paired_ingredient_code", "paired_ingredient_name", "paired_ingredient_name_en",
+    "effect_name", "dosage_form", "details", "notification_date", "change_date",
 )
 
 
 def _dataset_id(con: sqlite3.Connection) -> str:
     digest = hashlib.sha256()
-    # The same official source snapshot can produce different runtime rows when
-    # import/filter semantics change. Keep that transformation generation in the
-    # release identity so a semantic data change cannot be mistaken for an
-    # idempotent rebuild of the previous mobile dataset.
+    # The same official source snapshot can produce different runtime rows or a
+    # different physical release when transformation policy changes. Keep that
+    # generation in the release identity so R2 cannot mistake the new output for
+    # an idempotent rebuild of the previous mobile dataset.
     digest.update(f"mobile-data-policy\0{MOBILE_DATA_POLICY_VERSION}\n".encode("utf-8"))
     rows = con.execute(
         "SELECT dataset_key,sha256,row_count FROM source_snapshots ORDER BY dataset_key"
@@ -49,6 +153,86 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _assert_product_rule_source_identity_unique(con: sqlite3.Connection) -> None:
+    duplicate = con.execute(
+        """SELECT source_dataset_key,source_row,COUNT(*) AS row_count
+           FROM product_rules
+           GROUP BY source_dataset_key,source_row
+           HAVING COUNT(*) > 1
+           LIMIT 1"""
+    ).fetchone()
+    if duplicate:
+        raise ValueError(
+            "product_rules source identity is not unique: "
+            f"{duplicate[0]} row {duplicate[1]} appears {duplicate[2]} times"
+        )
+
+
+def _populate_compact_product_rules(dst: sqlite3.Connection) -> None:
+    dst.execute(MOBILE_RULE_SOURCES_DDL)
+    dst.execute(MOBILE_RULE_TEXTS_DDL)
+    dst.execute(MOBILE_PRODUCT_RULES_DDL)
+    dst.execute(MOBILE_PRODUCT_CRITERION_LINKS_DDL)
+    dst.execute(
+        """INSERT INTO mobile_rule_sources(dataset_key)
+           SELECT DISTINCT source_dataset_key
+           FROM source_db.product_rules
+           ORDER BY source_dataset_key"""
+    )
+    text_union = " UNION ".join(
+        f"SELECT {column} AS value FROM source_db.product_rules WHERE {column} IS NOT NULL"
+        for column in MOBILE_RULE_TEXT_COLUMNS
+    )
+    dst.execute(
+        f"INSERT INTO mobile_rule_texts(value) "
+        f"SELECT DISTINCT value FROM ({text_union}) ORDER BY value"
+    )
+    text_id = lambda column: f"(SELECT id FROM mobile_rule_texts WHERE value=s.{column})"
+    dst.execute(
+        f"""INSERT INTO mobile_product_rules(
+               id,source_dataset_id,source_row,category_text_id,item_seq,
+               ingredient_code_text_id,ingredient_name_text_id,ingredient_name_en_text_id,
+               paired_item_seq,paired_ingredient_code_text_id,paired_ingredient_name_text_id,
+               paired_ingredient_name_en_text_id,effect_name_text_id,dosage_form_text_id,
+               details_text_id,notification_date_text_id,change_date_text_id
+           )
+           SELECT
+               s.id,
+               (SELECT id FROM mobile_rule_sources WHERE dataset_key=s.source_dataset_key),
+               s.source_row,{text_id('category')},s.item_seq,
+               {text_id('ingredient_code')},{text_id('ingredient_name')},{text_id('ingredient_name_en')},
+               s.paired_item_seq,{text_id('paired_ingredient_code')},{text_id('paired_ingredient_name')},
+               {text_id('paired_ingredient_name_en')},{text_id('effect_name')},{text_id('dosage_form')},
+               {text_id('details')},{text_id('notification_date')},{text_id('change_date')}
+           FROM source_db.product_rules s"""
+    )
+    dst.execute(
+        """INSERT INTO mobile_product_criterion_links(
+               product_rule_id,criterion_rule_id,match_method_code,pair_orientation_code
+           )
+           SELECT
+               product_rule_id,
+               criterion_rule_id,
+               CASE match_method
+                   WHEN 'mfds_ingredient_code' THEN 0
+                   WHEN 'permit_composition' THEN 1
+                   WHEN 'mfds_details_exact' THEN 2
+                   WHEN 'mfds_unanimous_value' THEN 3
+                   ELSE 99
+               END,
+               CASE
+                   WHEN pair_orientation IS NULL THEN NULL
+                   WHEN pair_orientation='forward' THEN 0
+                   WHEN pair_orientation='reverse' THEN 1
+                   ELSE 99
+               END
+           FROM source_db.product_criterion_links
+           ORDER BY product_rule_id,criterion_rule_id"""
+    )
+    dst.execute(MOBILE_PRODUCT_RULES_VIEW_DDL)
+    dst.execute(MOBILE_PRODUCT_CRITERION_LINKS_VIEW_DDL)
 
 
 def build_mobile_database(
@@ -81,6 +265,7 @@ def build_mobile_database(
         ).fetchone()
         if not schema_version or schema_version[0] != "10" or not build_stage or build_stage[0] != "complete":
             raise ValueError("canonical runtime requires complete schema v10 database")
+        _assert_product_rule_source_identity_unique(src)
         dataset_id = _dataset_id(src)
         objects = {
             (kind, name): sql
@@ -92,15 +277,16 @@ def build_mobile_database(
         dst = sqlite3.connect(temporary)
         try:
             dst.execute("PRAGMA foreign_keys=OFF")
-            for table in RUNTIME_TABLES:
+            for table in COPIED_RUNTIME_TABLES:
                 ddl = objects.get(("table", table))
                 if not ddl:
                     raise ValueError(f"canonical runtime table missing: {table}")
                 dst.execute(ddl)
             escaped = str(source.resolve()).replace("'", "''")
             dst.execute(f"ATTACH DATABASE '{escaped}' AS source_db")
-            for table in RUNTIME_TABLES:
+            for table in COPIED_RUNTIME_TABLES:
                 dst.execute(f'INSERT INTO "{table}" SELECT * FROM source_db."{table}"')
+            _populate_compact_product_rules(dst)
             dst.commit()
             dst.execute("DETACH DATABASE source_db")
             source_indexes = {
@@ -109,19 +295,27 @@ def build_mobile_database(
                     "SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
                 )
             }
-            missing_indexes = [name for name in RUNTIME_INDEXES if name not in source_indexes]
+            missing_indexes = [
+                name
+                for name in RUNTIME_INDEXES
+                if name not in MOBILE_RUNTIME_INDEX_DDL and name not in source_indexes
+            ]
             if missing_indexes:
                 raise ValueError(
                     f"canonical runtime index missing: {', '.join(missing_indexes)}"
                 )
             for name in RUNTIME_INDEXES:
-                dst.execute(source_indexes[name])
+                dst.execute(MOBILE_RUNTIME_INDEX_DDL.get(name, source_indexes.get(name)))
             for view in RUNTIME_VIEWS:
                 ddl = objects.get(("view", view))
                 if not ddl:
                     raise ValueError(f"canonical runtime view missing: {view}")
                 dst.execute(ddl)
             dst.commit()
+            # Bulk loading millions of WITHOUT ROWID links leaves measurable
+            # page slack even in a freshly created database. Compact once on
+            # the build host so the installed artifact does not carry it.
+            dst.execute("VACUUM")
             dst.execute("PRAGMA foreign_keys=ON")
             if dst.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise RuntimeError("mobile canonical integrity check failed")
