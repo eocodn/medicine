@@ -11,7 +11,7 @@ from .canonical_runtime import canonical_manifest
 # This value participates in the published mobile dataset identity. Keep it in
 # lockstep with medicine_canonical.mobile.MOBILE_DATA_POLICY_VERSION; tests
 # intentionally fail if publisher and on-device runtime policy diverge.
-MOBILE_DATA_POLICY_VERSION = "7"
+MOBILE_DATA_POLICY_VERSION = "8"
 _DATASET_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 

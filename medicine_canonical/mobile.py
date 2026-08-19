@@ -9,7 +9,7 @@ from pathlib import Path
 from .inspection import verify_canonical_database
 
 
-MOBILE_DATA_POLICY_VERSION = "7"
+MOBILE_DATA_POLICY_VERSION = "8"
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
@@ -67,13 +67,29 @@ MOBILE_PRODUCT_RULES_DDL = """CREATE TABLE mobile_product_rules (
     notification_date_text_id INTEGER REFERENCES mobile_rule_texts(id),
     change_date_text_id INTEGER REFERENCES mobile_rule_texts(id)
 )"""
-MOBILE_PRODUCT_CRITERION_LINKS_DDL = """CREATE TABLE product_criterion_links (
+MOBILE_PRODUCT_CRITERION_LINKS_DDL = """CREATE TABLE mobile_product_criterion_links (
     product_rule_id INTEGER NOT NULL REFERENCES mobile_product_rules(id),
     criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
-    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','permit_composition','mfds_details_exact','mfds_unanimous_value')),
-    pair_orientation TEXT CHECK(pair_orientation IN ('forward','reverse') OR pair_orientation IS NULL),
+    match_method_code INTEGER NOT NULL CHECK(match_method_code BETWEEN 0 AND 3),
+    pair_orientation_code INTEGER CHECK(pair_orientation_code IN (0,1) OR pair_orientation_code IS NULL),
     PRIMARY KEY(product_rule_id, criterion_rule_id)
 ) WITHOUT ROWID"""
+MOBILE_PRODUCT_CRITERION_LINKS_VIEW_DDL = """CREATE VIEW product_criterion_links AS
+SELECT
+    product_rule_id,
+    criterion_rule_id,
+    CASE match_method_code
+        WHEN 0 THEN 'mfds_ingredient_code'
+        WHEN 1 THEN 'permit_composition'
+        WHEN 2 THEN 'mfds_details_exact'
+        WHEN 3 THEN 'mfds_unanimous_value'
+    END AS match_method,
+    CASE pair_orientation_code
+        WHEN 0 THEN 'forward'
+        WHEN 1 THEN 'reverse'
+        ELSE NULL
+    END AS pair_orientation
+FROM mobile_product_criterion_links"""
 MOBILE_PRODUCT_RULES_VIEW_DDL = """CREATE VIEW product_rules AS
 SELECT
     r.id,
@@ -193,9 +209,30 @@ def _populate_compact_product_rules(dst: sqlite3.Connection) -> None:
            FROM source_db.product_rules s"""
     )
     dst.execute(
-        "INSERT INTO product_criterion_links SELECT * FROM source_db.product_criterion_links"
+        """INSERT INTO mobile_product_criterion_links(
+               product_rule_id,criterion_rule_id,match_method_code,pair_orientation_code
+           )
+           SELECT
+               product_rule_id,
+               criterion_rule_id,
+               CASE match_method
+                   WHEN 'mfds_ingredient_code' THEN 0
+                   WHEN 'permit_composition' THEN 1
+                   WHEN 'mfds_details_exact' THEN 2
+                   WHEN 'mfds_unanimous_value' THEN 3
+                   ELSE 99
+               END,
+               CASE
+                   WHEN pair_orientation IS NULL THEN NULL
+                   WHEN pair_orientation='forward' THEN 0
+                   WHEN pair_orientation='reverse' THEN 1
+                   ELSE 99
+               END
+           FROM source_db.product_criterion_links
+           ORDER BY product_rule_id,criterion_rule_id"""
     )
     dst.execute(MOBILE_PRODUCT_RULES_VIEW_DDL)
+    dst.execute(MOBILE_PRODUCT_CRITERION_LINKS_VIEW_DDL)
 
 
 def build_mobile_database(
@@ -275,6 +312,10 @@ def build_mobile_database(
                     raise ValueError(f"canonical runtime view missing: {view}")
                 dst.execute(ddl)
             dst.commit()
+            # Bulk loading millions of WITHOUT ROWID links leaves measurable
+            # page slack even in a freshly created database. Compact once on
+            # the build host so the installed artifact does not carry it.
+            dst.execute("VACUUM")
             dst.execute("PRAGMA foreign_keys=ON")
             if dst.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise RuntimeError("mobile canonical integrity check failed")

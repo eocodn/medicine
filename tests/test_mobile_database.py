@@ -162,6 +162,35 @@ class MobileDatabaseTest(unittest.TestCase):
             ],
         )
 
+    def test_mobile_criterion_links_use_compact_codes_with_compatibility_view(self) -> None:
+        build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
+        with sqlite3.connect(self.mobile_db) as con:
+            objects = {
+                str(row[0]): str(row[1])
+                for row in con.execute(
+                    "SELECT name,type FROM sqlite_master "
+                    "WHERE name IN ('product_criterion_links','mobile_product_criterion_links')"
+                )
+            }
+            physical_columns = {
+                str(row[1])
+                for row in con.execute("PRAGMA table_info('mobile_product_criterion_links')")
+            }
+            runtime_columns = [
+                str(row[1])
+                for row in con.execute("PRAGMA table_info('product_criterion_links')")
+            ]
+        self.assertEqual(objects["product_criterion_links"], "view")
+        self.assertEqual(objects["mobile_product_criterion_links"], "table")
+        self.assertIn("match_method_code", physical_columns)
+        self.assertIn("pair_orientation_code", physical_columns)
+        self.assertNotIn("match_method", physical_columns)
+        self.assertNotIn("pair_orientation", physical_columns)
+        self.assertEqual(
+            runtime_columns,
+            ["product_rule_id", "criterion_rule_id", "match_method", "pair_orientation"],
+        )
+
     def test_mobile_build_rejects_duplicate_product_rule_source_identity(self) -> None:
         duplicate_source = self.canonical_db.with_name("canonical-duplicate-rule.sqlite")
         with sqlite3.connect(self.canonical_db) as source:
