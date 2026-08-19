@@ -7,6 +7,7 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import java.io.File
 import java.net.URI
+import java.util.Properties
 import javax.inject.Inject
 
 abstract class PrepareOcrAssets : DefaultTask() {
@@ -32,6 +33,20 @@ plugins {
     id("com.android.application")
     id("com.chaquo.python")
 }
+
+val releaseVersionPropertiesFile = rootProject.file("release.properties")
+val releaseVersionProperties = Properties().apply {
+    releaseVersionPropertiesFile.inputStream().use(::load)
+}
+val releaseVersionName = releaseVersionProperties.getProperty("versionName")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: error("android/release.properties must define versionName")
+val releaseVersionCode = releaseVersionProperties.getProperty("versionCode")
+    ?.trim()
+    ?.toIntOrNull()
+    ?.takeIf { it > 0 }
+    ?: error("android/release.properties must define a positive integer versionCode")
 
 data class AndroidReleaseEnvironment(
     val versionCode: Int,
@@ -60,8 +75,14 @@ fun requireReleaseEnvironment(): AndroidReleaseEnvironment {
     val versionCode = versionCodeText.toIntOrNull()
         ?: error("MEDICINE_ANDROID_VERSION_CODE must be a positive integer")
     require(versionCode > 0) { "MEDICINE_ANDROID_VERSION_CODE must be a positive integer" }
+    require(versionCode == releaseVersionCode) {
+        "MEDICINE_ANDROID_VERSION_CODE must match android/release.properties"
+    }
     val versionName = required("MEDICINE_ANDROID_VERSION_NAME").trim()
     require(versionName.isNotEmpty()) { "MEDICINE_ANDROID_VERSION_NAME must not be blank" }
+    require(versionName == releaseVersionName) {
+        "MEDICINE_ANDROID_VERSION_NAME must match android/release.properties"
+    }
 
     return AndroidReleaseEnvironment(
         versionCode = versionCode,
@@ -140,8 +161,8 @@ android {
         applicationId = "com.medicine.android"
         minSdk = 24
         targetSdk = 35
-        versionCode = releaseEnvironment?.versionCode ?: 1
-        versionName = releaseEnvironment?.versionName ?: "0.2.0"
+        versionCode = releaseEnvironment?.versionCode ?: releaseVersionCode
+        versionName = releaseEnvironment?.versionName ?: releaseVersionName
 
         ndk {
             abiFilters += listOf("arm64-v8a")

@@ -1,0 +1,48 @@
+name: Android Developer Release Check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-android:
+    name: Check debug-signed Android arm64 release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out selected ref
+        uses: actions/checkout@v6
+
+      - name: Resolve Android release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(./scripts/current-android-release-tag.sh)"
+          printf 'tag=%s\n' "${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and verify debug-signed Android release
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="medicine-android-release:${GITHUB_SHA}"
+          docker build --file Dockerfile.android --tag "${image}" .
+
+          rm -rf dist
+          mkdir -p dist
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -e GRADLE_USER_HOME=/tmp/gradle-cache \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            "${image}" \
+            bash /workspace/scripts/check-android-release.sh \
+              "${{ steps.version.outputs.tag }}" /workspace/dist
+
+      - name: Preserve validated Android APK for this run
+        uses: actions/cache/save@v5
+        with:
+          path: dist
+          key: android-release-${{ github.sha }}-${{ github.run_id }}-arm64-v8a

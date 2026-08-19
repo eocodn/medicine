@@ -1,0 +1,115 @@
+name: Android Developer Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  prepare-release:
+    name: Resolve validated Android Developer Release Check
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.validation.outputs.run_id }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+
+      - name: Verify tag matches Android release version
+        run: ./scripts/verify-android-release-version.sh "${GITHUB_REF_NAME}"
+
+      - name: Resolve successful Android Developer Release Check for this commit
+        id: validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id="$(
+            gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/android-release-check.yml/runs?head_sha=${GITHUB_SHA}&event=workflow_dispatch&status=success&per_page=1" \
+              --jq '.workflow_runs[0].id // empty'
+          )"
+          if [[ -z "${run_id}" ]]; then
+            printf 'no successful Android Developer Release Check found for tag commit %s\n' "${GITHUB_SHA}" >&2
+            exit 1
+          fi
+          printf 'run_id=%s\n' "${run_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Ensure draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/ensure-release-draft.sh "${GITHUB_REF_NAME}"
+
+  publish-android:
+    name: Upload validated Android arm64 APK
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore validated Android APK
+        uses: actions/cache/restore@v5
+        with:
+          path: dist
+          key: android-release-${{ github.sha }}-${{ needs.prepare-release.outputs.run_id }}-arm64-v8a
+          fail-on-cache-miss: true
+
+      - name: Verify validated Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="dist/medicine-${GITHUB_REF_NAME}-arm64-v8a.apk"
+          test -f "${expected}"
+          shopt -s nullglob
+          apks=(dist/*.apk)
+          (( ${#apks[@]} == 1 ))
+
+      - name: Upload validated Android APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist/medicine-${GITHUB_REF_NAME}-arm64-v8a.apk" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - prepare-release
+      - publish-android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+
+      - name: Download validated Android APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern '*.apk' \
+            --dir dist
+          shopt -s nullglob
+          apks=(dist/*.apk)
+          if (( ${#apks[@]} != 1 )); then
+            printf 'expected 1 release APK, found %s\n' "${#apks[@]}" >&2
+            exit 1
+          fi
+
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum ./*.apk > SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/publish-release.sh "${GITHUB_REF_NAME}" dist

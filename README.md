@@ -353,8 +353,8 @@ release 변형은 배포 실수 방지를 위해 서명키와 버전을 명시�
 두지 말고 컨테이너에 read-only로 마운트합니다. 아래 환경변수의 비밀번호 값은 shell history나 문서에 기록하지 않습니다.
 
 ```bash
-export MEDICINE_ANDROID_VERSION_CODE=2
-export MEDICINE_ANDROID_VERSION_NAME=0.3.0
+export MEDICINE_ANDROID_VERSION_CODE="$(sed -n 's/^versionCode=//p' android/release.properties)"
+export MEDICINE_ANDROID_VERSION_NAME="$(sed -n 's/^versionName=//p' android/release.properties)"
 export MEDICINE_ANDROID_KEY_ALIAS='...'
 export ANDROID_RELEASE_KEYSTORE=/absolute/path/to/release.jks
 
@@ -385,6 +385,12 @@ docker compose -p medicine_android_release run --rm \
 `android/gradle/verification-metadata.xml`의 SHA-256으로 검증합니다. Android command-line tools 다운로드 역시
 Docker 이미지 빌드 중 고정 SHA-256을 확인합니다. 의존성을 의도적으로 변경할 때만 고정된 Android Docker 환경에서
 `--write-locks --write-verification-metadata sha256`로 두 파일을 함께 갱신하고 변경 내용을 검토합니다.
+
+개발자용 GitHub 배포는 COWI와 같은 exact-SHA handoff를 사용합니다. 태그 전에 **Android Developer Release Check**
+Actions workflow가 별도 signing secret 없이 debug-signed APK를 한 번 빌드·검증하고 해당 workflow run에 묶어 보관하며,
+같은 commit에 `vX.Y.Z` 태그를 push하면 **Android Developer Release** workflow가 검증된 APK를 재빌드하지 않고
+GitHub Release에 게시합니다. 이 경로는 정식 release signing/Play 배포와 별개이며, 버전 변경과 태그 순서는
+`docs/android-releasing.md`를 따릅니다.
 
 데이터 이용조건 검토는 제품 배포 전 별도 release 절차로 남아 있습니다.
 
