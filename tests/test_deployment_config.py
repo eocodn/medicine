@@ -85,6 +85,8 @@ class DeploymentConfigTest(unittest.TestCase):
 
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("contents: read", workflow)
+        self.assertIn("actions/setup-python@v5", workflow)
+        self.assertIn("python-version: '3.13'", workflow)
         for secret in (
             "R2_ACCESS_KEY_ID",
             "R2_SECRET_ACCESS_KEY",

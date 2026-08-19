@@ -30,6 +30,11 @@ jobs:
             fi
           done
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Install R2 tooling
         run: python3 -m pip install --disable-pip-version-check --no-cache-dir . 'boto3>=1.34,<2'
 
