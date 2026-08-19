@@ -86,8 +86,8 @@ docker compose down
 - 복용 종료 처리 / 최근 복용 기록 조회
 - JSON API와 동일 코어를 사용하는 headless CLI
 - 서버 없는 Android 패키징
-  - WebView UI, Python 앱 코어, 검증된 canonical reference snapshot을 APK에 함께 포함
-  - Android 앱은 `INTERNET` 권한 없이 앱 내부 HTTPS asset origin과 네이티브 Python 브리지만 사용
+  - WebView UI와 Python 앱 코어는 APK에 포함하고 reference DB는 signed hosted channel에서 first-launch bootstrap
+  - `INTERNET` 권한은 native reference downloader에만 사용하며 WebView 외부 HTTP/HTTPS 요청은 차단
   - 개인 복약 DB는 Android Keystore AES-GCM 키로 요청 사이에 암호화해 보관하고, SQLite 처리 중에만 앱 전용 저장소의 임시 평문 DB를 사용
   - 비정상 종료로 임시 평문 DB가 남으면 다음 시작 시 이를 최신 상태로 복구·checkpoint한 뒤 즉시 다시 암호화
   - 배포 reference DB는 읽기 전용으로 분리
@@ -186,14 +186,14 @@ R2 bucket은 public 개발 URL을 켜기 전에 `medicine-canonical r2-public-au
 `reference/v1/` 외 객체가 없는지 확인합니다.
 
 개발 단계의 Android reference update endpoint는 Cloudflare R2의 non-production `r2.dev` URL을 사용합니다.
-현재 개발 endpoint는 `https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/`이며 Gradle release 빌드의
-기본값으로 내장합니다. `MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL`로 개발 endpoint를 교체할 수 있고, debug
-빌드는 기본적으로 update URL이 비어 있습니다. `MEDICINE_REFERENCE_UPDATE_BASE_URL`은 두 variant 모두를 덮어쓰는
-명시적 테스트/build override입니다. 출시 준비 시에는 `r2.dev` 대신 custom domain으로 교체합니다.
+현재 개발 endpoint는 `https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/`이며 first-launch bootstrap이
+필수이므로 Gradle debug/release 빌드 모두의 기본값으로 내장합니다. `MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL`로
+개발 endpoint를 교체할 수 있고, `MEDICINE_REFERENCE_UPDATE_BASE_URL`은 두 variant 모두를 덮어쓰는 명시적
+테스트/build override입니다. 출시 준비 시에는 `r2.dev` 대신 custom domain으로 교체합니다.
 
-`canonical verify`가 실패하면 앱은 데이터셋을 verified로 취급하지 않습니다. Android 빌드는
-`canonical mobile-build`를 먼저 실행해 `data/db/mobile.sqlite`와 SHA-256 manifest를 만든 뒤 동일한 Python
-core를 APK에 패키징합니다.
+`canonical verify`가 실패하면 앱은 데이터셋을 verified로 취급하지 않습니다. Reference publish workflow는
+`canonical mobile-build`로 `mobile.sqlite`와 manifest를 생성해 signed hosted release로 배포하지만, Android
+APK 자체에는 해당 DB나 manifest를 포함하지 않습니다. APK에는 DB를 검증하는 동일한 Python runtime core만 패키징합니다.
 
 ## 앱 제어 CLI
 
@@ -330,33 +330,24 @@ docker build -f browser_ocr/Dockerfile --target runtime \
 Android 앱은 WebView를 UI 셸로 사용하지만 외부 웹 서버에는 연결하지 않습니다. 정적 UI는 AndroidX WebKit의
 `https://appassets.androidplatform.net` 로컬 asset origin에서 제공하고, 앱의 `/api/...` 호출은
 `MedicineNative` 브리지를 통해 APK에 포함된 Python `MedicationApp` 코어를 직접 호출합니다. WebView의 다른
-HTTP/HTTPS 요청은 차단하며 Android manifest에는 `INTERNET` 권한이 없습니다.
+HTTP/HTTPS 요청은 차단합니다. Android manifest의 `INTERNET` 권한은 native reference downloader에만 사용됩니다.
 
 배포용 reference DB는 검증된 `canonical.sqlite`에서 런타임 테이블과 view만 추린 `mobile.sqlite`입니다.
-APK에는 압축된 asset으로 들어가며 첫 실행 때 manifest의 크기와 SHA-256을 확인하면서 앱 전용 저장소에
-원자적으로 설치합니다. reference DB는 이후 읽기 전용으로 사용하고 개인 기록은 별도의 `personal.sqlite`에 저장합니다.
+APK에는 DB를 넣지 않습니다. 검증된 LKG가 없는 첫 실행에는 signed `latest.json`을 확인하고 full gzip snapshot을
+Range-resume 가능한 checkpoint로 내려받은 뒤 artifact SHA-256/크기와 SQLite/runtime identity를 검증하여 앱 전용
+저장소에 원자적으로 설치합니다. 따라서 최초 설치 직후 첫 실행은 네트워크가 필요하지만, verified LKG가 생긴 뒤에는
+인터넷 연결 없이 약 검색·DUR 판정·복약 기록을 사용할 수 있습니다. reference DB는 읽기 전용으로 유지하고 개인 기록은
+별도의 `personal.sqlite`에 저장합니다.
 
-Docker에서 데이터 release gate, compact DB 생성, Android 단위 테스트와 debug APK 빌드를 한 번에 실행합니다.
+Docker에서 Android 단위 테스트와 debug APK 빌드를 실행합니다. Android 빌드 자체는 canonical/mobile DB를 생성하지 않습니다.
 
 ```bash
 docker compose run --rm android
 ```
 
-다른 worktree에서 이미 검증된 `mobile.sqlite`를 재사용해 Android만 확인할 때는 reference 디렉터리를
-`/workspace` 바깥에 읽기 전용으로 mount합니다. 이렇게 하면 Docker가 worktree의 `data/db` 아래에
-중첩 mountpoint를 root 소유로 만들지 않습니다.
-
-```bash
-MEDICINE_MOBILE_DB=/reference/mobile.sqlite \
-MEDICINE_MOBILE_MANIFEST=/reference/mobile.manifest.json \
-docker compose run --rm \
-  -v ~/dev/medicine/data/db:/reference:ro \
-  android
-```
-
 APK는 `android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. 설치 후에는 PC, LAN, loopback 서버나
-인터넷 연결 없이 약 검색·DUR 판정·복약 기록을 실행할 수 있습니다. 현재 Gradle 설정은 개인 기기 우선으로
-`arm64-v8a`만 패키징합니다.
+별도 웹 서버 없이 동작합니다. 최초 bootstrap 완료 후에는 reference LKG를 로컬에서 사용합니다. 현재 Gradle 설정은
+개인 기기 우선으로 `arm64-v8a`만 패키징합니다.
 
 release 변형도 동일한 온디바이스 구조로 빌드할 수 있지만 실제 배포 전에 Android 서명키와 release signing
 configuration을 별도로 설정해야 합니다. 데이터 이용조건 검토 역시 제품 배포 전 별도 release 절차로 남아 있습니다.

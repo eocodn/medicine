@@ -5,6 +5,11 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.GZIPInputStream
 
+object ReferenceRuntimePolicy {
+    // Keep in lockstep with medicine_app.canonical_runtime._CANONICAL_SCHEMA_VERSION.
+    const val SCHEMA_VERSION = "10"
+}
+
 class PythonReferenceDatabaseVerifier : ReferenceDatabaseVerifier {
     override fun verify(file: File, version: ReferenceVersion) {
         val result = Python.getInstance()
@@ -23,7 +28,7 @@ class PythonReferenceDatabaseVerifier : ReferenceDatabaseVerifier {
 
 class PythonReferenceArtifactRebuilder : ReferenceArtifactRebuilder {
     override fun rebuild(
-        current: InstalledReferenceVersion,
+        current: InstalledReferenceVersion?,
         artifact: ReferenceReleaseArtifact,
         downloaded: File,
         output: File,
@@ -34,14 +39,17 @@ class PythonReferenceArtifactRebuilder : ReferenceArtifactRebuilder {
         }
         when (artifact.kind) {
             ReferenceArtifactKind.FULL_GZIP -> decompressFull(downloaded, output)
-            ReferenceArtifactKind.CHUNK_PATCH -> Python.getInstance()
-                .getModule("medicine_canonical.release")
-                .callAttr(
-                    "apply_chunk_patch",
-                    current.file.absolutePath,
-                    downloaded.absolutePath,
-                    output.absolutePath,
-                )
+            ReferenceArtifactKind.CHUNK_PATCH -> {
+                val installed = requireNotNull(current) { "reference patch requires an installed base" }
+                Python.getInstance()
+                    .getModule("medicine_canonical.release")
+                    .callAttr(
+                        "apply_chunk_patch",
+                        installed.file.absolutePath,
+                        downloaded.absolutePath,
+                        output.absolutePath,
+                    )
+            }
         }
     }
 

@@ -8,6 +8,9 @@ import org.junit.Test
 import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class ReferenceUpdaterTest {
     private class MemoryStateStorage : ReferenceStateStorage {
@@ -24,15 +27,27 @@ class ReferenceUpdaterTest {
         private val release: VerifiedReferenceRelease,
         private val artifactBytes: ByteArray = "artifact".toByteArray(),
         private val failDownload: Boolean = false,
+        private val fetchEntered: CountDownLatch? = null,
+        private val downloadEntered: CountDownLatch? = null,
+        private val continueDownload: CountDownLatch? = null,
     ) : ReferenceReleaseSource {
+        var fetches = 0
         val downloads = mutableListOf<ReferenceReleaseArtifact>()
-        override fun fetchLatest(): VerifiedReferenceRelease = release
+        override fun fetchLatest(): VerifiedReferenceRelease {
+            fetches += 1
+            fetchEntered?.countDown()
+            return release
+        }
         override fun download(
             artifact: ReferenceReleaseArtifact,
             target: File,
             progress: (Long, Long) -> Unit,
         ) {
             downloads += artifact
+            downloadEntered?.countDown()
+            continueDownload?.let { latch ->
+                check(latch.await(5, TimeUnit.SECONDS)) { "timed out waiting to continue fake download" }
+            }
             target.writeBytes(artifactBytes)
             progress(artifactBytes.size.toLong(), artifactBytes.size.toLong())
             if (failDownload) error("network interrupted")
@@ -42,7 +57,7 @@ class ReferenceUpdaterTest {
     private class FakeRebuilder(private val targetBytes: ByteArray) : ReferenceArtifactRebuilder {
         var usedArtifact: ReferenceReleaseArtifact? = null
         override fun rebuild(
-            current: InstalledReferenceVersion,
+            current: InstalledReferenceVersion?,
             artifact: ReferenceReleaseArtifact,
             downloaded: File,
             output: File,
@@ -106,10 +121,13 @@ class ReferenceUpdaterTest {
             val storage = MemoryStateStorage()
             val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
             val currentBytes = "current".toByteArray()
-            val current = version(currentBytes, 0, "bundled")
-            val installed = store.openForStartup(current) { it.writeBytes(currentBytes) }
+            val current = version(currentBytes, 1, "current")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
             val targetBytes = "target-one".toByteArray()
-            val release = release(targetBytes, 1, "one", current, includeMatchingPatch = true)
+            val release = release(targetBytes, 2, "one", current, includeMatchingPatch = true)
             val source = FakeSource(release)
             val rebuilder = FakeRebuilder(targetBytes)
 
@@ -119,7 +137,7 @@ class ReferenceUpdaterTest {
             assertEquals(ReferenceArtifactKind.CHUNK_PATCH, source.downloads.single().kind)
             assertEquals(ReferenceArtifactKind.CHUNK_PATCH, rebuilder.usedArtifact!!.kind)
             assertEquals(current, store.snapshot().active)
-            assertEquals(1, store.snapshot().pending!!.releaseSequence)
+            assertEquals(2, store.snapshot().pending!!.releaseSequence)
             assertEquals(current, installed.version)
         } finally {
             root.deleteRecursively()
@@ -133,8 +151,11 @@ class ReferenceUpdaterTest {
             val storage = MemoryStateStorage()
             val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
             val currentBytes = "current".toByteArray()
-            val current = version(currentBytes, 0, "bundled")
-            val installed = store.openForStartup(current) { it.writeBytes(currentBytes) }
+            val current = version(currentBytes, 1, "current")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
             val targetBytes = "target-two".toByteArray()
             val release = release(targetBytes, 2, "two", current, includeMatchingPatch = false)
             val source = FakeSource(release)
@@ -156,14 +177,17 @@ class ReferenceUpdaterTest {
         try {
             val storage = MemoryStateStorage()
             val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
-            val bundledBytes = "bundled".toByteArray()
-            val bundled = version(bundledBytes, 0, "bundled")
-            store.openForStartup(bundled) { it.writeBytes(bundledBytes) }
+            val bundledBytes = "initial".toByteArray()
+            val bundled = version(bundledBytes, 1, "initial")
+            store.installInitial(
+                bundled,
+                File(root, ".initial.sqlite").apply { writeBytes(bundledBytes) },
+            )
             val sevenBytes = "release-seven".toByteArray()
             val seven = version(sevenBytes, 7, "seven")
             store.stagePending(seven, File(root, ".seven.sqlite").apply { writeBytes(sevenBytes) })
             val installed = ReferenceStore(root, storage, FakeDatabaseVerifier())
-                .openForStartup(bundled) { error("bundled exists") }
+                .openForStartup("8")!!
             val oldBytes = "release-six".toByteArray()
             val oldRelease = release(oldBytes, 6, "six", installed.version, includeMatchingPatch = false)
             val source = FakeSource(oldRelease)
@@ -186,8 +210,11 @@ class ReferenceUpdaterTest {
             val storage = MemoryStateStorage()
             val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
             val currentBytes = "current".toByteArray()
-            val current = version(currentBytes, 0, "bundled")
-            val installed = store.openForStartup(current) { it.writeBytes(currentBytes) }
+            val current = version(currentBytes, 1, "current")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
             val targetBytes = "target-failure".toByteArray()
             val source = FakeSource(
                 release(targetBytes, 3, "failure", current, includeMatchingPatch = false),
@@ -203,6 +230,64 @@ class ReferenceUpdaterTest {
             assertFalse(root.listFiles().orEmpty().any { it.name.startsWith(".candidate-") })
             assertTrue(root.listFiles().orEmpty().any { it.name.startsWith(".artifact-") && it.name.endsWith(".part") })
         } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun separateUpdaterInstancesSerializeSharedReferenceIo() {
+        val root = Files.createTempDirectory("reference-updater-concurrent").toFile()
+        val executor = Executors.newFixedThreadPool(2)
+        val firstDownloadEntered = CountDownLatch(1)
+        val continueFirstDownload = CountDownLatch(1)
+        val secondFetchEntered = CountDownLatch(1)
+        try {
+            val storage = MemoryStateStorage()
+            val currentBytes = "current-concurrent".toByteArray()
+            val current = version(currentBytes, 1, "current-concurrent")
+            val initialStore = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val installed = initialStore.installInitial(
+                current,
+                File(root, ".current-concurrent.sqlite").apply { writeBytes(currentBytes) },
+            )
+            val targetBytes = "target-concurrent".toByteArray()
+            val nextRelease = release(
+                targetBytes,
+                2,
+                "concurrent",
+                current,
+                includeMatchingPatch = false,
+            )
+            val firstSource = FakeSource(
+                nextRelease,
+                downloadEntered = firstDownloadEntered,
+                continueDownload = continueFirstDownload,
+            )
+            val secondSource = FakeSource(nextRelease, fetchEntered = secondFetchEntered)
+            val firstUpdater = ReferenceUpdater(
+                root,
+                ReferenceStore(root, storage, FakeDatabaseVerifier()),
+                firstSource,
+                FakeRebuilder(targetBytes),
+            )
+            val secondUpdater = ReferenceUpdater(
+                root,
+                ReferenceStore(root, storage, FakeDatabaseVerifier()),
+                secondSource,
+                FakeRebuilder(targetBytes),
+            )
+
+            val firstFuture = executor.submit<ReferenceUpdateResult> { firstUpdater.checkForUpdate(installed) }
+            assertTrue(firstDownloadEntered.await(2, TimeUnit.SECONDS))
+            val secondFuture = executor.submit<ReferenceUpdateResult> { secondUpdater.checkForUpdate(installed) }
+
+            assertFalse(secondFetchEntered.await(200, TimeUnit.MILLISECONDS))
+            continueFirstDownload.countDown()
+            assertEquals(ReferenceUpdateStatus.STAGED, firstFuture.get(2, TimeUnit.SECONDS).status)
+            assertEquals(ReferenceUpdateStatus.STAGED, secondFuture.get(2, TimeUnit.SECONDS).status)
+        } finally {
+            continueFirstDownload.countDown()
+            executor.shutdownNow()
             root.deleteRecursively()
         }
     }

@@ -52,29 +52,44 @@ class ManifestContractTest {
     }
 
     @Test
-    fun referenceDataInstallIsHashVerifiedAtomicAndReadOnly() {
-        val installer = java.io.File("src/main/java/com/medicine/android/ReferenceAssetInstaller.kt").readText()
+    fun referenceDataBootstrapsFromSignedChannelWithoutBundledDatabaseAssets() {
+        val bootstrapper = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapper.kt").readText()
         val store = java.io.File("src/main/java/com/medicine/android/ReferenceStore.kt").readText()
+        val build = java.io.File("build.gradle.kts").readText()
         assertTrue(store.contains("MessageDigest.getInstance(\"SHA-256\")"))
         assertTrue(store.contains("highestActivatedSequence"))
         assertTrue(store.contains("pending"))
         assertTrue(store.contains("previous"))
-        assertTrue(installer.contains("output.fd.sync()"))
+        assertTrue(bootstrapper.contains("ReferenceManifestVerifier(ReferenceTrust.trustedPublicKeys)"))
+        assertTrue(bootstrapper.contains(".bootstrap-artifact-"))
+        assertTrue(bootstrapper.contains("ReferenceBootstrapStorageException"))
         assertTrue(store.contains("candidate.renameTo(target)"))
         assertTrue(store.contains("target.setReadOnly()"))
-        assertFalse(installer.contains("file.name.startsWith(\"mobile-\") && file.extension == \"sqlite\" && file != target"))
+        assertFalse(java.io.File("src/main/java/com/medicine/android/ReferenceAssetInstaller.kt").exists())
+        assertFalse(build.contains("PrepareMobileAssets"))
+        assertFalse(build.contains("mobile.sqlite"))
+        assertFalse(build.contains("mobile.manifest.json"))
     }
 
     @Test
-    fun referenceUpdaterPackagesSharedPatchCoreAndKeepsDistributionEndpointOffByDefault() {
+    fun referenceUpdaterPackagesSharedPatchCoreAndUsesDevelopmentDistributionEndpoint() {
         val build = java.io.File("build.gradle.kts").readText()
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val bootstrapper = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapper.kt").readText()
         val updater = java.io.File("src/main/java/com/medicine/android/ReferenceUpdater.kt").readText()
+        val coordinator = java.io.File("src/main/java/com/medicine/android/ReferenceOperationCoordinator.kt").readText()
         val source = java.io.File("src/main/java/com/medicine/android/ReferenceReleaseHttpSource.kt").readText()
         assertTrue(build.contains("MEDICINE_REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
+        assertTrue(build.contains("pub-539f06de795a469c85ab40570a8634a2.r2.dev"))
         assertTrue(build.contains("include(\"medicine_canonical/release.py\")"))
         assertTrue(updater.contains("ReferenceUpdateStatus.STAGED"))
         assertTrue(updater.contains(".artifact-"))
+        assertTrue(bootstrapper.contains("ReferenceOperationCoordinator.exclusive"))
+        assertTrue(updater.contains("ReferenceOperationCoordinator.exclusive"))
+        assertTrue(coordinator.contains("ReentrantLock"))
+        assertTrue(activity.contains("RejectedExecutionException"))
+        assertTrue(activity.contains("startupExecutor.isShutdown"))
         assertTrue(source.contains("Range"))
         assertTrue(source.contains("Content-Range"))
         assertTrue(source.contains("HttpsURLConnection"))
@@ -115,7 +130,8 @@ class ManifestContractTest {
         assertTrue(strings.contains("<string name=\"app_name\">약봄</string>"))
         assertFalse(strings.contains(">Medicine</string>"))
         assertTrue(activity.contains("Log.e(TAG, \"Application startup failed\", error)"))
-        assertTrue(activity.contains("앱 데이터를 준비하지 못했습니다.\\n앱을 다시 실행해주세요."))
+        assertTrue(activity.contains("앱 데이터를 준비하지 못했습니다.\\n다시 시도해주세요."))
+        assertTrue(activity.contains("다시 시도"))
         assertFalse(activity.contains("\${error.message"))
     }
 

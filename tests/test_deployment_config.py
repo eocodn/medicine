@@ -88,18 +88,31 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("--label bug", incident)
         self.assertIn("actions/runs/${GITHUB_RUN_ID}", incident)
 
-    def test_android_release_defaults_to_r2_dev_reference_updates_while_debug_stays_off(self) -> None:
+    def test_android_debug_and_release_default_to_r2_dev_reference_bootstrap(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
 
         self.assertIn("https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/", gradle)
         self.assertIn("REFERENCE_UPDATE_BASE_URL", gradle)
         self.assertIn("releaseReferenceUpdateBaseUrl", gradle)
+        self.assertIn("effectiveReferenceUpdateBaseUrl", gradle)
         self.assertIn("debug", gradle)
         self.assertIn("release", gradle)
         self.assertIn("r2.dev", gradle)
         self.assertIn("MEDICINE_REFERENCE_UPDATE_BASE_URL", compose)
         self.assertIn("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", compose)
+
+    def test_android_bootstrap_schema_matches_embedded_runtime_schema(self) -> None:
+        kotlin = Path(
+            "android/app/src/main/java/com/medicine/android/ReferenceRuntimeAdapters.kt"
+        ).read_text()
+        python_runtime = Path("medicine_app/canonical_runtime.py").read_text()
+
+        android_schema = re.search(r'const val SCHEMA_VERSION = "([0-9]+)"', kotlin)
+        runtime_schema = re.search(r'_CANONICAL_SCHEMA_VERSION = "([0-9]+)"', python_runtime)
+        self.assertIsNotNone(android_schema)
+        self.assertIsNotNone(runtime_schema)
+        self.assertEqual(android_schema.group(1), runtime_schema.group(1))
 
     def test_canonical_reviewed_corpora_are_included_in_built_package(self) -> None:
         config = tomllib.loads(Path("pyproject.toml").read_text())
@@ -134,14 +147,16 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertNotIn('include("medicine_canonical/mfds_remark_registry.py")', gradle)
         self.assertNotIn('include("medicine_canonical/data/mfds_remark_registry.tsv")', gradle)
 
-    def test_android_build_packages_canonical_snapshot_without_alias_refresh(self) -> None:
+    def test_android_build_does_not_generate_or_package_reference_snapshot(self) -> None:
         compose = Path("compose.yaml").read_text()
         build_script = Path("scripts/android_compose_build.sh").read_text()
         gradle = Path("android/app/build.gradle.kts").read_text()
-        self.assertIn("from medicine_canonical.mobile import build_mobile_database", build_script)
-        self.assertIn('build_mobile_database("data/db/canonical.sqlite", "data/db/mobile.sqlite")', build_script)
-        self.assertNotIn("ingredient-aliases --write", build_script)
-        self.assertNotIn("data/db/dur.sqlite", build_script)
+        self.assertNotIn("build_mobile_database", build_script)
+        self.assertNotIn("mobile.sqlite", build_script)
+        self.assertNotIn("mobile.manifest.json", build_script)
+        self.assertNotIn("PrepareMobileAssets", gradle)
+        self.assertNotIn("MEDICINE_MOBILE_DB", gradle)
+        self.assertNotIn("MEDICINE_MOBILE_MANIFEST", gradle)
         self.assertIn('command: ["sh", "/workspace/scripts/android_compose_build.sh"]', compose)
         self.assertIn("androidComponents", gradle)
         self.assertIn("addGeneratedSourceDirectory", gradle)
@@ -199,20 +214,20 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertNotIn("android-gradle-cache:/opt/gradle-cache", android_service)
         self.assertNotIn("\nvolumes:\n  android-gradle-cache:\n", compose)
 
-    def test_android_accepts_prebuilt_reference_inputs_outside_workspace(self) -> None:
+    def test_android_has_no_prebuilt_reference_asset_inputs(self) -> None:
         compose = Path("compose.yaml").read_text()
         gradle = Path("android/app/build.gradle.kts").read_text()
         build_script = Path("scripts/android_compose_build.sh").read_text()
         android_service = compose.split("\n  android:\n", 1)[1]
 
-        self.assertIn("MEDICINE_MOBILE_DB", gradle)
-        self.assertIn("MEDICINE_MOBILE_MANIFEST", gradle)
-        self.assertIn("MEDICINE_MOBILE_DB", android_service)
-        self.assertIn("MEDICINE_MOBILE_MANIFEST", android_service)
-        self.assertIn("Both MEDICINE_MOBILE_DB and MEDICINE_MOBILE_MANIFEST must be set together", build_script)
-        self.assertIn("Skipping mobile database build; using prebuilt reference inputs", build_script)
+        self.assertNotIn("MEDICINE_MOBILE_DB", gradle)
+        self.assertNotIn("MEDICINE_MOBILE_MANIFEST", gradle)
+        self.assertNotIn("MEDICINE_MOBILE_DB", android_service)
+        self.assertNotIn("MEDICINE_MOBILE_MANIFEST", android_service)
+        self.assertNotIn("mobile.sqlite", build_script)
+        self.assertNotIn("mobile.manifest.json", build_script)
 
-    def test_android_default_compose_build_executes_mobile_builder_before_gradle(self) -> None:
+    def test_android_default_compose_build_runs_gradle_without_mobile_builder(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         compose = (repo_root / "compose.yaml").read_text()
         android_service = compose.split("\n  android:\n", 1)[1]
@@ -224,17 +239,6 @@ class DeploymentConfigTest(unittest.TestCase):
             bin_dir = Path(temp_dir) / "bin"
             bin_dir.mkdir()
             log_path = Path(temp_dir) / "calls.log"
-            python_stub = bin_dir / "python3.12"
-            python_stub.write_text(
-                "#!/bin/sh\n"
-                "printf 'python-argc:%s\\n' \"$#\" >> \"$ANDROID_BUILD_TEST_LOG\"\n"
-                "index=1\n"
-                "for arg in \"$@\"; do\n"
-                "  printf 'python-arg%s:%s\\n' \"$index\" \"$arg\" >> \"$ANDROID_BUILD_TEST_LOG\"\n"
-                "  index=$((index + 1))\n"
-                "done\n"
-            )
-            python_stub.chmod(0o755)
             gradle_stub = bin_dir / "gradle"
             gradle_stub.write_text(
                 "#!/bin/sh\n"
@@ -243,8 +247,6 @@ class DeploymentConfigTest(unittest.TestCase):
             gradle_stub.chmod(0o755)
 
             env = os.environ.copy()
-            env.pop("MEDICINE_MOBILE_DB", None)
-            env.pop("MEDICINE_MOBILE_MANIFEST", None)
             env["ANDROID_BUILD_TEST_LOG"] = str(log_path)
             env["PATH"] = f"{bin_dir}:{env['PATH']}"
             result = subprocess.run(
@@ -259,14 +261,7 @@ class DeploymentConfigTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = log_path.read_text().splitlines()
 
-        self.assertEqual(calls[0], "python-argc:2")
-        self.assertEqual(calls[1], "python-arg1:-c")
-        self.assertIn("from medicine_canonical.mobile import build_mobile_database", calls[2])
-        self.assertIn(
-            'build_mobile_database("data/db/canonical.sqlite", "data/db/mobile.sqlite")',
-            calls[2],
-        )
-        self.assertEqual(calls[3], "gradle:--no-daemon testDebugUnitTest assembleDebug")
+        self.assertEqual(calls, ["gradle:--no-daemon testDebugUnitTest assembleDebug"])
 
     def test_local_web_packages_the_approved_on_device_ocr_runtime(self) -> None:
         compose = Path("compose.yaml").read_text()

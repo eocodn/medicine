@@ -1,36 +1,11 @@
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.file.FileSystemOperations
-import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import java.net.URI
 import javax.inject.Inject
-
-abstract class PrepareMobileAssets : DefaultTask() {
-    @get:Inject
-    abstract val fileSystemOperations: FileSystemOperations
-
-    @get:InputFile
-    abstract val mobileDatabase: RegularFileProperty
-
-    @get:InputFile
-    abstract val mobileManifest: RegularFileProperty
-
-    @get:OutputDirectory
-    abstract val outputDirectory: DirectoryProperty
-
-    @TaskAction
-    fun prepare() {
-        fileSystemOperations.sync {
-            from(mobileDatabase)
-            from(mobileManifest)
-            into(outputDirectory)
-        }
-    }
-}
 
 abstract class PrepareOcrAssets : DefaultTask() {
     @get:Inject
@@ -56,13 +31,6 @@ plugins {
     id("com.chaquo.python")
 }
 
-val mobileDatabaseOverride = System.getenv("MEDICINE_MOBILE_DB")?.takeIf { it.isNotBlank() }
-val mobileManifestOverride = System.getenv("MEDICINE_MOBILE_MANIFEST")?.takeIf { it.isNotBlank() }
-require((mobileDatabaseOverride == null) == (mobileManifestOverride == null)) {
-    "Both MEDICINE_MOBILE_DB and MEDICINE_MOBILE_MANIFEST must be set together"
-}
-val mobileDatabaseFile = rootProject.file(mobileDatabaseOverride ?: "../data/db/mobile.sqlite")
-val mobileManifestFile = rootProject.file(mobileManifestOverride ?: "../data/db/mobile.manifest.json")
 val referenceUpdateBaseUrlOverride = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")?.trim()?.takeIf { it.isNotEmpty() }
 val defaultReleaseReferenceUpdateBaseUrl = "https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/"
 val releaseReferenceUpdateBaseUrl = System.getenv("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL")
@@ -88,13 +56,7 @@ if (releaseReferenceUpdateBaseUrl.isNotEmpty()) {
         "MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL must use the development r2.dev endpoint"
     }
 }
-val debugReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride.orEmpty()
-val releaseEffectiveReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride ?: releaseReferenceUpdateBaseUrl
-val prepareMobileAssets = tasks.register<PrepareMobileAssets>("prepareMobileAssets") {
-    mobileDatabase.set(layout.file(providers.provider { mobileDatabaseFile }))
-    mobileManifest.set(layout.file(providers.provider { mobileManifestFile }))
-    outputDirectory.set(layout.buildDirectory.dir("generated/mobileAssets"))
-}
+val effectiveReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride ?: releaseReferenceUpdateBaseUrl
 
 val ocrAssetsDirectory = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
     .orElse("/opt/medicine-ocr-assets")
@@ -121,10 +83,10 @@ android {
 
     buildTypes {
         getByName("debug") {
-            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$debugReferenceUpdateBaseUrl\"")
+            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$effectiveReferenceUpdateBaseUrl\"")
         }
         getByName("release") {
-            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$releaseEffectiveReferenceUpdateBaseUrl\"")
+            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$effectiveReferenceUpdateBaseUrl\"")
         }
     }
 
@@ -149,7 +111,6 @@ androidComponents {
             "Android assets source API is unavailable for ${variant.name}"
         }
         assets.addStaticSourceDirectory(rootProject.file("../medicine_app/static").absolutePath)
-        assets.addGeneratedSourceDirectory(prepareMobileAssets, PrepareMobileAssets::outputDirectory)
         assets.addGeneratedSourceDirectory(prepareOcrAssets, PrepareOcrAssets::outputDirectory)
     }
 }
