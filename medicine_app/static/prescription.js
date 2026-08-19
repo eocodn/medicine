@@ -479,24 +479,40 @@ async function confirmAddMedication() {
     acknowledge_warnings: Boolean(state.warningToken),
     warning_token: state.warningToken,
   };
+  let created;
   try {
-    await api(`/api/people/${state.currentPersonId}/medications`, {
+    created = await api(`/api/people/${state.currentPersonId}/medications`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    state.pendingProduct = null;
-    state.pendingRequestId = null;
-    state.pendingOcrDraft = null;
-    state.pendingOcrPersonId = null;
-    state.warningToken = null;
-    state.reviewedDraftKey = null;
-    closeSheets();
-    await loadDashboard();
-    renderAll();
-    showScreen("meds");
   } catch (error) {
     if (handleConfirmationRequired(error, "confirm-add-med")) return;
     toast(error.message);
+    return;
+  }
+
+  const currentDashboard = state.dashboard || {};
+  const currentMedications = currentDashboard.medications || [];
+  state.dashboard = {
+    ...currentDashboard,
+    medications: [...currentMedications.filter((item) => item.id !== created.id), created],
+  };
+  state.pendingProduct = null;
+  state.pendingRequestId = null;
+  state.pendingOcrDraft = null;
+  state.pendingOcrPersonId = null;
+  state.warningToken = null;
+  state.reviewedDraftKey = null;
+  closeSheets();
+  renderAll();
+  showScreen("meds");
+
+  try {
+    await loadDashboard();
+    renderAll();
+  } catch (error) {
+    console.error("dashboard refresh after medication create failed", error);
+    toast("약은 저장됐지만 목록을 새로고침하지 못했어요. 앱을 다시 열면 저장된 약을 확인할 수 있어요.");
   }
 }
 

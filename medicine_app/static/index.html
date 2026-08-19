@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f6f7f4">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
   <title>약봄</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260817ux8">
+  <link rel="stylesheet" href="/static/styles.css?v=20260819ux1">
   <link rel="stylesheet" href="/static/prescription.css?v=20260817ux2">
 </head>
 <body>
@@ -98,7 +98,15 @@
     <form id="person-form" class="form-stack">
       <input name="notes" type="hidden">
       <label>이름<input name="name" required placeholder="예: 나, 엄마"></label>
-      <label>생년월일<input name="birth_date" type="date" min="1000-01-01" required></label>
+      <fieldset class="birth-date-group">
+        <legend>생년월일</legend>
+        <div class="birth-date-fields" role="group" aria-label="생년월일">
+          <input name="birth_year" type="number" inputmode="numeric" min="1000" required aria-label="출생 연도" placeholder="YYYY">
+          <select name="birth_month" required aria-label="출생 월"></select>
+          <select name="birth_day" required aria-label="출생 일"></select>
+        </div>
+        <input name="birth_date" type="hidden">
+      </fieldset>
       <label>성별
         <select name="sex" required>
           <option value="" selected disabled>선택하세요</option>
@@ -124,14 +132,29 @@
     </form>
   </section>
 
+  <section id="delete-person-sheet" class="bottom-sheet destructive-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="delete-person-title">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <div><p class="eyebrow">DELETE PROFILE</p><h2 id="delete-person-title">프로필을 삭제할까요?</h2></div>
+      <button class="icon-button" data-close-sheet type="button" aria-label="닫기">×</button>
+    </div>
+    <div class="delete-person-content">
+      <p id="delete-person-copy" class="muted"></p>
+      <div class="delete-person-actions">
+        <button class="secondary-button" data-close-sheet type="button">취소</button>
+        <button id="confirm-delete-person" class="danger-button" type="button">프로필 삭제</button>
+      </div>
+    </div>
+  </section>
+
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/static/native-api.js?v=20260817err1" defer></script>
   <script src="/static/dialog.js?v=20260817ux7" defer></script>
   <script src="/static/prescription-dur.js?v=20260818dur1" defer></script>
-  <script src="/static/prescription.js?v=20260818dur1" defer></script>
-  <script src="/static/people.js?v=20260817ux7" defer></script>
+  <script src="/static/prescription.js?v=20260819ux1" defer></script>
+  <script src="/static/people.js?v=20260819ux1" defer></script>
   <script src="/static/timeline.js?v=20260811b" defer></script>
-  <script src="/static/app.js?v=20260817ux7" defer></script>
+  <script src="/static/app.js?v=20260819ux1" defer></script>
   <script src="/static/ocr-review.js?v=20260817ux7" defer></script>
 </body>
 </html>

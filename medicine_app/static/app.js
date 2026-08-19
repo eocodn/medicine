@@ -13,6 +13,7 @@ const state = {
   reviewedDraftKey: null,
   editingMedicationId: null,
   editingPersonId: null,
+  pendingDeletePersonId: null,
   searchTimer: null,
   searchRequestId: 0,
 };
@@ -109,7 +110,6 @@ function showScreen(name) {
     else node.removeAttribute("aria-current");
   });
   $("#page-title").textContent = titles[name] || "약봄";
-  if (name === "search") setTimeout(() => $("#drug-query").focus(), 80);
 }
 
 function permitStatusLabel(value, raw) {
@@ -231,8 +231,8 @@ function renderHome() {
       ${(plan.prn_medications || []).length ? `<div class="prn-note"><strong>필요시 복용</strong>${plan.prn_medications.map((med) => escapeHtml(med.product_name)).join(" · ")}</div>` : ""}
     </div>`;
 
-  $$('[data-instance-taken]', root).forEach((button) => button.addEventListener("click", () => completeDoseInstance(button.dataset.instanceTaken, "taken")));
-  $$('[data-instance-skipped]', root).forEach((button) => button.addEventListener("click", () => completeDoseInstance(button.dataset.instanceSkipped, "skipped")));
+  $$('[data-instance-taken]', root).forEach((button) => button.addEventListener("click", () => completeDoseInstance(button.dataset.instanceTaken, "taken", button)));
+  $$('[data-instance-skipped]', root).forEach((button) => button.addEventListener("click", () => completeDoseInstance(button.dataset.instanceSkipped, "skipped", button)));
   $$('[data-instance-cancel]', root).forEach((button) => button.addEventListener("click", () => cancelDoseInstance(button.dataset.instanceCancel)));
 }
 
@@ -314,15 +314,46 @@ function renderMedications() {
   $$('[data-log-cancel]', historyRoot).forEach((button) => button.addEventListener("click", () => cancelDoseInstance(button.dataset.logCancel)));
 }
 
-async function completeDoseInstance(instanceId, status) {
+async function completeDoseInstance(instanceId, status, button = null) {
+  const originalText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "처리 중…";
+  }
+  let updated;
   try {
-    await api(`/api/dose-instances/${instanceId}`, {
+    updated = await api(`/api/dose-instances/${instanceId}`, {
       method: "POST",
       body: JSON.stringify({ status }),
     });
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = originalText;
+    }
+    toast(error.message);
+    return;
+  }
+
+  const localDose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
+  if (localDose) {
+    localDose.status = updated.status;
+    localDose.completed_at = updated.completed_at;
+    renderAll();
+  } else if (button) {
+    button.removeAttribute("aria-busy");
+    button.textContent = status === "taken" ? "✓ 저장됨" : "건너뜀 저장됨";
+  }
+
+  try {
     await loadDashboard();
     renderAll();
-  } catch (error) { toast(error.message); }
+  } catch (error) {
+    console.error("dashboard refresh after dose completion failed", error);
+    toast("복용 기록은 저장됐지만 화면을 새로고침하지 못했어요. 앱을 다시 열면 저장된 기록을 확인할 수 있어요.");
+  }
 }
 
 async function cancelDoseInstance(instanceId) {
