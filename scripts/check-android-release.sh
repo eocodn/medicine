@@ -18,7 +18,7 @@ versionName="$(sed -n 's/^versionName=//p' android/release.properties | head -n 
 versionCode="$(sed -n 's/^versionCode=//p' android/release.properties | head -n 1)"
 (
     cd android
-    gradle --no-daemon --dependency-verification strict testDebugUnitTest lintDebug assembleDebug
+    ./gradlew --no-daemon --dependency-verification strict testDebugUnitTest lintDebug assembleDebug
 )
 
 source_apk="android/app/build/outputs/apk/debug/app-debug.apk"

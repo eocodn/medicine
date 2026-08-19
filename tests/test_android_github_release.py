@@ -94,10 +94,38 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertNotIn("ANDROID_RELEASE_KEY_PASSWORD", workflow)
         self.assertIn("./scripts/current-android-release-tag.sh", workflow)
         self.assertIn("check-android-release.sh", workflow)
-        self.assertIn("Dockerfile.android", workflow)
+        self.assertIn("actions/setup-java@v4", workflow)
+        self.assertIn("actions/setup-node@v4", workflow)
+        self.assertIn("java-version: '17'", workflow)
+        self.assertIn("node-version: '22'", workflow)
+        self.assertIn('sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"', workflow)
+        self.assertIn("npm ci --ignore-scripts --no-audit --no-fund", workflow)
+        self.assertIn("fetch_assets.mjs", workflow)
+        self.assertIn("mobile/export_runtime.mjs", workflow)
+        self.assertIn("MEDICINE_OCR_ASSETS_DIR", workflow)
+        self.assertNotIn("docker ", workflow)
+        self.assertNotIn("Dockerfile.android", workflow)
         self.assertIn("actions/cache/save@v5", workflow)
         self.assertIn("android-release-${{ github.sha }}-${{ github.run_id }}-arm64-v8a", workflow)
         self.assertIn("dist", workflow)
+
+    def test_android_gradle_wrapper_is_pinned_and_checksum_verified(self) -> None:
+        gradlew = ROOT / "android" / "gradlew"
+        wrapper_jar = ROOT / "android" / "gradle" / "wrapper" / "gradle-wrapper.jar"
+        wrapper_jar_checksum = ROOT / "android" / "gradle" / "wrapper" / "gradle-wrapper.jar.sha256"
+        wrapper_properties = ROOT / "android" / "gradle" / "wrapper" / "gradle-wrapper.properties"
+
+        self.assertTrue(gradlew.is_file())
+        self.assertTrue(wrapper_jar.is_file())
+        self.assertTrue(wrapper_jar_checksum.is_file())
+        self.assertTrue(wrapper_properties.is_file())
+        properties = wrapper_properties.read_text()
+        self.assertIn("distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.1-bin.zip", properties)
+        self.assertRegex(properties, r"(?m)^distributionSha256Sum=[0-9a-f]{64}$")
+        self.assertRegex(wrapper_jar_checksum.read_text().strip(), r"^[0-9a-f]{64}  gradle-wrapper\.jar$")
+
+        workflow = (ROOT / ".github" / "workflows" / "android-release-check.yml").read_text()
+        self.assertIn("sha256sum -c gradle-wrapper.jar.sha256", workflow)
 
     def test_tag_release_restores_exact_validated_apk_without_rebuilding(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "android-release.yml").read_text()
@@ -125,7 +153,8 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn('workspace=$(CDPATH= cd "$(dirname "$0")/.." && pwd)', script)
         self.assertIn('cd "${workspace}"', script)
         self.assertIn("./scripts/verify-android-release-version.sh", script)
-        self.assertIn("testDebugUnitTest lintDebug assembleDebug", script)
+        self.assertIn("./gradlew --no-daemon --dependency-verification strict testDebugUnitTest lintDebug assembleDebug", script)
+        self.assertNotIn("\ngradle --no-daemon", script)
         self.assertNotIn("./scripts/android_release_build.sh", script)
         self.assertNotIn("MEDICINE_ANDROID_KEYSTORE", script)
         self.assertIn("medicine-${tag}-arm64-v8a.apk", script)
@@ -157,6 +186,7 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("does not rebuild", docs)
         self.assertIn("debug-signed", docs)
         self.assertIn("does not require GitHub signing secrets", docs)
+        self.assertIn("native GitHub-hosted Ubuntu runner", docs)
         self.assertNotIn("ANDROID_RELEASE_KEYSTORE_BASE64", docs)
         self.assertIn("v0.2.0", docs)
         self.assertIn("docs/android-releasing.md", readme)

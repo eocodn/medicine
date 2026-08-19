@@ -11,9 +11,50 @@ jobs:
     name: Check debug-signed Android arm64 release
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      MEDICINE_OCR_ASSETS_DIR: ${{ runner.temp }}/medicine-ocr-assets
     steps:
       - name: Check out selected ref
         uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: browser_ocr/package-lock.json
+
+      - name: Verify Gradle Wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd android/gradle/wrapper
+          sha256sum -c gradle-wrapper.jar.sha256
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Prepare OCR runtime assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd browser_ocr
+          npm ci --ignore-scripts --no-audit --no-fund
+          downloads="${RUNNER_TEMP}/medicine-ocr-downloads"
+          rm -rf "${downloads}" "${MEDICINE_OCR_ASSETS_DIR}"
+          mkdir -p "${downloads}"
+          node fetch_assets.mjs "${downloads}" detection
+          node mobile/export_runtime.mjs "${downloads}" "${MEDICINE_OCR_ASSETS_DIR}"
 
       - name: Resolve Android release version
         id: version
@@ -27,19 +68,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image="medicine-android-release:${GITHUB_SHA}"
-          docker build --file Dockerfile.android --tag "${image}" .
-
           rm -rf dist
           mkdir -p dist
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -e HOME=/tmp \
-            -e GRADLE_USER_HOME=/tmp/gradle-cache \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            "${image}" \
-            bash /workspace/scripts/check-android-release.sh \
-              "${{ steps.version.outputs.tag }}" /workspace/dist
+          ./scripts/check-android-release.sh \
+            "${{ steps.version.outputs.tag }}" "${GITHUB_WORKSPACE}/dist"
 
       - name: Preserve validated Android APK for this run
         uses: actions/cache/save@v5
