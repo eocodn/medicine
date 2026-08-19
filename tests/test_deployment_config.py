@@ -12,7 +12,11 @@ class DeploymentConfigTest(unittest.TestCase):
         workflow = Path(".github/workflows/reference-publish.yml").read_text()
 
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertNotIn("schedule:", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertIn("cron: '17 3 * * *'", workflow)
+        self.assertIn('timezone: "Asia/Seoul"', workflow)
+        self.assertIn("REFERENCE_PUBLISH_SCHEDULE_ENABLED", workflow)
+        self.assertIn('"$EVENT_NAME" == "schedule"', workflow)
         self.assertIn("concurrency:", workflow)
         self.assertIn("DATA_GO_KR_SERVICE_KEY", workflow)
         self.assertIn("R2_ACCESS_KEY_ID", workflow)
@@ -54,7 +58,22 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("canonical verify", workflow)
         self.assertIn("canonical substance-verify", workflow)
         self.assertIn("canonical mobile-build", workflow)
+        self.assertIn("r2-public-audit", workflow)
         self.assertIn("release-publish-r2", workflow)
+        self.assertLess(workflow.index("r2-public-audit"), workflow.index("release-publish-r2"))
+
+    def test_android_release_defaults_to_r2_dev_reference_updates_while_debug_stays_off(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        compose = Path("compose.yaml").read_text()
+
+        self.assertIn("https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/", gradle)
+        self.assertIn("REFERENCE_UPDATE_BASE_URL", gradle)
+        self.assertIn("releaseReferenceUpdateBaseUrl", gradle)
+        self.assertIn("debug", gradle)
+        self.assertIn("release", gradle)
+        self.assertIn("r2.dev", gradle)
+        self.assertIn("MEDICINE_REFERENCE_UPDATE_BASE_URL", compose)
+        self.assertIn("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", compose)
 
     def test_canonical_reviewed_corpora_are_included_in_built_package(self) -> None:
         config = tomllib.loads(Path("pyproject.toml").read_text())
@@ -66,6 +85,9 @@ class DeploymentConfigTest(unittest.TestCase):
         workflow = Path(".github/workflows/r2-smoke.yml").read_text()
 
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("actions/setup-python@v5", workflow)
+        self.assertIn("python-version: '3.13'", workflow)
         for secret in (
             "R2_ACCESS_KEY_ID",
             "R2_SECRET_ACCESS_KEY",
@@ -77,6 +99,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("head_object", workflow)
         self.assertIn("delete_object", workflow)
         self.assertIn("medicine-r2-smoke/", workflow)
+        self.assertIn("r2-public-audit", workflow)
 
     def test_android_packages_mfds_remark_runtime_registry(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()

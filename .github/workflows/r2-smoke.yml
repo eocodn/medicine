@@ -3,7 +3,8 @@ name: R2 smoke
 on:
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   private-bucket-write:
@@ -15,6 +16,9 @@ jobs:
       R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Validate required secrets
         shell: bash
         run: |
@@ -26,8 +30,13 @@ jobs:
             fi
           done
 
-      - name: Install S3 client
-        run: python3 -m pip install --disable-pip-version-check --no-cache-dir 'boto3>=1.34,<2'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install R2 tooling
+        run: python3 -m pip install --disable-pip-version-check --no-cache-dir . 'boto3>=1.34,<2'
 
       - name: Put, verify, and delete smoke object
         shell: bash
@@ -94,3 +103,6 @@ jobs:
 
           print(f"R2 private bucket smoke succeeded for {bucket}")
           PY
+
+      - name: Audit bucket namespace for development public access
+        run: medicine-canonical r2-public-audit --json
