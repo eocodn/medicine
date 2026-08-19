@@ -40,7 +40,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          sdk_root="${RUNNER_TEMP}/android-sdk"
+          archive="${RUNNER_TEMP}/commandlinetools-linux-13114758_latest.zip"
+          curl --fail --location --silent --show-error \
+            --output "${archive}" \
+            https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+          printf '%s  %s\n' \
+            '7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee' \
+            "${archive}" | sha256sum -c -
+          mkdir -p "${sdk_root}/cmdline-tools"
+          unzip -q "${archive}" -d "${sdk_root}/cmdline-tools"
+          mv "${sdk_root}/cmdline-tools/cmdline-tools" "${sdk_root}/cmdline-tools/latest"
+          sdkmanager="${sdk_root}/cmdline-tools/latest/bin/sdkmanager"
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "${sdk_root}" "${sdk_root}" >> "${GITHUB_ENV}"
+          printf '%s\n%s\n' \
+            "${sdk_root}/cmdline-tools/latest/bin" \
+            "${sdk_root}/platform-tools" >> "${GITHUB_PATH}"
+          set +o pipefail
+          yes | "${sdkmanager}" --licenses >/dev/null
+          license_status=${PIPESTATUS[1]}
+          set -o pipefail
+          test "${license_status}" -eq 0
+          "${sdkmanager}" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Prepare OCR runtime assets
         shell: bash
