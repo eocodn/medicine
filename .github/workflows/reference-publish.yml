@@ -206,3 +206,81 @@ jobs:
             --mobile-manifest data/db/mobile.manifest.json \
             --output-dir artifacts/reference-release \
             --json
+
+  incident:
+    if: ${{ always() && github.event_name == 'schedule' && vars.REFERENCE_PUBLISH_SCHEDULE_ENABLED == 'true' }}
+    needs: [sources, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCES_RESULT: ${{ needs.sources.result }}
+      PUBLISH_RESULT: ${{ needs.publish.result }}
+      INCIDENT_TITLE: "[automation] Reference DB scheduled publish failure"
+      INCIDENT_MARKER: "<!-- reference-publish-scheduled-incident -->"
+    steps:
+      - name: Manage scheduled publish incident
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          incident_number="$(
+            gh issue list \
+              --repo "$GITHUB_REPOSITORY" \
+              --state open \
+              --search 'in:title "Reference DB scheduled publish failure"' \
+              --limit 100 \
+              --json number,title,body \
+              --jq '[.[] | select(.title == "[automation] Reference DB scheduled publish failure" and ((.body // "") | contains("<!-- reference-publish-scheduled-incident -->")))] | .[0].number // ""'
+          )"
+
+          if [[ "$SOURCES_RESULT" == "success" && "$PUBLISH_RESULT" == "success" ]]; then
+            if [[ -z "$incident_number" ]]; then
+              exit 0
+            fi
+
+            recovery_body="$(mktemp)"
+            cat >"$recovery_body" <<EOF
+          Scheduled reference publication recovered successfully.
+
+          - Run: ${run_url}
+          - Commit: ${GITHUB_SHA}
+          - sources: ${SOURCES_RESULT}
+          - publish: ${PUBLISH_RESULT}
+          EOF
+            gh issue comment "$incident_number" --repo "$GITHUB_REPOSITORY" --body-file "$recovery_body"
+            gh issue close "$incident_number" --repo "$GITHUB_REPOSITORY" --reason completed
+            exit 0
+          fi
+
+          failure_body="$(mktemp)"
+          cat >"$failure_body" <<EOF
+          Scheduled reference publication failed or did not complete successfully.
+
+          - Run: ${run_url}
+          - Commit: ${GITHUB_SHA}
+          - Attempt: ${GITHUB_RUN_ATTEMPT}
+          - sources: ${SOURCES_RESULT}
+          - publish: ${PUBLISH_RESULT}
+
+          Inspect the linked Actions run for the failing step and traceback. The reference publisher remains fail-closed; the latest pointer is not advanced unless publication completes successfully.
+          EOF
+
+          if [[ -n "$incident_number" ]]; then
+            gh issue comment "$incident_number" --repo "$GITHUB_REPOSITORY" --body-file "$failure_body"
+            exit 0
+          fi
+
+          issue_body="$(mktemp)"
+          {
+            printf '%s\n\n' "$INCIDENT_MARKER"
+            cat "$failure_body"
+          } >"$issue_body"
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$INCIDENT_TITLE" \
+            --body-file "$issue_body" \
+            --label bug

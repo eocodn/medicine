@@ -62,6 +62,32 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("release-publish-r2", workflow)
         self.assertLess(workflow.index("r2-public-audit"), workflow.index("release-publish-r2"))
 
+    def test_scheduled_reference_publish_manages_one_github_failure_incident(self) -> None:
+        workflow = Path(".github/workflows/reference-publish.yml").read_text()
+        incident = workflow.split("\n  incident:\n", 1)[1]
+
+        self.assertIn("always()", incident)
+        self.assertIn("github.event_name == 'schedule'", incident)
+        self.assertIn("REFERENCE_PUBLISH_SCHEDULE_ENABLED == 'true'", incident)
+        self.assertIn("needs: [sources, publish]", incident)
+        self.assertIn("issues: write", incident)
+        self.assertIn("contents: read", incident)
+        self.assertNotIn("id-token: write", incident)
+        self.assertNotIn("R2_ACCESS_KEY_ID", incident)
+        self.assertNotIn("REFERENCE_SIGNING_KMS_KEY_VERSION", incident)
+        self.assertNotIn("secrets.", incident)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", incident)
+        self.assertIn("needs.sources.result", incident)
+        self.assertIn("needs.publish.result", incident)
+        self.assertIn("<!-- reference-publish-scheduled-incident -->", incident)
+        self.assertIn("[automation] Reference DB scheduled publish failure", incident)
+        self.assertIn("gh issue list", incident)
+        self.assertIn("gh issue create", incident)
+        self.assertIn("gh issue comment", incident)
+        self.assertIn("gh issue close", incident)
+        self.assertIn("--label bug", incident)
+        self.assertIn("actions/runs/${GITHUB_RUN_ID}", incident)
+
     def test_android_release_defaults_to_r2_dev_reference_updates_while_debug_stays_off(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
