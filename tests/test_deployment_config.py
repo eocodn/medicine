@@ -136,6 +136,31 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("releaseRequested", gradle)
         self.assertIn("requireReleaseEnvironment", gradle)
 
+    def test_android_aggregate_bundle_requires_release_environment(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        release_detection = gradle.split("val releaseRequested =", 1)[1].split(
+            "val releaseEnvironment =", 1
+        )[0]
+
+        self.assertIn('setOf("assemble", "build", "bundle")', release_detection)
+
+    def test_android_release_keystores_are_ignored_recursively(self) -> None:
+        gitignore = Path(".gitignore").read_text()
+
+        self.assertIn("android/**/*.jks", gitignore)
+        self.assertIn("android/**/*.keystore", gitignore)
+
+    def test_android_release_passwords_are_prompted_without_literal_secret_exports(self) -> None:
+        readme = Path("README.md").read_text()
+        release_section = readme.split("release 변형은", 1)[1].split("## 의료 정보 주의", 1)[0]
+
+        self.assertNotIn("export MEDICINE_ANDROID_KEYSTORE_PASSWORD='...'", release_section)
+        self.assertNotIn("export MEDICINE_ANDROID_KEY_PASSWORD='...'", release_section)
+        self.assertIn("read -r -s MEDICINE_ANDROID_KEYSTORE_PASSWORD", release_section)
+        self.assertIn("read -r -s MEDICINE_ANDROID_KEY_PASSWORD", release_section)
+        self.assertIn("export MEDICINE_ANDROID_KEYSTORE_PASSWORD", release_section)
+        self.assertIn("export MEDICINE_ANDROID_KEY_PASSWORD", release_section)
+
     def test_android_dependencies_are_locked_and_checksum_verified(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         self.assertIn("dependencyLocking", gradle)

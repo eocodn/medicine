@@ -66,7 +66,7 @@ fun requireReleaseEnvironment(): AndroidReleaseEnvironment {
 
 val releaseRequested = gradle.startParameter.taskNames.any { requested ->
     val taskName = requested.substringAfterLast(':')
-    taskName.contains("Release", ignoreCase = true) || taskName in setOf("assemble", "build")
+    taskName.contains("Release", ignoreCase = true) || taskName in setOf("assemble", "build", "bundle")
 }
 val releaseEnvironment = if (releaseRequested) requireReleaseEnvironment() else null
 

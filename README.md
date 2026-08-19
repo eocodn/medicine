@@ -355,10 +355,18 @@ release 변형은 배포 실수 방지를 위해 서명키와 버전을 명시�
 ```bash
 export MEDICINE_ANDROID_VERSION_CODE=2
 export MEDICINE_ANDROID_VERSION_NAME=0.3.0
-export MEDICINE_ANDROID_KEYSTORE_PASSWORD='...'
 export MEDICINE_ANDROID_KEY_ALIAS='...'
-export MEDICINE_ANDROID_KEY_PASSWORD='...'
 export ANDROID_RELEASE_KEYSTORE=/absolute/path/to/release.jks
+
+printf 'Android keystore password: '
+read -r -s MEDICINE_ANDROID_KEYSTORE_PASSWORD
+printf '\n'
+export MEDICINE_ANDROID_KEYSTORE_PASSWORD
+
+printf 'Android key password: '
+read -r -s MEDICINE_ANDROID_KEY_PASSWORD
+printf '\n'
+export MEDICINE_ANDROID_KEY_PASSWORD
 
 docker compose -p medicine_android_release build android
 docker compose -p medicine_android_release run --rm \
