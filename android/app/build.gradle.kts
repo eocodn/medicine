@@ -87,6 +87,12 @@ android {
         }
         getByName("release") {
             buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$effectiveReferenceUpdateBaseUrl\"")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 
@@ -123,6 +129,7 @@ chaquopy {
     sourceSets.getByName("main") {
         srcDir(rootProject.file(".."))
         include("medicine_app/**/*.py")
+        exclude("medicine_app/cli.py")
         include("medicine_reference/**/*.py")
         include("medicine_reference/data/mfds_remark_registry.tsv")
         include("medicine_canonical/__init__.py")
