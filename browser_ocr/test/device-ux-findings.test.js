@@ -70,6 +70,7 @@ function medicationAddContext() {
     showScreen: (name) => events.push(`screen:${name}`),
     closeSheets: () => events.push("close"),
     closeSheetsAfterMutation: () => events.push("close"),
+    markDashboardStale: () => { context.state.dashboardStale = true; events.push("stale"); },
     toast: (message) => events.push(`toast:${message}`),
     escapeHtml: (value) => String(value ?? ""),
     assessmentDetailsHtml: () => "",
@@ -99,7 +100,7 @@ test("birth date uses direct year month day selectors instead of a calendar-only
   assert.match(people, /setBirthDateFields/);
 });
 
-test("a committed medication remains visible when only the dashboard refresh fails", async () => {
+test("a committed medication remains in local state when only the dashboard refresh fails", async () => {
   const { context, events } = medicationAddContext();
 
   await context.confirmAddMedication();

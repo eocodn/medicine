@@ -11,8 +11,15 @@ function appContext() {
     innerHTML: "",
     querySelectorAll() { return []; },
   };
+  const medications = { innerHTML: "", querySelectorAll() { return []; } };
+  const history = { innerHTML: "", querySelectorAll() { return []; } };
   const document = {
-    querySelector(selector) { return selector === "#home-content" ? home : null; },
+    querySelector(selector) {
+      if (selector === "#home-content") return home;
+      if (selector === "#medications-list") return medications;
+      if (selector === "#dose-history") return history;
+      return null;
+    },
     querySelectorAll() { return []; },
     addEventListener() {},
   };
@@ -33,11 +40,15 @@ function appContext() {
     fetch: async () => { throw new Error("unexpected fetch"); },
   };
   vm.createContext(context);
+  const stateSource = fs.readFileSync(
+    path.join(__dirname, "../../medicine_app/static/app-state.js"), "utf8",
+  );
   const source = fs.readFileSync(
     path.join(__dirname, "../../medicine_app/static/app.js"), "utf8",
   );
+  vm.runInContext(stateSource, context);
   vm.runInContext(source, context);
-  return { context, home };
+  return { context, home, medications, history };
 }
 
 test("home surfaces active medications whose schedule information is missing", () => {
@@ -60,4 +71,18 @@ test("home surfaces active medications whose schedule information is missing", (
   assert.match(home.innerHTML, /일정없는약/);
   assert.match(home.innerHTML, /일정 정보 미입력/);
   assert.doesNotMatch(home.innerHTML, /오늘 예정된 복용이 없어요/);
+});
+
+
+test("stale dashboard state suppresses stale medication actions after a committed mutation", () => {
+  const { context, medications, history } = appContext();
+  vm.runInContext(`
+    state.dashboard = { medications: [{ id: "m1", product_name: "이미 종료된 약", revision: 1, active: true }] };
+    state.dashboardStale = true;
+    renderMedications();
+  `, context);
+
+  assert.match(medications.innerHTML, /변경사항은 저장됐어요/);
+  assert.doesNotMatch(medications.innerHTML, /이미 종료된 약|data-stop|data-edit/);
+  assert.equal(history.innerHTML, "");
 });

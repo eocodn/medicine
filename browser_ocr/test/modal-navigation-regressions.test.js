@@ -175,6 +175,7 @@ function screenContext() {
   };
   vm.createContext(context);
   vm.runInContext(source("dialog.js"), context);
+  vm.runInContext(source("app-state.js"), context);
   vm.runInContext(source("app.js"), context);
   return { context, meds, search, title, sourceButton, searchQuery };
 }
@@ -245,17 +246,186 @@ test("committed modal mutations distinguish refresh-only failure from mutation f
   const people = source("people.js");
   const prescription = source("prescription.js");
 
-  assert.match(app, /closeSheetsAfterMutation\(\);\s*try\s*\{\s*await loadDashboard\(\)/);
+  const appState = source("app-state.js");
+  assert.match(app, /reconcileCommittedMedication\(stopped\)/);
   assert.match(app, /dashboard refresh after medication stop failed/);
   assert.match(app, /복용은 종료됐지만 목록을 새로고침하지 못했어요/);
+  assert.match(appState, /function markDashboardStale/);
+  assert.match(appState, /function reconcileCommittedMedication/);
+  assert.doesNotMatch(appState, /function committedMedicationAssessmentFlags/);
 
-  assert.equal((people.match(/closeSheetsAfterMutation\(\);\s*try\s*\{\s*await loadPeople\(\)/g) || []).length, 2);
+  assert.equal((people.match(/closeSheetsAfterMutation\(\)/g) || []).length, 2);
   assert.match(people, /people refresh after profile save failed/);
   assert.match(people, /프로필은 저장됐지만 화면을 새로고침하지 못했어요/);
   assert.match(people, /people refresh after profile delete failed/);
   assert.match(people, /프로필은 삭제됐지만 화면을 새로고침하지 못했어요/);
 
-  assert.match(prescription, /closeSheetsAfterMutation\(\);\s*try\s*\{\s*await loadDashboard\(\)/);
+  assert.match(prescription, /reconcileCommittedMedication\(updated\)/);
   assert.match(prescription, /dashboard refresh after medication edit failed/);
   assert.match(prescription, /약은 수정됐지만 목록을 새로고침하지 못했어요/);
+});
+
+function committedMutationContext() {
+  const events = [];
+  const storage = new Map();
+  const context = {
+    localStorage: {
+      getItem() { return null; },
+      setItem(key, value) { storage.set(key, String(value)); },
+      removeItem(key) { storage.delete(key); },
+    },
+    document: {
+      activeElement: null,
+      visibilityState: "visible",
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {},
+    },
+    window: { addEventListener() {}, location: { search: "" }, MedicineLocalApi: null, MedicineOcrReview: null },
+    console: { ...console, error() {} },
+    URLSearchParams,
+    Intl,
+    Date,
+    setTimeout,
+    clearTimeout,
+    setInterval() {},
+    crypto,
+    CSS: { escape(value) { return String(value); } },
+    CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
+    FormData: class FormData {
+      constructor(form) { this.form = form; }
+      entries() { return Object.entries(this.form.formData || {})[Symbol.iterator](); }
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(source("dialog.js"), context);
+  vm.runInContext(source("app-state.js"), context);
+  vm.runInContext(source("app.js"), context);
+  vm.runInContext(source("people.js"), context);
+  vm.runInContext(source("prescription.js"), context);
+  context.closeSheetsAfterMutation = () => events.push("close");
+  context.renderAll = () => events.push("render");
+  context.showScreen = (name) => events.push(`screen:${name}`);
+  context.toast = (message) => events.push(`toast:${message}`);
+  context.syncBirthDateFields = () => {};
+  context.todayInKorea = () => "2026-08-19";
+  context.prescriptionPayloadFromForm = () => ({ dose_amount: 2, dose_unit: "정", frequency_per_day: 1 });
+  return {
+    context,
+    events,
+    storage,
+    setState(expression) { vm.runInContext(expression, context); },
+    read(expression) { return vm.runInContext(expression, context); },
+  };
+}
+
+test("profile edit keeps the committed person when refresh fails", async () => {
+  const harness = committedMutationContext();
+  harness.setState(`
+    state.people = [{ id: "p1", name: "이전 이름", birth_date: "1990-01-01", age: 36, sex: "male", pregnancy_status: "not_applicable", lactation_status: "not_applicable" }];
+    state.currentPersonId = "p1";
+    state.dashboard = { person: { id: "p1" }, medications: [] };
+    state.editingPersonId = "p1";
+  `);
+  harness.context.api = async () => ({
+    id: "p1", name: "새 이름", birth_date: "1990-01-01", age: 36, sex: "male",
+    pregnancy_status: "not_applicable", lactation_status: "not_applicable", profile_needs_review: false,
+  });
+  harness.context.loadPeople = async () => { throw new Error("refresh failed"); };
+  const form = {
+    formData: { name: "새 이름", birth_date: "1990-01-01", sex: "male" },
+    reset() {},
+  };
+
+  await harness.context.submitPerson({ preventDefault() {}, currentTarget: form });
+
+  assert.equal(harness.read("state.people[0].name"), "새 이름");
+  assert.equal(harness.read("state.dashboardStale"), true);
+  assert.ok(harness.events.includes("screen:people"));
+});
+
+test("profile create selects the committed person without retaining the previous dashboard", async () => {
+  const harness = committedMutationContext();
+  harness.setState(`
+    state.people = [{ id: "p1", name: "기존", birth_date: "1990-01-01", age: 36, sex: "male" }];
+    state.currentPersonId = "p1";
+    state.dashboard = { person: { id: "p1" }, medications: [{ id: "old-med" }] };
+    state.editingPersonId = null;
+  `);
+  harness.context.api = async () => ({
+    id: "p2", name: "신규", birth_date: "2000-01-01", age: 26, sex: "male",
+    pregnancy_status: "not_applicable", lactation_status: "not_applicable", profile_needs_review: false,
+  });
+  harness.context.loadPeople = async () => { throw new Error("refresh failed"); };
+  const form = {
+    formData: { name: "신규", birth_date: "2000-01-01", sex: "male" },
+    reset() {},
+  };
+
+  await harness.context.submitPerson({ preventDefault() {}, currentTarget: form });
+
+  assert.equal(harness.read("state.currentPersonId"), "p2");
+  assert.equal(harness.read("state.people.some((person) => person.id === 'p2')"), true);
+  assert.equal(harness.read("state.dashboard === null"), true);
+  assert.equal(harness.read("state.dashboardStale"), true);
+});
+
+test("profile delete removes the committed person locally before refresh", async () => {
+  const harness = committedMutationContext();
+  harness.setState(`
+    state.people = [
+      { id: "p1", name: "삭제", birth_date: "1990-01-01", age: 36, sex: "male" },
+      { id: "p2", name: "유지", birth_date: "1991-01-01", age: 35, sex: "male" }
+    ];
+    state.currentPersonId = "p1";
+    state.dashboard = { person: { id: "p1" }, medications: [{ id: "m1" }] };
+    state.pendingDeletePersonId = "p1";
+  `);
+  harness.context.api = async () => ({ id: "p1", deleted: true });
+  harness.context.loadPeople = async () => { throw new Error("refresh failed"); };
+
+  await harness.context.confirmDeletePerson();
+
+  assert.equal(harness.read("state.people.some((person) => person.id === 'p1')"), false);
+  assert.equal(harness.read("state.currentPersonId"), "p2");
+  assert.equal(harness.read("state.dashboard === null"), true);
+  assert.equal(harness.read("state.dashboardStale"), true);
+});
+
+test("medication edit keeps authoritative revision and regimen when refresh fails", async () => {
+  const harness = committedMutationContext();
+  harness.setState(`
+    state.dashboard = { medications: [{ id: "m1", revision: 1, active: true, dosage_text: "1정", product_name: "약", dur_alert: true }] };
+    state.editingMedicationId = "m1";
+  `);
+  harness.context.api = async () => ({
+    id: "m1", revision: 2, active: true, dosage_text: "2정", product_name: "약",
+    schedules: [], assessment: { dur_checks: [], requires_review: false },
+  });
+  harness.context.loadDashboard = async () => { throw new Error("refresh failed"); };
+
+  await harness.context.confirmEditMedication();
+
+  assert.equal(harness.read("state.dashboard.medications[0].revision"), 2);
+  assert.equal(harness.read("state.dashboard.medications[0].dosage_text"), "2정");
+  assert.equal(harness.read("state.dashboardStale"), true);
+  assert.ok(harness.events.includes("screen:meds"));
+});
+
+test("medication stop removes the committed inactive medication before refresh", async () => {
+  const harness = committedMutationContext();
+  harness.setState(`
+    state.dashboard = { medications: [{ id: "m1", revision: 1, active: true, dosage_text: "1정", product_name: "약" }] };
+    state.pendingStopMedicationId = "m1";
+  `);
+  harness.context.api = async () => ({ id: "m1", revision: 2, active: false, product_name: "약", schedules: [] });
+  harness.context.loadDashboard = async () => { throw new Error("refresh failed"); };
+
+  await harness.context.confirmStopMedication();
+
+  assert.equal(harness.read("state.dashboard.medications.length"), 0);
+  assert.equal(harness.read("state.dashboardStale"), true);
+  assert.ok(harness.events.includes("screen:meds"));
 });

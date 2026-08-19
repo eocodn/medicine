@@ -451,8 +451,9 @@ async function confirmEditMedication() {
   const medication = (state.dashboard?.medications || []).find((item) => item.id === state.editingMedicationId);
   if (!medication) return;
   const draft = prescriptionPayloadFromForm();
+  let updated;
   try {
-    await api(`/api/medications/${medication.id}`, {
+    updated = await api(`/api/medications/${medication.id}`, {
       method: "PATCH",
       body: JSON.stringify({
         expected_revision: medication.revision,
@@ -467,16 +468,21 @@ async function confirmEditMedication() {
     return;
   }
 
+  reconcileCommittedMedication(updated);
+  markDashboardStale();
   state.editingMedicationId = null;
   state.warningToken = null;
   state.reviewedDraftKey = null;
   closeSheetsAfterMutation();
+  renderAll();
+  showScreen("meds", { focus: true });
   try {
     await loadDashboard();
     renderAll();
-    showScreen("meds", { focus: true });
   } catch (error) {
     console.error("dashboard refresh after medication edit failed", error);
+    markDashboardStale();
+    renderAll();
     toast("약은 수정됐지만 목록을 새로고침하지 못했어요. 앱을 다시 열면 최신 복용 정보를 확인할 수 있어요.");
   }
 }
@@ -522,6 +528,7 @@ async function confirmAddMedication() {
   state.pendingOcrPersonId = null;
   state.warningToken = null;
   state.reviewedDraftKey = null;
+  markDashboardStale();
   closeSheetsAfterMutation();
   renderAll();
   showScreen("meds", { focus: true });
@@ -531,6 +538,8 @@ async function confirmAddMedication() {
     renderAll();
   } catch (error) {
     console.error("dashboard refresh after medication create failed", error);
+    markDashboardStale();
+    renderAll();
     toast("약은 저장됐지만 목록을 새로고침하지 못했어요. 앱을 다시 열면 저장된 약을 확인할 수 있어요.");
   }
 }

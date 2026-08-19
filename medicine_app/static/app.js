@@ -1,23 +1,3 @@
-const state = {
-  people: [],
-  currentPersonId: localStorage.getItem("medicine.currentPersonId"),
-  dashboard: null,
-  dashboardDate: null,
-  fullCatalog: false,
-  pendingProduct: null,
-  pendingRequestId: null,
-  pendingOcrDraft: null,
-  pendingOcrPersonId: null,
-  ocrSearchActive: false,
-  warningToken: null,
-  reviewedDraftKey: null,
-  editingMedicationId: null,
-  editingPersonId: null,
-  pendingDeletePersonId: null,
-  pendingStopMedicationId: null,
-  searchTimer: null,
-  searchRequestId: 0,
-};
 const titles = {
   home: "오늘의 복약",
   meds: "복용 관리",
@@ -168,6 +148,7 @@ function medicationRegimenSummaryHtml(med) {
 function currentPerson() {
   return state.people.find((person) => person.id === state.currentPersonId) || null;
 }
+
 async function loadPeople() {
   const previousPersonId = state.currentPersonId;
   state.people = await api("/api/people");
@@ -190,8 +171,10 @@ async function loadHealth() {
 }
 async function loadDashboard() {
   if (!state.currentPersonId) return;
-  state.dashboard = await api(`/api/people/${state.currentPersonId}/dashboard`);
-  state.dashboardDate = state.dashboard?.daily_plan?.date || todayInKorea();
+  const dashboard = await api(`/api/people/${state.currentPersonId}/dashboard`);
+  state.dashboard = dashboard;
+  state.dashboardDate = dashboard?.daily_plan?.date || todayInKorea();
+  state.dashboardStale = false;
 }
 
 function renderAll() {
@@ -213,6 +196,16 @@ function renderHome() {
         <button class="primary-button wide" id="home-add-person" type="button">프로필 추가</button>
       </div>`;
     $("#home-add-person").addEventListener("click", () => openPersonForm());
+    return;
+  }
+
+  if (state.dashboardStale) {
+    root.innerHTML = `
+      <div class="hero-card">
+        <p class="eyebrow">REFRESH REQUIRED</p>
+        <h2>${escapeHtml(person.name)}님의<br>변경사항은 저장됐어요.</h2>
+        <p class="muted">최신 복약 정보는 다시 확인이 필요합니다. 앱을 다시 열어 최신 상태를 확인해주세요.</p>
+      </div>`;
     return;
   }
 
@@ -279,6 +272,11 @@ function permitChangeCardHtml(medication) {
 function renderMedications() {
   const medsRoot = $("#medications-list");
   const historyRoot = $("#dose-history");
+  if (state.dashboardStale) {
+    medsRoot.innerHTML = `<div class="empty-state"><strong>변경사항은 저장됐어요</strong>최신 복약 정보는 다시 확인이 필요합니다. 앱을 다시 열어 최신 상태를 확인해주세요.</div>`;
+    historyRoot.innerHTML = "";
+    return;
+  }
   const meds = state.dashboard?.medications || [];
   const logs = state.dashboard?.recent_logs || [];
 
@@ -386,22 +384,28 @@ async function confirmStopMedication() {
   if (!medicationId) return;
   const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
   const query = medication ? `?expected_revision=${medication.revision}` : "";
+  let stopped;
   try {
-    await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
+    stopped = await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
   } catch (error) {
     toast(error.message);
     return;
   }
 
+  reconcileCommittedMedication(stopped);
+  markDashboardStale();
   state.pendingStopMedicationId = null;
   closeSheetsAfterMutation();
+  renderAll();
+  showScreen("meds", { focus: true });
   try {
     await loadDashboard();
     renderAll();
-    showScreen("meds", { focus: true });
     toast("복용을 종료했어요");
   } catch (error) {
     console.error("dashboard refresh after medication stop failed", error);
+    markDashboardStale();
+    renderAll();
     toast("복용은 종료됐지만 목록을 새로고침하지 못했어요. 앱을 다시 열면 최신 상태를 확인할 수 있어요.");
   }
 }
