@@ -9,12 +9,16 @@ from pathlib import Path
 from .inspection import verify_canonical_database
 
 
-MOBILE_DATA_POLICY_VERSION = "6"
+MOBILE_DATA_POLICY_VERSION = "7"
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
 )
 RUNTIME_VIEWS = ("product_rule_criteria",)
+COPIED_RUNTIME_TABLES = (
+    "canonical_meta", "source_snapshots", "products", "product_identifiers",
+    "product_flags", "ingredient_rules", "dose_criteria",
+)
 # Mobile queries are intentionally narrower than canonical build/linking queries.
 # Keep only indexes that serve runtime lookup paths; copying every canonical
 # builder index adds hundreds of MB without helping on-device reads.
@@ -26,42 +30,96 @@ RUNTIME_INDEXES = (
 MOBILE_RUNTIME_INDEX_DDL = {
     "idx_product_rules_runtime": (
         "CREATE INDEX idx_product_rules_runtime "
-        "ON product_rules(item_seq, category, paired_item_seq)"
+        "ON mobile_product_rules(item_seq, category_text_id, paired_item_seq)"
     ),
 }
 
-# The canonical DB enforces source-row uniqueness with a persistent UNIQUE
-# b-tree because build/linking code mutates that database. The installed mobile
-# DB is immutable, so retaining that b-tree spends tens of MB without serving a
-# runtime lookup. Keep the same runtime-facing columns and stable rule ids, but
-# enforce source identity before copy instead of storing the constraint on-device.
-MOBILE_PRODUCT_RULES_DDL = """CREATE TABLE product_rules (
+# Product rules dominate the mobile DB and repeat a small vocabulary of source,
+# category, ingredient, form, detail and date strings hundreds of thousands of
+# times. Keep ITEM_SEQ strings directly in the lookup table because they are the
+# runtime identity and hot lookup keys, but dictionary-code the repeated payload.
+# A compatibility view named product_rules restores the canonical row shape so
+# the shared runtime SQL remains identical between canonical and mobile DBs.
+MOBILE_RULE_SOURCES_DDL = """CREATE TABLE mobile_rule_sources (
     id INTEGER PRIMARY KEY,
-    source_dataset_key TEXT NOT NULL REFERENCES source_snapshots(dataset_key),
-    source_row INTEGER NOT NULL,
-    category TEXT NOT NULL,
-    item_seq TEXT NOT NULL,
-    ingredient_code TEXT,
-    ingredient_name TEXT,
-    ingredient_name_en TEXT,
-    paired_item_seq TEXT,
-    paired_ingredient_code TEXT,
-    paired_ingredient_name TEXT,
-    paired_ingredient_name_en TEXT,
-    effect_name TEXT,
-    dosage_form TEXT,
-    details TEXT,
-    notification_date TEXT,
-    change_date TEXT
+    dataset_key TEXT NOT NULL UNIQUE REFERENCES source_snapshots(dataset_key)
 )"""
+MOBILE_RULE_TEXTS_DDL = """CREATE TABLE mobile_rule_texts (
+    id INTEGER PRIMARY KEY,
+    value TEXT NOT NULL UNIQUE
+)"""
+MOBILE_PRODUCT_RULES_DDL = """CREATE TABLE mobile_product_rules (
+    id INTEGER PRIMARY KEY,
+    source_dataset_id INTEGER NOT NULL REFERENCES mobile_rule_sources(id),
+    source_row INTEGER NOT NULL,
+    category_text_id INTEGER NOT NULL REFERENCES mobile_rule_texts(id),
+    item_seq TEXT NOT NULL,
+    ingredient_code_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    ingredient_name_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    ingredient_name_en_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    paired_item_seq TEXT,
+    paired_ingredient_code_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    paired_ingredient_name_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    paired_ingredient_name_en_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    effect_name_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    dosage_form_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    details_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    notification_date_text_id INTEGER REFERENCES mobile_rule_texts(id),
+    change_date_text_id INTEGER REFERENCES mobile_rule_texts(id)
+)"""
+MOBILE_PRODUCT_CRITERION_LINKS_DDL = """CREATE TABLE product_criterion_links (
+    product_rule_id INTEGER NOT NULL REFERENCES mobile_product_rules(id),
+    criterion_rule_id INTEGER NOT NULL REFERENCES ingredient_rules(id),
+    match_method TEXT NOT NULL CHECK(match_method IN ('mfds_ingredient_code','permit_composition','mfds_details_exact','mfds_unanimous_value')),
+    pair_orientation TEXT CHECK(pair_orientation IN ('forward','reverse') OR pair_orientation IS NULL),
+    PRIMARY KEY(product_rule_id, criterion_rule_id)
+) WITHOUT ROWID"""
+MOBILE_PRODUCT_RULES_VIEW_DDL = """CREATE VIEW product_rules AS
+SELECT
+    r.id,
+    src.dataset_key AS source_dataset_key,
+    r.source_row,
+    category.value AS category,
+    r.item_seq,
+    ingredient_code.value AS ingredient_code,
+    ingredient_name.value AS ingredient_name,
+    ingredient_name_en.value AS ingredient_name_en,
+    r.paired_item_seq,
+    paired_ingredient_code.value AS paired_ingredient_code,
+    paired_ingredient_name.value AS paired_ingredient_name,
+    paired_ingredient_name_en.value AS paired_ingredient_name_en,
+    effect_name.value AS effect_name,
+    dosage_form.value AS dosage_form,
+    details.value AS details,
+    notification_date.value AS notification_date,
+    change_date.value AS change_date
+FROM mobile_product_rules r
+JOIN mobile_rule_sources src ON src.id=r.source_dataset_id
+JOIN mobile_rule_texts category ON category.id=r.category_text_id
+LEFT JOIN mobile_rule_texts ingredient_code ON ingredient_code.id=r.ingredient_code_text_id
+LEFT JOIN mobile_rule_texts ingredient_name ON ingredient_name.id=r.ingredient_name_text_id
+LEFT JOIN mobile_rule_texts ingredient_name_en ON ingredient_name_en.id=r.ingredient_name_en_text_id
+LEFT JOIN mobile_rule_texts paired_ingredient_code ON paired_ingredient_code.id=r.paired_ingredient_code_text_id
+LEFT JOIN mobile_rule_texts paired_ingredient_name ON paired_ingredient_name.id=r.paired_ingredient_name_text_id
+LEFT JOIN mobile_rule_texts paired_ingredient_name_en ON paired_ingredient_name_en.id=r.paired_ingredient_name_en_text_id
+LEFT JOIN mobile_rule_texts effect_name ON effect_name.id=r.effect_name_text_id
+LEFT JOIN mobile_rule_texts dosage_form ON dosage_form.id=r.dosage_form_text_id
+LEFT JOIN mobile_rule_texts details ON details.id=r.details_text_id
+LEFT JOIN mobile_rule_texts notification_date ON notification_date.id=r.notification_date_text_id
+LEFT JOIN mobile_rule_texts change_date ON change_date.id=r.change_date_text_id"""
+MOBILE_RULE_TEXT_COLUMNS = (
+    "category", "ingredient_code", "ingredient_name", "ingredient_name_en",
+    "paired_ingredient_code", "paired_ingredient_name", "paired_ingredient_name_en",
+    "effect_name", "dosage_form", "details", "notification_date", "change_date",
+)
 
 
 def _dataset_id(con: sqlite3.Connection) -> str:
     digest = hashlib.sha256()
-    # The same official source snapshot can produce different runtime rows when
-    # import/filter semantics change. Keep that transformation generation in the
-    # release identity so a semantic data change cannot be mistaken for an
-    # idempotent rebuild of the previous mobile dataset.
+    # The same official source snapshot can produce different runtime rows or a
+    # different physical release when transformation policy changes. Keep that
+    # generation in the release identity so R2 cannot mistake the new output for
+    # an idempotent rebuild of the previous mobile dataset.
     digest.update(f"mobile-data-policy\0{MOBILE_DATA_POLICY_VERSION}\n".encode("utf-8"))
     rows = con.execute(
         "SELECT dataset_key,sha256,row_count FROM source_snapshots ORDER BY dataset_key"
@@ -94,6 +152,50 @@ def _assert_product_rule_source_identity_unique(con: sqlite3.Connection) -> None
             "product_rules source identity is not unique: "
             f"{duplicate[0]} row {duplicate[1]} appears {duplicate[2]} times"
         )
+
+
+def _populate_compact_product_rules(dst: sqlite3.Connection) -> None:
+    dst.execute(MOBILE_RULE_SOURCES_DDL)
+    dst.execute(MOBILE_RULE_TEXTS_DDL)
+    dst.execute(MOBILE_PRODUCT_RULES_DDL)
+    dst.execute(MOBILE_PRODUCT_CRITERION_LINKS_DDL)
+    dst.execute(
+        """INSERT INTO mobile_rule_sources(dataset_key)
+           SELECT DISTINCT source_dataset_key
+           FROM source_db.product_rules
+           ORDER BY source_dataset_key"""
+    )
+    text_union = " UNION ".join(
+        f"SELECT {column} AS value FROM source_db.product_rules WHERE {column} IS NOT NULL"
+        for column in MOBILE_RULE_TEXT_COLUMNS
+    )
+    dst.execute(
+        f"INSERT INTO mobile_rule_texts(value) "
+        f"SELECT DISTINCT value FROM ({text_union}) ORDER BY value"
+    )
+    text_id = lambda column: f"(SELECT id FROM mobile_rule_texts WHERE value=s.{column})"
+    dst.execute(
+        f"""INSERT INTO mobile_product_rules(
+               id,source_dataset_id,source_row,category_text_id,item_seq,
+               ingredient_code_text_id,ingredient_name_text_id,ingredient_name_en_text_id,
+               paired_item_seq,paired_ingredient_code_text_id,paired_ingredient_name_text_id,
+               paired_ingredient_name_en_text_id,effect_name_text_id,dosage_form_text_id,
+               details_text_id,notification_date_text_id,change_date_text_id
+           )
+           SELECT
+               s.id,
+               (SELECT id FROM mobile_rule_sources WHERE dataset_key=s.source_dataset_key),
+               s.source_row,{text_id('category')},s.item_seq,
+               {text_id('ingredient_code')},{text_id('ingredient_name')},{text_id('ingredient_name_en')},
+               s.paired_item_seq,{text_id('paired_ingredient_code')},{text_id('paired_ingredient_name')},
+               {text_id('paired_ingredient_name_en')},{text_id('effect_name')},{text_id('dosage_form')},
+               {text_id('details')},{text_id('notification_date')},{text_id('change_date')}
+           FROM source_db.product_rules s"""
+    )
+    dst.execute(
+        "INSERT INTO product_criterion_links SELECT * FROM source_db.product_criterion_links"
+    )
+    dst.execute(MOBILE_PRODUCT_RULES_VIEW_DDL)
 
 
 def build_mobile_database(
@@ -138,19 +240,16 @@ def build_mobile_database(
         dst = sqlite3.connect(temporary)
         try:
             dst.execute("PRAGMA foreign_keys=OFF")
-            for table in RUNTIME_TABLES:
-                ddl = (
-                    MOBILE_PRODUCT_RULES_DDL
-                    if table == "product_rules"
-                    else objects.get(("table", table))
-                )
+            for table in COPIED_RUNTIME_TABLES:
+                ddl = objects.get(("table", table))
                 if not ddl:
                     raise ValueError(f"canonical runtime table missing: {table}")
                 dst.execute(ddl)
             escaped = str(source.resolve()).replace("'", "''")
             dst.execute(f"ATTACH DATABASE '{escaped}' AS source_db")
-            for table in RUNTIME_TABLES:
+            for table in COPIED_RUNTIME_TABLES:
                 dst.execute(f'INSERT INTO "{table}" SELECT * FROM source_db."{table}"')
+            _populate_compact_product_rules(dst)
             dst.commit()
             dst.execute("DETACH DATABASE source_db")
             source_indexes = {

@@ -35,7 +35,13 @@ class MobileDatabaseTest(unittest.TestCase):
         try:
             tables = {row[0] for row in mobile.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("products", tables)
-            self.assertIn("product_rules", tables)
+            self.assertIn("mobile_product_rules", tables)
+            self.assertIn("mobile_rule_sources", tables)
+            self.assertIn("mobile_rule_texts", tables)
+            self.assertNotIn("product_rules", tables)
+            views = {row[0] for row in mobile.execute("SELECT name FROM sqlite_master WHERE type='view'")}
+            self.assertIn("product_rules", views)
+            self.assertIn("product_rule_criteria", views)
             self.assertNotIn("product_ingredient_criterion_links", tables)
             self.assertNotIn("product_ingredient_criterion_unresolved", tables)
             for legacy in ("product_dur", "ingredient_dur", "product_catalog", "product_code_bridge", "ingredient_aliases"):
@@ -93,7 +99,7 @@ class MobileDatabaseTest(unittest.TestCase):
                 str(row[2])
                 for row in con.execute("PRAGMA index_info('idx_product_rules_runtime')")
             ]
-            self.assertEqual(columns, ["item_seq", "category", "paired_item_seq"])
+            self.assertEqual(columns, ["item_seq", "category_text_id", "paired_item_seq"])
             pair = con.execute(
                 "SELECT item_seq,category,paired_item_seq FROM product_rules "
                 "WHERE paired_item_seq IS NOT NULL LIMIT 1"
@@ -118,6 +124,43 @@ class MobileDatabaseTest(unittest.TestCase):
             )
         self.assertIn("idx_product_rules_runtime", item_plan)
         self.assertIn("idx_product_rules_runtime", pair_plan)
+
+    def test_mobile_product_rules_uses_compact_physical_storage_with_compatibility_view(self) -> None:
+        build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
+        with sqlite3.connect(self.mobile_db) as con:
+            objects = {
+                str(row[0]): str(row[1])
+                for row in con.execute(
+                    "SELECT name,type FROM sqlite_master "
+                    "WHERE name IN ('product_rules','mobile_product_rules','mobile_rule_sources','mobile_rule_texts')"
+                )
+            }
+            physical_columns = {
+                str(row[1])
+                for row in con.execute("PRAGMA table_info('mobile_product_rules')")
+            }
+            runtime_columns = [
+                str(row[1])
+                for row in con.execute("PRAGMA table_info('product_rules')")
+            ]
+        self.assertEqual(objects["product_rules"], "view")
+        self.assertEqual(objects["mobile_product_rules"], "table")
+        self.assertEqual(objects["mobile_rule_sources"], "table")
+        self.assertEqual(objects["mobile_rule_texts"], "table")
+        self.assertIn("category_text_id", physical_columns)
+        self.assertIn("details_text_id", physical_columns)
+        self.assertNotIn("category", physical_columns)
+        self.assertNotIn("details", physical_columns)
+        self.assertEqual(
+            runtime_columns,
+            [
+                "id", "source_dataset_key", "source_row", "category", "item_seq",
+                "ingredient_code", "ingredient_name", "ingredient_name_en",
+                "paired_item_seq", "paired_ingredient_code", "paired_ingredient_name",
+                "paired_ingredient_name_en", "effect_name", "dosage_form", "details",
+                "notification_date", "change_date",
+            ],
+        )
 
     def test_mobile_build_rejects_duplicate_product_rule_source_identity(self) -> None:
         duplicate_source = self.canonical_db.with_name("canonical-duplicate-rule.sqlite")
@@ -159,10 +202,10 @@ class MobileDatabaseTest(unittest.TestCase):
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
         with sqlite3.connect(self.canonical_db) as source, sqlite3.connect(self.mobile_db) as mobile:
             source_rules = source.execute(
-                "SELECT id,source_dataset_key,source_row FROM product_rules ORDER BY id"
+                "SELECT * FROM product_rules ORDER BY id"
             ).fetchall()
             mobile_rules = mobile.execute(
-                "SELECT id,source_dataset_key,source_row FROM product_rules ORDER BY id"
+                "SELECT * FROM product_rules ORDER BY id"
             ).fetchall()
             source_links = source.execute(
                 "SELECT product_rule_id,criterion_rule_id,match_method,pair_orientation "
