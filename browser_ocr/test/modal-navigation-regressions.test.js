@@ -30,6 +30,10 @@ function dialogContext({ open = false } = {}) {
     tabIndex: -1,
     focus() { context.document.activeElement = this; },
   };
+  const pageTitle = {
+    tabIndex: -1,
+    focus() { context.document.activeElement = this; },
+  };
   const first = { classList: classList(), focus() { context.document.activeElement = this; } };
   const last = { classList: classList(), focus() { context.document.activeElement = this; } };
   const sheet = {
@@ -47,6 +51,7 @@ function dialogContext({ open = false } = {}) {
         if (selector === "#sheet-backdrop") return backdrop;
         if (selector === ".app-shell") return shell;
         if (selector === "#risk-sheet") return sheet;
+        if (selector === "#page-title") return pageTitle;
         return null;
       },
       querySelectorAll(selector) { return selector === ".bottom-sheet" ? [sheet] : []; },
@@ -60,7 +65,7 @@ function dialogContext({ open = false } = {}) {
   };
   vm.createContext(context);
   vm.runInContext(source("dialog.js"), context);
-  return { context, sheet, focusTarget, first, last, backdrop, shell, events };
+  return { context, sheet, focusTarget, pageTitle, first, last, backdrop, shell, events };
 }
 
 test("native back is consumed only when an app-owned sheet is open", () => {
@@ -93,6 +98,27 @@ test("modal focus trap contains reverse tabbing from the programmatic heading", 
   assert.equal(context.document.activeElement, last);
 });
 
+
+test("successful modal completion establishes stable focus before any refresh", () => {
+  const { context, pageTitle, sheet } = dialogContext({ open: true });
+  context.closeSheetsAfterMutation();
+  assert.equal(sheet.classList.contains("hidden"), true);
+  assert.equal(context.document.activeElement, pageTitle);
+});
+
+test("ordinary modal dismissal falls back when its opener was rerendered away", () => {
+  const { context, pageTitle } = dialogContext({ open: false });
+  const opener = {
+    isConnected: true,
+    focus() { context.document.activeElement = this; },
+  };
+  context.document.activeElement = opener;
+  context.openSheet("#risk-sheet");
+  opener.isConnected = false;
+  context.closeSheets();
+  assert.equal(context.document.activeElement, pageTitle);
+});
+
 function screenContext() {
   const nodes = {};
   const makeScreen = (name, active = false) => ({
@@ -115,6 +141,11 @@ function screenContext() {
     focus() { context.document.activeElement = this; },
   };
   const sourceButton = { screen: meds };
+  const searchQuery = {
+    focusCount: 0,
+    focus() { this.focusCount += 1; context.document.activeElement = this; },
+  };
+  nodes["#drug-query"] = searchQuery;
   const context = {
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
     document: {
@@ -145,7 +176,7 @@ function screenContext() {
   vm.createContext(context);
   vm.runInContext(source("dialog.js"), context);
   vm.runInContext(source("app.js"), context);
-  return { context, meds, search, title, sourceButton };
+  return { context, meds, search, title, sourceButton, searchQuery };
 }
 
 test("screen navigation moves focus out of a source screen that becomes hidden", () => {
@@ -162,6 +193,18 @@ test("explicit programmatic navigation can focus the stable page landmark", () =
   assert.equal(context.document.activeElement, title);
 });
 
+
+test("search box chrome focuses the input but clear-button taps do not", () => {
+  const { context, searchQuery } = screenContext();
+  const chromeTarget = { closest() { return null; } };
+  context.focusSearchFromBox({ target: chromeTarget });
+  assert.equal(searchQuery.focusCount, 1);
+
+  const clearTarget = { closest(selector) { return selector === "#drug-query-clear" ? this : null; } };
+  context.focusSearchFromBox({ target: clearTarget });
+  assert.equal(searchQuery.focusCount, 1);
+});
+
 test("shared UI owns search clear and medication-stop confirmation controls", () => {
   const index = source("index.html");
   const app = source("app.js");
@@ -170,6 +213,7 @@ test("shared UI owns search clear and medication-stop confirmation controls", ()
   assert.match(styles, /::-webkit-search-cancel-button/);
   assert.match(styles, /\.search-clear\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
   assert.match(app, /#drug-query-clear/);
+  assert.match(app, /\.search-box"\)\.addEventListener\("click", focusSearchFromBox\)/);
   assert.match(app, /dispatchEvent\(new Event\("input"/);
   assert.match(index, /id="stop-medication-sheet"/);
   assert.match(index, /id="confirm-stop-medication"/);
@@ -184,11 +228,34 @@ test("prescription rerenders explicitly restore modal focus", () => {
   assert.match(prescription, /data-remove-schedule-time[\s\S]{0,900}\.focus\(/);
 });
 
-test("successful modal flows defer focus restoration until after rerender", () => {
+test("successful modal flows establish stable focus before authoritative refresh", () => {
+  const app = source("app.js");
   const people = source("people.js");
   const prescription = source("prescription.js");
-  assert.match(people, /closeSheets\(\{\s*restoreFocus:\s*false\s*\}\)/);
+  assert.equal((people.match(/closeSheetsAfterMutation\(\)/g) || []).length, 2);
+  assert.equal((app.match(/closeSheetsAfterMutation\(\)/g) || []).length, 1);
+  assert.equal((prescription.match(/closeSheetsAfterMutation\(\)/g) || []).length, 2);
   assert.match(people, /showScreen\([^\n]+\{\s*focus:\s*true\s*\}/);
-  assert.match(prescription, /closeSheets\(\{\s*restoreFocus:\s*false\s*\}\)/);
   assert.match(prescription, /showScreen\("meds",\s*\{\s*focus:\s*true\s*\}\)/);
+});
+
+
+test("committed modal mutations distinguish refresh-only failure from mutation failure", () => {
+  const app = source("app.js");
+  const people = source("people.js");
+  const prescription = source("prescription.js");
+
+  assert.match(app, /closeSheetsAfterMutation\(\);\s*try\s*\{\s*await loadDashboard\(\)/);
+  assert.match(app, /dashboard refresh after medication stop failed/);
+  assert.match(app, /복용은 종료됐지만 목록을 새로고침하지 못했어요/);
+
+  assert.equal((people.match(/closeSheetsAfterMutation\(\);\s*try\s*\{\s*await loadPeople\(\)/g) || []).length, 2);
+  assert.match(people, /people refresh after profile save failed/);
+  assert.match(people, /프로필은 저장됐지만 화면을 새로고침하지 못했어요/);
+  assert.match(people, /people refresh after profile delete failed/);
+  assert.match(people, /프로필은 삭제됐지만 화면을 새로고침하지 못했어요/);
+
+  assert.match(prescription, /closeSheetsAfterMutation\(\);\s*try\s*\{\s*await loadDashboard\(\)/);
+  assert.match(prescription, /dashboard refresh after medication edit failed/);
+  assert.match(prescription, /약은 수정됐지만 목록을 새로고침하지 못했어요/);
 });

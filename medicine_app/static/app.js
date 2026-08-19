@@ -100,6 +100,11 @@ function resetOcrTransientState({ clearSearch = false } = {}) {
   updateSearchMode();
 }
 
+function focusSearchFromBox(event) {
+  if (event.target?.closest?.("#drug-query-clear")) return;
+  $("#drug-query")?.focus();
+}
+
 function showScreen(name, { focus = false } = {}) {
   const previousScreenNode = $(".screen.active");
   const previousScreen = previousScreenNode?.dataset.screen || null;
@@ -379,17 +384,26 @@ function stopMedication(medicationId) {
 async function confirmStopMedication() {
   const medicationId = state.pendingStopMedicationId;
   if (!medicationId) return;
+  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  const query = medication ? `?expected_revision=${medication.revision}` : "";
   try {
-    const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
-    const query = medication ? `?expected_revision=${medication.revision}` : "";
     await api(`/api/medications/${medicationId}${query}`, { method: "DELETE" });
-    state.pendingStopMedicationId = null;
-    closeSheets({ restoreFocus: false });
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+
+  state.pendingStopMedicationId = null;
+  closeSheetsAfterMutation();
+  try {
     await loadDashboard();
     renderAll();
     showScreen("meds", { focus: true });
     toast("복용을 종료했어요");
-  } catch (error) { toast(error.message); }
+  } catch (error) {
+    console.error("dashboard refresh after medication stop failed", error);
+    toast("복용은 종료됐지만 목록을 새로고침하지 못했어요. 앱을 다시 열면 최신 상태를 확인할 수 있어요.");
+  }
 }
 
 function formatTime(value) {
@@ -473,6 +487,7 @@ function bindEvents() {
   $("#sheet-backdrop").addEventListener("click", closeSheets);
   $$('[data-close-sheet]').forEach((button) => button.addEventListener("click", closeSheets));
   $("#confirm-stop-medication").addEventListener("click", confirmStopMedication);
+  $(".search-box").addEventListener("click", focusSearchFromBox);
   $("#drug-query-clear").addEventListener("click", () => {
     const query = $("#drug-query");
     if (!query.value) return;

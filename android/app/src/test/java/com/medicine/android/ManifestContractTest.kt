@@ -143,6 +143,8 @@ class ManifestContractTest {
         assertTrue(activity.contains("OnBackPressedCallback"))
         assertTrue(activity.contains("MedicineDialog?.handleNativeBack"))
         assertTrue(activity.contains("evaluateJavascript"))
+        assertTrue(activity.contains("backDispatchGate.tryBegin()"))
+        assertTrue(activity.contains("backDispatchGate.complete"))
         assertTrue(dialog.contains("function handleNativeBack"))
         assertTrue(dialog.contains("if (!activeSheet()) return false"))
     }

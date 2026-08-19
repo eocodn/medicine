@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCaptureUri: Uri? = null
     private var pendingCaptureFile: File? = null
-    private var backDispatchPending = false
+    private val backDispatchGate = BackDispatchGate()
     private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val startupRunning = AtomicBoolean(false)
     private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -75,17 +75,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleAppBack(callback: OnBackPressedCallback) {
-        if (backDispatchPending) return
         val view = webView
         if (view == null) {
             dispatchDefaultBack(callback)
             return
         }
-        backDispatchPending = true
+        if (!backDispatchGate.tryBegin()) return
         view.evaluateJavascript("window.MedicineDialog?.handleNativeBack?.() === true") { handled ->
-            backDispatchPending = false
-            if (handled == "true" || isFinishing || isDestroyed) return@evaluateJavascript
-            dispatchDefaultBack(callback)
+            val dispatchDefault = backDispatchGate.complete(handled, isFinishing || isDestroyed)
+            if (dispatchDefault) dispatchDefaultBack(callback)
         }
     }
 

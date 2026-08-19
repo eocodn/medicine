@@ -69,6 +69,7 @@ function medicationAddContext() {
     renderAll: () => events.push("render"),
     showScreen: (name) => events.push(`screen:${name}`),
     closeSheets: () => events.push("close"),
+    closeSheetsAfterMutation: () => events.push("close"),
     toast: (message) => events.push(`toast:${message}`),
     escapeHtml: (value) => String(value ?? ""),
     assessmentDetailsHtml: () => "",

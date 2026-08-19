@@ -65,6 +65,15 @@ function openSheet(selector) {
   setTimeout(() => focusSheetContent(sheet), 0);
 }
 
+function restorePreviousSheetFocus() {
+  const target = previousSheetFocus;
+  if (target?.focus && target.isConnected !== false) {
+    target.focus({ preventScroll: true });
+    if (document.activeElement === target) return true;
+  }
+  return focusPageTitle();
+}
+
 function closeSheets(options = {}) {
   const closingSheet = activeSheet();
   const restoreFocus = options?.restoreFocus !== false;
@@ -72,12 +81,18 @@ function closeSheets(options = {}) {
   document.querySelectorAll(".bottom-sheet").forEach((node) => node.classList.add("hidden"));
   document.querySelector(".app-shell").inert = false;
   document.removeEventListener("keydown", trapSheetFocus);
-  if (restoreFocus && previousSheetFocus?.focus) previousSheetFocus.focus({ preventScroll: true });
+  if (restoreFocus && closingSheet) restorePreviousSheetFocus();
   previousSheetFocus = null;
   if (closingSheet?.id) {
     document.dispatchEvent(new CustomEvent("medicine:sheet-closed", { detail: { id: closingSheet.id } }));
   }
   return Boolean(closingSheet);
+}
+
+function closeSheetsAfterMutation() {
+  const closed = closeSheets({ restoreFocus: false });
+  focusPageTitle();
+  return closed;
 }
 
 function handleNativeBack() {

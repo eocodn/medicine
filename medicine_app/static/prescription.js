@@ -461,16 +461,23 @@ async function confirmEditMedication() {
         warning_token: state.warningToken,
       }),
     });
-    state.editingMedicationId = null;
-    state.warningToken = null;
-    state.reviewedDraftKey = null;
-    closeSheets({ restoreFocus: false });
+  } catch (error) {
+    if (handleConfirmationRequired(error, "confirm-edit-med")) return;
+    toast(error.message);
+    return;
+  }
+
+  state.editingMedicationId = null;
+  state.warningToken = null;
+  state.reviewedDraftKey = null;
+  closeSheetsAfterMutation();
+  try {
     await loadDashboard();
     renderAll();
     showScreen("meds", { focus: true });
   } catch (error) {
-    if (handleConfirmationRequired(error, "confirm-edit-med")) return;
-    toast(error.message);
+    console.error("dashboard refresh after medication edit failed", error);
+    toast("약은 수정됐지만 목록을 새로고침하지 못했어요. 앱을 다시 열면 최신 복용 정보를 확인할 수 있어요.");
   }
 }
 
@@ -515,7 +522,7 @@ async function confirmAddMedication() {
   state.pendingOcrPersonId = null;
   state.warningToken = null;
   state.reviewedDraftKey = null;
-  closeSheets({ restoreFocus: false });
+  closeSheetsAfterMutation();
   renderAll();
   showScreen("meds", { focus: true });
 
