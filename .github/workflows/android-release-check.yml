@@ -11,8 +11,6 @@ jobs:
     name: Check debug-signed Android arm64 release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      MEDICINE_OCR_ASSETS_DIR: ${{ runner.temp }}/medicine-ocr-assets
     steps:
       - name: Check out selected ref
         uses: actions/checkout@v6
@@ -48,13 +46,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          runtime="${RUNNER_TEMP}/medicine-ocr-assets"
+          printf 'MEDICINE_OCR_ASSETS_DIR=%s\n' "${runtime}" >> "${GITHUB_ENV}"
           cd browser_ocr
           npm ci --ignore-scripts --no-audit --no-fund
           downloads="${RUNNER_TEMP}/medicine-ocr-downloads"
-          rm -rf "${downloads}" "${MEDICINE_OCR_ASSETS_DIR}"
+          rm -rf "${downloads}" "${runtime}"
           mkdir -p "${downloads}"
           node fetch_assets.mjs "${downloads}" detection
-          node mobile/export_runtime.mjs "${downloads}" "${MEDICINE_OCR_ASSETS_DIR}"
+          node mobile/export_runtime.mjs "${downloads}" "${runtime}"
 
       - name: Resolve Android release version
         id: version
