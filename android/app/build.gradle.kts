@@ -42,6 +42,15 @@ data class AndroidReleaseEnvironment(
     val keyPassword: String,
 )
 
+val releaseEnvironmentNames = listOf(
+    "MEDICINE_ANDROID_VERSION_CODE",
+    "MEDICINE_ANDROID_VERSION_NAME",
+    "MEDICINE_ANDROID_KEYSTORE_PATH",
+    "MEDICINE_ANDROID_KEYSTORE_PASSWORD",
+    "MEDICINE_ANDROID_KEY_ALIAS",
+    "MEDICINE_ANDROID_KEY_PASSWORD",
+)
+
 fun requireReleaseEnvironment(): AndroidReleaseEnvironment {
     fun required(name: String): String = System.getenv(name)
         ?.takeIf { it.isNotEmpty() }
@@ -64,11 +73,30 @@ fun requireReleaseEnvironment(): AndroidReleaseEnvironment {
     )
 }
 
-val releaseRequested = gradle.startParameter.taskNames.any { requested ->
-    val taskName = requested.substringAfterLast(':')
-    taskName.contains("Release", ignoreCase = true) || taskName in setOf("assemble", "build", "bundle")
+val releaseEnvironment = if (releaseEnvironmentNames.all { !System.getenv(it).isNullOrEmpty() }) {
+    requireReleaseEnvironment()
+} else {
+    null
 }
-val releaseEnvironment = if (releaseRequested) requireReleaseEnvironment() else null
+
+val verifyReleaseEnvironment = tasks.register("verifyReleaseEnvironment") {
+    group = "verification"
+    description = "Validates Android release version and signing inputs before release tasks run."
+    doLast {
+        val release = requireReleaseEnvironment()
+        require(File(release.keystorePath).isFile) {
+            "MEDICINE_ANDROID_KEYSTORE_PATH does not point to a readable file"
+        }
+    }
+}
+
+// Gradle accepts abbreviated task names (for example, `assRel`), so guard the
+// resolved release tasks rather than trying to infer intent from raw CLI names.
+tasks.configureEach {
+    if (name != verifyReleaseEnvironment.name && name.contains("Release", ignoreCase = true)) {
+        dependsOn(verifyReleaseEnvironment)
+    }
+}
 
 val referenceUpdateBaseUrlOverride = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")?.trim()?.takeIf { it.isNotEmpty() }
 val defaultReleaseReferenceUpdateBaseUrl = "https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/"
@@ -123,11 +151,7 @@ android {
     signingConfigs {
         create("release") {
             releaseEnvironment?.let { release ->
-                val keystore = File(release.keystorePath)
-                require(keystore.isFile) {
-                    "MEDICINE_ANDROID_KEYSTORE_PATH does not point to a readable file"
-                }
-                storeFile = keystore
+                storeFile = File(release.keystorePath)
                 storePassword = release.keystorePassword
                 keyAlias = release.keyAlias
                 keyPassword = release.keyPassword

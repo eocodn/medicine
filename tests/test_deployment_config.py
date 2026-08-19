@@ -133,22 +133,34 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("signingConfigs", gradle)
         release = gradle.split('getByName("release") {', 1)[1].split("\n        }", 1)[0]
         self.assertIn("signingConfig", release)
-        self.assertIn("releaseRequested", gradle)
         self.assertIn("requireReleaseEnvironment", gradle)
+        self.assertIn('tasks.register("verifyReleaseEnvironment")', gradle)
 
     def test_android_aggregate_bundle_requires_release_environment(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
-        release_detection = gradle.split("val releaseRequested =", 1)[1].split(
-            "val releaseEnvironment =", 1
-        )[0]
+        self.assertIn("tasks.configureEach", gradle)
+        self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
+        self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
 
-        self.assertIn('setOf("assemble", "build", "bundle")', release_detection)
+    def test_android_release_guard_uses_resolved_tasks_not_raw_cli_names(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+
+        self.assertNotIn("gradle.startParameter.taskNames", gradle)
+        self.assertIn('tasks.register("verifyReleaseEnvironment")', gradle)
+        self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
+        self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
 
     def test_android_release_keystores_are_ignored_recursively(self) -> None:
         gitignore = Path(".gitignore").read_text()
 
         self.assertIn("android/**/*.jks", gitignore)
         self.assertIn("android/**/*.keystore", gitignore)
+
+    def test_android_release_keystores_are_excluded_from_docker_context(self) -> None:
+        dockerignore = Path(".dockerignore").read_text()
+
+        self.assertIn("android/**/*.jks", dockerignore)
+        self.assertIn("android/**/*.keystore", dockerignore)
 
     def test_android_release_passwords_are_prompted_without_literal_secret_exports(self) -> None:
         readme = Path("README.md").read_text()
@@ -171,6 +183,9 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertTrue(lockfile.is_file())
         self.assertTrue(verification.is_file())
         self.assertIn("sha256", verification.read_text())
+
+        dockerfile = Path("Dockerfile.android").read_text()
+        self.assertIn("COPY android/gradle ./gradle", dockerfile)
 
     def test_android_sdk_archive_is_checksum_verified(self) -> None:
         dockerfile = Path("Dockerfile.android").read_text()

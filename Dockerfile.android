@@ -38,6 +38,7 @@ COPY --from=ocr-assets /out /opt/medicine-ocr-assets
 
 WORKDIR /workspace/android
 COPY android/settings.gradle.kts android/build.gradle.kts android/gradle.properties ./
+COPY android/gradle ./gradle
 COPY android/app ./app
 
 CMD ["gradle", "--no-daemon", "--dependency-verification", "strict", "testDebugUnitTest", "assembleDebug"]
