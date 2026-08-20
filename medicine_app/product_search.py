@@ -17,9 +17,12 @@ _TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _ASCII_UNIT_PATTERNS = (
-    (re.compile(r"(?<![a-z])(?:mcg|ug|μg)(?![a-z])", re.IGNORECASE), "ug"),
-    (re.compile(r"(?<![a-z])mg(?![a-z])", re.IGNORECASE), "mg"),
-    (re.compile(r"(?<![a-z])ml(?![a-z])", re.IGNORECASE), "ml"),
+    # After a numeric token, a known dosage unit is semantic even when export
+    # text is glued to it (e.g. `150mgCapsule`). This cannot match ordinary
+    # alphabetic words because the left boundary must be a digit.
+    (re.compile(r"(?:(?<=\d)(?:mcg|ug|μg)|(?<![a-z])(?:mcg|ug|μg)(?![a-z]))", re.IGNORECASE), "ug"),
+    (re.compile(r"(?:(?<=\d)mg|(?<![a-z])mg(?![a-z]))", re.IGNORECASE), "mg"),
+    (re.compile(r"(?:(?<=\d)ml|(?<![a-z])ml(?![a-z]))", re.IGNORECASE), "ml"),
 )
 _KOREAN_UNIT_PATTERNS = (
     (re.compile(r"마이크로(?:그램|그람)", re.IGNORECASE), "ug"),
@@ -30,7 +33,9 @@ _OCR_TRAILING_REGIMEN_RE = re.compile(
     r"(__unit_(?:mg|ug|ml)__)(?:\s*)(\d+(?:\.\d+)?)(?:\s*)(?:정|캡슐|포)\s*$",
     re.IGNORECASE,
 )
-_ENCLOSED_ALPHANUMERIC_RE = re.compile(r"[\u2460-\u24ff]")
+_ENCLOSED_MARKER_CANDIDATE_RE = re.compile(
+    r"[\u2460-\u24ff\u2776-\u2792\u3251-\u325f\u32b1-\u32bf\U0001f100]"
+)
 _COMPATIBILITY_RANGES = (
     (0x2070, 0x209F),  # superscripts/subscripts
     (0x2100, 0x214F),  # letterlike symbols
@@ -66,6 +71,7 @@ class ProductSearchQuery:
     text_tokens: tuple[str, ...]
     number_tokens: tuple[str, ...]
     unit_tokens: tuple[str, ...]
+    strength_atoms: tuple[tuple[str, str | None], ...]
 
     @property
     def structured(self) -> bool:
@@ -111,13 +117,18 @@ def _normalize_number(value: str) -> str:
 
 
 def _is_enclosed_numeric_marker(char: str) -> bool:
-    codepoint = ord(char)
-    if not 0x2460 <= codepoint <= 0x24FF:
-        return False
     normalized = unicodedata.normalize("NFKC", char)
-    return any(value.isdigit() for value in normalized) and not any(
+    if not any(value.isdigit() for value in normalized) or any(
         value.isalpha() for value in normalized
+    ):
+        return False
+    name = unicodedata.name(char, "")
+    numeric_name = "DIGIT" in name or "NUMBER" in name
+    enumeration_shape = any(
+        marker in name
+        for marker in ("CIRCLED", "PARENTHESIZED", "FULL STOP")
     )
+    return numeric_name and enumeration_shape
 
 
 def _replace_enclosed_numeric_marker(match: re.Match[str]) -> str:
@@ -126,7 +137,10 @@ def _replace_enclosed_numeric_marker(match: re.Match[str]) -> str:
 
 
 def _canonical_text(value: object) -> str:
-    raw = _ENCLOSED_ALPHANUMERIC_RE.sub(
+    # The regex is a cheap prefilter over Unicode blocks that contain enclosed
+    # numeric forms. Expensive Unicode semantic checks run only for those rare
+    # characters, not for every character in every candidate row.
+    raw = _ENCLOSED_MARKER_CANDIDATE_RE.sub(
         _replace_enclosed_numeric_marker,
         str(value or ""),
     )
@@ -179,9 +193,8 @@ def _build_compatibility_equivalents() -> dict[str, tuple[str, ...]]:
 
 _COMPATIBILITY_EQUIVALENTS = _build_compatibility_equivalents()
 _FULLWIDTH_BY_ASCII = {
-    unicodedata.normalize("NFKC", chr(codepoint)).casefold(): chr(codepoint)
-    for codepoint in range(0xFF01, 0xFF5F)
-    if len(unicodedata.normalize("NFKC", chr(codepoint)).casefold()) == 1
+    chr(codepoint): chr(codepoint + 0xFEE0)
+    for codepoint in range(0x21, 0x7F)
 }
 _EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST: dict[str, tuple[str, ...]] = {}
 for _key in _COMPATIBILITY_EQUIVALENTS:
@@ -245,6 +258,25 @@ def raw_candidate_variants(
     return tuple(variants)
 
 
+def raw_case_width_glob(token: str) -> str | None:
+    """Match any ASCII/fullwidth upper/lower spelling without variant explosion."""
+    token = str(token or "").casefold()
+    if not token or not token.isascii() or not token.isalnum():
+        return None
+    pieces: list[str] = []
+    for char in token:
+        if "a" <= char <= "z":
+            full_lower = _FULLWIDTH_BY_ASCII[char]
+            full_upper = _FULLWIDTH_BY_ASCII[char.upper()]
+            pieces.append(f"[{char}{char.upper()}{full_lower}{full_upper}]")
+            continue
+        if "0" <= char <= "9":
+            pieces.append(f"[{char}{_FULLWIDTH_BY_ASCII[char]}]")
+            continue
+        return None
+    return "*" + "".join(pieces) + "*"
+
+
 def parse_product_search_query(value: object, *, mode: str = "manual") -> ProductSearchQuery:
     mode = str(mode or "manual").strip().lower()
     if mode not in _SEARCH_MODES:
@@ -256,15 +288,26 @@ def parse_product_search_query(value: object, *, mode: str = "manual") -> Produc
     text_tokens: list[str] = []
     number_tokens: list[str] = []
     unit_tokens: list[str] = []
+    strength_atoms: list[tuple[str, str | None]] = []
+    previous_kind: str | None = None
     for match in _TOKEN_RE.finditer(normalized):
         unit = match.group(1)
         token = match.group(0).casefold()
         if unit:
-            unit_tokens.append(unit.casefold())
+            canonical_unit = unit.casefold()
+            unit_tokens.append(canonical_unit)
+            if previous_kind == "number":
+                number, _unit = strength_atoms[-1]
+                strength_atoms[-1] = (number, canonical_unit)
+            previous_kind = "unit"
         elif token[0].isdigit():
-            number_tokens.append(_normalize_number(token))
+            number = _normalize_number(token)
+            number_tokens.append(number)
+            strength_atoms.append((number, None))
+            previous_kind = "number"
         else:
             text_tokens.append(token)
+            previous_kind = "text"
     return ProductSearchQuery(
         original=original,
         mode=mode,
@@ -272,6 +315,7 @@ def parse_product_search_query(value: object, *, mode: str = "manual") -> Produc
         text_tokens=tuple(text_tokens),
         number_tokens=tuple(number_tokens),
         unit_tokens=tuple(unit_tokens),
+        strength_atoms=tuple(strength_atoms),
     )
 
 
@@ -284,6 +328,26 @@ def _ordered_subsequence(needle: tuple[str, ...], haystack: tuple[str, ...]) -> 
             cursor += 1
             if cursor == len(needle):
                 return True
+    return False
+
+
+def _ordered_strength_atoms(
+    needle: tuple[tuple[str, str | None], ...],
+    haystack: tuple[tuple[str, str | None], ...],
+) -> bool:
+    """Match exact numbers in order while binding an explicit query unit to that number."""
+    if not needle:
+        return True
+    cursor = 0
+    for candidate_number, candidate_unit in haystack:
+        query_number, query_unit = needle[cursor]
+        if candidate_number != query_number:
+            continue
+        if query_unit is not None and candidate_unit != query_unit:
+            continue
+        cursor += 1
+        if cursor == len(needle):
+            return True
     return False
 
 
@@ -353,9 +417,34 @@ def _ordered_text_match(
     return True, edit_count
 
 
-def _field_text(value: object) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
-    parsed = parse_product_search_query(value)
-    return "".join(parsed.text_tokens), parsed.number_tokens, parsed.unit_tokens
+def _field_text(
+    value: object,
+) -> tuple[
+    str,
+    tuple[str, ...],
+    tuple[tuple[str, str | None], ...],
+]:
+    text_tokens: list[str] = []
+    unit_tokens: list[str] = []
+    strength_atoms: list[tuple[str, str | None]] = []
+    previous_kind: str | None = None
+    for match in _TOKEN_RE.finditer(_canonical_text(value)):
+        unit = match.group(1)
+        token = match.group(0).casefold()
+        if unit:
+            canonical_unit = unit.casefold()
+            unit_tokens.append(canonical_unit)
+            if previous_kind == "number":
+                number, _bound_unit = strength_atoms[-1]
+                strength_atoms[-1] = (number, canonical_unit)
+            previous_kind = "unit"
+        elif token[0].isdigit():
+            strength_atoms.append((_normalize_number(token), None))
+            previous_kind = "number"
+        else:
+            text_tokens.append(token)
+            previous_kind = "text"
+    return "".join(text_tokens), tuple(unit_tokens), tuple(strength_atoms)
 
 
 def _match_text_field(
@@ -365,10 +454,10 @@ def _match_text_field(
     field: str,
     field_rank: int,
 ) -> ProductSearchMatch | None:
-    compact, field_numbers, field_units = _field_text(value)
+    compact, field_units, field_strength_atoms = _field_text(value)
     if not compact or not query.text_tokens:
         return None
-    if not _ordered_subsequence(query.number_tokens, field_numbers):
+    if not _ordered_strength_atoms(query.strength_atoms, field_strength_atoms):
         return None
     if not _ordered_subsequence(query.unit_tokens, field_units):
         return None
@@ -501,5 +590,6 @@ __all__ = [
     "fuzzy_candidate_fragments",
     "match_product_fields",
     "parse_product_search_query",
+    "raw_case_width_glob",
     "raw_candidate_variants",
 ]

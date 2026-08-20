@@ -23,6 +23,7 @@ class ProductSearchQueryTest(unittest.TestCase):
         spaced = parse_product_search_query(" 씬지록신 25 ㎍ ")
         compact = parse_product_search_query("씬지록신25mcg")
         ascii_before_form = parse_product_search_query("알로판400mg정")
+        ascii_before_latin = parse_product_search_query("Clindamycin150mgCapsule")
         thousands = parse_product_search_query("글루파 1,000 mg")
 
         self.assertEqual(spaced.text_tokens, ("씬지록신",))
@@ -34,6 +35,8 @@ class ProductSearchQueryTest(unittest.TestCase):
         self.assertEqual(ascii_before_form.text_tokens, ("알로판", "정"))
         self.assertEqual(ascii_before_form.number_tokens, ("400",))
         self.assertEqual(ascii_before_form.unit_tokens, ("mg",))
+        self.assertEqual(ascii_before_latin.text_tokens, ("clindamycin", "capsule"))
+        self.assertEqual(ascii_before_latin.strength_atoms, (("150", "mg"),))
         self.assertEqual(thousands.number_tokens, ("1000",))
         self.assertEqual(thousands.unit_tokens, ("mg",))
 
@@ -52,6 +55,26 @@ class ProductSearchQueryTest(unittest.TestCase):
         self.assertIsNotNone(exact)
         self.assertIsNone(collision)
 
+    def test_strength_atoms_keep_numbers_bound_to_their_units(self) -> None:
+        concentration = parse_product_search_query("보령듀리세프건조시럽 125mg/5ml")
+        shared_unit = parse_product_search_query("타진 10/5mg")
+
+        self.assertEqual(concentration.strength_atoms, (("125", "mg"), ("5", "ml")))
+        self.assertEqual(shared_unit.strength_atoms, (("10", None), ("5", "mg")))
+
+        self.assertIsNone(match_product_fields(
+            parse_product_search_query("보령듀리세프건조시럽 5 mg"),
+            product_name="보령듀리세프건조시럽125밀리그램/5밀리리터(세파드록실수화물)",
+        ))
+        self.assertIsNone(match_product_fields(
+            parse_product_search_query("보령듀리세프건조시럽 250 ml"),
+            product_name="보령듀리세프건조시럽250밀리그램/5밀리리터(세파드록실수화물)",
+        ))
+        self.assertIsNotNone(match_product_fields(
+            parse_product_search_query("콤보 10 5 mg"),
+            product_name="콤보정10mg/5mg",
+        ))
+
     def test_raw_candidate_variants_cover_nfkc_compatibility_equivalents(self) -> None:
         self.assertIn("Ⅱ", raw_candidate_variants("ii"))
         self.assertIn("ⅱ", raw_candidate_variants("ii"))
@@ -61,10 +84,13 @@ class ProductSearchQueryTest(unittest.TestCase):
 
     def test_compatibility_units_and_enclosed_markers_keep_search_semantics(self) -> None:
         parsed = parse_product_search_query("약150㎎①수출명150㎎Capsule②")
+        extended = parse_product_search_query("약㉑수출명5mg")
 
         self.assertEqual(parsed.number_tokens, ("150", "150"))
         self.assertEqual(parsed.unit_tokens, ("mg", "mg"))
         self.assertEqual(parsed.text_tokens, ("약", "수출명", "capsule"))
+        self.assertEqual(extended.number_tokens, ("5",))
+        self.assertEqual(extended.strength_atoms, (("5", "mg"),))
 
     def test_only_code_shaped_queries_use_identifier_candidate_lookup(self) -> None:
         self.assertTrue(parse_product_search_query("EDI-SYN-25").identifier_like)
@@ -230,6 +256,30 @@ class ProductSearchIntegrationTest(unittest.TestCase):
                 "풀위드정５밀리그램",
                 "Fullwidth Ingredient",
             )
+            add_product(
+                con,
+                "FULLWIDTH-LATIN-MIXED",
+                "ＡｂＣ정５mg",
+                "Fullwidth Latin Ingredient",
+            )
+            add_product(
+                con,
+                "CEF-125-5",
+                "보령듀리세프건조시럽125밀리그램/5밀리리터(세파드록실수화물)",
+                "Cefadroxil Hydrate",
+            )
+            add_product(
+                con,
+                "CEF-250-5",
+                "보령듀리세프건조시럽250밀리그램/5밀리리터(세파드록실수화물)",
+                "Cefadroxil Hydrate",
+            )
+            add_product(
+                con,
+                "COMBO-REPEATED-UNIT",
+                "콤보정10mg/5mg",
+                "Alpha 10mg/Beta 5mg",
+            )
         self.app = MedicationApp(self.canonical_db, self.personal_db)
 
     def tearDown(self) -> None:
@@ -285,6 +335,16 @@ class ProductSearchIntegrationTest(unittest.TestCase):
         self.assert_first("글루파 1,000 mg", "GLUPA-COMMA")
         self.assert_first("디3 베이스 10000", "D3-COMMA")
         self.assert_first("풀위드 5", "FULLWIDTH-STRENGTH")
+
+    def test_number_unit_association_rejects_concentration_cross_binding(self) -> None:
+        self.assertEqual(self.app.search_products("보령듀리세프건조시럽 5 mg", limit=10), [])
+        self.assertEqual(self.app.search_products("보령듀리세프건조시럽 250 ml", limit=10), [])
+        self.assert_first("보령듀리세프건조시럽 125 mg", "CEF-125-5")
+        self.assert_first("보령듀리세프건조시럽 5 ml", "CEF-125-5")
+        self.assert_first("콤보 10 5 mg", "COMBO-REPEATED-UNIT")
+
+    def test_fullwidth_latin_case_variants_remain_candidate_complete(self) -> None:
+        self.assert_first("ABC 5 mg", "FULLWIDTH-LATIN-MIXED")
 
     def test_punctuation_separated_text_uses_normalized_matching(self) -> None:
         self.assert_first("하트만-용액", "HARTMANN")
@@ -383,11 +443,16 @@ class ProductSearchIntegrationTest(unittest.TestCase):
 
     def test_nfkc_compatibility_spans_inside_text_tokens_retrieve_exact_product_name(self) -> None:
         square_unit = "동구염산클린다마이신캅셀150㎎[수출명:DongkooClindamycin150㎎Capsule]"
+        normalized_square_unit = "동구염산클린다마이신캅셀150mg[수출명:DongkooClindamycin150mgCapsule]"
         embedded_roman = "그린모노주250단위(건조FVⅢ:C단클론항체정제사람혈액응고제VⅢ:C인자)"
 
         self.assertIn(
             "SQUARE-UNIT-LATIN",
             [row["product_ref"] for row in self.app.search_products(square_unit, limit=10)],
+        )
+        self.assertIn(
+            "SQUARE-UNIT-LATIN",
+            [row["product_ref"] for row in self.app.search_products(normalized_square_unit, limit=10)],
         )
         self.assertIn(
             "EMBEDDED-ROMAN",

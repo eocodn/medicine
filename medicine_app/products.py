@@ -13,6 +13,7 @@ from .product_search import (
     fuzzy_candidate_fragments,
     match_product_fields,
     parse_product_search_query,
+    raw_case_width_glob,
     raw_candidate_variants,
 )
 
@@ -250,6 +251,10 @@ class ProductRepository:
                 for variant in raw_candidate_variants(token):
                     variant_clauses.append(f"p.{field} LIKE ?")
                     params.append(f"%{variant}%")
+                case_width_glob = raw_case_width_glob(token)
+                if case_width_glob:
+                    variant_clauses.append(f"p.{field} GLOB ?")
+                    params.append(case_width_glob)
                 text_clauses.append("(" + " OR ".join(variant_clauses) + ")")
             text_joiner = " OR " if fragment_mode else " AND "
             clauses.append("(" + text_joiner.join(text_clauses) + ")")
