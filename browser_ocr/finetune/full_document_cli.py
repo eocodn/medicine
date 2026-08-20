@@ -111,6 +111,37 @@ def _detector_profile(manifest_path: Path, model_name: str) -> dict[str, object]
     }
 
 
+def build_ocr_producer_profile(
+    args: argparse.Namespace,
+    recognizer: dict[str, object] | None = None,
+) -> dict[str, object]:
+    selected = recognizer or load_selected_recognizer(args.baseline_result)
+    manifest_path = Path(args.detector_manifest).resolve()
+    detector = _detector_profile(manifest_path, args.detector_model)
+    if args.detector_edge <= 0:
+        raise DatasetError("detector edge must be positive")
+    if args.detector_threads <= 0:
+        raise DatasetError("detector threads must be positive")
+    implementation = _implementation_profile()
+    return {
+        "schema_version": 2,
+        "baseline_result_sha256": _sha256_file(selected["result_path"]),
+        "recognizer_checkpoint_sha256": selected["checkpoint_sha256"],
+        "recognizer_config_sha256": selected["config_sha256"],
+        "recognizer_device": args.recognizer_device,
+        "detector_manifest_sha256": detector["manifest_sha256"],
+        "detector_model": args.detector_model,
+        "detector_edge": args.detector_edge,
+        "detector_threads": args.detector_threads,
+        "detector_asset_sha256": detector["asset_sha256"],
+        "implementation": {
+            key: value
+            for key, value in implementation.items()
+            if key not in {"parser", "parser_contract"}
+        },
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ocr-full-document")
     parser.add_argument("--image", required=True)
@@ -168,26 +199,17 @@ def _run_logged(command: list[str], *, cwd: Path, log_path: Path) -> None:
 
 
 def _profile(args: argparse.Namespace, image: Path, recognizer: dict[str, object]) -> dict[str, object]:
-    manifest_path = Path(args.detector_manifest).resolve()
-    detector = _detector_profile(manifest_path, args.detector_model)
-    if args.detector_edge <= 0:
-        raise DatasetError("detector edge must be positive")
-    if args.detector_threads <= 0:
-        raise DatasetError("detector threads must be positive")
+    producer = build_ocr_producer_profile(args, recognizer)
+    implementation = _implementation_profile()
     return {
-        "schema_version": 2,
+        **producer,
         "image_sha256": _sha256_file(image),
-        "baseline_result_sha256": _sha256_file(recognizer["result_path"]),
-        "recognizer_checkpoint_sha256": recognizer["checkpoint_sha256"],
-        "recognizer_config_sha256": recognizer["config_sha256"],
-        "recognizer_device": args.recognizer_device,
-        "detector_manifest_sha256": detector["manifest_sha256"],
-        "detector_model": args.detector_model,
-        "detector_edge": args.detector_edge,
-        "detector_threads": args.detector_threads,
-        "detector_asset_sha256": detector["asset_sha256"],
         "parser": BASELINE_ID,
-        "implementation": _implementation_profile(),
+        "implementation": {
+            **producer["implementation"],
+            "parser": implementation["parser"],
+            "parser_contract": implementation["parser_contract"],
+        },
     }
 
 

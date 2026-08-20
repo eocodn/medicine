@@ -129,6 +129,8 @@ class RealParserDataTest(unittest.TestCase):
             }
             draft = prepare_real_annotation(sample, runtime_result)
             self.assertEqual(draft["annotation_status"], "draft")
+            self.assertFalse(draft["gold_rows_reviewed"])
+            self.assertEqual(draft["provenance"], sample["provenance"])
             self.assertTrue(all(node["label_status"] == "unlabeled" for node in draft["observation"]["nodes"]))
             self.assertNotIn("parser", draft["observation"]["profile"])
             self.assertNotIn("parser", draft["observation"]["profile"]["implementation"])
@@ -136,10 +138,33 @@ class RealParserDataTest(unittest.TestCase):
             draft["observation"]["nodes"][0].update(label_status="labeled", semantic_role="product", association_group="m1")
             draft["observation"]["nodes"][1].update(label_status="labeled", semantic_role="dose", association_group="m1")
             draft["gold_rows"] = [{"gold_row_id": "m1", "product_query": "가나다정", "draft": {"dose_amount": 1, "dose_unit": "tablet"}}]
+            draft["gold_rows_reviewed"] = True
             completed = finalize_real_annotation(draft, expected_immutable_sha256=annotation_immutable_sha256(draft))
             self.assertEqual(completed["annotation_status"], "complete")
             self.assertEqual(completed["relations"][0]["label"], "same_medication")
             self.assertEqual(completed["source_kind"], "real_deidentified")
+            self.assertEqual(completed["provenance"], sample["provenance"])
+
+    def test_finalize_requires_explicit_image_gold_review_even_when_nodes_are_labeled(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = load_real_source_manifest(self._manifest(root))
+            sample = source.samples[0]
+            runtime_result = {
+                "status": "ok",
+                "profile": _runtime_profile(sample["image_sha256"]),
+                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                "regions": [{"index": 1, "text": "안내", "recognition_score": 0.98, "polygon": [[10, 10], [100, 10], [100, 35], [10, 35]]}],
+            }
+            draft = prepare_real_annotation(sample, runtime_result)
+            draft["observation"]["nodes"][0].update(label_status="labeled", semantic_role="other", association_group=None)
+            with self.assertRaisesRegex(ParserDatasetError, "gold.*review"):
+                finalize_real_annotation(draft, expected_immutable_sha256=annotation_immutable_sha256(draft))
+
+            draft["gold_rows_reviewed"] = True
+            completed = finalize_real_annotation(draft, expected_immutable_sha256=annotation_immutable_sha256(draft))
+            self.assertEqual(completed["gold_rows"], [])
+            self.assertTrue(completed["gold_rows_reviewed"])
 
     def test_finalize_rejects_unlabeled_node(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -172,6 +197,7 @@ class RealParserDataTest(unittest.TestCase):
             draft["observation"]["nodes"][0]["text"] = "변조된정"
             draft["observation"]["nodes"][0].update(label_status="labeled", semantic_role="product", association_group="m1")
             draft["gold_rows"] = [{"gold_row_id": "m1", "product_query": "가나다정", "draft": {}}]
+            draft["gold_rows_reviewed"] = True
             with self.assertRaisesRegex(ParserDatasetError, "immutable.*SHA"):
                 finalize_real_annotation(draft, expected_immutable_sha256=immutable_sha)
 

@@ -182,6 +182,8 @@ test("one document corpus materializes aligned detection recognition parsing and
     const parserValManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "val-synthetic-ocr", "manifest.json"), "utf8"));
     const parserOracleManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "oracle", "manifest.json"), "utf8"));
     assert.equal(parserTrainManifest.task, "medication_document_parser");
+    assert.equal(parserTrainManifest.schema_version, 2);
+    assert.match(parserTrainManifest.metadata_sha256, /^[0-9a-f]{64}$/);
     assert.equal(parserTrainManifest.document_count, corpus.samples.filter((sample) => sample.split === "train").length);
     assert.equal(parserValManifest.document_count, corpus.samples.filter((sample) => sample.split === "val").length);
     assert.equal(parserOracleManifest.document_count, corpus.samples.length);
@@ -189,6 +191,8 @@ test("one document corpus materializes aligned detection recognition parsing and
     assert.ok(parserTrainDocuments.every((item) => item.split === "train" && item.source_kind === "synthetic"));
     assert.ok(parserTrainDocuments.every((item) => item.observation.kind === "synthetic_ocr"));
     assert.ok(parserTrainDocuments.every((item) => item.annotation_status === "complete"));
+    assert.ok(parserTrainDocuments.every((item) => item.gold_rows_reviewed === true));
+    assert.ok(parsing.some((item) => item.expected_rows.some((row) => row.draft.meal_relation === "after_meal")));
 
     const firstParsing = parsing.find((sample) => sample.positive_edges.length > 0);
     assert.ok(firstParsing);

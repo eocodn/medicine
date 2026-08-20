@@ -6,13 +6,80 @@ function roleValue(text) {
   return match ? Number(match[0]) : null;
 }
 
-export function expectedRows(sample) {
+function normalizedTime(period, hourValue, minuteValue) {
+  let hour = Number(hourValue);
+  const minute = minuteValue ? Number(minuteValue) : 0;
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+  if (/^(오후|PM)$/iu.test(period)) {
+    if (hour < 12) hour += 12;
+  } else if (hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function parsedTimes(value) {
+  const text = String(value || "");
+  const found = [];
+  for (const match of text.matchAll(/(오전|오후)\s*(\d{1,2})(?:\s*시)?(?:\s*[:：]\s*(\d{2}))?/giu)) {
+    found.push(normalizedTime(match[1], match[2], match[3]));
+  }
+  for (const match of text.matchAll(/\b(AM|PM)\s*(\d{1,2})(?:\s*[:：]\s*(\d{2}))?\b/giu)) {
+    found.push(normalizedTime(match[1], match[2], match[3]));
+  }
+  if (/(?:복용|투약|투여|복약)\s*시간|schedule\s*times?/iu.test(text)) {
+    for (const match of text.matchAll(/(?:^|[^0-9])([01]?[0-9]|2[0-3])\s*[:：]\s*([0-5][0-9])(?![0-9])/gu)) {
+      found.push(`${String(Number(match[1])).padStart(2, "0")}:${match[2]}`);
+    }
+  }
+  return [...new Set(found.filter(Boolean))].sort();
+}
+
+function mealRelation(value) {
+  const text = String(value || "");
+  const candidates = [];
+  if (/식사\s*(?:와|와 함께|중)|식중/iu.test(text)) candidates.push("with_meal");
+  if (/식후|식사\s*후/iu.test(text)) candidates.push("after_meal");
+  if (/식전|식사\s*전/iu.test(text)) candidates.push("before_meal");
+  if (/공복|빈속/iu.test(text)) candidates.push("empty_stomach");
+  if (/식사\s*(?:무관|관계\s*없이)/iu.test(text)) candidates.push("regardless");
+  const unique = [...new Set(candidates)];
+  return unique.length === 1 ? unique[0] : null;
+}
+
+function administrationRoute(value) {
+  const text = String(value || "");
+  if (/점안|안약|ophthalm/iu.test(text)) return "ophthalmic";
+  if (/점이|귀에|otic/iu.test(text)) return "otic";
+  if (/점비|비강|nasal/iu.test(text)) return "nasal";
+  if (/흡입|inhal/iu.test(text)) return "inhaled";
+  if (/주사|inject/iu.test(text)) return "injection";
+  if (/외용|도포|바르|연고|크림|겔|로션|topical/iu.test(text)) return "topical";
+  if (/경구|복용|먹|oral/iu.test(text)) return "oral";
+  return null;
+}
+
+function regimenSemantics(region) {
+  const text = String(region.text || "");
+  const checkboxOptions = (text.match(/□/gu) || []).length;
+  return {
+    region_id: region.region_id,
+    schedule_times: parsedTimes(text),
+    meal_relation: checkboxOptions > 1 ? null : mealRelation(text),
+    administration_route: administrationRoute(text),
+    as_needed: checkboxOptions <= 1 && /필요시|필요\s*시|\bPRN\b|as\s+needed/iu.test(text),
+  };
+}
+
+function buildExpectedRows(sample, includeRegimenSemantics) {
   const groups = new Map();
   for (const region of sample.regions) {
-    if (!["product", "product_label", "dose", "frequency", "duration"].includes(region.semantic_role)) continue;
+    const supportedRoles = includeRegimenSemantics
+      ? ["product", "product_label", "dose", "frequency", "duration", "instruction", "schedule"]
+      : ["product", "product_label", "dose", "frequency", "duration"];
+    if (!supportedRoles.includes(region.semantic_role)) continue;
     if (region.association_group === "document") continue;
-    const group = groups.get(region.association_group) ?? { product_labels: [] };
+    const group = groups.get(region.association_group) ?? { product_labels: [], regimen_semantics: [] };
     if (region.semantic_role === "product_label") group.product_labels.push(region);
+    else if (["instruction", "schedule"].includes(region.semantic_role)) group.regimen_semantics.push(regimenSemantics(region));
     else group[region.semantic_role] = region;
     groups.set(region.association_group, group);
   }
@@ -58,6 +125,25 @@ export function expectedRows(sample) {
         evidence.prescription_days = [group.duration.region_id];
       }
     }
+    if (includeRegimenSemantics) {
+      const scheduleTimes = [...new Set(group.regimen_semantics.flatMap((item) => item.schedule_times))].sort();
+      if (scheduleTimes.length) {
+        draft.schedule_times = scheduleTimes;
+        evidence.schedule_times = group.regimen_semantics.filter((item) => item.schedule_times.length).map((item) => item.region_id);
+      }
+      for (const field of ["meal_relation", "administration_route"]) {
+        const candidates = [...new Set(group.regimen_semantics.map((item) => item[field]).filter(Boolean))];
+        if (candidates.length === 1) {
+          draft[field] = candidates[0];
+          evidence[field] = group.regimen_semantics.filter((item) => item[field] === candidates[0]).map((item) => item.region_id);
+        }
+      }
+      const asNeededEvidence = group.regimen_semantics.filter((item) => item.as_needed).map((item) => item.region_id);
+      if (asNeededEvidence.length) {
+        draft.as_needed = true;
+        evidence.as_needed = asNeededEvidence;
+      }
+    }
     rows.push({
       row_id: productEvidence[0].region_id,
       product_query: group.product.text.trim(),
@@ -67,6 +153,14 @@ export function expectedRows(sample) {
     });
   }
   return rows;
+}
+
+export function expectedRows(sample) {
+  return buildExpectedRows(sample, false);
+}
+
+export function parserTrainingRows(sample) {
+  return buildExpectedRows(sample, true);
 }
 
 export function positiveEdges(sample) {
@@ -115,7 +209,7 @@ export function buildParsingItems(corpus) {
       critical: region.critical,
     })),
     positive_edges: positiveEdges(sample),
-    expected_rows: expectedRows(sample),
+    expected_rows: parserTrainingRows(sample),
   }));
 }
 

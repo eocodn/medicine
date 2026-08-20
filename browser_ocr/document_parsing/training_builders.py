@@ -261,6 +261,7 @@ def _base_document(
         "observation": {"kind": observation_kind, "profile": dict(observation_profile), "nodes": normalized_nodes},
         "relations": build_relation_labels(normalized_nodes),
         "gold_rows": _gold_rows(sample),
+        "gold_rows_reviewed": True,
         "annotation_status": "complete",
     }
 

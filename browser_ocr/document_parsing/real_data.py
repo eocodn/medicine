@@ -86,6 +86,7 @@ def annotation_immutable_sha256(annotation: Mapping[str, Any]) -> str:
         "scenario_tags": annotation.get("scenario_tags"),
         "risk_tags": annotation.get("risk_tags"),
         "privacy": annotation.get("privacy"),
+        "provenance": annotation.get("provenance"),
         "observation": {
             "kind": observation.get("kind"),
             "profile": observation.get("profile"),
@@ -279,6 +280,7 @@ def prepare_real_annotation(sample: Mapping[str, Any], runtime_result: Mapping[s
         "scenario_tags": list(sample["scenario_tags"]),
         "risk_tags": list(sample["risk_tags"]),
         "privacy": {"contains_patient_data": False, "deidentified": True},
+        "provenance": dict(sample["provenance"]),
         "observation": {
             "kind": "runtime_ocr",
             "profile": runtime_observation_profile(
@@ -289,6 +291,7 @@ def prepare_real_annotation(sample: Mapping[str, Any], runtime_result: Mapping[s
         },
         "relations": [],
         "gold_rows": [],
+        "gold_rows_reviewed": False,
         "annotation_status": "draft",
     }
 
@@ -309,6 +312,8 @@ def finalize_real_annotation(
         raise ParserDatasetError("real annotation observation nodes must be a list")
     if any(not isinstance(node, Mapping) or node.get("label_status") == "unlabeled" for node in nodes):
         raise ParserDatasetError("real annotation still contains unlabeled nodes")
+    if annotation.get("gold_rows_reviewed") is not True:
+        raise ParserDatasetError("real annotation image gold review is not complete")
     document["relations"] = build_relation_labels(nodes)
     document["annotation_status"] = "complete"
     return normalize_parser_documents([document])[0]

@@ -94,9 +94,11 @@ Learned parser training does not consume the legacy rule-parser corpus directly.
 - `label_status=labeled` carries a role/group target, while split/merge observations spanning incompatible truth roles/groups are `ambiguous` and are masked from supervised role/relation loss;
 - unmatched detector boxes are explicit `other` negatives;
 - relations contain both `same_medication` positives and `different_medication` hard negatives for dose, frequency, duration, instruction, and medication-associated schedule nodes;
-- `gold_rows` are image-level truth and do not depend on which regions OCR happened to observe.
+- `gold_rows` are image-level truth and do not depend on which regions OCR happened to observe. Learned-parser synthetic rows additionally carry deterministic, evidence-backed schedule/meal/route/PRN semantics when the associated instruction text proves them; the legacy deterministic-parser oracle/E2E rows intentionally retain their narrower core contract.
+- `gold_rows_reviewed` separates an explicitly reviewed empty image-level gold set from the default unfinished annotation state.
+- real documents preserve pseudonymous `source_id`/`license_id` provenance in the finalized parser sample.
 
-The strict manifest binds `samples.jsonl` by SHA-256. Dataset outputs also carry an authoritative completed/running state and exclusive writer lock: an exact rerun reuses the completed dataset, while a different seed/source/split/content profile is rejected instead of replacing it. Synthetic data may be used for train/validation/test; `real_deidentified` data is holdout-only and is rejected from `train`.
+Parser dataset schema v2 binds both `samples.jsonl` and manifest metadata by SHA-256. Relation labels are checked against endpoint association groups, so contradictory `same_medication`/`different_medication` supervision is rejected. Dataset outputs also carry an authoritative completed/running state and exclusive writer lock: an exact rerun reuses the completed dataset, while a different seed/source/split/content profile is rejected instead of replacing it. Synthetic data may be used for train/validation/test; `real_deidentified` data is holdout-only and is rejected from `train`.
 
 Unified corpus materialization creates these parser datasets automatically:
 
@@ -124,7 +126,7 @@ docker compose run --rm ocr-parser-data build-runtime \
 
 Private prescription photos stay outside Git. Ingestion accepts only an external `real_deidentified` source manifest whose documents are already de-identified, use pseudonymous lowercase ids, use the document id as the image filename stem, and declare `contains_patient_data=false`. Only `val` and `test` are accepted.
 
-The GPU `ocr-parser-real` service sends every photo through the exact selected full-document detector/crop/recognizer path and writes runtime OCR results plus annotation drafts. Runtime observations require pinned detector/recognizer/config/implementation SHA-256 metadata. Parser identity alone is deliberately stripped from the observation profile: changing the parser does not invalidate OCR observations produced by unchanged detector/recognizer inputs.
+The GPU `ocr-parser-real` service sends every photo through the exact selected full-document detector/crop/recognizer path and writes runtime OCR results plus annotation drafts. Runtime observations require pinned detector/recognizer/config/implementation SHA-256 metadata. A batch checkpoint binds one normalized OCR producer identity, so an interrupted batch cannot resume with a different detector/recognizer/implementation and mix producers. Parser identity alone is deliberately stripped from the observation profile: changing the parser does not invalidate OCR observations produced by unchanged detector/recognizer inputs.
 
 ```sh
 docker compose run --rm \
@@ -136,7 +138,7 @@ docker compose run --rm \
   --json
 ```
 
-Human annotation assigns node roles/groups and image-level `gold_rows`. The annotation index separately binds the source manifest, source sample list, per-document runtime result, and immutable OCR observation projection by SHA-256. Rerunning either preparation command reuses the completed binding and never rewrites human labels. Finalization rechecks those hashes and fails while any OCR node remains unlabeled:
+Human annotation assigns node roles/groups and image-level `gold_rows`, then explicitly sets `gold_rows_reviewed=true` even when the reviewed image contains zero medication rows. Annotation index schema v3 binds the source manifest, source sample list, one homogeneous OCR producer identity, each per-document runtime result, and the immutable OCR/source projection by SHA-256. Rerunning either preparation command adopts only matching crash-window drafts and never rewrites human labels. Finalization rechecks those bindings, preserves source/license provenance plus exact source manifest/sample hashes, and fails while any OCR node remains unlabeled or image-level gold remains unreviewed:
 
 ```sh
 docker compose run --rm ocr-parser-data finalize-real \

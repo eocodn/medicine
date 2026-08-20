@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildLayout } from "../../detection/synthetic_layouts.mjs";
-import { expectedRows } from "../parser_truth.mjs";
+import { expectedRows, parserTrainingRows } from "../parser_truth.mjs";
 import {
   PARSER_STRUCTURE_VARIANTS,
   applyParserStructureVariant,
@@ -45,8 +45,14 @@ test("product-only and numeric recipes alter document truth rather than parser p
   const groups = [...new Set(productOnly.regions.filter((region) => region.semantic_role === "product").map((region) => region.association_group))];
   assert.ok(groups.some((group) => {
     const roles = new Set(productOnly.regions.filter((region) => region.association_group === group).map((region) => region.semantic_role));
-    return roles.has("product") && !roles.has("dose") && !roles.has("frequency") && !roles.has("duration");
+    return roles.has("product") && !roles.has("dose") && !roles.has("frequency") && !roles.has("duration") && !roles.has("instruction") && !roles.has("schedule");
   }));
+
+  const scheduleRandom = rng(45);
+  const scheduleBase = buildLayout(8, scheduleRandom, { products: products() });
+  const scheduleProductOnly = applyParserStructureVariant(scheduleBase, { index: 8, split: "train", splitOrdinal: 4, random: scheduleRandom });
+  assert.equal(scheduleProductOnly.parser_structure_variant, "product_only");
+  assert.equal(scheduleProductOnly.regions.some((region) => region.semantic_role === "schedule" && region.association_group !== "document"), false);
 
   const numericRandom = rng(43);
   const numericBase = buildLayout(13, numericRandom, { products: products() });
@@ -68,5 +74,36 @@ test("held-out recipes include fraction/partial-header and header-only negatives
   const negativeBase = buildLayout(25, negativeRandom, { products: products() });
   const negative = applyParserStructureVariant(negativeBase, { index: 25, split: "val", splitOrdinal: 2, random: negativeRandom });
   assert.equal(negative.parser_structure_variant, "header_only_negative");
-  assert.equal(negative.regions.some((region) => ["product", "product_label", "dose", "frequency", "duration"].includes(region.semantic_role) && region.association_group !== "document"), false);
+  assert.equal(negative.regions.some((region) => ["product", "product_label", "dose", "frequency", "duration", "instruction", "schedule"].includes(region.semantic_role) && region.association_group !== "document"), false);
+
+  const scheduleNegativeRandom = rng(55);
+  const scheduleNegativeBase = buildLayout(8, scheduleNegativeRandom, { products: products() });
+  const scheduleNegative = applyParserStructureVariant(scheduleNegativeBase, { index: 8, split: "val", splitOrdinal: 2, random: scheduleNegativeRandom });
+  assert.equal(scheduleNegative.regions.some((region) => region.semantic_role === "schedule" && region.association_group !== "document"), false);
+});
+
+test("parser gold derives supported structured semantics from associated instructions", () => {
+  const rows = parserTrainingRows({
+    regions: [
+      { region_id: "p", text: "가나다정", semantic_role: "product", association_group: "m1" },
+      { region_id: "i", text: "오전 8시 식후 필요시 경구 복용", semantic_role: "instruction", association_group: "m1" },
+    ],
+  });
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0].draft.schedule_times, ["08:00"]);
+  assert.equal(rows[0].draft.meal_relation, "after_meal");
+  assert.equal(rows[0].draft.as_needed, true);
+  assert.equal(rows[0].draft.administration_route, "oral");
+  assert.deepEqual(rows[0].evidence.schedule_times, ["i"]);
+  assert.deepEqual(rows[0].evidence.meal_relation, ["i"]);
+  assert.deepEqual(rows[0].evidence.as_needed, ["i"]);
+  assert.deepEqual(rows[0].evidence.administration_route, ["i"]);
+
+  const legacyRows = expectedRows({
+    regions: [
+      { region_id: "p", text: "가나다정", semantic_role: "product", association_group: "m1" },
+      { region_id: "i", text: "오전 8시 식후 필요시 경구 복용", semantic_role: "instruction", association_group: "m1" },
+    ],
+  });
+  assert.deepEqual(legacyRows[0].draft, {});
 });

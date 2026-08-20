@@ -1,6 +1,6 @@
 import { DOCUMENT_HEIGHT, DOCUMENT_WIDTH, estimateRenderedTextBox } from "../detection/synthetic_layouts.mjs";
 
-export const PARSER_STRUCTURE_REVISION = 2;
+export const PARSER_STRUCTURE_REVISION = 3;
 
 const TRAIN_VARIANTS = [
   "complete",
@@ -92,7 +92,7 @@ function productOnlyOneGroup(regions, random) {
   if (!group) return regions;
   return regions.filter((region) => !(
     region.association_group === group
-    && ["dose", "frequency", "duration", "instruction"].includes(region.semantic_role)
+    && ["dose", "frequency", "duration", "instruction", "schedule"].includes(region.semantic_role)
   ));
 }
 
@@ -171,7 +171,7 @@ function ambiguousSpacing(regions) {
 
 function headerOnly(regions) {
   return regions.filter((region) => !(
-    ["product", "product_label", "dose", "frequency", "duration", "instruction"].includes(region.semantic_role)
+    ["product", "product_label", "dose", "frequency", "duration", "instruction", "schedule"].includes(region.semantic_role)
     && region.association_group !== "document"
   ));
 }

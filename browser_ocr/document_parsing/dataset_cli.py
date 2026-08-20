@@ -16,6 +16,7 @@ from .real_data import (
     load_real_source_manifest,
     prepare_real_annotation,
 )
+from .observation_profile import runtime_observation_producer
 from .training_builders import build_runtime_dataset, build_synthetic_dataset
 from .training_dataset import ParserDatasetError, load_parser_dataset, write_parser_dataset
 
@@ -110,6 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _prepare_real(source_manifest: str, results_root: str, output_dir: str) -> dict[str, Any]:
     source = load_real_source_manifest(source_manifest)
+    source_by_id = {str(sample["document_id"]): sample for sample in source.samples}
     root = Path(results_root).resolve()
     output = Path(output_dir).resolve()
     annotations = output / "annotations"
@@ -120,37 +122,82 @@ def _prepare_real(source_manifest: str, results_root: str, output_dir: str) -> d
     with _exclusive_lock(output / ".prepare-real.lock"):
         if index_path.is_file():
             index = _read_json(index_path, "annotation index")
+            if index.get("schema_version") != 3:
+                raise ParserDatasetError("annotation index schema_version must be 3")
+            if str(index.get("source_dataset_id") or "") != source.dataset_id:
+                raise ParserDatasetError("existing real annotation index source dataset differs")
             if index.get("source_manifest_sha256") != source_manifest_sha:
                 raise ParserDatasetError("existing real annotation index source manifest differs")
             if index.get("source_samples_sha256") != source_samples_sha:
                 raise ParserDatasetError("existing real annotation index source samples differ")
+            producer = index.get("ocr_producer")
+            if not isinstance(producer, dict):
+                raise ParserDatasetError("existing real annotation index OCR producer is invalid")
             entries = index.get("documents")
             if not isinstance(entries, list) or len(entries) != len(source.samples):
                 raise ParserDatasetError("existing real annotation index is incomplete")
+            seen_ids: set[str] = set()
             for entry in entries:
-                if not isinstance(entry, dict):
+                if not isinstance(entry, dict) or set(entry) != {
+                    "document_id", "annotation", "immutable_sha256", "runtime_result", "runtime_result_sha256"
+                }:
                     raise ParserDatasetError("existing real annotation index entry is invalid")
-                annotation_path = annotations / str(entry.get("annotation") or "")
-                runtime_path = Path(str(entry.get("runtime_result") or ""))
+                document_id = str(entry.get("document_id") or "")
+                if document_id in seen_ids:
+                    raise ParserDatasetError("existing real annotation index document set is invalid")
+                seen_ids.add(document_id)
+                sample = source_by_id.get(document_id)
+                if sample is None:
+                    raise ParserDatasetError("existing real annotation index document set is invalid")
+                annotation_relative = Path(str(entry.get("annotation") or ""))
+                if annotation_relative.is_absolute() or ".." in annotation_relative.parts or annotation_relative.as_posix() != f"{document_id}.json":
+                    raise ParserDatasetError("existing real annotation index annotation path is invalid")
+                annotation_path = annotations / annotation_relative
+                runtime_path = root / document_id / "result.json"
+                if str(entry.get("runtime_result") or "") != str(runtime_path):
+                    raise ParserDatasetError("existing real annotation index runtime result path is invalid")
                 if not annotation_path.is_file() or not runtime_path.is_file():
                     raise ParserDatasetError("existing real annotation inputs are incomplete")
                 if _sha256_file(runtime_path) != entry.get("runtime_result_sha256"):
                     raise ParserDatasetError("existing runtime OCR result changed after annotation preparation")
+                runtime_payload = _read_json(runtime_path, "runtime OCR result")
+                if runtime_observation_producer(runtime_payload.get("profile"), expected_image_sha256=str(sample["image_sha256"])) != producer:
+                    raise ParserDatasetError("existing real annotation runtime OCR producer differs")
                 annotation = _read_json(annotation_path, "real annotation")
                 if annotation_immutable_sha256(annotation) != entry.get("immutable_sha256"):
                     raise ParserDatasetError("existing real annotation immutable snapshot changed")
-            return {"status": "ok", "documents": len(entries), "annotations_dir": str(annotations), "reused": True}
+            if seen_ids != set(source_by_id):
+                raise ParserDatasetError("existing real annotation index document set is invalid")
+            return {"status": "ok", "documents": len(entries), "annotations_dir": str(annotations), "reused": True, "resumed": False}
 
-        unexpected = [path.name for path in annotations.iterdir() if path.name != "index.json"]
+        allowed_annotation_names = {f"{sample['document_id']}.json" for sample in source.samples}
+        unexpected = [path.name for path in annotations.iterdir() if path.name not in allowed_annotation_names and path.name != "index.json"]
         if unexpected:
-            raise ParserDatasetError("real annotation output is non-empty without authoritative index")
+            raise ParserDatasetError("real annotation output contains files outside the bound source document set")
         entries: list[dict[str, str]] = []
+        resumed = False
+        producer: dict[str, Any] | None = None
         for index, sample in enumerate(source.samples, start=1):
             result_path = root / str(sample["document_id"]) / "result.json"
             result = _read_json(result_path, "runtime OCR result")
-            annotation = prepare_real_annotation(sample, result)
+            current_producer = runtime_observation_producer(
+                result.get("profile"),
+                expected_image_sha256=str(sample["image_sha256"]),
+            )
+            if producer is None:
+                producer = current_producer
+            elif current_producer != producer:
+                raise ParserDatasetError("real annotation inputs mix different runtime OCR producers")
+            expected_annotation = prepare_real_annotation(sample, result)
             annotation_path = annotations / f"{sample['document_id']}.json"
-            _atomic_json(annotation_path, annotation)
+            if annotation_path.is_file():
+                annotation = _read_json(annotation_path, "real annotation")
+                if annotation_immutable_sha256(annotation) != annotation_immutable_sha256(expected_annotation):
+                    raise ParserDatasetError("orphaned real annotation immutable snapshot differs from bound runtime OCR")
+                resumed = True
+            else:
+                annotation = expected_annotation
+                _atomic_json(annotation_path, annotation)
             entries.append({
                 "document_id": str(sample["document_id"]),
                 "annotation": annotation_path.name,
@@ -160,23 +207,24 @@ def _prepare_real(source_manifest: str, results_root: str, output_dir: str) -> d
             })
             print(f"[ocr-parser-data] real annotation {index}/{len(source.samples)}", file=sys.stderr, flush=True)
         index_value = {
-            "schema_version": 2,
+            "schema_version": 3,
             "source_dataset_id": source.dataset_id,
             "source_manifest": str(source.manifest_path),
             "source_manifest_sha256": source_manifest_sha,
             "source_samples": str(source.samples_path),
             "source_samples_sha256": source_samples_sha,
+            "ocr_producer": producer,
             "documents": entries,
         }
         _atomic_json(index_path, index_value)
-        return {"status": "ok", "documents": len(entries), "annotations_dir": str(annotations), "reused": False}
+        return {"status": "ok", "documents": len(entries), "annotations_dir": str(annotations), "reused": False, "resumed": resumed}
 
 
 def _finalize_real(annotations_dir: str, dataset_id: str, output_dir: str) -> dict[str, Any]:
     root = Path(annotations_dir).resolve()
     index = _read_json(root / "index.json", "annotation index")
-    if index.get("schema_version") != 2:
-        raise ParserDatasetError("annotation index schema_version must be 2")
+    if index.get("schema_version") != 3:
+        raise ParserDatasetError("annotation index schema_version must be 3")
     source_manifest = Path(str(index.get("source_manifest") or ""))
     if not source_manifest.is_file():
         raise ParserDatasetError("annotation index source manifest does not exist")
@@ -186,7 +234,12 @@ def _finalize_real(annotations_dir: str, dataset_id: str, output_dir: str) -> di
     if not source_samples.is_file() or _sha256_file(source_samples) != str(index.get("source_samples_sha256") or ""):
         raise ParserDatasetError("annotation index source samples SHA-256 mismatch")
     source = load_real_source_manifest(source_manifest)
+    if str(index.get("source_dataset_id") or "") != source.dataset_id:
+        raise ParserDatasetError("annotation index source dataset id disagrees with bound source manifest")
     source_by_id = {str(sample["document_id"]): sample for sample in source.samples}
+    producer = index.get("ocr_producer")
+    if not isinstance(producer, dict):
+        raise ParserDatasetError("annotation index OCR producer must be an object")
     entries = index.get("documents")
     if not isinstance(entries, list) or not entries:
         raise ParserDatasetError("annotation index documents must be a non-empty list")
@@ -210,6 +263,8 @@ def _finalize_real(annotations_dir: str, dataset_id: str, output_dir: str) -> di
         if source_sample is None:
             raise ParserDatasetError("annotation document_id is absent from bound real source")
         runtime_payload = _read_json(runtime_result, "runtime OCR result")
+        if runtime_observation_producer(runtime_payload.get("profile"), expected_image_sha256=str(source_sample["image_sha256"])) != producer:
+            raise ParserDatasetError("runtime OCR producer differs across finalized real dataset")
         expected_draft = prepare_real_annotation(source_sample, runtime_payload)
         expected_immutable_sha = annotation_immutable_sha256(expected_draft)
         if expected_immutable_sha != str(entry["immutable_sha256"] or ""):
@@ -224,7 +279,9 @@ def _finalize_real(annotations_dir: str, dataset_id: str, output_dir: str) -> di
         documents=documents,
         metadata={
             "builder": "real_annotation_finalize_v1",
-            "source_dataset_id": str(index.get("source_dataset_id") or ""),
+            "source_dataset_id": source.dataset_id,
+            "source_manifest_sha256": str(index["source_manifest_sha256"]),
+            "source_samples_sha256": str(index["source_samples_sha256"]),
         },
     )
     dataset = load_parser_dataset(manifest)

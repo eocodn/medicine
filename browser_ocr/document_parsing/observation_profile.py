@@ -70,4 +70,10 @@ def runtime_observation_profile(raw: object, *, expected_image_sha256: str | Non
     return profile
 
 
-__all__ = ["runtime_observation_profile"]
+def runtime_observation_producer(raw: object, *, expected_image_sha256: str | None = None) -> dict[str, Any]:
+    profile = runtime_observation_profile(raw, expected_image_sha256=expected_image_sha256)
+    profile.pop("image_sha256", None)
+    return profile
+
+
+__all__ = ["runtime_observation_producer", "runtime_observation_profile"]

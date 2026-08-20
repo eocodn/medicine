@@ -15,7 +15,7 @@ from .contract import DRAFT_FIELDS
 from .training_alignment import MODEL_ROLES
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 TASK = "medication_document_parser"
 SOURCE_POLICY = "synthetic_train_real_holdout_v1"
 _STATE_FILE = ".dataset-state.json"
@@ -35,6 +35,7 @@ _MANIFEST_FIELDS = {
     "source_policy",
     "samples_file",
     "samples_sha256",
+    "metadata_sha256",
     "document_count",
     "metadata",
 }
@@ -49,9 +50,11 @@ _DOCUMENT_FIELDS = {
     "scenario_tags",
     "risk_tags",
     "privacy",
+    "provenance",
     "observation",
     "relations",
     "gold_rows",
+    "gold_rows_reviewed",
     "annotation_status",
 }
 _NODE_FIELDS = {
@@ -66,6 +69,7 @@ _NODE_FIELDS = {
 }
 _RELATION_FIELDS = {"product_node_id", "field_node_id", "label"}
 _GOLD_ROW_FIELDS = {"gold_row_id", "product_query", "draft"}
+_PROVENANCE_FIELDS = {"source_id", "license_id"}
 
 
 class ParserDatasetError(ValueError):
@@ -257,6 +261,20 @@ def _normalize_document(value: object) -> dict[str, Any]:
     if source_kind == "real_deidentified" and privacy.get("deidentified") is not True:
         raise ParserDatasetError(f"{document_id} real data must be explicitly deidentified")
 
+    provenance_raw = data.get("provenance")
+    provenance: dict[str, str] | None = None
+    if provenance_raw is not None:
+        provenance_data = _require_mapping(provenance_raw, f"{document_id}.provenance")
+        if set(provenance_data) != _PROVENANCE_FIELDS:
+            raise ParserDatasetError(f"{document_id}.provenance must contain source_id and license_id")
+        source_id = _require_id(provenance_data.get("source_id"), f"{document_id}.provenance.source_id")
+        license_id = str(provenance_data.get("license_id") or "").strip()
+        if not license_id or len(license_id) > 128 or any(char in license_id for char in "\r\n\t"):
+            raise ParserDatasetError(f"{document_id}.provenance.license_id must be a short non-empty string")
+        provenance = {"source_id": source_id, "license_id": license_id}
+    if source_kind == "real_deidentified" and provenance is None:
+        raise ParserDatasetError(f"{document_id} real_deidentified documents require source provenance")
+
     observation = _require_mapping(data.get("observation"), f"{document_id}.observation")
     if set(observation) != {"kind", "profile", "nodes"}:
         raise ParserDatasetError(f"{document_id}.observation must contain kind, profile and nodes")
@@ -296,17 +314,31 @@ def _normalize_document(value: object) -> dict[str, Any]:
             raise ParserDatasetError(f"{document_id}.relations[{index}] product node is not labeled product")
         if node_by_id[field_id]["semantic_role"] not in {"dose", "frequency", "duration", "instruction", "schedule"}:
             raise ParserDatasetError(f"{document_id}.relations[{index}] field node has unsupported role")
+        product_group = node_by_id[product_id]["association_group"]
+        field_group = node_by_id[field_id]["association_group"]
+        if product_group is None or field_group is None:
+            raise ParserDatasetError(f"{document_id}.relations[{index}] endpoints require association_group")
+        expected_label = "same_medication" if product_group == field_group else "different_medication"
+        if label != expected_label:
+            raise ParserDatasetError(
+                f"{document_id}.relations[{index}] label contradicts endpoint association_group values"
+            )
         key = (product_id, field_id)
         if key in relation_keys:
             raise ParserDatasetError(f"{document_id}.relations contains duplicate product/field pair")
         relation_keys.add(key)
         relations.append({"product_node_id": product_id, "field_node_id": field_id, "label": label})
 
+    gold_rows_reviewed = data.get("gold_rows_reviewed")
+    if not isinstance(gold_rows_reviewed, bool):
+        raise ParserDatasetError(f"{document_id}.gold_rows_reviewed must be boolean")
     annotation_status = str(data.get("annotation_status") or "complete")
     if annotation_status not in {"draft", "complete"}:
         raise ParserDatasetError(f"{document_id}.annotation_status must be draft or complete")
     if annotation_status == "complete" and any(node["label_status"] == "unlabeled" for node in nodes):
         raise ParserDatasetError(f"{document_id} complete annotation contains unlabeled nodes")
+    if annotation_status == "complete" and gold_rows_reviewed is not True:
+        raise ParserDatasetError(f"{document_id} complete annotation requires image gold review")
 
     return {
         "document_id": document_id,
@@ -319,9 +351,11 @@ def _normalize_document(value: object) -> dict[str, Any]:
         "scenario_tags": _require_tags(data.get("scenario_tags"), f"{document_id}.scenario_tags"),
         "risk_tags": _require_tags(data.get("risk_tags"), f"{document_id}.risk_tags"),
         "privacy": {"contains_patient_data": False, "deidentified": bool(privacy["deidentified"])},
+        "provenance": provenance,
         "observation": {"kind": observation_kind, "profile": dict(profile), "nodes": nodes},
         "relations": relations,
         "gold_rows": _normalize_gold_rows(data.get("gold_rows"), f"{document_id}.gold_rows"),
+        "gold_rows_reviewed": gold_rows_reviewed,
         "annotation_status": annotation_status,
     }
 
@@ -383,11 +417,12 @@ def write_parser_dataset(
     samples_path = root / "samples.jsonl"
     samples_sha = _sha256_bytes(samples_bytes)
     normalized_metadata = dict(metadata or {})
+    metadata_sha = _sha256_bytes(_canonical_json(normalized_metadata))
     profile = {
         "schema_version": 1,
         "dataset_id": normalized_id,
         "samples_sha256": samples_sha,
-        "metadata_sha256": _sha256_bytes(_canonical_json(normalized_metadata)),
+        "metadata_sha256": metadata_sha,
     }
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -396,6 +431,7 @@ def write_parser_dataset(
         "source_policy": SOURCE_POLICY,
         "samples_file": "samples.jsonl",
         "samples_sha256": samples_sha,
+        "metadata_sha256": metadata_sha,
         "document_count": len(normalized),
         "metadata": normalized_metadata,
     }
@@ -410,6 +446,8 @@ def write_parser_dataset(
                 dataset = load_parser_dataset(manifest_path, allow_draft=True)
                 if dataset.dataset_id != normalized_id or _sha256_file(dataset.root / "samples.jsonl") != samples_sha:
                     raise ParserDatasetError("completed parser dataset state disagrees with persisted dataset")
+                if _sha256_bytes(_canonical_json(dataset.metadata)) != profile["metadata_sha256"]:
+                    raise ParserDatasetError("completed parser dataset metadata disagrees with persisted state")
                 return manifest_path
             if state.get("status") != "running":
                 raise ParserDatasetError("parser dataset output state has unsupported status")
@@ -467,6 +505,13 @@ def load_parser_dataset(manifest_path: str | Path, *, allow_draft: bool = False)
     actual_samples_sha = _sha256_file(samples_path)
     if actual_samples_sha != expected_samples_sha:
         raise ParserDatasetError("parser dataset samples SHA-256 mismatch")
+    metadata = _require_mapping(manifest.get("metadata"), "metadata")
+    expected_metadata_sha = str(manifest.get("metadata_sha256") or "")
+    if not _SHA256_RE.fullmatch(expected_metadata_sha):
+        raise ParserDatasetError("metadata_sha256 must be lowercase SHA-256")
+    actual_metadata_sha = _sha256_bytes(_canonical_json(metadata))
+    if actual_metadata_sha != expected_metadata_sha:
+        raise ParserDatasetError("parser dataset metadata SHA-256 mismatch")
     documents: list[dict[str, Any]] = []
     for line_number, raw_line in enumerate(samples_path.read_text(encoding="utf-8").splitlines(), start=1):
         if not raw_line.strip():
@@ -481,7 +526,6 @@ def load_parser_dataset(manifest_path: str | Path, *, allow_draft: bool = False)
         raise ParserDatasetError("document_id values must be unique")
     if not allow_draft and any(document["annotation_status"] != "complete" for document in documents):
         raise ParserDatasetError("parser dataset contains draft annotations")
-    metadata = _require_mapping(manifest.get("metadata"), "metadata")
     fingerprint = _sha256_bytes(
         _canonical_json({
             "schema_version": SCHEMA_VERSION,

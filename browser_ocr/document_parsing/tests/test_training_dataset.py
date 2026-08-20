@@ -18,7 +18,7 @@ def _poly(x: float, y: float, w: float = 80, h: float = 24) -> list[list[float]]
 
 
 def _doc(*, source_kind: str = "synthetic", split: str = "train") -> dict:
-    return {
+    document = {
         "document_id": "doc-001",
         "split": split,
         "source_kind": source_kind,
@@ -72,7 +72,11 @@ def _doc(*, source_kind: str = "synthetic", split: str = "train") -> dict:
                 "draft": {"dose_amount": 1, "dose_unit": "tablet"},
             }
         ],
+        "gold_rows_reviewed": True,
     }
+    if source_kind == "real_deidentified":
+        document["provenance"] = {"source_id": "fixture-source", "license_id": "private-deidentified"}
+    return document
 
 
 class ParserTrainingDatasetContractTest(unittest.TestCase):
@@ -155,6 +159,47 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
                     dataset_id="stable-output",
                     documents=[changed],
                     metadata={"seed": 2},
+                )
+
+    def test_relation_label_must_match_endpoint_association_groups(self) -> None:
+        same_with_different_groups = _doc()
+        same_with_different_groups["observation"]["nodes"][1]["association_group"] = "med-2"
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "association_group"):
+                write_parser_dataset(
+                    Path(raw),
+                    dataset_id="bad-relation-same",
+                    documents=[same_with_different_groups],
+                )
+
+        different_with_same_group = _doc()
+        different_with_same_group["relations"][0]["label"] = "different_medication"
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "association_group"):
+                write_parser_dataset(
+                    Path(raw),
+                    dataset_id="bad-relation-different",
+                    documents=[different_with_same_group],
+                )
+
+    def test_completed_dataset_rejects_persisted_manifest_metadata_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest_path = write_parser_dataset(
+                root,
+                dataset_id="metadata-bound",
+                documents=[_doc()],
+                metadata={"seed": 1, "builder": "fixture"},
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["metadata"] = {"seed": 999, "builder": "forged"}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ParserDatasetError, "metadata"):
+                write_parser_dataset(
+                    root,
+                    dataset_id="metadata-bound",
+                    documents=[_doc()],
+                    metadata={"seed": 1, "builder": "fixture"},
                 )
 
 
