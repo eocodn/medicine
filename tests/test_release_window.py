@@ -33,6 +33,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         name: str,
         data: bytes,
         dataset_id: str,
+        verifier=None,
     ) -> ContractReleaseCandidate:
         db = self.root / f"c{major}-{name}.sqlite"
         manifest = self.root / f"c{major}-{name}.manifest.json"
@@ -50,7 +51,12 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        return ContractReleaseCandidate(major, db, manifest)
+        return ContractReleaseCandidate(
+            major,
+            db,
+            manifest,
+            verifier=verifier or (lambda _database, _major, _dataset_id: None),
+        )
 
     def publish(
         self,
@@ -93,6 +99,22 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         self.assertEqual(entry["target"]["sha256"], sha256_file(c1.database))
         self.assertTrue(entry["full"]["key"].startswith("reference/v2/contracts/1/full/"))
 
+    def test_candidate_must_pass_frozen_contract_verifier_before_any_upload(self) -> None:
+        def reject(_database, _major, _dataset_id):
+            raise ValueError("frozen contract verification failed")
+
+        candidate = self.candidate(
+            1,
+            "invalid-contract",
+            b"not-a-contract-db",
+            "sha256:" + "9" * 64,
+            verifier=reject,
+        )
+
+        with self.assertRaisesRegex(ValueError, "frozen contract verification failed"):
+            self.publish([candidate], current=1, minimum=1, sequence=100, suffix="invalid-contract")
+        self.assertEqual(self.client.put_order, [])
+
     def test_same_logical_dataset_with_new_physical_artifact_is_a_new_release(self) -> None:
         dataset = "sha256:" + "a" * 64
         first = self.candidate(1, "physical-a", b"A" * 500_000, dataset)
@@ -123,6 +145,79 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         self.assertEqual(self.verified_root()["release_sequence"], 100)
         self.assertEqual(self.client.put_order, [])
 
+    def test_unchanged_publish_repairs_missing_current_full_without_advancing_root(self) -> None:
+        c1 = self.candidate(1, "repair", b"R" * 500_000, "sha256:" + "c" * 64)
+        self.publish([c1], current=1, minimum=1, sequence=100, suffix="repair-a")
+        root = self.verified_root()["manifest"]
+        full_key = root["contracts"]["1"]["full"]["key"]
+        self.client.objects.pop((self.bucket, full_key))
+        self.client.put_order.clear()
+
+        result = self.publish([c1], current=1, minimum=1, sequence=101, suffix="repair-b")
+
+        self.assertEqual(result["status"], "unchanged")
+        self.assertEqual(self.verified_root()["release_sequence"], 100)
+        self.assertIn((self.bucket, full_key), self.client.objects)
+        self.assertEqual(self.client.put_order, [full_key])
+
+    def test_immutable_upload_failure_does_not_advance_signed_root(self) -> None:
+        first = self.candidate(1, "upload-base", b"A" * 500_000, "sha256:" + "1" * 64)
+        self.publish([first], current=1, minimum=1, sequence=100, suffix="upload-base")
+        second = self.candidate(1, "upload-next", b"B" * 500_000, "sha256:" + "2" * 64)
+        original_put = self.client.put_object
+
+        def fail_full_once(**kwargs):
+            if kwargs["Key"].endswith(f"/{sha256_file(second.database)}.sqlite.gz"):
+                self.client.put_object = original_put
+                raise RuntimeError("simulated immutable upload failure")
+            return original_put(**kwargs)
+
+        self.client.put_object = fail_full_once
+
+        with self.assertRaisesRegex(RuntimeError, "simulated immutable upload failure"):
+            self.publish([second], current=1, minimum=1, sequence=101, suffix="upload-next")
+        self.assertEqual(self.verified_root()["release_sequence"], 100)
+
+    def test_competing_root_change_prevents_v2_root_commit(self) -> None:
+        first = self.candidate(1, "race-base", b"A" * 500_000, "sha256:" + "1" * 64)
+        self.publish([first], current=1, minimum=1, sequence=100, suffix="race-base")
+        second = self.candidate(1, "race-next", b"B" * 500_000, "sha256:" + "2" * 64)
+
+        def mutate_root() -> None:
+            key = (self.bucket, ROOT_KEY)
+            current = dict(self.client.objects[key])
+            current["Body"] = current["Body"] + b" "
+            self.client.objects[key] = current
+
+        self.client.before_latest_put = mutate_root
+
+        with self.assertRaisesRegex(RuntimeError, "root changed"):
+            self.publish([second], current=1, minimum=1, sequence=101, suffix="race-next")
+        self.assertEqual(self.client.delete_order, [])
+
+    def test_post_commit_cleanup_failure_is_repaired_by_idempotent_retry(self) -> None:
+        first = self.candidate(1, "cleanup-base", b"A" * 500_000, "sha256:" + "1" * 64)
+        self.publish([first], current=1, minimum=1, sequence=100, suffix="cleanup-base")
+        stale = "reference/v2/contracts/1/patch/" + "a" * 64 + "-" + "b" * 64 + ".mpatch"
+        self.client.objects[(self.bucket, stale)] = {
+            "Body": b"stale",
+            "Metadata": {"sha256": "0" * 64},
+            "ContentType": "application/octet-stream",
+            "CacheControl": "public, max-age=31536000, immutable",
+        }
+        self.client.fail_delete_once = stale
+        second = self.candidate(1, "cleanup-next", b"B" * 500_000, "sha256:" + "2" * 64)
+
+        with self.assertRaisesRegex(RuntimeError, "retention cleanup failed"):
+            self.publish([second], current=1, minimum=1, sequence=101, suffix="cleanup-next")
+
+        self.assertEqual(self.verified_root()["release_sequence"], 101)
+        self.assertIn((self.bucket, stale), self.client.objects)
+
+        retried = self.publish([second], current=1, minimum=1, sequence=102, suffix="cleanup-retry")
+        self.assertEqual(retried["status"], "unchanged")
+        self.assertNotIn((self.bucket, stale), self.client.objects)
+
     def test_window_can_advertise_current_and_previous_contract_from_same_refresh(self) -> None:
         c1 = self.candidate(1, "window", b"A" * 500_000, "sha256:" + "1" * 64)
         c2 = self.candidate(2, "window", b"B" * 500_000, "sha256:" + "2" * 64)
@@ -135,6 +230,26 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         self.assertEqual(root["minimum_supported_contract_major"], 1)
         self.assertTrue(root["contracts"]["1"]["full"]["key"].startswith("reference/v2/contracts/1/"))
         self.assertTrue(root["contracts"]["2"]["full"]["key"].startswith("reference/v2/contracts/2/"))
+
+    def test_changed_window_repairs_reused_contract_full_before_advancing_root(self) -> None:
+        c1 = self.candidate(1, "reuse-repair", b"A" * 500_000, "sha256:" + "1" * 64)
+        self.publish([c1], current=1, minimum=1, sequence=100, suffix="reuse-repair-base")
+        previous = self.verified_root()["manifest"]
+        c1_full = previous["contracts"]["1"]["full"]["key"]
+        self.client.objects.pop((self.bucket, c1_full))
+        c2 = self.candidate(2, "reuse-repair", b"B" * 500_000, "sha256:" + "2" * 64)
+
+        result = self.publish(
+            [c1, c2],
+            current=2,
+            minimum=1,
+            sequence=200,
+            suffix="reuse-repair-next",
+        )
+
+        self.assertEqual(result["status"], "published")
+        self.assertEqual(self.verified_root()["release_sequence"], 200)
+        self.assertIn((self.bucket, c1_full), self.client.objects)
 
     def test_patches_are_built_only_from_history_of_the_same_contract(self) -> None:
         c1a = self.candidate(1, "base", b"A" * 2_000_000, "sha256:" + "1" * 64)

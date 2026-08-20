@@ -16,11 +16,15 @@ from .build import (
 from .inspection import canonical_product_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .mobile import build_mobile_database
+from .reference_contracts.registry import build_supported_contract_window
 from medicine_app.reference_update import verify_reference_database
 from .release import apply_chunk_patch, prepare_release
 from .release_r2 import download_object_from_env
 from .release_r2_public import audit_public_bucket_from_env
-from .release_window import publish_contract_window_from_env
+from .release_window import (
+    publish_contract_directory_from_env,
+    publish_contract_window_from_env,
+)
 from .release_signing import verify_signed_envelope
 from .source_layout import MfdsSourceLayout
 from .substance_build import (
@@ -118,6 +122,18 @@ def build_parser() -> argparse.ArgumentParser:
     mobile_build.add_argument("--manifest", type=Path)
     mobile_build.add_argument("--json", action="store_true")
 
+    reference_window_build = sub.add_parser(
+        "reference-window-build",
+        help="Build every currently supported Reference Contract database",
+    )
+    reference_window_build.add_argument("--db", type=Path, default=DEFAULT_DB)
+    reference_window_build.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data/db/reference-contracts"),
+    )
+    reference_window_build.add_argument("--json", action="store_true")
+
     mobile_verify_runtime = sub.add_parser(
         "mobile-verify-runtime",
         help="Verify a mobile reference DB against on-device runtime policy and release identity",
@@ -214,6 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_publish = sub.add_parser("release-publish-r2", help="Prepare and atomically publish a mobile DB release to R2")
     release_publish.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
     release_publish.add_argument("--mobile-manifest", type=Path, default=Path("data/db/mobile.manifest.json"))
+    release_publish.add_argument("--contract-dir", type=Path)
     release_publish.add_argument("--output-dir", type=Path, default=Path("artifacts/reference-release"))
     release_publish.add_argument("--created-at")
     release_publish.add_argument("--json", action="store_true")
@@ -292,6 +309,8 @@ def main(argv=None) -> int:
         payload = build_mobile_database(
             args.db, args.output, manifest_path=args.manifest
         )
+    elif args.command == "reference-window-build":
+        payload = build_supported_contract_window(args.db, args.output_dir)
     elif args.command == "mobile-verify-runtime":
         payload = verify_reference_database(
             args.db,
@@ -343,9 +362,16 @@ def main(argv=None) -> int:
     elif args.command == "r2-public-audit":
         payload = audit_public_bucket_from_env()
     elif args.command == "release-publish-r2":
-        payload = publish_contract_window_from_env(
-            args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at
-        )
+        if args.contract_dir is not None:
+            payload = publish_contract_directory_from_env(
+                args.contract_dir,
+                args.output_dir,
+                created_at=args.created_at,
+            )
+        else:
+            payload = publish_contract_window_from_env(
+                args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at
+            )
     else:
         payload = verify_canonical_database(args.db)
         _emit(payload, args.json)

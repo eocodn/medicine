@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,12 +29,15 @@ class ContractReleaseCandidate:
     contract_major: int
     database: Path
     manifest: Path
+    verifier: Callable[[Path, int, str], object]
 
     def __init__(
         self,
         contract_major: int,
         database: str | Path,
         manifest: str | Path,
+        *,
+        verifier: Callable[[Path, int, str], object],
     ) -> None:
         if (
             not isinstance(contract_major, int)
@@ -44,6 +48,9 @@ class ContractReleaseCandidate:
         object.__setattr__(self, "contract_major", contract_major)
         object.__setattr__(self, "database", Path(database))
         object.__setattr__(self, "manifest", Path(manifest))
+        if not callable(verifier):
+            raise ValueError("reference contract candidate verifier is required")
+        object.__setattr__(self, "verifier", verifier)
 
 
 @dataclass(frozen=True)
@@ -95,6 +102,7 @@ def load_candidate(candidate: ContractReleaseCandidate) -> CandidateMetadata:
         raise ValueError("reference contract manifest SHA-256 does not match database")
     if manifest.get("size_bytes") != target_size_bytes:
         raise ValueError("reference contract manifest size does not match database")
+    candidate.verifier(candidate.database, candidate.contract_major, dataset_id)
     return CandidateMetadata(
         candidate=candidate,
         dataset_id=dataset_id,

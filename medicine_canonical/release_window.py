@@ -7,6 +7,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .reference_contracts.registry import implementation_for, supported_contract_majors
+from .release import compress_snapshot
 from .release_r2 import (
     IMMUTABLE_CACHE_CONTROL,
     LATEST_CACHE_CONTROL,
@@ -15,6 +17,7 @@ from .release_r2 import (
     _put_immutable,
     _read_body_bytes,
     _sha256_bytes,
+    _verify_head,
     client_from_env,
 )
 from .release_signing import (
@@ -204,6 +207,51 @@ def _root_matches_candidates(
     )
 
 
+def _ensure_current_full_artifact(
+    client,
+    bucket: str,
+    *,
+    major: int,
+    entry: dict,
+    candidate: _CandidateMetadata,
+    output_dir: Path,
+) -> None:
+    full = entry["full"]
+    key = str(full["key"])
+    existing = _head_optional(client, bucket, key)
+    if existing is not None:
+        _verify_head(
+            existing,
+            size_bytes=int(full["size_bytes"]),
+            sha256=str(full["sha256"]),
+            key=key,
+        )
+        return
+
+    repair_dir = output_dir / ".repair"
+    repair_dir.mkdir(parents=True, exist_ok=True)
+    repair = repair_dir / f"contract-{major}-{candidate.target_sha256}.sqlite.gz"
+    compressed = compress_snapshot(candidate.candidate.database, repair)
+    if (
+        compressed["sha256"] != full["sha256"]
+        or compressed["size_bytes"] != full["size_bytes"]
+    ):
+        repair.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"cannot repair contract {major} full artifact from unchanged signed target"
+        )
+    try:
+        _put_immutable(
+            client,
+            bucket,
+            key,
+            repair,
+            content_type="application/gzip",
+        )
+    finally:
+        repair.unlink(missing_ok=True)
+
+
 def _put_root(
     client,
     bucket: str,
@@ -312,6 +360,8 @@ def publish_contract_window(
         major: _contract_inventory(client, bucket, major)
         for major in by_major
     }
+    root_dir = Path(output_dir)
+    root_dir.mkdir(parents=True, exist_ok=True)
 
     if _root_matches_candidates(
         previous_root,
@@ -320,6 +370,15 @@ def publish_contract_window(
         minimum_supported_contract_major=minimum_supported_contract_major,
     ):
         assert initial_raw is not None and previous_root is not None and previous_sequence is not None
+        for major, candidate in sorted(by_major.items()):
+            _ensure_current_full_artifact(
+                client,
+                bucket,
+                major=major,
+                entry=previous_root["contracts"][str(major)],
+                candidate=candidate,
+                output_dir=root_dir,
+            )
         cleanup = _cleanup_active_contracts(
             client,
             bucket,
@@ -338,8 +397,6 @@ def publish_contract_window(
     if previous_sequence is not None and release_sequence <= previous_sequence:
         raise ValueError("release_sequence must be greater than the published reference root sequence")
 
-    root_dir = Path(output_dir)
-    root_dir.mkdir(parents=True, exist_ok=True)
     prepared: dict[int, _PreparedContract] = {}
     previous_contracts = (previous_root or {}).get("contracts") or {}
     with tempfile.TemporaryDirectory(dir=root_dir, prefix="reference-window-") as temporary:
@@ -385,6 +442,20 @@ def publish_contract_window(
                     path,
                     content_type="application/octet-stream",
                 )
+
+    # A root update can reuse one contract target while another contract changes
+    # (for example C1 unchanged when C2 is introduced). Verify every mandatory
+    # active full against authoritative object state before signing the new root;
+    # otherwise a missing reused N-1 artifact could be re-advertised indefinitely.
+    for major, candidate in sorted(by_major.items()):
+        _ensure_current_full_artifact(
+            client,
+            bucket,
+            major=major,
+            entry=prepared[major].entry,
+            candidate=candidate,
+            output_dir=root_dir,
+        )
 
     current_raw, current_etag, _, _ = _read_root(
         client,
@@ -447,15 +518,56 @@ def publish_contract_window_from_env(
     # Contract 1 has no predecessor.  When contract 2 is introduced the publish
     # workflow must supply both exporters through `publish_contract_window` so a
     # supported predecessor is never silently dropped.
+    implementation = implementation_for(major)
     return publish_contract_window(
         client_from_env(),
         bucket,
-        [ContractReleaseCandidate(major, target_db, manifest_path)],
+        [
+            ContractReleaseCandidate(
+                major,
+                target_db,
+                manifest_path,
+                verifier=implementation.verify,
+            )
+        ],
         output_dir,
         signer=release_signer_from_env(),
         release_sequence=release_sequence_from_env(),
         current_contract_major=major,
         minimum_supported_contract_major=major,
+        created_at=created_at,
+    )
+
+
+def publish_contract_directory_from_env(
+    contract_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    created_at: str | None = None,
+) -> dict:
+    bucket = os.environ.get("R2_BUCKET", "").strip()
+    if not bucket:
+        raise RuntimeError("R2_BUCKET is required")
+    root = Path(contract_dir)
+    majors = supported_contract_majors()
+    candidates = [
+        ContractReleaseCandidate(
+            major,
+            root / f"contract-{major}.sqlite",
+            root / f"contract-{major}.manifest.json",
+            verifier=implementation_for(major).verify,
+        )
+        for major in majors
+    ]
+    return publish_contract_window(
+        client_from_env(),
+        bucket,
+        candidates,
+        output_dir,
+        signer=release_signer_from_env(),
+        release_sequence=release_sequence_from_env(),
+        current_contract_major=majors[-1],
+        minimum_supported_contract_major=majors[0],
         created_at=created_at,
     )
 
@@ -469,5 +581,6 @@ __all__ = [
     "RELEASE_PREFIX",
     "ROOT_KEY",
     "publish_contract_window",
+    "publish_contract_directory_from_env",
     "publish_contract_window_from_env",
 ]

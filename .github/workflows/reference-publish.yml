@@ -187,14 +187,13 @@ jobs:
           medicine-canonical verify --json
           medicine-canonical substance-verify --json
 
-      - name: Build verified Android mobile snapshot
+      - name: Build verified supported Reference Contract window
         shell: bash
         run: |
           set -euo pipefail
-          medicine-canonical mobile-build \
+          medicine-canonical reference-window-build \
             --db data/db/canonical.sqlite \
-            --output data/db/mobile.sqlite \
-            --manifest data/db/mobile.manifest.json \
+            --output-dir data/db/reference-contracts \
             --json
 
       - name: Publish immutable release and advance latest last
@@ -202,8 +201,7 @@ jobs:
         run: |
           set -euo pipefail
           medicine-canonical release-publish-r2 \
-            --db data/db/mobile.sqlite \
-            --mobile-manifest data/db/mobile.manifest.json \
+            --contract-dir data/db/reference-contracts \
             --output-dir artifacts/reference-release \
             --json
 

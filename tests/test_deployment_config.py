@@ -57,9 +57,11 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertLess(workflow.index("medicine-canonical sync"), workflow.index("integrated-build"))
         self.assertIn("canonical verify", workflow)
         self.assertIn("canonical substance-verify", workflow)
-        self.assertIn("canonical mobile-build", workflow)
+        self.assertIn("canonical reference-window-build", workflow)
+        self.assertIn("--output-dir data/db/reference-contracts", workflow)
         self.assertIn("r2-public-audit", workflow)
         self.assertIn("release-publish-r2", workflow)
+        self.assertIn("--contract-dir data/db/reference-contracts", workflow)
         self.assertLess(workflow.index("r2-public-audit"), workflow.index("release-publish-r2"))
 
     def test_scheduled_reference_publish_manages_one_github_failure_incident(self) -> None:
@@ -333,7 +335,7 @@ class DeploymentConfigTest(unittest.TestCase):
         kotlin = Path(
             "android/app/src/main/java/com/medicine/android/ReferenceRuntimeAdapters.kt"
         ).read_text()
-        python_runtime = Path("medicine_app/reference_update.py").read_text()
+        python_runtime = Path("medicine_app/reference_contracts/v1.py").read_text()
 
         android_contract = re.search(r'const val CONTRACT_MAJOR = ([0-9]+)', kotlin)
         runtime_contract = re.search(r'REFERENCE_CONTRACT_MAJOR = ([0-9]+)', python_runtime)
@@ -369,11 +371,11 @@ class DeploymentConfigTest(unittest.TestCase):
 
     def test_android_excludes_mfds_remark_registry_and_requires_materialized_semantics(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
-        verifier = Path("medicine_app/reference_update.py").read_text()
+        verifier = Path("medicine_app/reference_contracts/v1.py").read_text()
         self.assertNotIn('include("medicine_reference/**/*.py")', gradle)
         self.assertNotIn("mfds_remark_registry.tsv", gradle)
         self.assertIn('"reference_criterion_semantics"', verifier)
-        self.assertIn("_verify_contract_schema(con)", verifier)
+        self.assertIn("_verify_schema(con)", verifier)
 
     def test_android_build_does_not_generate_or_package_reference_snapshot(self) -> None:
         compose = Path("compose.yaml").read_text()
