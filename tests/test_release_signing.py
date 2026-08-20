@@ -175,6 +175,39 @@ class ReleaseSigningTest(unittest.TestCase):
         self.assertEqual(payload["release_sequence"], 7)
         self.assertEqual(payload["manifest"], self.manifest)
 
+    def test_release_verify_envelope_cli_rejects_unsupported_legacy_schema(self) -> None:
+        manifest = dict(self.manifest, schema_version=2)
+        payload = (
+            json.dumps(
+                manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        envelope = encode_signed_envelope(self.signer.sign_payload(payload, release_sequence=7))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            envelope_path = root / "latest.json"
+            public_key_path = root / "public.pem"
+            envelope_path.write_bytes(envelope)
+            public_key_path.write_bytes(TEST_PUBLIC_KEY_PEM)
+
+            with self.assertRaisesRegex(ValueError, "schema"):
+                canonical_main(
+                    [
+                        "release-verify-envelope",
+                        "--envelope",
+                        str(envelope_path),
+                        "--public-key",
+                        str(public_key_path),
+                        "--key-id",
+                        "test-2026",
+                        "--json",
+                    ]
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

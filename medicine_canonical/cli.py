@@ -365,6 +365,8 @@ def main(argv=None) -> int:
             {args.key_id: args.public_key.read_bytes()},
             minimum_release_sequence=args.minimum_sequence,
         )
+        if verified["manifest"].get("schema_version") != 1:
+            raise ValueError("signed release payload schema is unsupported")
         payload = {
             "status": "verified",
             "key_id": verified["key_id"],
