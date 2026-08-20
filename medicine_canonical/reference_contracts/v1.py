@@ -30,6 +30,11 @@ REFERENCE_CRITERION_SEMANTICS_DDL = """CREATE TABLE reference_criterion_semantic
     PRIMARY KEY(criterion_rule_id, ordinal)
 ) WITHOUT ROWID"""
 
+REFERENCE_SEMANTIC_EXPECTATIONS_DDL = """CREATE TABLE reference_semantic_expectations (
+    criterion_rule_id INTEGER PRIMARY KEY REFERENCES ingredient_rules(id),
+    expected_fact_count INTEGER NOT NULL CHECK(expected_fact_count > 0)
+) WITHOUT ROWID"""
+
 PRODUCT_RULE_CRITERIA_VIEW_DDL = """CREATE VIEW product_rule_criteria AS
 SELECT
     i.id AS criterion_rule_id,
@@ -153,6 +158,7 @@ def materialize_reference_semantics(
     source: sqlite3.Connection,
     target: sqlite3.Connection,
 ) -> int:
+    target.execute(REFERENCE_SEMANTIC_EXPECTATIONS_DDL)
     target.execute(REFERENCE_CRITERION_SEMANTICS_DDL)
     inserted = 0
     rows = source.execute(
@@ -165,7 +171,15 @@ def materialize_reference_semantics(
         reviewed = reviewed_mfds_remark(category, source_remark)
         if reviewed is None:
             continue
-        for ordinal, fact in enumerate(semantic_facts_for_reviewed_remark(reviewed)):
+        facts = semantic_facts_for_reviewed_remark(reviewed)
+        if facts:
+            target.execute(
+                """INSERT INTO reference_semantic_expectations(
+                       criterion_rule_id,expected_fact_count
+                   ) VALUES(?,?)""",
+                (criterion_rule_id, len(facts)),
+            )
+        for ordinal, fact in enumerate(facts):
             target.execute(
                 """INSERT INTO reference_criterion_semantics(
                        criterion_rule_id,ordinal,semantic_role,evaluation_mode,evaluator_kind,
@@ -191,6 +205,92 @@ def materialize_reference_semantics(
             )
             inserted += 1
     return inserted
+
+
+def _verify_reviewed_semantic_materialization(database: sqlite3.Connection) -> None:
+    """Prove the exported semantic rows exactly match the server review registry.
+
+    The APK intentionally does not ship the exact REMARK registry.  Therefore
+    the publisher-side contract verifier is the authoritative boundary which
+    must prove that every reviewed source qualifier with runtime facts was
+    materialized completely, while build-resolved composition-scope reviews
+    remain intentionally fact-free.
+    """
+    rows = database.execute(
+        """SELECT id,category,qualifier_note
+           FROM ingredient_rules
+           WHERE qualifier_note IS NOT NULL AND TRIM(qualifier_note) != ''
+           ORDER BY id"""
+    ).fetchall()
+    for criterion_rule_id, category, source_remark in rows:
+        reviewed = reviewed_mfds_remark(category, source_remark)
+        if reviewed is None:
+            raise ValueError(
+                "reference semantic materialization contains an unreviewed source REMARK"
+            )
+        expected = semantic_facts_for_reviewed_remark(reviewed)
+        expectation = database.execute(
+            """SELECT expected_fact_count FROM reference_semantic_expectations
+               WHERE criterion_rule_id=?""",
+            (criterion_rule_id,),
+        ).fetchone()
+        if expected:
+            if expectation is None or int(expectation[0]) != len(expected):
+                raise ValueError(
+                    "reference semantic materialization expectation is missing or incorrect"
+                )
+        elif expectation is not None:
+            raise ValueError(
+                "reference semantic materialization unexpectedly exports build-resolved facts"
+            )
+
+        actual = database.execute(
+            """SELECT ordinal,semantic_role,evaluation_mode,evaluator_kind,fallback_action,
+                      qualifier_type,display_text,structured_payload_json,source_remark
+               FROM reference_criterion_semantics
+               WHERE criterion_rule_id=? ORDER BY ordinal""",
+            (criterion_rule_id,),
+        ).fetchall()
+        expected_rows = [
+            (
+                ordinal,
+                fact.semantic_role,
+                fact.evaluation_mode,
+                fact.evaluator_kind,
+                fact.fallback_action,
+                fact.qualifier_type,
+                fact.display_text,
+                json.dumps(
+                    fact.structured_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                fact.source_remark,
+            )
+            for ordinal, fact in enumerate(expected)
+        ]
+        if actual != expected_rows:
+            raise ValueError(
+                "reference semantic materialization does not match reviewed source semantics"
+            )
+
+    extra_expectation = database.execute(
+        """SELECT e.criterion_rule_id
+           FROM reference_semantic_expectations e
+           LEFT JOIN ingredient_rules i ON i.id=e.criterion_rule_id
+           WHERE i.id IS NULL OR i.qualifier_note IS NULL OR TRIM(i.qualifier_note)=''
+           LIMIT 1"""
+    ).fetchone()
+    extra_semantic = database.execute(
+        """SELECT s.criterion_rule_id
+           FROM reference_criterion_semantics s
+           LEFT JOIN ingredient_rules i ON i.id=s.criterion_rule_id
+           WHERE i.id IS NULL OR i.qualifier_note IS NULL OR TRIM(i.qualifier_note)=''
+           LIMIT 1"""
+    ).fetchone()
+    if extra_expectation is not None or extra_semantic is not None:
+        raise ValueError("reference semantic materialization has orphaned semantic facts")
 
 
 _LOGICAL_PROJECTIONS: tuple[tuple[str, str], ...] = (
@@ -357,11 +457,18 @@ def verify_reference_database(
         raise ValueError("contract-v1 verifier received a different contract major")
     from medicine_app.reference_contracts.v1 import verify_reference_database as runtime_verify
 
-    return runtime_verify(
+    result = runtime_verify(
         database,
         expected_contract_major=contract_major,
         expected_dataset_id=dataset_id,
     )
+    uri = f"file:{Path(database).resolve()}?mode=ro"
+    with sqlite3.connect(uri, uri=True, timeout=10) as con:
+        actual_dataset_id = logical_dataset_id(con)
+        if actual_dataset_id != str(dataset_id).lower():
+            raise ValueError("reference logical dataset identity does not match release")
+        _verify_reviewed_semantic_materialization(con)
+    return result
 
 
 __all__ = [

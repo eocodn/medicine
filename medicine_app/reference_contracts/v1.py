@@ -48,6 +48,9 @@ REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
         "criterion_maximum_daily_amount", "criterion_maximum_daily_unit",
         "criterion_dose_parse_status", "criterion_dose_parse_reason", "match_method",
     }),
+    "reference_semantic_expectations": frozenset({
+        "criterion_rule_id", "expected_fact_count",
+    }),
     "reference_criterion_semantics": frozenset({
         "criterion_rule_id", "ordinal", "semantic_role", "evaluation_mode", "evaluator_kind",
         "fallback_action", "qualifier_type", "display_text", "structured_payload_json",
@@ -158,13 +161,25 @@ def _verify_schema(con: sqlite3.Connection) -> None:
 
 def _verify_semantics(con: sqlite3.Connection) -> None:
     con.row_factory = sqlite3.Row
+    expectations = {
+        int(row["criterion_rule_id"]): int(row["expected_fact_count"])
+        for row in con.execute(
+            """SELECT criterion_rule_id,expected_fact_count
+               FROM reference_semantic_expectations ORDER BY criterion_rule_id"""
+        ).fetchall()
+    }
+    if any(count <= 0 for count in expectations.values()):
+        raise ValueError("reference semantic expectation count is invalid")
     rows = con.execute(
         """SELECT criterion_rule_id,ordinal,semantic_role,evaluation_mode,evaluator_kind,
                   fallback_action,qualifier_type,display_text,structured_payload_json,source_remark
            FROM reference_criterion_semantics
            ORDER BY criterion_rule_id,ordinal"""
     ).fetchall()
+    actual_counts: dict[int, int] = {}
     for row in rows:
+        criterion_rule_id = int(row["criterion_rule_id"])
+        actual_counts[criterion_rule_id] = actual_counts.get(criterion_rule_id, 0) + 1
         try:
             normalized_semantic_record(dict(row))
         except ValueError as exc:
@@ -172,6 +187,14 @@ def _verify_semantics(con: sqlite3.Connection) -> None:
                 "reference semantic row "
                 f"{row['criterion_rule_id']}:{row['ordinal']} is invalid: {exc}"
             ) from exc
+    if set(actual_counts) != set(expectations):
+        raise ValueError("reference semantic expectations do not cover materialized semantic rows")
+    for criterion_rule_id, expected_count in expectations.items():
+        if actual_counts.get(criterion_rule_id, 0) != expected_count:
+            raise ValueError(
+                "reference semantic materialization count does not match expectation for "
+                f"criterion {criterion_rule_id}"
+            )
 
 
 def verify_reference_database(

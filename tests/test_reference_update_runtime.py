@@ -72,6 +72,18 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
                 expected_dataset_id=self.release["dataset_id"],
             )
 
+    def test_runtime_verifier_requires_semantic_expectation_table(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute("DROP TABLE reference_semantic_expectations")
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "reference contract schema"):
+            verify_reference_database(
+                self.mobile,
+                expected_contract_major=1,
+                expected_dataset_id=self.release["dataset_id"],
+            )
+
     def test_runtime_verifier_rejects_missing_runtime_required_product_column(self) -> None:
         with sqlite3.connect(self.mobile) as con:
             con.execute("ALTER TABLE products DROP COLUMN manufacturer")

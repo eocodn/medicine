@@ -14,6 +14,7 @@ from medicine_canonical.mobile import build_mobile_database
 from medicine_canonical.reference_contracts.v1 import (
     REFERENCE_CONTRACT_MAJOR,
     export_reference_database,
+    logical_dataset_id,
     semantic_facts_for_reviewed_remark,
     verify_reference_database,
 )
@@ -110,6 +111,45 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
 
         self.assertEqual(release["contract_major"], 1)
         self.assertEqual(verified["status"], "verified")
+
+    def test_server_verifier_rejects_missing_reviewed_semantic_materialization(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            criterion_rule_id = con.execute(
+                """SELECT criterion_rule_id FROM reference_criterion_semantics
+                   WHERE source_remark=? ORDER BY criterion_rule_id LIMIT 1""",
+                ("다만, 다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여",),
+            ).fetchone()[0]
+            con.execute(
+                "DELETE FROM reference_criterion_semantics WHERE criterion_rule_id=?",
+                (criterion_rule_id,),
+            )
+            con.execute(
+                "DELETE FROM reference_semantic_expectations WHERE criterion_rule_id=?",
+                (criterion_rule_id,),
+            )
+            dataset_id = logical_dataset_id(con)
+            con.execute(
+                "UPDATE reference_contract_meta SET value=? WHERE key='dataset_id'",
+                (dataset_id,),
+            )
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "semantic materialization"):
+            verify_reference_database(self.mobile, REFERENCE_CONTRACT_MAJOR, dataset_id)
+
+    def test_server_verifier_recomputes_frozen_logical_dataset_identity(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute(
+                "UPDATE products SET product_name=product_name || ' mutated' WHERE item_seq='SEM-A'"
+            )
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "logical dataset identity"):
+            verify_reference_database(
+                self.mobile,
+                REFERENCE_CONTRACT_MAJOR,
+                self.release["dataset_id"],
+            )
 
     def test_supported_contract_window_builder_emits_every_registered_major(self) -> None:
         output = self.mobile.parent / "contract-window"

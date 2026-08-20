@@ -79,6 +79,11 @@ def _mfds_semantics(
     if criterion_rule_id is None:
         return _legacy_dev_semantics(row)
     try:
+        expectation = con.execute(
+            """SELECT expected_fact_count FROM reference_semantic_expectations
+               WHERE criterion_rule_id=?""",
+            (criterion_rule_id,),
+        ).fetchone()
         records = con.execute(
             """SELECT semantic_role,evaluation_mode,evaluator_kind,fallback_action,
                       qualifier_type,display_text,structured_payload_json,source_remark
@@ -88,6 +93,19 @@ def _mfds_semantics(
         ).fetchall()
     except sqlite3.DatabaseError:
         return _legacy_dev_semantics(row)
+    if expectation is not None and len(records) != int(expectation[0]):
+        source_remark = str(row.get("criterion_qualifier_note") or "").strip()
+        return [{
+            "semantic_role": "applicability_condition",
+            "evaluation_mode": "review_required",
+            "evaluator_kind": "opaque_condition",
+            "fallback_action": "review_required",
+            "qualifier_type": "source_note",
+            "display_text": source_remark or "세부 적용 조건 확인 필요",
+            "structured_payload": {},
+            "source_remark": source_remark,
+            "runtime_error_kind": "missing_contract_semantics",
+        }]
     result: list[dict[str, Any]] = []
     for record in records:
         raw = {
@@ -205,9 +223,10 @@ def _remark_interaction_timing(
         and semantic.get("fallback_action") == "review_required"
     ]
     if review_required_conditions:
+        error_kind = review_required_conditions[0].get("runtime_error_kind")
         return {
             "status": "not_evaluable",
-            "kind": "review_required_condition",
+            "kind": error_kind or "review_required_condition",
             "reason": "reference condition requires professional review",
             "source_text": review_required_conditions[0].get("source_remark"),
         }
