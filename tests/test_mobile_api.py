@@ -124,6 +124,10 @@ class MobileApiTest(unittest.TestCase):
             "GET",
             "/api/products?q=%ED%83%80%EC%A7%84%EC%84%9C%EB%B0%A9%EC%A0%95%2010%2F5mg0.5%EC%A0%95&limit=10&mode=ocr",
         )
+        normalized_mode_status, normalized_mode = self.request(
+            "GET",
+            "/api/products?q=%ED%83%80%EC%A7%84%EC%84%9C%EB%B0%A9%EC%A0%95%2010%2F5mg0.5%EC%A0%95&limit=10&mode=OCR",
+        )
         invalid_status, invalid = self.request(
             "GET",
             "/api/products?q=%ED%83%80%EC%A7%84&mode=guess",
@@ -133,6 +137,8 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(manual, [])
         self.assertEqual(ocr_status, 200)
         self.assertEqual(ocr[0]["product_ref"], "OCR-SEARCH")
+        self.assertEqual(normalized_mode_status, 200)
+        self.assertEqual(normalized_mode[0]["product_ref"], "OCR-SEARCH")
         self.assertEqual(invalid_status, 400)
         self.assertIn("search mode", invalid["detail"])
 

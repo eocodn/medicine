@@ -201,6 +201,16 @@ class PrescriptionCliTest(unittest.TestCase):
         self.assertEqual(results[0]["product_ref"], "CLI-OCR")
         self.assertEqual(results[0]["search_match"]["tier"], "ocr_fuzzy")
         self.assertTrue(results[0]["search_match"]["fuzzy"])
+        self.assertIn("sort_key", results[0]["search_match"])
+
+        status, legacy_results = self.run_cli(
+            "drug-search", "MFDS-SAFE", "--explain-matches"
+        )
+
+        self.assertEqual(status, 0)
+        self.assertTrue(legacy_results)
+        self.assertEqual(legacy_results[0]["search_match"]["field"], "identifier")
+        self.assertIn("sort_key", legacy_results[0]["search_match"])
 
 
     def test_generic_dose_log_command_is_not_exposed(self) -> None:

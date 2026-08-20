@@ -10,6 +10,7 @@ from .dosage_forms import infer_administration_route
 from .product_search import (
     ProductSearchMatch,
     ProductSearchQuery,
+    compatibility_candidate_fragments,
     fuzzy_candidate_fragments,
     match_product_fields,
     parse_product_search_query,
@@ -138,6 +139,86 @@ class ProductRepository:
         ).fetchall()
 
     @staticmethod
+    def _legacy_match(
+        con: sqlite3.Connection,
+        row: sqlite3.Row,
+        term: str,
+    ) -> ProductSearchMatch:
+        needle = term.casefold()
+        for field, field_rank in (
+            ("product_name", 0),
+            ("ingredient_text", 1),
+            ("manufacturer", 2),
+        ):
+            value = str(row[field] or "")
+            compact = value.casefold()
+            position = compact.find(needle)
+            if position < 0:
+                continue
+            prefix = position == 0
+            return ProductSearchMatch(
+                field=field,
+                tier="legacy_prefix" if prefix else "legacy_substring",
+                fuzzy=False,
+                sort_key=(field_rank, 0, 0 if prefix else 1, max(0, len(compact) - len(needle))),
+            )
+        if str(row["item_seq"]).casefold().startswith(needle):
+            return ProductSearchMatch(
+                field="identifier",
+                tier="identifier_prefix",
+                fuzzy=False,
+                sort_key=(-1, 0, 0, 0),
+            )
+        edi_match = con.execute(
+            """SELECT 1 FROM product_identifiers
+               WHERE item_seq=? AND system='EDI' AND lower(value) LIKE lower(?) LIMIT 1""",
+            (row["item_seq"], f"{term}%"),
+        ).fetchone()
+        if edi_match is not None:
+            return ProductSearchMatch(
+                field="identifier",
+                tier="identifier_prefix",
+                fuzzy=False,
+                sort_key=(-1, 0, 0, 0),
+            )
+        return ProductSearchMatch(
+            field="legacy",
+            tier="legacy_like",
+            fuzzy=False,
+            sort_key=(3, 0, 1, 0),
+        )
+
+    def _legacy_results(
+        self,
+        con: sqlite3.Connection,
+        term: str,
+        limit: int,
+        include_inactive: bool,
+        *,
+        explain: bool,
+    ) -> list[dict]:
+        rows = self._legacy_search_rows(con, term, limit, include_inactive)
+        results = []
+        for row in rows:
+            decorated = self._decorate_product(row, con)
+            if explain:
+                decorated["search_match"] = self._legacy_match(con, row, term).explanation()
+            results.append(decorated)
+        return results
+
+    @staticmethod
+    def _number_raw_variants(number: str) -> tuple[str, ...]:
+        variants = [number]
+        integer, dot, fraction = number.partition(".")
+        if integer.isdigit() and len(integer) > 3:
+            grouped = f"{int(integer):,}"
+            if dot:
+                grouped = f"{grouped}.{fraction}"
+            if grouped not in variants:
+                variants.append(grouped)
+        return tuple(variants)
+
+    @staticmethod
     def _structured_candidate_rows(
         con: sqlite3.Connection,
         query: ProductSearchQuery,
@@ -166,11 +247,14 @@ class ProductRepository:
         number_clauses: list[str] = []
         if query.number_tokens:
             for number in query.number_tokens:
-                like = f"%{number}%"
-                number_clauses.append(
-                    "(p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?)"
-                )
-                params.extend((like, like, like))
+                variant_clauses: list[str] = []
+                for variant in ProductRepository._number_raw_variants(number):
+                    like = f"%{variant}%"
+                    variant_clauses.append(
+                        "(p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?)"
+                    )
+                    params.extend((like, like, like))
+                number_clauses.append("(" + " OR ".join(variant_clauses) + ")")
         number_clause = ""
         if number_clauses:
             number_clause = " AND " + " AND ".join(number_clauses)
@@ -250,12 +334,14 @@ class ProductRepository:
             raise ValueError("limit must be between 1 and 100")
         query = parse_product_search_query(term, mode=mode)
         with self._canonical() as con:
-            if mode == "manual" and not query.structured:
-                rows = self._legacy_search_rows(con, term, limit, include_inactive)
-                return [self._decorate_product(row, con) for row in rows]
+            if query.mode == "manual" and not query.structured:
+                return self._legacy_results(
+                    con, term, limit, include_inactive, explain=explain
+                )
             if not query.text_tokens:
-                rows = self._legacy_search_rows(con, term, limit, include_inactive)
-                return [self._decorate_product(row, con) for row in rows]
+                return self._legacy_results(
+                    con, term, limit, include_inactive, explain=explain
+                )
             identifier_match = ProductSearchMatch(
                 field="identifier",
                 tier="identifier_prefix",
@@ -283,7 +369,17 @@ class ProductRepository:
             rows = self._structured_candidate_rows(con, query, include_inactive)
             ranked.extend(self._rank_structured_rows(rows, query))
             ranked.sort(key=lambda item: item[0])
-            if not ranked and mode == "ocr":
+            if not ranked and query.mode == "manual":
+                fragments = compatibility_candidate_fragments(query)
+                if fragments:
+                    rows = self._structured_candidate_rows(
+                        con,
+                        query,
+                        include_inactive,
+                        fragments=fragments,
+                    )
+                    ranked = self._rank_structured_rows(rows, query)
+            if not ranked and query.mode == "ocr":
                 fragments = fuzzy_candidate_fragments(query)
                 if fragments:
                     rows = self._structured_candidate_rows(

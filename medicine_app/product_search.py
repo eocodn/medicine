@@ -13,13 +13,13 @@ _UNIT_SENTINEL = {
     "ml": "__unit_ml__",
 }
 _TOKEN_RE = re.compile(
-    r"__unit_(mg|ug|ml)__|\d+(?:\.\d+)?|[a-z]+|[가-힣]+",
+    r"__unit_(mg|ug|ml)__|\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|[a-z]+|[가-힣]+",
     re.IGNORECASE,
 )
 _ASCII_UNIT_PATTERNS = (
-    (re.compile(r"(?<![a-z가-힣])(?:mcg|ug|μg)(?![a-z가-힣])", re.IGNORECASE), "ug"),
-    (re.compile(r"(?<![a-z가-힣])mg(?![a-z가-힣])", re.IGNORECASE), "mg"),
-    (re.compile(r"(?<![a-z가-힣])ml(?![a-z가-힣])", re.IGNORECASE), "ml"),
+    (re.compile(r"(?<![a-z])(?:mcg|ug|μg)(?![a-z])", re.IGNORECASE), "ug"),
+    (re.compile(r"(?<![a-z])mg(?![a-z])", re.IGNORECASE), "mg"),
+    (re.compile(r"(?<![a-z])ml(?![a-z])", re.IGNORECASE), "ml"),
 )
 _KOREAN_UNIT_PATTERNS = (
     (re.compile(r"마이크로(?:그램|그람)", re.IGNORECASE), "ug"),
@@ -69,10 +69,12 @@ class ProductSearchMatch:
             "field": self.field,
             "tier": self.tier,
             "fuzzy": self.fuzzy,
+            "sort_key": list(self.sort_key),
         }
 
 
 def _normalize_number(value: str) -> str:
+    value = value.replace(",", "")
     try:
         number = Decimal(value)
     except InvalidOperation:
@@ -85,9 +87,9 @@ def _normalize_number(value: str) -> str:
 def _canonical_text(value: object) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).casefold()
     text = text.replace("µ", "μ")
-    for pattern, unit in _KOREAN_UNIT_PATTERNS:
-        text = pattern.sub(f" {_UNIT_SENTINEL[unit]} ", text)
     for pattern, unit in _ASCII_UNIT_PATTERNS:
+        text = pattern.sub(f" {_UNIT_SENTINEL[unit]} ", text)
+    for pattern, unit in _KOREAN_UNIT_PATTERNS:
         text = pattern.sub(f" {_UNIT_SENTINEL[unit]} ", text)
     return text
 
@@ -134,19 +136,19 @@ def _ordered_subsequence(needle: tuple[str, ...], haystack: tuple[str, ...]) -> 
     return False
 
 
-def _distance_at_most_one(left: str, right: str) -> bool:
+def _edit_distance_at_most_one(left: str, right: str) -> int | None:
     if left == right:
-        return True
+        return 0
     if abs(len(left) - len(right)) > 1:
-        return False
+        return None
     if len(left) == len(right):
         mismatches = 0
         for a, b in zip(left, right):
             if a != b:
                 mismatches += 1
                 if mismatches > 1:
-                    return False
-        return True
+                    return None
+        return 1
     if len(left) > len(right):
         left, right = right, left
     short_index = 0
@@ -159,9 +161,9 @@ def _distance_at_most_one(left: str, right: str) -> bool:
             continue
         edits += 1
         if edits > 1:
-            return False
+            return None
         long_index += 1
-    return True
+    return 1
 
 
 def _ordered_text_match(
@@ -171,25 +173,33 @@ def _ordered_text_match(
     allow_fuzzy: bool,
 ) -> tuple[bool, int]:
     cursor = 0
-    fuzzy_count = 0
-    for token in tokens:
+    edit_count = 0
+    for token_index, token in enumerate(tokens):
         position = candidate.find(token, cursor)
         if position >= 0:
             cursor = position + len(token)
             continue
-        if not allow_fuzzy or len(token) < 4:
-            return False, fuzzy_count
-        matched_position = None
-        for start in range(cursor, max(cursor, len(candidate) - len(token) + 1)):
-            window = candidate[start:start + len(token)]
-            if len(window) == len(token) and _distance_at_most_one(token, window):
-                matched_position = start
+        if not allow_fuzzy or len(token) < 3:
+            return False, edit_count
+        if edit_count >= 1:
+            return False, edit_count
+        matched: tuple[int, int] | None = None
+        starts = (0,) if token_index == 0 and cursor == 0 else range(cursor, len(candidate))
+        for start in starts:
+            for width in (len(token) - 1, len(token), len(token) + 1):
+                if width < 1 or start + width > len(candidate):
+                    continue
+                distance = _edit_distance_at_most_one(token, candidate[start:start + width])
+                if distance == 1:
+                    matched = (start, width)
+                    break
+            if matched is not None:
                 break
-        if matched_position is None:
-            return False, fuzzy_count
-        fuzzy_count += 1
-        cursor = matched_position + len(token)
-    return True, fuzzy_count
+        if matched is None:
+            return False, edit_count
+        edit_count += 1
+        cursor = matched[0] + matched[1]
+    return True, edit_count
 
 
 def _field_text(value: object) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
@@ -231,8 +241,26 @@ def _match_text_field(
         field=field,
         tier=tier,
         fuzzy=bool(fuzzy_count),
-        sort_key=(field_rank, 1 if fuzzy_count else 0, 0 if prefix else 1, gap),
+        sort_key=(field_rank, fuzzy_count, 0 if prefix else 1, gap),
     )
+
+
+def _match_ingredient_field(
+    query: ProductSearchQuery,
+    value: object,
+) -> ProductSearchMatch | None:
+    # A numeric/unit qualifier belongs to one ingredient component. Matching
+    # numbers against the whole slash-separated field can bind another
+    # component's strength to the queried ingredient (e.g. Cellulase 500 when
+    # only Biodiastase is 500).
+    if query.number_tokens or query.unit_tokens:
+        matches = [
+            _match_text_field(query, component, field="ingredient_text", field_rank=1)
+            for component in str(value or "").split("/")
+        ]
+        found = [match for match in matches if match is not None]
+        return min(found, key=lambda match: match.sort_key) if found else None
+    return _match_text_field(query, value, field="ingredient_text", field_rank=1)
 
 
 def match_product_fields(
@@ -249,12 +277,7 @@ def match_product_fields(
             field="product_name",
             field_rank=0,
         ),
-        _match_text_field(
-            query,
-            ingredient_text,
-            field="ingredient_text",
-            field_rank=1,
-        ),
+        _match_ingredient_field(query, ingredient_text),
         _match_text_field(
             query,
             manufacturer,
@@ -272,7 +295,7 @@ def fuzzy_candidate_fragments(query: ProductSearchQuery) -> tuple[str, ...]:
         return ()
     fragments: list[str] = []
     for token in sorted(query.text_tokens, key=len, reverse=True):
-        if len(token) < 4:
+        if len(token) < 3:
             continue
         # Prefix/suffix fragments are deliberately non-overlapping. With a
         # single-character substitution, at least one fragment therefore
@@ -286,9 +309,31 @@ def fuzzy_candidate_fragments(query: ProductSearchQuery) -> tuple[str, ...]:
     return tuple(fragments[:6])
 
 
+def compatibility_candidate_fragments(query: ProductSearchQuery) -> tuple[str, ...]:
+    """Return raw-safe anchors for an exact normalized-match retry.
+
+    SQLite candidate filtering sees the contract-v1 raw product text, while
+    final matching sees NFKC-normalized text. If a compatibility glyph changes
+    bytes (for example Ⅱ -> II), a full normalized token can miss the row before
+    exact normalized matching gets a chance. This fallback is only used after
+    the deterministic candidate pass is empty; it does not relax final matching.
+    """
+    fragments: list[str] = []
+    for token in sorted(query.text_tokens, key=len, reverse=True):
+        if len(token) < 3:
+            continue
+        for fragment in (token, token[:3], token[-3:]):
+            if len(fragment) >= 3 and fragment not in fragments:
+                fragments.append(fragment)
+        if len(fragments) >= 6:
+            break
+    return tuple(fragments[:6])
+
+
 __all__ = [
     "ProductSearchMatch",
     "ProductSearchQuery",
+    "compatibility_candidate_fragments",
     "fuzzy_candidate_fragments",
     "match_product_fields",
     "parse_product_search_query",

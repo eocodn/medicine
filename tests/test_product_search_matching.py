@@ -17,6 +17,8 @@ class ProductSearchQueryTest(unittest.TestCase):
     def test_normalizes_spacing_boundaries_and_strength_units(self) -> None:
         spaced = parse_product_search_query(" 씬지록신 25 ㎍ ")
         compact = parse_product_search_query("씬지록신25mcg")
+        ascii_before_form = parse_product_search_query("알로판400mg정")
+        thousands = parse_product_search_query("글루파 1,000 mg")
 
         self.assertEqual(spaced.text_tokens, ("씬지록신",))
         self.assertEqual(spaced.number_tokens, ("25",))
@@ -24,6 +26,11 @@ class ProductSearchQueryTest(unittest.TestCase):
         self.assertEqual(compact.text_tokens, spaced.text_tokens)
         self.assertEqual(compact.number_tokens, spaced.number_tokens)
         self.assertEqual(compact.unit_tokens, spaced.unit_tokens)
+        self.assertEqual(ascii_before_form.text_tokens, ("알로판", "정"))
+        self.assertEqual(ascii_before_form.number_tokens, ("400",))
+        self.assertEqual(ascii_before_form.unit_tokens, ("mg",))
+        self.assertEqual(thousands.number_tokens, ("1000",))
+        self.assertEqual(thousands.unit_tokens, ("mg",))
 
     def test_strength_numbers_are_exact_tokens_not_substrings(self) -> None:
         query = parse_product_search_query("씬지록신 25")
@@ -120,6 +127,48 @@ class ProductSearchIntegrationTest(unittest.TestCase):
                 "하트만용액",
                 "Calcium Chloride Hydrate/Potassium Chloride/Sodium Chloride/Sodium Lactate Solution 50%",
             )
+            add_product(
+                con,
+                "ALLOPAN-400",
+                "알로판400mg정(이부프로펜)",
+                "Ibuprofen",
+            )
+            add_product(
+                con,
+                "DANAZOL-200",
+                "영풍다나졸200mg캡슐",
+                "Danazol",
+            )
+            add_product(
+                con,
+                "GLUPA-COMMA",
+                "글루파정1,000㎎(메트포르민염산염)",
+                "Metformin Hydrochloride",
+            )
+            add_product(
+                con,
+                "D3-COMMA",
+                "디3 베이스 경구 드롭스 10,000IU/mL (콜레칼시페롤)",
+                "Cholecalciferol",
+            )
+            add_product(
+                con,
+                "ROMAN-II",
+                "지로티프Ⅱ주(정제브이아이장티푸스백신)",
+                "Typhoid Vaccine",
+            )
+            add_product(
+                con,
+                "ARONAMIN-GOLD",
+                "아로나민골드정",
+                "Vitamin Complex",
+            )
+            add_product(
+                con,
+                "MOATAMIN-GOLD",
+                "모아타민골드비백정",
+                "Vitamin Complex",
+            )
         self.app = MedicationApp(self.canonical_db, self.personal_db)
 
     def tearDown(self) -> None:
@@ -148,6 +197,19 @@ class ProductSearchIntegrationTest(unittest.TestCase):
 
         results = self.app.search_products("Sodium Lactate Solution 50%", limit=10)
         self.assertIn("HARTMANN", [row["product_ref"] for row in results])
+
+    def test_structured_ingredient_numbers_stay_bound_to_the_same_component(self) -> None:
+        self.assertEqual(self.app.search_products("Cellulase 500", limit=10), [])
+        self.assertEqual(self.app.search_products("Lipase 500", limit=10), [])
+        self.assert_first("Biodiastase 500", "DIGEST-500")
+
+    def test_ascii_units_before_hangul_forms_and_thousands_are_normalized(self) -> None:
+        self.assert_first("알로판 400mg", "ALLOPAN-400")
+        self.assert_first("알로판 400 밀리그램", "ALLOPAN-400")
+        self.assert_first("영풍다나졸 200 mg", "DANAZOL-200")
+        self.assert_first("글루파 1000 mg", "GLUPA-COMMA")
+        self.assert_first("글루파 1,000 mg", "GLUPA-COMMA")
+        self.assert_first("디3 베이스 10000", "D3-COMMA")
 
     def test_punctuation_separated_text_uses_normalized_matching(self) -> None:
         self.assert_first("하트만-용액", "HARTMANN")
@@ -207,10 +269,34 @@ class ProductSearchIntegrationTest(unittest.TestCase):
         self.assertEqual(self.app.search_products("씬지록심 25", limit=10), [])
         self.assert_first("씬지록심 25", "SYN-25", mode="ocr")
         self.assert_first("씬즈록신 25", "SYN-25", mode="ocr")
+        self.assert_first("씬록신 25", "SYN-25", mode="ocr")
+        self.assert_first("씬지지록신 25", "SYN-25", mode="ocr")
+        self.assert_first("아로민골드", "ARONAMIN-GOLD", mode="ocr")
+        self.assertEqual(self.app.search_products("타징 서방징 10 5", limit=10, mode="ocr"), [])
 
         result = self.app.search_products("씬지록심 25", limit=10, mode="ocr")[0]
         self.assertEqual(result["product_mapping_method"], "item_seq_exact")
         self.assertNotIn("search_match", result)
+
+    def test_search_uses_normalized_mode_after_parsing(self) -> None:
+        self.assert_first("씬즈록신 25", "SYN-25", mode="OCR")
+        self.assert_first("씬즈록신 25", "SYN-25", mode=" ocr ")
+
+    def test_nfkc_equivalent_product_text_survives_candidate_generation(self) -> None:
+        self.assert_first("지로티프Ⅱ", "ROMAN-II")
+        self.assert_first("지로티프 II", "ROMAN-II")
+
+    def test_explain_is_present_for_structured_legacy_and_identifier_paths(self) -> None:
+        structured = self.app.search_products("씬지록신 25", limit=10, explain=True)[0]
+        legacy = self.app.search_products("알프람", limit=10, explain=True)[0]
+        identifier = self.app.search_products("SYN-25", limit=10, explain=True)[0]
+
+        for result in (structured, legacy, identifier):
+            self.assertIn("search_match", result)
+            self.assertIn("field", result["search_match"])
+            self.assertIn("tier", result["search_match"])
+            self.assertIn("fuzzy", result["search_match"])
+            self.assertIn("sort_key", result["search_match"])
 
     def test_structured_search_requires_no_search_specific_database_object(self) -> None:
         with sqlite3.connect(self.canonical_db) as con:
