@@ -135,6 +135,36 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(stopped["active"])
 
+    def test_reference_unavailable_mode_starts_without_any_reference_database(self) -> None:
+        unavailable_personal = self.personal_db.with_name("unavailable-personal.sqlite")
+        api = MobileApi(None, unavailable_personal, reference_unavailable_reason="update_required")
+
+        created = json.loads(api.request(
+            "POST",
+            "/api/people",
+            json.dumps({
+                "name": "로컬기록",
+                "birth_date": "1990-01-01",
+                "sex": "male",
+                "pregnancy_status": "not_applicable",
+            }, ensure_ascii=False),
+        ))
+        self.assertEqual(created["status"], 201)
+        person_id = created["body"]["id"]
+
+        health = json.loads(api.request("GET", "/api/health", ""))
+        self.assertEqual(health["status"], 200)
+        self.assertFalse(health["body"]["reference_available"])
+        self.assertEqual(health["body"]["reference_status"], "update_required")
+
+        people = json.loads(api.request("GET", "/api/people", ""))
+        self.assertEqual(people["status"], 200)
+        self.assertEqual(people["body"][0]["id"], person_id)
+
+        products = json.loads(api.request("GET", "/api/products?q=test", ""))
+        self.assertEqual(products["status"], 503)
+        self.assertEqual(products["body"]["reference_status"], "update_required")
+
     def test_dose_completion_can_be_canceled_through_mobile_bridge(self) -> None:
         _, person = self.request("POST", "/api/people", {
             "name": "복용취소",

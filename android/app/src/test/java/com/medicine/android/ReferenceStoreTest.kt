@@ -17,6 +17,16 @@ class ReferenceStoreTest {
         override fun write(value: ByteArray) { bytes = value.copyOf() }
     }
 
+    private class CountingStateStorage : ReferenceStateStorage {
+        var bytes: ByteArray? = null
+        var writes = 0
+        override fun read(): ByteArray? = bytes?.copyOf()
+        override fun write(value: ByteArray) {
+            writes += 1
+            bytes = value.copyOf()
+        }
+    }
+
     private class FakeDatabaseVerifier : ReferenceDatabaseVerifier {
         var calls = 0
         override fun verify(file: File, version: ReferenceVersion) {
@@ -254,6 +264,26 @@ class ReferenceStoreTest {
             assertEquals(1, reopened.snapshot().highestRetiredContractMajor)
             assertEquals(12, reopened.snapshot().highestSeenRootSequence)
             assertEquals(signedRootHash, reopened.snapshot().highestSeenRootHash)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun observingContractRetirementPersistsRootHighWaterAndRetirementAtomically() {
+        val root = Files.createTempDirectory("reference-store-retirement-atomic").toFile()
+        try {
+            val storage = CountingStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val signedRootHash = "e".repeat(64)
+
+            store.markContractRetired(1, 13, signedRootHash)
+
+            assertEquals(1, storage.writes)
+            val state = store.snapshot()
+            assertEquals(13, state.highestSeenRootSequence)
+            assertEquals(signedRootHash, state.highestSeenRootHash)
+            assertEquals(1, state.highestRetiredContractMajor)
         } finally {
             root.deleteRecursively()
         }

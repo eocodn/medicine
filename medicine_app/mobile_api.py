@@ -87,10 +87,20 @@ class MobileApi:
     external or loopback web server.
     """
 
-    def __init__(self, canonical_db: str | Path, personal_db: str | Path) -> None:
+    def __init__(
+        self,
+        canonical_db: str | Path | None,
+        personal_db: str | Path,
+        *,
+        reference_unavailable_reason: str | None = None,
+    ) -> None:
         self.service = MedicationApp(canonical_db, personal_db)
-        self.reference_available = True
-        self.reference_unavailable_reason: str | None = None
+        self.reference_available = canonical_db is not None
+        self.reference_unavailable_reason: str | None = (
+            None
+            if self.reference_available
+            else (reference_unavailable_reason or "unavailable")
+        )
 
     def set_reference_available(self, available: bool, reason: str | None = None) -> None:
         self.reference_available = bool(available)
@@ -265,7 +275,7 @@ class MobileApi:
         return 404, {"detail": "route not found"}
 
 
-def create_bridge(canonical_db: str, personal_db: str) -> MobileApi:
+def create_bridge(canonical_db: str | None, personal_db: str) -> MobileApi:
     return MobileApi(canonical_db, personal_db)
 
 

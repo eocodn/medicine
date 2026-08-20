@@ -8,7 +8,7 @@ import org.json.JSONObject
 import java.io.File
 
 class MedicineBridge(
-    referenceDatabase: File,
+    referenceDatabase: File?,
     personalDatabase: File,
     private val vault: PersonalDatabaseVault,
 ) {
@@ -22,7 +22,7 @@ class MedicineBridge(
                 .getModule("medicine_app.mobile_api")
                 .callAttr(
                     "create_bridge",
-                    referenceDatabase.absolutePath,
+                    referenceDatabase?.absolutePath,
                     personalDatabase.absolutePath,
                 )
             api.callAttr("prepare_for_seal")

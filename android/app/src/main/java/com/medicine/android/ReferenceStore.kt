@@ -155,31 +155,46 @@ class ReferenceStore(
     }
 
     fun observeSignedRoot(releaseSequence: Long, rootHash: String) {
+        val state = snapshot()
+        val observed = withObservedSignedRoot(state, releaseSequence, rootHash)
+        if (observed != state) writeState(observed)
+    }
+
+    private fun withObservedSignedRoot(
+        state: ReferenceStoreState,
+        releaseSequence: Long,
+        rootHash: String,
+    ): ReferenceStoreState {
         require(releaseSequence > 0) { "signed root sequence must be positive" }
         require(rootHash.matches(Regex("[0-9a-f]{64}"))) { "invalid signed root hash" }
-        val state = snapshot()
-        when {
+        return when {
             releaseSequence < state.highestSeenRootSequence ->
                 throw IllegalArgumentException("signed reference root rollback is not allowed")
-            releaseSequence == state.highestSeenRootSequence ->
+            releaseSequence == state.highestSeenRootSequence -> {
                 require(state.highestSeenRootHash == rootHash) {
                     "signed reference root changed without advancing sequence"
                 }
-            else -> writeState(
+                state
+            }
+            else ->
                 state.copy(
                     highestSeenRootSequence = releaseSequence,
                     highestSeenRootHash = rootHash,
                 )
-            )
         }
     }
 
     fun markContractRetired(contractMajor: Int, releaseSequence: Long, rootHash: String) {
         require(contractMajor > 0) { "retired reference contract major must be positive" }
-        observeSignedRoot(releaseSequence, rootHash)
         val state = snapshot()
-        if (contractMajor <= state.highestRetiredContractMajor) return
-        writeState(state.copy(highestRetiredContractMajor = contractMajor))
+        val observed = withObservedSignedRoot(state, releaseSequence, rootHash)
+        val retired = observed.copy(
+            highestRetiredContractMajor = maxOf(
+                observed.highestRetiredContractMajor,
+                contractMajor,
+            ),
+        )
+        if (retired != state) writeState(retired)
     }
 
     fun isContractRetired(contractMajor: Int): Boolean {

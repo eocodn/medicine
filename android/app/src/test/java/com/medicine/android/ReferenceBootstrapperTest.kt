@@ -67,6 +67,31 @@ class ReferenceBootstrapperTest {
         }
     }
 
+    private class RetiredSource(
+        private val sequence: Long,
+        private val hash: String,
+    ) : ReferenceReleaseSource {
+        var downloads = 0
+
+        override fun fetchLatest(): VerifiedReferenceRelease {
+            throw ReferenceContractRetiredException(
+                releaseSequence = sequence,
+                rootHash = hash,
+                currentContractMajor = 2,
+                minimumSupportedContractMajor = 2,
+            )
+        }
+
+        override fun download(
+            artifact: ReferenceReleaseArtifact,
+            target: File,
+            progress: (Long, Long) -> Unit,
+        ) {
+            downloads += 1
+            error("retired contract must not download")
+        }
+    }
+
     private class FakeRebuilder : ReferenceArtifactRebuilder {
         var currentWasNull = false
         override fun rebuild(
@@ -145,6 +170,43 @@ class ReferenceBootstrapperTest {
             assertTrue(observer.phases.containsAll(listOf("manifest", "full-download", "rebuild", "verify-and-install", "ready")))
             assertEquals(FULL_BYTES.size.toLong() to FULL_BYTES.size.toLong(), observer.progress.last())
             assertFalse(root.listFiles().orEmpty().any { it.name.startsWith(".bootstrap-candidate-") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun retiredContractWithoutLkgReturnsUnavailableModeAndPersistsRetirement() {
+        val root = Files.createTempDirectory("reference-bootstrap-retired-empty").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val source = RetiredSource(33, "f".repeat(64))
+            val bootstrapper = ReferenceBootstrapper(
+                root,
+                store,
+                source,
+                FakeRebuilder(),
+                FixedStorageCapacity(Long.MAX_VALUE),
+            )
+
+            val selected = bootstrapper.ensureInstalledOrRetired(1)
+
+            assertNull(selected)
+            assertEquals(0, source.downloads)
+            assertTrue(store.isContractRetired(1))
+            assertEquals(33, store.snapshot().highestSeenRootSequence)
+            assertEquals("f".repeat(64), store.snapshot().highestSeenRootHash)
+
+            val reopened = ReferenceBootstrapper(
+                root,
+                ReferenceStore(root, storage, FakeDatabaseVerifier()),
+                source,
+                FakeRebuilder(),
+                FixedStorageCapacity(Long.MAX_VALUE),
+            ).ensureInstalledOrRetired(1)
+            assertNull(reopened)
+            assertEquals(0, source.downloads)
         } finally {
             root.deleteRecursively()
         }

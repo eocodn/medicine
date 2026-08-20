@@ -6,17 +6,18 @@ import java.io.File
 import java.security.MessageDigest
 
 data class InstalledReference(
-    val database: File,
-    val datasetId: String,
-    val version: ReferenceVersion,
+    val database: File?,
+    val datasetId: String?,
+    val version: ReferenceVersion?,
     val store: ReferenceStore,
     val referenceDir: File,
     val recoveryReason: String? = null,
+    val unavailableReason: String? = null,
 ) {
     val referenceAvailable: Boolean
-        get() = !store.isContractRetired(version.contractMajor)
+        get() = database != null && version != null && !store.isContractRetired(version.contractMajor)
     val referenceUnavailableReason: String?
-        get() = if (referenceAvailable) null else "update_required"
+        get() = if (referenceAvailable) null else (unavailableReason ?: "update_required")
 }
 
 interface ReferenceStorageCapacity {
@@ -48,6 +49,22 @@ class ReferenceBootstrapper(
     fun ensureInstalled(expectedContractMajor: Int): InstalledReferenceVersion =
         ReferenceOperationCoordinator.exclusive {
             ensureInstalledExclusive(expectedContractMajor)
+        }
+
+    fun ensureInstalledOrRetired(expectedContractMajor: Int): InstalledReferenceVersion? =
+        ReferenceOperationCoordinator.exclusive {
+            store.openForStartup(expectedContractMajor)?.let { return@exclusive it }
+            if (store.isContractRetired(expectedContractMajor)) return@exclusive null
+            try {
+                ensureInstalledExclusive(expectedContractMajor)
+            } catch (retired: ReferenceContractRetiredException) {
+                store.markContractRetired(
+                    expectedContractMajor,
+                    retired.releaseSequence,
+                    retired.rootHash,
+                )
+                null
+            }
         }
 
     private fun ensureInstalledExclusive(expectedContractMajor: Int): InstalledReferenceVersion {
@@ -192,14 +209,25 @@ class AndroidReferenceInstaller(
             baseUrl,
             ReferenceManifestVerifier(ReferenceTrust.trustedPublicKeys),
         )
-        val selected = ReferenceBootstrapper(
+        val bootstrapper = ReferenceBootstrapper(
             referenceDir,
             store,
             source,
             PythonReferenceArtifactRebuilder(),
             AndroidReferenceStorageCapacity(),
             observer,
-        ).ensureInstalled(ReferenceRuntimePolicy.CONTRACT_MAJOR)
+        )
+        val selected = bootstrapper.ensureInstalledOrRetired(ReferenceRuntimePolicy.CONTRACT_MAJOR)
+        if (selected == null) {
+            return InstalledReference(
+                database = null,
+                datasetId = null,
+                version = null,
+                store = store,
+                referenceDir = referenceDir,
+                unavailableReason = "update_required",
+            )
+        }
         return InstalledReference(
             database = selected.file,
             datasetId = selected.version.datasetId,

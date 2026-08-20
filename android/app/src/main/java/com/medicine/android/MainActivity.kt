@@ -185,6 +185,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun scheduleReferenceUpdate(reference: InstalledReference, bridge: MedicineBridge) {
+        val installedVersion = reference.version ?: return
+        val installedDatabase = reference.database ?: return
         val baseUrl = BuildConfig.REFERENCE_UPDATE_BASE_URL.trim()
         if (baseUrl.isEmpty()) {
             Log.i(TAG, "Reference updater is disabled: no distribution base URL configured")
@@ -204,7 +206,7 @@ class MainActivity : ComponentActivity() {
                         source,
                         PythonReferenceArtifactRebuilder(),
                         ReferenceUpdateLogObserver(),
-                    ).checkForUpdate(InstalledReferenceVersion(reference.version, reference.database))
+                    ).checkForUpdate(InstalledReferenceVersion(installedVersion, installedDatabase))
                 }.getOrElse { error ->
                     ReferenceUpdateResult(
                         status = ReferenceUpdateStatus.FAILED,

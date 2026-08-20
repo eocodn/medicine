@@ -207,15 +207,15 @@ class ReferenceUpdater(
                     "signed release sequence is below the activation high-water mark",
                 )
             }
+            val sameTarget = current.version.sha256 == release.targetSha256 &&
+                current.version.sizeBytes == release.targetSizeBytes &&
+                current.version.datasetId == release.datasetId
+            if (sameTarget) {
+                return ReferenceUpdateResult(ReferenceUpdateStatus.UP_TO_DATE, release.releaseSequence)
+            }
             if (release.releaseSequence == state.highestActivatedSequence &&
                 current.version.releaseSequence == state.highestActivatedSequence
             ) {
-                if (current.version.sha256 == release.targetSha256 &&
-                    current.version.sizeBytes == release.targetSizeBytes &&
-                    current.version.datasetId == release.datasetId
-                ) {
-                    return ReferenceUpdateResult(ReferenceUpdateStatus.UP_TO_DATE, release.releaseSequence)
-                }
                 return ReferenceUpdateResult(
                     ReferenceUpdateStatus.FAILED,
                     release.releaseSequence,

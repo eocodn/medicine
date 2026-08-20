@@ -235,6 +235,44 @@ class ReferenceUpdaterTest {
     }
 
     @Test
+    fun newerRootWithUnchangedContractTargetIsUpToDateWithoutDownloadOrRestage() {
+        val root = Files.createTempDirectory("reference-updater-root-only").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val currentBytes = "current-root-only".toByteArray()
+            val current = version(currentBytes, 7, "current-root-only")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current-root-only.sqlite").apply { writeBytes(currentBytes) },
+            )
+            val release = release(
+                currentBytes,
+                sequence = 8,
+                label = "current-root-only",
+                current = current,
+                includeMatchingPatch = false,
+            )
+            val source = FakeSource(release)
+
+            val result = ReferenceUpdater(
+                root,
+                store,
+                source,
+                FakeRebuilder(currentBytes),
+            ).checkForUpdate(installed)
+
+            assertEquals(ReferenceUpdateStatus.UP_TO_DATE, result.status)
+            assertTrue(source.downloads.isEmpty())
+            assertEquals(current, store.snapshot().active)
+            assertNull(store.snapshot().pending)
+            assertEquals(8, store.snapshot().highestSeenRootSequence)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun updaterRejectsReleaseBelowActivatedHighWaterBeforeDownloading() {
         val root = Files.createTempDirectory("reference-updater-rollback").toFile()
         try {
