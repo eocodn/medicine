@@ -9,7 +9,7 @@ permissions:
 jobs:
   check-android:
     name: Check debug-signed Android arm64 release
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, wsl-ci]
     timeout-minutes: 45
     steps:
       - name: Check out selected ref

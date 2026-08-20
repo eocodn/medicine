@@ -94,6 +94,8 @@ class AndroidGithubReleaseTest(unittest.TestCase):
 
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("contents: read", workflow)
+        self.assertIn("runs-on: [self-hosted, wsl-ci]", workflow)
+        self.assertNotIn("runs-on: ubuntu-latest", workflow)
         self.assertNotIn("secrets.", workflow)
         self.assertNotIn("ANDROID_RELEASE_KEYSTORE_BASE64", workflow)
         self.assertNotIn("ANDROID_RELEASE_KEYSTORE_PASSWORD", workflow)
