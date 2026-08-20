@@ -92,6 +92,10 @@ function buildExpectedRows(sample, includeRegimenSemantics) {
     const draft = {};
     const productEvidence = [...group.product_labels, group.product];
     const evidence = { product_query: productEvidence.map((region) => region.region_id) };
+    const asNeededEvidence = includeRegimenSemantics
+      ? group.regimen_semantics.filter((item) => item.as_needed).map((item) => item.region_id)
+      : [];
+    const asNeeded = asNeededEvidence.length > 0;
     if (group.dose) {
       const amount = roleValue(group.dose.text);
       if (amount !== null) {
@@ -114,7 +118,7 @@ function buildExpectedRows(sample, includeRegimenSemantics) {
         }
       }
     }
-    if (group.frequency) {
+    if (group.frequency && !asNeeded) {
       const value = roleValue(group.frequency.text);
       if (value !== null) {
         draft.frequency_per_day = value;
@@ -129,7 +133,9 @@ function buildExpectedRows(sample, includeRegimenSemantics) {
       }
     }
     if (includeRegimenSemantics) {
-      const scheduleTimes = [...new Set(group.regimen_semantics.flatMap((item) => item.schedule_times))].sort();
+      const scheduleTimes = asNeeded
+        ? []
+        : [...new Set(group.regimen_semantics.flatMap((item) => item.schedule_times))].sort();
       if (scheduleTimes.length) {
         draft.schedule_times = scheduleTimes;
         evidence.schedule_times = group.regimen_semantics.filter((item) => item.schedule_times.length).map((item) => item.region_id);
@@ -141,8 +147,7 @@ function buildExpectedRows(sample, includeRegimenSemantics) {
           evidence[field] = group.regimen_semantics.filter((item) => item[field] === candidates[0]).map((item) => item.region_id);
         }
       }
-      const asNeededEvidence = group.regimen_semantics.filter((item) => item.as_needed).map((item) => item.region_id);
-      if (asNeededEvidence.length) {
+      if (asNeeded) {
         draft.as_needed = true;
         evidence.as_needed = asNeededEvidence;
       }

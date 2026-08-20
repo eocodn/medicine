@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from browser_ocr.finetune.dataset import DatasetError
 from browser_ocr.finetune.full_document_cli import (
+    _gpu_runtime_identity,
     _implementation_profile,
     build_ocr_producer_profile,
     build_parser,
@@ -153,6 +157,86 @@ class FullDocumentCliContractTest(unittest.TestCase):
             self.assertEqual(first["inference_runtime_sha256"], "a" * 64)
             self.assertEqual(second["inference_runtime_sha256"], "b" * 64)
             self.assertNotEqual(first, second)
+
+    def test_ocr_producer_profile_binds_dictionary_selected_by_recognizer_config(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            baseline, detector, paddle, detector_root = self._producer_inputs(root)
+            selected_dictionary = root / "selected-dict.txt"
+            selected_dictionary.write_text("가\n나\n", encoding="utf-8")
+            config = root / "model" / "config.yml"
+            config.write_text(
+                f"Global:\n  character_dict_path: {selected_dictionary}\n",
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args([
+                "--image", str(root / "unused.jpg"),
+                "--baseline-result", str(baseline),
+                "--output-dir", str(root / "out"),
+                "--detector-manifest", str(detector),
+                "--detector-root", str(detector_root),
+                "--paddleocr-root", str(paddle),
+                "--recognizer-device", "cpu",
+            ])
+            first = build_ocr_producer_profile(args)
+            selected_dictionary.write_text("가\n나\n다\n", encoding="utf-8")
+            second = build_ocr_producer_profile(args)
+            self.assertNotEqual(first["paddleocr_dictionary_sha256"], second["paddleocr_dictionary_sha256"])
+            self.assertNotEqual(first, second)
+
+    def test_gpu_producer_profile_binds_runtime_selected_device(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            baseline, detector, paddle, detector_root = self._producer_inputs(root)
+            args = build_parser().parse_args([
+                "--image", str(root / "unused.jpg"),
+                "--baseline-result", str(baseline),
+                "--output-dir", str(root / "out"),
+                "--detector-manifest", str(detector),
+                "--detector-root", str(detector_root),
+                "--paddleocr-root", str(paddle),
+                "--recognizer-device", "gpu",
+            ])
+            runtime = {
+                "paddle_version": "3.2.0",
+                "device_name": "Fixture GPU",
+                "compute_capability": [8, 9],
+                "cuda_version": "12.6",
+                "cudnn_version": 90501,
+            }
+            with patch(
+                "browser_ocr.finetune.full_document_cli._gpu_runtime_identity",
+                return_value=runtime,
+                create=True,
+            ):
+                with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0"}, clear=False):
+                    first = build_ocr_producer_profile(args)
+                with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "1"}, clear=False):
+                    second = build_ocr_producer_profile(args)
+            self.assertNotEqual(first["inference_runtime_sha256"], second["inference_runtime_sha256"])
+            self.assertNotEqual(first, second)
+
+    def test_gpu_runtime_identity_binds_nvidia_driver_report(self) -> None:
+        fake_paddle = SimpleNamespace()
+        nvidia = SimpleNamespace(
+            stdout="GPU-fixture, Fixture GPU, 610.47, 8.9\n",
+        )
+        with patch.dict(sys.modules, {"paddle": fake_paddle}), \
+             patch(
+                 "browser_ocr.finetune.training.probe_paddle_runtime",
+                 return_value={
+                     "schema_version": 1,
+                     "status": "ok",
+                     "paddle_version": "3.2.0",
+                     "device_name": "Fixture GPU",
+                     "compute_capability": [8, 9],
+                     "cuda_version": "12.6",
+                     "cudnn_version": 90501,
+                 },
+             ), \
+             patch("browser_ocr.finetune.full_document_cli.subprocess.run", return_value=nvidia):
+            identity = _gpu_runtime_identity()
+        self.assertEqual(identity["nvidia_smi"], ["GPU-fixture, Fixture GPU, 610.47, 8.9"])
 
     def test_completed_full_document_rejects_mutated_result_content(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

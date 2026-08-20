@@ -28,6 +28,60 @@ def _jobs_fingerprint(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _crop_profile_fingerprint(path: Path, jobs: list[dict]) -> str:
+    digest = hashlib.sha256()
+    digest.update(path.read_bytes())
+    seen: set[str] = set()
+    for job in jobs:
+        if not isinstance(job, dict):
+            raise ValueError("recognition crop job must be an object")
+        image_path = Path(str(job.get("image") or "")).resolve()
+        key = str(image_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not image_path.is_file():
+            raise ValueError(f"recognition crop source image is missing: {image_path}")
+        encoded = key.encode("utf-8")
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+        digest.update(bytes.fromhex(_sha256_file(image_path)))
+    return digest.hexdigest()
+
+
+def _advance_output_chain(current: str, output_path: Path) -> str:
+    if not output_path.is_file():
+        raise ValueError(f"recognition crop checkpoint output missing: {output_path}")
+    digest = hashlib.sha256()
+    digest.update(bytes.fromhex(current))
+    encoded = str(output_path.resolve()).encode("utf-8")
+    digest.update(len(encoded).to_bytes(4, "big"))
+    digest.update(encoded)
+    digest.update(bytes.fromhex(_sha256_file(output_path)))
+    return digest.hexdigest()
+
+
+def _completed_output_chain(jobs: list[dict], completed: int) -> str:
+    current = "0" * 64
+    for index, job in enumerate(jobs[:completed], start=1):
+        if not isinstance(job, dict):
+            raise ValueError(f"crop job {index} must be an object")
+        output_path = Path(str(job.get("output") or ""))
+        try:
+            current = _advance_output_chain(current, output_path)
+        except ValueError as exc:
+            raise ValueError(f"recognition crop checkpoint output changed at job {index}: {output_path}") from exc
+    return current
+
+
 def _ordered_crop_batches(
     jobs: list[dict],
     *,
@@ -73,28 +127,36 @@ def crop_jobs(path: Path, state_path: Path) -> dict:
     jobs = payload.get("jobs")
     if not isinstance(jobs, list):
         raise ValueError("crop jobs must contain jobs array")
-    fingerprint = _jobs_fingerprint(path)
+    jobs_sha256 = _jobs_fingerprint(path)
+    profile_sha256 = _crop_profile_fingerprint(path, jobs)
     if state_path.is_file():
         state = _read_object(state_path)
-        if state.get("jobs_sha256") != fingerprint or state.get("total") != len(jobs):
+        if (
+            state.get("schema_version") != 2
+            or state.get("jobs_sha256") != jobs_sha256
+            or state.get("profile_sha256") != profile_sha256
+            or state.get("total") != len(jobs)
+        ):
             raise ValueError("recognition crop checkpoint profile mismatch")
         completed = int(state.get("completed", -1))
         if completed < 0 or completed > len(jobs):
             raise ValueError("recognition crop checkpoint has invalid completed count")
-        for index, job in enumerate(jobs[:completed], start=1):
-            output_path = Path(str(job.get("output") or ""))
-            if not output_path.is_file():
-                raise ValueError(f"recognition crop checkpoint output missing at job {index}: {output_path}")
+        output_chain = _completed_output_chain(jobs, completed)
+        if state.get("output_chain_sha256") != output_chain:
+            raise ValueError("recognition crop checkpoint output SHA-256 chain changed")
         if state.get("status") == "completed":
             return {"schema_version": 1, "status": "completed", "processed": completed, "resumed_from": completed}
     else:
         completed = 0
+        output_chain = "0" * 64
         _atomic_json(state_path, {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "running",
-            "jobs_sha256": fingerprint,
+            "jobs_sha256": jobs_sha256,
+            "profile_sha256": profile_sha256,
             "total": len(jobs),
             "completed": 0,
+            "output_chain_sha256": output_chain,
         })
 
     resumed_from = completed
@@ -141,26 +203,37 @@ def crop_jobs(path: Path, state_path: Path) -> dict:
             for future in futures:
                 future.result()
             completed = batch[-1][-1][0]
+            for ordinal, job in sorted(
+                (item for group in batch for item in group),
+                key=lambda item: item[0],
+            ):
+                output_chain = _advance_output_chain(output_chain, Path(str(job.get("output") or "")))
             # Claim only a fully completed ordered prefix. If a worker fails,
             # retrying may overwrite a bounded tail but cannot skip a crop.
             _atomic_json(state_path, {
-                "schema_version": 1,
+                "schema_version": 2,
                 "status": "running",
-                "jobs_sha256": fingerprint,
+                "jobs_sha256": jobs_sha256,
+                "profile_sha256": profile_sha256,
                 "total": len(jobs),
                 "completed": completed,
+                "output_chain_sha256": output_chain,
             })
             if completed >= next_report or completed == len(jobs):
                 print(f"[ocr-corpus] recognition-crops {completed}/{len(jobs)}", file=sys.stderr, flush=True)
                 while next_report <= completed:
                     next_report += report_every
 
+    if _crop_profile_fingerprint(path, jobs) != profile_sha256:
+        raise ValueError("recognition crop source inputs changed during materialization")
     _atomic_json(state_path, {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "completed",
-        "jobs_sha256": fingerprint,
+        "jobs_sha256": jobs_sha256,
+        "profile_sha256": profile_sha256,
         "total": len(jobs),
         "completed": completed,
+        "output_chain_sha256": output_chain,
     })
     return {"schema_version": 1, "status": "completed", "processed": completed, "resumed_from": resumed_from}
 
@@ -205,6 +278,19 @@ def finalize_recognition(manifest_path: Path, assignment_path: Path, paddle_outp
     }
 
 
+def validate_recognition(manifest_path: Path) -> dict:
+    from browser_ocr.finetune.dataset import load_dataset
+
+    dataset = load_dataset(manifest_path)
+    return {
+        "schema_version": 1,
+        "status": "ok",
+        "dataset_id": dataset.manifest["dataset_id"],
+        "dataset_fingerprint": dataset.fingerprint,
+        "samples": len(dataset.samples),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="ocr-corpus-helper")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -215,15 +301,19 @@ def main() -> None:
     finalize.add_argument("--manifest", required=True)
     finalize.add_argument("--assignments", required=True)
     finalize.add_argument("--paddle-output", required=True)
+    validate = sub.add_parser("validate-recognition")
+    validate.add_argument("--manifest", required=True)
     args = parser.parse_args()
     if args.command == "crop":
         result = crop_jobs(Path(args.jobs).resolve(), Path(args.state).resolve())
-    else:
+    elif args.command == "finalize-recognition":
         result = finalize_recognition(
             Path(args.manifest).resolve(),
             Path(args.assignments).resolve(),
             Path(args.paddle_output).resolve(),
         )
+    else:
+        result = validate_recognition(Path(args.manifest).resolve())
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 

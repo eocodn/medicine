@@ -118,6 +118,17 @@ class RealParserDataTest(unittest.TestCase):
             with self.assertRaisesRegex(ParserDatasetError, "pseudonymous document_id"):
                 load_real_source_manifest(manifest)
 
+    def test_real_source_requires_supported_deidentified_license_identifier(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = self._manifest(root)
+            samples = root / "samples.jsonl"
+            row = json.loads(samples.read_text(encoding="utf-8"))
+            row["provenance"]["license_id"] = "patient-hong-gildong-rrn"
+            samples.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ParserDatasetError, "license_id.*supported deidentified-source"):
+                load_real_source_manifest(manifest)
+
     def test_real_source_rejects_duplicate_image_hash_across_holdout_splits(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

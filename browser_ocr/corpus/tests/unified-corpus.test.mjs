@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
@@ -214,6 +214,43 @@ test("one document corpus materializes aligned detection recognition parsing and
     const split = JSON.parse(await readFile(join(viewsRoot, "recognition", "document-split.json"), "utf8"));
     assert.equal(split.parent_corpus_id, corpus.corpus_id);
     assert.deepEqual(Object.keys(split.splits).sort(), ["test", "train", "val"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("materializer ignores stale lock files but rejects corrupted completed artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "medicine-unified-integrity-"));
+  try {
+    const corpusRoot = join(root, "corpus");
+    const viewsRoot = join(corpusRoot, "views");
+    const catalog = drugCatalog();
+    const corpus = await generateUnifiedCorpus({
+      outputDir: corpusRoot,
+      count: 12,
+      seed: 991,
+      drugSplitSeed: 161,
+      historicalDrugExposure: historicalExposure(catalog),
+      drugCatalog: catalog,
+    });
+    await mkdir(viewsRoot, { recursive: true });
+    await writeFile(join(viewsRoot, ".materialize.lock"), "stale-lock-from-dead-process\n");
+    const first = await materializeUnifiedViews({
+      corpusPath: join(corpusRoot, "manifest.json"),
+      outputDir: viewsRoot,
+    });
+    assert.equal(first.status, "completed");
+    const reused = await materializeUnifiedViews({
+      corpusPath: join(corpusRoot, "manifest.json"),
+      outputDir: viewsRoot,
+    });
+    assert.deepEqual(reused, first);
+
+    await rm(join(viewsRoot, "parsing", "datasets", "train-synthetic-ocr", "manifest.json"), { force: true });
+    await assert.rejects(
+      materializeUnifiedViews({ corpusPath: join(corpusRoot, "manifest.json"), outputDir: viewsRoot }),
+      /completed.*artifact|artifact.*missing|parser dataset/iu,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

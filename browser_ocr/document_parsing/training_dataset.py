@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from .artifact_invariants import normalized_polygon, normalized_provenance, require_unique_real_image_hashes
 from .draft_contract import normalize_parser_draft
 from .training_alignment import MODEL_ROLES, build_relation_labels
 
@@ -69,7 +70,6 @@ _NODE_FIELDS = {
 }
 _RELATION_FIELDS = {"product_node_id", "field_node_id", "label"}
 _GOLD_ROW_FIELDS = {"gold_row_id", "product_query", "draft"}
-_PROVENANCE_FIELDS = {"source_id", "license_id"}
 
 
 class ParserDatasetError(ValueError):
@@ -144,25 +144,6 @@ def _require_tags(value: object, label: str) -> list[str]:
     return tags
 
 
-def _polygon(value: object, label: str) -> list[list[float]]:
-    if not isinstance(value, list) or len(value) != 4:
-        raise ParserDatasetError(f"{label} must contain four points")
-    points: list[list[float]] = []
-    for point in value:
-        if not isinstance(point, list) or len(point) != 2:
-            raise ParserDatasetError(f"{label} points must contain x/y")
-        converted: list[float] = []
-        for coordinate in point:
-            if isinstance(coordinate, bool) or not isinstance(coordinate, (int, float)):
-                raise ParserDatasetError(f"{label} coordinates must be numeric")
-            number = float(coordinate)
-            if not math.isfinite(number):
-                raise ParserDatasetError(f"{label} coordinates must be finite")
-            converted.append(number)
-        points.append(converted)
-    return points
-
-
 def _normalize_gold_rows(value: object, label: str) -> list[dict[str, Any]]:
     if not isinstance(value, list) or len(value) > 24:
         raise ParserDatasetError(f"{label} must be a list with at most 24 rows")
@@ -187,7 +168,7 @@ def _normalize_gold_rows(value: object, label: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _normalize_node(value: object, document_id: str, index: int) -> dict[str, Any]:
+def _normalize_node(value: object, document_id: str, index: int, *, width: int, height: int) -> dict[str, Any]:
     data = _require_mapping(value, f"{document_id}.observation.nodes[{index}]")
     _reject_unknown(data, _NODE_FIELDS, f"{document_id}.observation.nodes[{index}]")
     node_id = _require_id(data.get("node_id"), f"{document_id}.node_id")
@@ -227,11 +208,20 @@ def _normalize_node(value: object, document_id: str, index: int) -> dict[str, An
             raise ParserDatasetError(f"{document_id}/{node_id} medication role requires association_group")
         if role == "other":
             group = None
+    try:
+        polygon = normalized_polygon(
+            data.get("polygon"),
+            label=f"{document_id}/{node_id}.polygon",
+            width=width,
+            height=height,
+        )
+    except ValueError as exc:
+        raise ParserDatasetError(str(exc)) from exc
     return {
         "node_id": node_id,
         "text": text,
         "confidence": confidence_number,
-        "polygon": _polygon(data.get("polygon"), f"{document_id}/{node_id}.polygon"),
+        "polygon": polygon,
         "target_region_ids": targets,
         "label_status": status,
         "semantic_role": role,
@@ -271,19 +261,14 @@ def _normalize_document(value: object) -> dict[str, Any]:
     if source_kind == "real_deidentified" and privacy.get("deidentified") is not True:
         raise ParserDatasetError(f"{document_id} real data must be explicitly deidentified")
 
-    provenance_raw = data.get("provenance")
-    provenance: dict[str, str] | None = None
-    if provenance_raw is not None:
-        provenance_data = _require_mapping(provenance_raw, f"{document_id}.provenance")
-        if set(provenance_data) != _PROVENANCE_FIELDS:
-            raise ParserDatasetError(f"{document_id}.provenance must contain source_id and license_id")
-        source_id = _require_id(provenance_data.get("source_id"), f"{document_id}.provenance.source_id")
-        license_id = str(provenance_data.get("license_id") or "").strip()
-        if not license_id or len(license_id) > 128 or any(char in license_id for char in "\r\n\t"):
-            raise ParserDatasetError(f"{document_id}.provenance.license_id must be a short non-empty string")
-        provenance = {"source_id": source_id, "license_id": license_id}
-    if source_kind == "real_deidentified" and provenance is None:
-        raise ParserDatasetError(f"{document_id} real_deidentified documents require source provenance")
+    try:
+        provenance = normalized_provenance(
+            data.get("provenance"),
+            source_kind=source_kind,
+            label=f"{document_id}.provenance",
+        )
+    except ValueError as exc:
+        raise ParserDatasetError(str(exc)) from exc
 
     observation = _require_mapping(data.get("observation"), f"{document_id}.observation")
     if set(observation) != {"kind", "profile", "nodes"}:
@@ -304,7 +289,10 @@ def _normalize_document(value: object) -> dict[str, Any]:
     raw_nodes = observation.get("nodes")
     if not isinstance(raw_nodes, list):
         raise ParserDatasetError(f"{document_id}.observation.nodes must be a list")
-    nodes = [_normalize_node(raw, document_id, index) for index, raw in enumerate(raw_nodes)]
+    nodes = [
+        _normalize_node(raw, document_id, index, width=width, height=height)
+        for index, raw in enumerate(raw_nodes)
+    ]
     node_ids = [node["node_id"] for node in nodes]
     if len(set(node_ids)) != len(node_ids):
         raise ParserDatasetError(f"{document_id}.observation.node_id values must be unique")
@@ -403,6 +391,10 @@ def normalize_parser_documents(documents: Iterable[object]) -> list[dict[str, An
     ids = [document["document_id"] for document in normalized]
     if len(set(ids)) != len(ids):
         raise ParserDatasetError("document_id values must be unique")
+    try:
+        require_unique_real_image_hashes(normalized)
+    except ValueError as exc:
+        raise ParserDatasetError(str(exc)) from exc
     return normalized
 
 

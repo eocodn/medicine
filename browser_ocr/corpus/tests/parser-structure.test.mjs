@@ -108,6 +108,20 @@ test("parser gold derives supported structured semantics from associated instruc
   assert.deepEqual(scheduledRows[0].draft.schedule_times, ["08:00"]);
   assert.deepEqual(scheduledRows[0].evidence.schedule_times, ["i2"]);
 
+  const splitPrnRows = parserTrainingRows({
+    regions: [
+      { region_id: "p3", text: "사아자정", semantic_role: "product", association_group: "m3" },
+      { region_id: "prn3", text: "필요시 복용", semantic_role: "instruction", association_group: "m3" },
+      { region_id: "schedule3", text: "오전 8시", semantic_role: "schedule", association_group: "m3" },
+      { region_id: "frequency3", text: "1회", semantic_role: "frequency", association_group: "m3" },
+    ],
+  });
+  assert.equal(splitPrnRows[0].draft.as_needed, true);
+  assert.equal(splitPrnRows[0].draft.schedule_times, undefined);
+  assert.equal(splitPrnRows[0].draft.frequency_per_day, undefined);
+  assert.equal(splitPrnRows[0].evidence.schedule_times, undefined);
+  assert.equal(splitPrnRows[0].evidence.frequency_per_day, undefined);
+
   const legacyRows = expectedRows({
     regions: [
       { region_id: "p", text: "가나다정", semantic_role: "product", association_group: "m1" },

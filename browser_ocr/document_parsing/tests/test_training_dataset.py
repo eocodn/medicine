@@ -129,6 +129,18 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
             with self.assertRaisesRegex(ParserDatasetError, "real_deidentified.*train"):
                 write_parser_dataset(root, dataset_id="bad-real-train", documents=[_doc(source_kind="real_deidentified", split="train")])
 
+    def test_real_deidentified_artifact_rejects_duplicate_image_hashes(self) -> None:
+        first = _doc(source_kind="real_deidentified", split="val")
+        first["observation"]["kind"] = "runtime_ocr"
+        first["observation"]["profile"] = _runtime_profile()
+        second = _doc(source_kind="real_deidentified", split="test")
+        second["document_id"] = "doc-002"
+        second["observation"]["kind"] = "runtime_ocr"
+        second["observation"]["profile"] = _runtime_profile()
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "duplicate real.*image SHA-256|image SHA-256.*unique"):
+                write_parser_dataset(Path(raw), dataset_id="duplicate-real-image", documents=[first, second])
+
     def test_real_requires_explicit_privacy_and_runtime_observation(self) -> None:
         document = _doc(source_kind="real_deidentified", split="val")
         document["privacy"]["deidentified"] = False
@@ -166,6 +178,27 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             with self.assertRaisesRegex(ParserDatasetError, "unsupported runtime OCR implementation fields"):
                 write_parser_dataset(Path(raw), dataset_id="bad-runtime-implementation-extra", documents=[document])
+
+    def test_real_provenance_license_id_must_be_supported_deidentified_source_id(self) -> None:
+        document = _doc(source_kind="real_deidentified", split="val")
+        document["observation"]["kind"] = "runtime_ocr"
+        document["observation"]["profile"] = _runtime_profile()
+        document["provenance"]["license_id"] = "patient-hong-gildong-rrn"
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "license_id.*supported.*license id"):
+                write_parser_dataset(Path(raw), dataset_id="identifying-license", documents=[document])
+
+    def test_observation_polygon_must_be_inside_image_and_non_degenerate(self) -> None:
+        invalid_polygons = [
+            [[-10, 10], [80, 10], [80, 30], [-10, 30]],
+            [[10, 10], [10, 10], [10, 10], [10, 10]],
+        ]
+        for index, polygon in enumerate(invalid_polygons):
+            with self.subTest(polygon=polygon), tempfile.TemporaryDirectory() as raw:
+                document = _doc()
+                document["observation"]["nodes"][0]["polygon"] = polygon
+                with self.assertRaisesRegex(ParserDatasetError, "polygon.*image|polygon.*area|polygon.*degenerate"):
+                    write_parser_dataset(Path(raw), dataset_id=f"bad-polygon-{index}", documents=[document])
 
     def test_ambiguous_nodes_must_not_carry_role_or_group_labels(self) -> None:
         document = _doc()

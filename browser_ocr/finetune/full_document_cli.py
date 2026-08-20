@@ -125,7 +125,34 @@ def _detector_profile(manifest_path: Path, model_root: Path, model_name: str) ->
     }
 
 
-def _runtime_environment_sha256() -> str:
+def _gpu_runtime_identity() -> dict[str, object]:
+    import paddle
+
+    from .training import probe_paddle_runtime
+
+    report = dict(probe_paddle_runtime(paddle))
+    try:
+        nvidia = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=uuid,name,driver_version,compute_cap",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise DatasetError("GPU OCR producer identity requires a working nvidia-smi runtime report") from exc
+    rows = sorted(line.strip() for line in nvidia.stdout.splitlines() if line.strip())
+    if not rows:
+        raise DatasetError("GPU OCR producer identity received an empty nvidia-smi runtime report")
+    report["nvidia_smi"] = rows
+    return report
+
+
+def _runtime_environment_sha256(recognizer_device: str) -> str:
     distributions = sorted({
         (str(dist.metadata.get("Name") or "").lower(), str(dist.version))
         for dist in importlib_metadata.distributions()
@@ -143,20 +170,61 @@ def _runtime_environment_sha256() -> str:
         "system": platform.system(),
         "distributions": distributions,
         "runtime_contract": runtime_contract,
+        "recognizer_device": recognizer_device,
     }
+    if recognizer_device == "gpu":
+        payload["gpu_runtime"] = {
+            **_gpu_runtime_identity(),
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "nvidia_visible_devices": os.environ.get("NVIDIA_VISIBLE_DEVICES"),
+        }
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _paddleocr_profile(root: Path) -> dict[str, str]:
+def _selected_dictionary(config_path: Path, paddleocr_root: Path) -> Path:
+    configured: str | None = None
+    in_global = False
+    global_indent = -1
+    for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+        content = raw_line.split("#", 1)[0].rstrip()
+        if not content.strip():
+            continue
+        indent = len(content) - len(content.lstrip())
+        stripped = content.strip()
+        if stripped.startswith("Global:"):
+            in_global = True
+            global_indent = indent
+            continue
+        if in_global and indent <= global_indent:
+            in_global = False
+        if in_global and stripped.startswith("character_dict_path:"):
+            raw_value = stripped.split(":", 1)[1].strip()
+            if not raw_value:
+                raise DatasetError("selected recognizer character_dict_path is empty")
+            if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {"'", '"'}:
+                raw_value = raw_value[1:-1]
+            configured = raw_value
+            break
+    if configured:
+        dictionary = Path(configured)
+        if not dictionary.is_absolute():
+            dictionary = paddleocr_root / dictionary
+    else:
+        dictionary = paddleocr_root / "ppocr" / "utils" / "dict" / "ppocrv5_korean_dict.txt"
+    dictionary = dictionary.resolve()
+    if not dictionary.is_file():
+        raise DatasetError(f"selected recognizer dictionary is missing: {dictionary}")
+    return dictionary
+
+
+def _paddleocr_profile(root: Path, config_path: Path) -> dict[str, str]:
     infer_script = root / "tools" / "infer_rec.py"
     tools_root = root / "tools"
     package_root = root / "ppocr"
-    dictionary = package_root / "utils" / "dict" / "ppocrv5_korean_dict.txt"
     if not infer_script.is_file() or not tools_root.is_dir() or not package_root.is_dir():
         raise DatasetError(f"PaddleOCR inference source is incomplete: {root}")
-    if not dictionary.is_file():
-        raise DatasetError(f"PaddleOCR Korean dictionary is missing: {dictionary}")
+    dictionary = _selected_dictionary(config_path, root)
     source_files = sorted({*tools_root.rglob("*.py"), *package_root.rglob("*.py")})
     digest = hashlib.sha256()
     for path in source_files:
@@ -184,7 +252,7 @@ def build_ocr_producer_profile(
     if args.detector_threads <= 0:
         raise DatasetError("detector threads must be positive")
     implementation = _implementation_profile()
-    paddleocr = _paddleocr_profile(Path(args.paddleocr_root).resolve())
+    paddleocr = _paddleocr_profile(Path(args.paddleocr_root).resolve(), Path(selected["config"]).resolve())
     return {
         "schema_version": 2,
         "baseline_result_sha256": _sha256_file(selected["result_path"]),
@@ -198,7 +266,7 @@ def build_ocr_producer_profile(
         "detector_asset_sha256": detector["asset_sha256"],
         "detector_onnx_sha256": detector["onnx_sha256"],
         "detector_config_sha256": detector["config_sha256"],
-        "inference_runtime_sha256": _runtime_environment_sha256(),
+        "inference_runtime_sha256": _runtime_environment_sha256(args.recognizer_device),
         "paddleocr_source_sha256": paddleocr["source_sha256"],
         "paddleocr_dictionary_sha256": paddleocr["dictionary_sha256"],
         "implementation": {

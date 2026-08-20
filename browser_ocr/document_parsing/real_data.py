@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from .artifact_invariants import real_license_id
 from .observation_profile import runtime_observation_profile
 from .training_alignment import build_relation_labels
 from .training_dataset import ParserDatasetError, normalize_parser_documents
@@ -202,10 +203,15 @@ def load_real_source_manifest(manifest_path: str | Path) -> RealSourceDataset:
             raise ParserDatasetError(f"{document_id}.provenance requires exactly source_id and license_id")
         normalized_provenance = {
             "source_id": _require_slug(provenance.get("source_id"), f"{document_id}.provenance.source_id"),
-            "license_id": str(provenance.get("license_id") or "").strip(),
+            "license_id": "",
         }
-        if not normalized_provenance["license_id"] or len(normalized_provenance["license_id"]) > 128 or any(char in normalized_provenance["license_id"] for char in "\r\n\t"):
-            raise ParserDatasetError(f"{document_id}.provenance.license_id must be a short non-empty string")
+        try:
+            normalized_provenance["license_id"] = real_license_id(
+                provenance.get("license_id"),
+                f"{document_id}.provenance.license_id",
+            )
+        except ValueError as exc:
+            raise ParserDatasetError(str(exc)) from exc
         layout_family = _require_slug(raw.get("layout_family"), f"{document_id}.layout_family")
         samples.append({
             **raw,

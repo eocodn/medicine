@@ -43,7 +43,7 @@ Generator v5 revision 8 adds parser-specific structural recipes before rendering
 - `parsing/`: authoritative document truth plus oracle manifests and strict learned-parser datasets. Materialization emits oracle and deterministic synthetic-OCR train/val/test manifests whose observed boxes may be dropped, split, merged, jittered or corrupted before geometry-based labeling. Relations include `same_medication` positives and cross-medication hard negatives.
 - `e2e/`: full-page images plus expected structured rows and critical region ids, preserving the same document split. The existing `browser_ocr.finetune.full_document_evaluation` evaluator can score detector→recognizer→parser result directories against the same canonical manifest.
 
-Recognition crops deliberately come from the final degraded raster rather than from pristine source text. Motion blur, JPEG compression, perspective, glare, printer degradation, and other document-level effects therefore reach recognizer training/evaluation exactly as they appear in the E2E image.
+Recognition crops deliberately come from the final degraded raster rather than from pristine source text. Motion blur, JPEG compression, perspective, glare, printer degradation, and other document-level effects therefore reach recognizer training/evaluation exactly as they appear in the E2E image. Crop checkpoints bind both source-image bytes and a rolling SHA-256 chain of completed crop outputs, so a same-path source change or mutated completed crop is rejected instead of being silently reused.
 
 Recognition metadata also records the fixed `severe-motion-downscale-jpeg-v1` OOD signature used by recognizer research. A document is tagged `degradation-hard-ood` only when it is hard difficulty and simultaneously has motion blur radius >= 3.5, downscale factor <= 0.65, JPEG quality <= 60, and all three corresponding augmentation components. The policy object is stored in the recognition manifest so training export filters and fixed evaluation slices use the same numeric definition. Critical medication crops additionally carry `critical-medication`.
 
@@ -84,7 +84,7 @@ docker compose run --rm ocr-corpus materialize --corpus /workspace/path/manifest
 docker compose run --rm ocr-corpus audit --corpus /workspace/path/manifest.json --json
 ```
 
-Generation and materialization use exclusive locks, atomic state files, content hashes, resumable checkpoints, and explicit progress on stderr. Reusing an output directory with a different generator/materializer profile fails rather than mixing artifacts.
+Generation and materialization use exclusive locks, atomic state files, content hashes, resumable checkpoints, and explicit progress on stderr. Materializer v12 uses a kernel advisory lock held by a helper process, so a dead process cannot strand an existence-based lock file; the lock file itself may persist harmlessly. Completed reuse revalidates the report SHA, a fixed set of stage/parser artifact hashes, recognition image hashes through the recognition dataset core, and all emitted parser datasets before returning success. Reusing an output directory with a different generator/materializer profile fails rather than mixing artifacts.
 
 ## Training and evaluation boundaries
 
