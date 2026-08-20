@@ -4,13 +4,19 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from medicine_canonical.release import sha256_file
+from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.release_signing import ReleaseSigner, verify_signed_envelope
 from medicine_canonical.release_window import (
     ContractReleaseCandidate,
     ROOT_KEY,
+    publish_contract_directory_from_env,
     publish_contract_window,
 )
 from tests.test_release_r2 import FakeS3, TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM
@@ -66,6 +72,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         minimum: int,
         sequence: int,
         suffix: str,
+        allow_early_retirement: bool = False,
     ) -> dict:
         return publish_contract_window(
             self.client,
@@ -77,6 +84,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             current_contract_major=current,
             minimum_supported_contract_major=minimum,
             created_at=f"2026-08-20T00:{sequence % 60:02d}:00Z",
+            allow_early_retirement=allow_early_retirement,
         )
 
     def verified_root(self) -> dict:
@@ -253,6 +261,113 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         self.assertEqual(root["minimum_supported_contract_major"], 1)
         self.assertTrue(root["contracts"]["1"]["full"]["key"].startswith("reference/v2/contracts/1/"))
         self.assertTrue(root["contracts"]["2"]["full"]["key"].startswith("reference/v2/contracts/2/"))
+
+    def test_early_previous_contract_retirement_requires_explicit_mode(self) -> None:
+        c1 = self.candidate(1, "retirement", b"A" * 500_000, "sha256:" + "1" * 64)
+        c2 = self.candidate(2, "retirement", b"B" * 500_000, "sha256:" + "2" * 64)
+        self.publish([c1, c2], current=2, minimum=1, sequence=200, suffix="retirement-base")
+
+        with self.assertRaisesRegex(ValueError, "explicit retirement"):
+            self.publish([c2], current=2, minimum=2, sequence=201, suffix="retirement-implicit")
+
+        result = self.publish(
+            [c2],
+            current=2,
+            minimum=2,
+            sequence=201,
+            suffix="retirement-explicit",
+            allow_early_retirement=True,
+        )
+
+        self.assertEqual(result["status"], "published")
+        root = self.verified_root()["manifest"]
+        self.assertEqual(root["current_contract_major"], 2)
+        self.assertEqual(root["minimum_supported_contract_major"], 2)
+        self.assertEqual(set(root["contracts"]), {"2"})
+
+        c3 = self.candidate(3, "retirement-next", b"C" * 500_000, "sha256:" + "3" * 64)
+        next_result = self.publish(
+            [c2, c3], current=3, minimum=2, sequence=202, suffix="retirement-next"
+        )
+        self.assertEqual(next_result["status"], "published")
+        self.assertEqual(self.verified_root()["manifest"]["minimum_supported_contract_major"], 2)
+
+    def test_directory_retirement_mode_selects_only_current_contract_candidate(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"R2_BUCKET": self.bucket}),
+            mock.patch("medicine_canonical.release_window.supported_contract_majors", return_value=(1, 2)),
+            mock.patch(
+                "medicine_canonical.release_window.implementation_for",
+                return_value=SimpleNamespace(verify=lambda *_args: None),
+            ),
+            mock.patch("medicine_canonical.release_window.client_from_env", return_value=self.client),
+            mock.patch("medicine_canonical.release_window.release_signer_from_env", return_value=self.signer),
+            mock.patch("medicine_canonical.release_window.release_sequence_from_env", return_value=201),
+            mock.patch("medicine_canonical.release_window.publish_contract_window", return_value={"status": "published"}) as publish,
+        ):
+            publish_contract_directory_from_env(
+                self.root / "contracts",
+                self.root / "dist-retirement",
+                retire_previous_contract=True,
+            )
+
+        candidates = publish.call_args.args[2]
+        self.assertEqual([candidate.contract_major for candidate in candidates], [2])
+        self.assertEqual(publish.call_args.kwargs["current_contract_major"], 2)
+        self.assertEqual(publish.call_args.kwargs["minimum_supported_contract_major"], 2)
+        self.assertTrue(publish.call_args.kwargs["allow_early_retirement"])
+
+    def test_directory_publisher_preserves_already_signed_retirement_on_later_runs(self) -> None:
+        published_root = {
+            "protocol_version": 2,
+            "current_contract_major": 2,
+            "minimum_supported_contract_major": 2,
+            "contracts": {"2": {}},
+        }
+        with (
+            mock.patch.dict(os.environ, {"R2_BUCKET": self.bucket}),
+            mock.patch("medicine_canonical.release_window.supported_contract_majors", return_value=(1, 2)),
+            mock.patch(
+                "medicine_canonical.release_window.implementation_for",
+                return_value=SimpleNamespace(verify=lambda *_args: None),
+            ),
+            mock.patch("medicine_canonical.release_window.client_from_env", return_value=self.client),
+            mock.patch("medicine_canonical.release_window.release_signer_from_env", return_value=self.signer),
+            mock.patch("medicine_canonical.release_window.release_sequence_from_env", return_value=202),
+            mock.patch(
+                "medicine_canonical.release_window._read_root",
+                return_value=(b"root", '"etag"', published_root, 201),
+            ),
+            mock.patch("medicine_canonical.release_window.publish_contract_window", return_value={"status": "published"}) as publish,
+        ):
+            publish_contract_directory_from_env(
+                self.root / "contracts",
+                self.root / "dist-retirement-followup",
+            )
+
+        candidates = publish.call_args.args[2]
+        self.assertEqual([candidate.contract_major for candidate in candidates], [2])
+        self.assertEqual(publish.call_args.kwargs["minimum_supported_contract_major"], 2)
+        self.assertTrue(publish.call_args.kwargs["allow_early_retirement"])
+
+    def test_cli_passes_explicit_retirement_only_for_contract_directory_publish(self) -> None:
+        stdout = StringIO()
+        with mock.patch(
+            "medicine_canonical.cli.publish_contract_directory_from_env",
+            return_value={"status": "published"},
+        ) as publish:
+            with redirect_stdout(stdout):
+                code = canonical_main([
+                    "release-publish-r2",
+                    "--contract-dir", str(self.root / "contracts"),
+                    "--retire-previous-contract",
+                    "--json",
+                ])
+        self.assertEqual(code, 0)
+        self.assertTrue(publish.call_args.kwargs["retire_previous_contract"])
+
+        with self.assertRaisesRegex(ValueError, "requires --contract-dir"):
+            canonical_main(["release-publish-r2", "--retire-previous-contract", "--json"])
 
     def test_changed_window_repairs_reused_contract_full_before_advancing_root(self) -> None:
         c1 = self.candidate(1, "reuse-repair", b"A" * 500_000, "sha256:" + "1" * 64)

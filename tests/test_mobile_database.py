@@ -73,6 +73,41 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertEqual(categories & supported, supported)
         self.assertEqual(len(categories & supported), 7)
 
+    def test_contract_runtime_uses_signed_dataset_identity_and_provenance_is_diagnostic_only(self) -> None:
+        result = build_mobile_database(
+            self.canonical_db, self.mobile_db, manifest_path=self.manifest
+        )
+        app = MedicationApp(self.mobile_db, self.personal_db)
+        person = app.create_person(
+            "계약검증",
+            "1990-01-01",
+            "female",
+            "not_pregnant",
+            "not_breastfeeding",
+        )
+        draft = {"product_ref": "MFDS-Z", "prescription_days": 35}
+
+        first = app.preview_medication(person["id"], draft)
+        first_dataset = first["coverage"]["dataset"]
+        self.assertEqual(first_dataset["status"], "verified")
+        self.assertEqual(first_dataset["dataset_id"], result["dataset_id"])
+        self.assertIsNotNone(first["warning_token"])
+
+        with sqlite3.connect(self.mobile_db) as con:
+            con.execute(
+                "UPDATE source_snapshots SET sha256=?, row_count=0 "
+                "WHERE dataset_key=(SELECT dataset_key FROM source_snapshots ORDER BY dataset_key LIMIT 1)",
+                ("f" * 64,),
+            )
+            con.commit()
+
+        second = app.preview_medication(person["id"], draft)
+        second_dataset = second["coverage"]["dataset"]
+        self.assertEqual(second_dataset["status"], "verified")
+        self.assertEqual(second_dataset["dataset_id"], result["dataset_id"])
+        self.assertEqual(second_dataset["provenance_status"], "not_verified")
+        self.assertEqual(second["warning_token"], first["warning_token"])
+
     def test_mobile_build_rejects_incomplete_source_snapshot_set(self) -> None:
         with sqlite3.connect(self.canonical_db) as con:
             con.execute("DELETE FROM source_snapshots WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'")

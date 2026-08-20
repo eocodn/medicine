@@ -132,6 +132,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data/db/reference-contracts"),
     )
+    reference_window_build.add_argument(
+        "--allow-retired-previous-failure",
+        action="store_true",
+        help="Surface an unbuildable N-1 candidate for signed-retirement publication",
+    )
     reference_window_build.add_argument("--json", action="store_true")
 
     mobile_verify_runtime = sub.add_parser(
@@ -233,6 +238,11 @@ def build_parser() -> argparse.ArgumentParser:
     release_publish.add_argument("--contract-dir", type=Path)
     release_publish.add_argument("--output-dir", type=Path, default=Path("artifacts/reference-release"))
     release_publish.add_argument("--created-at")
+    release_publish.add_argument(
+        "--retire-previous-contract",
+        action="store_true",
+        help="Explicitly advance the signed minimum support bound to current N",
+    )
     release_publish.add_argument("--json", action="store_true")
     return parser
 
@@ -310,7 +320,11 @@ def main(argv=None) -> int:
             args.db, args.output, manifest_path=args.manifest
         )
     elif args.command == "reference-window-build":
-        payload = build_supported_contract_window(args.db, args.output_dir)
+        payload = build_supported_contract_window(
+            args.db,
+            args.output_dir,
+            allow_previous_failure=args.allow_retired_previous_failure,
+        )
     elif args.command == "mobile-verify-runtime":
         payload = verify_reference_database(
             args.db,
@@ -367,8 +381,11 @@ def main(argv=None) -> int:
                 args.contract_dir,
                 args.output_dir,
                 created_at=args.created_at,
+                retire_previous_contract=args.retire_previous_contract,
             )
         else:
+            if args.retire_previous_contract:
+                raise ValueError("--retire-previous-contract requires --contract-dir")
             payload = publish_contract_window_from_env(
                 args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at
             )

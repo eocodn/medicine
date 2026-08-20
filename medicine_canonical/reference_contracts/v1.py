@@ -75,6 +75,20 @@ JOIN ingredient_rules i ON i.id = l.criterion_rule_id
 LEFT JOIN dose_criteria d ON d.criterion_rule_id = i.id"""
 
 
+def _normalized_schema_sql(value: str | None) -> str:
+    return " ".join(str(value or "").strip().rstrip(";").split())
+
+
+def _verify_frozen_runtime_views(database: sqlite3.Connection) -> None:
+    row = database.execute(
+        "SELECT type,sql FROM sqlite_master WHERE name='product_rule_criteria'"
+    ).fetchone()
+    if row is None or row[0] != "view":
+        raise ValueError("reference product_rule_criteria runtime object must be the frozen view")
+    if _normalized_schema_sql(row[1]) != _normalized_schema_sql(PRODUCT_RULE_CRITERIA_VIEW_DDL):
+        raise ValueError("reference product_rule_criteria runtime view definition is not contract-v1")
+
+
 @dataclass(frozen=True)
 class ReferenceSemanticFact:
     semantic_role: str
@@ -464,6 +478,7 @@ def verify_reference_database(
     )
     uri = f"file:{Path(database).resolve()}?mode=ro"
     with sqlite3.connect(uri, uri=True, timeout=10) as con:
+        _verify_frozen_runtime_views(con)
         actual_dataset_id = logical_dataset_id(con)
         if actual_dataset_id != str(dataset_id).lower():
             raise ValueError("reference logical dataset identity does not match release")

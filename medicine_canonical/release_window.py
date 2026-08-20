@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,62 +35,19 @@ from .release_window_artifacts import (
     RELEASE_PREFIX,
     contract_inventory as _contract_inventory,
     entry_keys as _entry_keys,
-    full_prefix as _full_prefix,
     load_candidate as _load_candidate,
     patch_prefix as _patch_prefix,
     prepare_contract as _prepare_contract,
+)
+from .release_window_protocol import (
+    MAX_ACTIVE_CONTRACTS,
+    validate_root_shape as _validate_root_shape,
+    validate_window as _validate_window,
 )
 
 
 PROTOCOL_VERSION = 2
 ROOT_KEY = f"{RELEASE_PREFIX}/latest.json"
-MAX_ACTIVE_CONTRACTS = 2
-_DATASET_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
-
-
-def _validate_window(
-    metadata: list[_CandidateMetadata],
-    *,
-    current_contract_major: int,
-    minimum_supported_contract_major: int,
-) -> dict[int, _CandidateMetadata]:
-    if (
-        not isinstance(current_contract_major, int)
-        or isinstance(current_contract_major, bool)
-        or current_contract_major <= 0
-    ):
-        raise ValueError("current contract major must be a positive integer")
-    if (
-        not isinstance(minimum_supported_contract_major, int)
-        or isinstance(minimum_supported_contract_major, bool)
-        or minimum_supported_contract_major <= 0
-    ):
-        raise ValueError("minimum supported contract major must be a positive integer")
-    if minimum_supported_contract_major > current_contract_major:
-        raise ValueError("minimum supported contract major cannot exceed current contract major")
-    expected_minimum = (
-        current_contract_major
-        if current_contract_major == 1
-        else current_contract_major - 1
-    )
-    if minimum_supported_contract_major != expected_minimum:
-        raise ValueError(
-            "supported window must contain current N and previous N-1 contract majors"
-        )
-    expected = set(range(minimum_supported_contract_major, current_contract_major + 1))
-    if len(expected) > MAX_ACTIVE_CONTRACTS:
-        raise ValueError("supported window is limited to current N and previous N-1 contracts")
-    by_major: dict[int, _CandidateMetadata] = {}
-    for item in metadata:
-        if item.candidate.contract_major in by_major:
-            raise ValueError(f"duplicate release candidate for contract {item.candidate.contract_major}")
-        by_major[item.candidate.contract_major] = item
-    if set(by_major) != expected:
-        raise ValueError(
-            "release candidates must exactly match the supported N and N-1 contract window"
-        )
-    return by_major
 
 
 def _not_found(exc: Exception) -> bool:
@@ -120,57 +76,6 @@ def _read_root(
         raise ValueError("remote reference root protocol is unsupported")
     _validate_root_shape(root)
     return raw, response.get("ETag"), root, verified["release_sequence"]
-
-
-def _validate_root_shape(root: dict) -> None:
-    current = root.get("current_contract_major")
-    minimum = root.get("minimum_supported_contract_major")
-    contracts = root.get("contracts")
-    if not isinstance(current, int) or isinstance(current, bool) or current <= 0:
-        raise ValueError("remote reference root current contract major is invalid")
-    if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum <= 0:
-        raise ValueError("remote reference root minimum contract major is invalid")
-    expected_minimum = current if current == 1 else current - 1
-    if minimum != expected_minimum:
-        raise ValueError("remote reference root support window is invalid")
-    if not isinstance(contracts, dict):
-        raise ValueError("remote reference root contracts are invalid")
-    expected = {str(major) for major in range(minimum, current + 1)}
-    if set(contracts) != expected:
-        raise ValueError("remote reference root contracts do not match support window")
-    for major_text, entry in contracts.items():
-        if not isinstance(entry, dict):
-            raise ValueError(f"remote contract {major_text} entry is invalid")
-        _validate_contract_entry(int(major_text), entry)
-
-
-def _validate_contract_entry(contract_major: int, entry: dict) -> None:
-    dataset_id = entry.get("dataset_id")
-    target = entry.get("target")
-    full = entry.get("full")
-    patches = entry.get("patches")
-    history = entry.get("history", [])
-    if not isinstance(dataset_id, str) or not _DATASET_ID.fullmatch(dataset_id):
-        raise ValueError(f"remote contract {contract_major} dataset identity is invalid")
-    if not isinstance(target, dict):
-        raise ValueError(f"remote contract {contract_major} target is invalid")
-    if not _SHA256.fullmatch(str(target.get("sha256") or "")):
-        raise ValueError(f"remote contract {contract_major} target SHA-256 is invalid")
-    if not isinstance(target.get("size_bytes"), int) or target["size_bytes"] <= 0:
-        raise ValueError(f"remote contract {contract_major} target size is invalid")
-    if not isinstance(full, dict) or full.get("compression") != "gzip":
-        raise ValueError(f"remote contract {contract_major} full snapshot is invalid")
-    expected_full_prefix = _full_prefix(contract_major)
-    if not isinstance(full.get("key"), str) or not full["key"].startswith(expected_full_prefix):
-        raise ValueError(f"remote contract {contract_major} full snapshot key is invalid")
-    if not _SHA256.fullmatch(str(full.get("sha256") or "")):
-        raise ValueError(f"remote contract {contract_major} full snapshot SHA-256 is invalid")
-    if not isinstance(full.get("size_bytes"), int) or full["size_bytes"] <= 0:
-        raise ValueError(f"remote contract {contract_major} full snapshot size is invalid")
-    if not isinstance(patches, list):
-        raise ValueError(f"remote contract {contract_major} patches are invalid")
-    if not isinstance(history, list) or len(history) > FULL_SNAPSHOT_RETENTION - 1:
-        raise ValueError(f"remote contract {contract_major} history is invalid")
 
 
 def _target_identity(entry: dict) -> tuple[str, str, int]:
@@ -326,6 +231,7 @@ def publish_contract_window(
     current_contract_major: int,
     minimum_supported_contract_major: int,
     created_at: str | None = None,
+    allow_early_retirement: bool = False,
 ) -> dict:
     if not str(bucket).strip():
         raise ValueError("R2 bucket is required")
@@ -341,6 +247,7 @@ def publish_contract_window(
         metadata,
         current_contract_major=current_contract_major,
         minimum_supported_contract_major=minimum_supported_contract_major,
+        allow_early_retirement=allow_early_retirement,
     )
     trusted_public_keys = {signer.key_id: signer.public_key_pem()}
     initial_raw, initial_etag, previous_root, previous_sequence = _read_root(
@@ -549,12 +456,35 @@ def publish_contract_directory_from_env(
     output_dir: str | Path,
     *,
     created_at: str | None = None,
+    retire_previous_contract: bool = False,
 ) -> dict:
     bucket = os.environ.get("R2_BUCKET", "").strip()
     if not bucket:
         raise RuntimeError("R2_BUCKET is required")
     root = Path(contract_dir)
     majors = supported_contract_majors()
+    client = client_from_env()
+    signer = release_signer_from_env()
+    retirement_active = False
+    if not retire_previous_contract and len(majors) == 2:
+        _, _, published_root, _ = _read_root(
+            client,
+            bucket,
+            trusted_public_keys={signer.key_id: signer.public_key_pem()},
+        )
+        retirement_active = bool(
+            published_root
+            and published_root.get("current_contract_major") == majors[-1]
+            and published_root.get("minimum_supported_contract_major") == majors[-1]
+        )
+    effective_retirement = retire_previous_contract or retirement_active
+    selected_majors = majors
+    minimum_supported = majors[0]
+    if effective_retirement:
+        if len(majors) != 2 or majors[-1] <= 1:
+            raise ValueError("previous-contract retirement requires an N/N-1 contract window")
+        selected_majors = (majors[-1],)
+        minimum_supported = majors[-1]
     candidates = [
         ContractReleaseCandidate(
             major,
@@ -562,18 +492,19 @@ def publish_contract_directory_from_env(
             root / f"contract-{major}.manifest.json",
             verifier=implementation_for(major).verify,
         )
-        for major in majors
+        for major in selected_majors
     ]
     return publish_contract_window(
-        client_from_env(),
+        client,
         bucket,
         candidates,
         output_dir,
-        signer=release_signer_from_env(),
+        signer=signer,
         release_sequence=release_sequence_from_env(),
         current_contract_major=majors[-1],
-        minimum_supported_contract_major=majors[0],
+        minimum_supported_contract_major=minimum_supported,
         created_at=created_at,
+        allow_early_retirement=effective_retirement,
     )
 
 

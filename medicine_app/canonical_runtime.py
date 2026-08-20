@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any, Mapping
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_DATASET_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _DIRECT_ITEM_RULE_CATEGORIES = frozenset({
     "elderly_caution", "therapeutic_duplication_caution"
 })
@@ -26,6 +27,13 @@ def item_seq(product: Mapping[str, Any]) -> str | None:
     return text or None
 
 
+def _positive_source_row_count(value: object) -> bool:
+    try:
+        return int(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
     con.row_factory = sqlite3.Row
     meta = {str(row[0]): str(row[1]) for row in con.execute("SELECT key,value FROM canonical_meta")}
@@ -37,7 +45,7 @@ def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
         str(row["dataset_key"])
         for row in rows
         if not _SHA256_RE.fullmatch(str(row.get("sha256") or "").lower())
-        or int(row.get("row_count") or 0) <= 0
+        or not _positive_source_row_count(row.get("row_count"))
     ]
     digest = hashlib.sha256()
     for row in rows:
@@ -50,9 +58,44 @@ def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
         and meta.get("build_stage") == "complete"
         and not invalid
     )
+    provenance_dataset_id = f"sha256:{digest.hexdigest()}" if rows else None
+    try:
+        contract_meta = {
+            str(row[0]): str(row[1])
+            for row in con.execute("SELECT key,value FROM reference_contract_meta")
+        }
+    except sqlite3.DatabaseError:
+        contract_meta = None
+    if contract_meta is not None:
+        dataset_id = str(contract_meta.get("dataset_id") or "").lower()
+        contract_major_text = str(contract_meta.get("contract_major") or "")
+        contract_major = (
+            int(contract_major_text)
+            if contract_major_text.isdigit() and not contract_major_text.startswith("0")
+            else None
+        )
+        contract_verified = (
+            bool(contract_major and contract_major > 0)
+            and bool(_DATASET_ID_RE.fullmatch(dataset_id))
+        )
+        return {
+            "status": "verified" if contract_verified else "not_verified",
+            "dataset_id": dataset_id if contract_verified else None,
+            "contract_major": contract_major,
+            "schema_version": meta.get("schema_version"),
+            "built_at": meta.get("built_at"),
+            "source_count": len(rows),
+            "source_families": sorted(families),
+            "invalid_sources": invalid,
+            "missing_sources": [],
+            "unexpected_sources": [],
+            "misclassified_sources": [],
+            "provenance_status": "verified" if verified else "not_verified",
+            "provenance_dataset_id": provenance_dataset_id,
+        }
     return {
         "status": "verified" if verified else "not_verified",
-        "dataset_id": f"sha256:{digest.hexdigest()}" if rows else None,
+        "dataset_id": provenance_dataset_id,
         "schema_version": meta.get("schema_version"),
         "built_at": meta.get("built_at"),
         "source_count": len(rows),

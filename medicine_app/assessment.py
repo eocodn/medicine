@@ -227,8 +227,19 @@ def bind_warning_token(assessment: dict[str, Any], payload_hash: str) -> str | N
         assessment["warning_token"] = None
         return None
     dataset_id = assessment.get("dataset", {}).get("dataset_id") or "dataset:unverified"
+    coverage_context = dict(assessment.get("coverage") or {})
+    coverage_dataset = coverage_context.get("dataset")
+    if isinstance(coverage_dataset, Mapping):
+        # Source-snapshot provenance is diagnostic in Reference Contract mode.
+        # Warning acknowledgement is bound to signed logical safety identity,
+        # not to physical/source-refresh metadata which cannot change a finding.
+        coverage_context["dataset"] = {
+            key: coverage_dataset.get(key)
+            for key in ("status", "dataset_id", "contract_major")
+            if key in coverage_dataset
+        }
     reviewed_safety_context = {
-        "coverage": assessment.get("coverage"),
+        "coverage": coverage_context,
         "risks": assessment.get("risks"),
         "review_items": assessment.get("review_items"),
         "duration": assessment.get("duration"),

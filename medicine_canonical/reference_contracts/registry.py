@@ -50,20 +50,39 @@ def supported_contract_majors() -> tuple[int, ...]:
 def build_supported_contract_window(
     canonical_db: str | Path,
     output_dir: str | Path,
+    *,
+    allow_previous_failure: bool = False,
 ) -> dict:
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     contracts: list[dict] = []
-    for major in supported_contract_majors():
+    majors = supported_contract_majors()
+    current = majors[-1]
+    failed_previous: dict | None = None
+    for major in majors:
         implementation = implementation_for(major)
         database = root / f"contract-{major}.sqlite"
         manifest = root / f"contract-{major}.manifest.json"
-        result = implementation.export(
-            canonical_db,
-            database,
-            manifest_path=manifest,
-        )
-        implementation.verify(database, major, str(result["dataset_id"]))
+        database.unlink(missing_ok=True)
+        manifest.unlink(missing_ok=True)
+        try:
+            result = implementation.export(
+                canonical_db,
+                database,
+                manifest_path=manifest,
+            )
+            implementation.verify(database, major, str(result["dataset_id"]))
+        except Exception as exc:
+            database.unlink(missing_ok=True)
+            manifest.unlink(missing_ok=True)
+            if allow_previous_failure and major == current - 1:
+                failed_previous = {
+                    "contract_major": major,
+                    "error": type(exc).__name__,
+                    "detail": str(exc),
+                }
+                continue
+            raise
         contracts.append(
             {
                 "contract_major": major,
@@ -74,12 +93,14 @@ def build_supported_contract_window(
                 "size_bytes": result["size_bytes"],
             }
         )
-    majors = supported_contract_majors()
-    return {
+    payload = {
         "current_contract_major": majors[-1],
         "minimum_supported_contract_major": majors[0],
         "contracts": contracts,
     }
+    if failed_previous is not None:
+        payload["failed_previous_contract"] = failed_previous
+    return payload
 
 
 __all__ = [

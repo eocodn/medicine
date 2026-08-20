@@ -9,6 +9,7 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
+from medicine_app.canonical_runtime import canonical_manifest
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.mobile import build_mobile_database
 from medicine_canonical.reference_contracts.v1 import (
@@ -19,6 +20,7 @@ from medicine_canonical.reference_contracts.v1 import (
     verify_reference_database,
 )
 from medicine_canonical.reference_contracts.registry import (
+    ReferenceContractImplementation,
     build_supported_contract_window,
     supported_contract_majors,
 )
@@ -151,6 +153,46 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
                 self.release["dataset_id"],
             )
 
+    def test_server_verified_contract_keeps_provenance_failure_diagnostic_only_at_runtime(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute(
+                "UPDATE source_snapshots SET row_count='not-a-count' "
+                "WHERE dataset_key=(SELECT dataset_key FROM source_snapshots ORDER BY dataset_key LIMIT 1)"
+            )
+            con.commit()
+
+        verified = verify_reference_database(
+            self.mobile,
+            REFERENCE_CONTRACT_MAJOR,
+            self.release["dataset_id"],
+        )
+        with sqlite3.connect(self.mobile) as con:
+            runtime = canonical_manifest(con)
+
+        self.assertEqual(verified["status"], "verified")
+        self.assertEqual(runtime["status"], "verified")
+        self.assertEqual(runtime["dataset_id"], self.release["dataset_id"])
+        self.assertEqual(runtime["provenance_status"], "not_verified")
+
+    def test_server_verifier_rejects_replaced_runtime_product_rule_criteria_relation(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute(
+                "CREATE TABLE product_rule_criteria_replacement AS "
+                "SELECT * FROM product_rule_criteria WHERE 0"
+            )
+            con.execute("DROP VIEW product_rule_criteria")
+            con.execute(
+                "ALTER TABLE product_rule_criteria_replacement RENAME TO product_rule_criteria"
+            )
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "product_rule_criteria.*view"):
+            verify_reference_database(
+                self.mobile,
+                REFERENCE_CONTRACT_MAJOR,
+                self.release["dataset_id"],
+            )
+
     def test_supported_contract_window_builder_emits_every_registered_major(self) -> None:
         output = self.mobile.parent / "contract-window"
 
@@ -162,6 +204,52 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.assertEqual([entry["contract_major"] for entry in result["contracts"]], [1])
         self.assertTrue(Path(result["contracts"][0]["database"]).is_file())
         self.assertTrue(Path(result["contracts"][0]["manifest"]).is_file())
+
+    def test_publication_build_can_surface_unbuildable_previous_contract_without_hiding_it(self) -> None:
+        output = self.mobile.parent / "retired-build-window"
+
+        def fail_previous(*_args, **_kwargs):
+            raise ValueError("contract 1 cannot express current semantics")
+
+        def export_current(_canonical, database, *, manifest_path, **_kwargs):
+            Path(database).write_bytes(b"contract-2")
+            Path(manifest_path).write_text("{}", encoding="utf-8")
+            return {
+                "contract_major": 2,
+                "dataset_id": "sha256:" + "2" * 64,
+                "sha256": "3" * 64,
+                "size_bytes": 10,
+            }
+
+        implementations = {
+            1: ReferenceContractImplementation(1, fail_previous, lambda *_args: {}),
+            2: ReferenceContractImplementation(2, export_current, lambda *_args: {}),
+        }
+        with (
+            mock.patch(
+                "medicine_canonical.reference_contracts.registry.supported_contract_majors",
+                return_value=(1, 2),
+            ),
+            mock.patch(
+                "medicine_canonical.reference_contracts.registry.implementation_for",
+                side_effect=lambda major: implementations[major],
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "cannot express"):
+                build_supported_contract_window(self.canonical, output)
+
+            result = build_supported_contract_window(
+                self.canonical,
+                output,
+                allow_previous_failure=True,
+            )
+
+        self.assertEqual([entry["contract_major"] for entry in result["contracts"]], [2])
+        self.assertEqual(result["failed_previous_contract"]["contract_major"], 1)
+        self.assertEqual(result["failed_previous_contract"]["error"], "ValueError")
+        self.assertFalse((output / "contract-1.sqlite").exists())
+        self.assertFalse((output / "contract-1.manifest.json").exists())
+        self.assertTrue((output / "contract-2.sqlite").is_file())
 
     def test_reference_window_build_cli_uses_registered_contract_set(self) -> None:
         output = self.mobile.parent / "cli-contract-window"

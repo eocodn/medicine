@@ -8,6 +8,11 @@ on:
         required: false
         default: false
         type: boolean
+      retire_previous_contract:
+        description: Explicitly retire N-1 from the signed Reference Contract support window
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: '17 3 * * *'
       timezone: "Asia/Seoul"
@@ -194,15 +199,23 @@ jobs:
           medicine-canonical reference-window-build \
             --db data/db/canonical.sqlite \
             --output-dir data/db/reference-contracts \
+            --allow-retired-previous-failure \
             --json
 
       - name: Publish immutable release and advance latest last
         shell: bash
+        env:
+          RETIRE_PREVIOUS_CONTRACT: ${{ github.event_name == 'workflow_dispatch' && inputs.retire_previous_contract || false }}
         run: |
           set -euo pipefail
+          retirement_args=()
+          if [[ "${RETIRE_PREVIOUS_CONTRACT:-false}" == "true" ]]; then
+            retirement_args+=(--retire-previous-contract)
+          fi
           medicine-canonical release-publish-r2 \
             --contract-dir data/db/reference-contracts \
             --output-dir artifacts/reference-release \
+            "${retirement_args[@]}" \
             --json
 
   incident:

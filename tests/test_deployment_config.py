@@ -59,9 +59,13 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("canonical substance-verify", workflow)
         self.assertIn("canonical reference-window-build", workflow)
         self.assertIn("--output-dir data/db/reference-contracts", workflow)
+        self.assertIn("--allow-retired-previous-failure", workflow)
         self.assertIn("r2-public-audit", workflow)
         self.assertIn("release-publish-r2", workflow)
         self.assertIn("--contract-dir data/db/reference-contracts", workflow)
+        self.assertIn("retire_previous_contract", workflow)
+        self.assertIn("--retire-previous-contract", workflow)
+        self.assertIn("RETIRE_PREVIOUS_CONTRACT", workflow)
         self.assertLess(workflow.index("r2-public-audit"), workflow.index("release-publish-r2"))
 
     def test_scheduled_reference_publish_manages_one_github_failure_incident(self) -> None:
