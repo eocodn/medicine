@@ -27,6 +27,7 @@ from .full_document import (
     sort_text_predictions,
 )
 from .native_runtime import native_runtime_identity as _native_runtime_identity
+from .native_runtime import python_native_runtime_identity as _python_native_runtime_identity
 
 
 def _sha256_file(path: Path) -> str:
@@ -171,6 +172,7 @@ def _runtime_environment_sha256(recognizer_device: str) -> str:
         "system": platform.system(),
         "distributions": distributions,
         "native_runtime": _native_runtime_identity(),
+        "python_native_runtime": _python_native_runtime_identity(),
         "runtime_contract": runtime_contract,
         "recognizer_device": recognizer_device,
     }

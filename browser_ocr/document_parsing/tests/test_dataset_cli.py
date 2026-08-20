@@ -132,7 +132,11 @@ class ParserDatasetCliTest(unittest.TestCase):
             "scenario_tags": [],
             "risk_tags": [],
             "privacy": {"contains_patient_data": False, "deidentified": False},
-            "observation": {"kind": "oracle", "profile": {}, "nodes": []},
+            "observation": {
+                "kind": "oracle",
+                "profile": {"producer": "unified_truth", "truth_samples_sha256": "9" * 64},
+                "nodes": [],
+            },
             "relations": [],
             "gold_rows": [],
             "gold_rows_reviewed": True,

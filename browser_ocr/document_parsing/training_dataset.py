@@ -1,17 +1,29 @@
 from __future__ import annotations
 
 import hashlib
-import fcntl
 import json
 import math
-import os
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from .artifact_invariants import normalized_polygon, normalized_provenance, validate_parser_document_set
+from .artifact_contract import (
+    dataset_state_profile,
+    require_completed_dataset_state,
+    strict_json_loads,
+    validate_parser_artifact,
+)
+from .artifact_invariants import normalized_polygon, normalized_provenance
+from .artifact_storage import (
+    ArtifactStorageError,
+    LOCK_FILE as _LOCK_FILE,
+    STATE_FILE as _STATE_FILE,
+    atomic_write as _atomic_write,
+    exclusive_output_lock as _exclusive_output_lock,
+    read_dataset_state as _read_state,
+)
 from .dataset_metadata import normalize_parser_metadata
 from .draft_contract import normalize_parser_draft
 from .training_alignment import MODEL_ROLES, build_relation_labels
@@ -20,8 +32,6 @@ from .training_alignment import MODEL_ROLES, build_relation_labels
 SCHEMA_VERSION = 2
 TASK = "medication_document_parser"
 SOURCE_POLICY = "synthetic_train_real_holdout_v1"
-_STATE_FILE = ".dataset-state.json"
-_LOCK_FILE = ".dataset.lock"
 _ALLOWED_SPLITS = {"train", "val", "test"}
 _ALLOWED_SOURCES = {"synthetic", "real_deidentified"}
 _ALLOWED_OBSERVATIONS = {"oracle", "synthetic_ocr", "runtime_ocr"}
@@ -269,13 +279,16 @@ def _normalize_document(value: object) -> dict[str, Any]:
     if source_kind == "real_deidentified" and observation_kind != "runtime_ocr":
         raise ParserDatasetError(f"{document_id} real_deidentified observations must use runtime_ocr")
     profile = _require_mapping(observation.get("profile"), f"{document_id}.observation.profile")
-    if observation_kind == "runtime_ocr":
-        from .observation_profile import runtime_observation_profile
+    from .observation_profile import parser_observation_profile
 
-        normalized_profile = runtime_observation_profile(profile, expected_image_sha256=image_sha)
-        if dict(profile) != normalized_profile:
-            raise ParserDatasetError(f"{document_id}.observation.profile must use canonical runtime OCR fields")
-        profile = normalized_profile
+    normalized_profile = parser_observation_profile(
+        observation_kind,
+        profile,
+        expected_image_sha256=image_sha,
+    )
+    if dict(profile) != normalized_profile:
+        raise ParserDatasetError(f"{document_id}.observation.profile must use canonical fields")
+    profile = normalized_profile
     raw_nodes = observation.get("nodes")
     if not isinstance(raw_nodes, list):
         raise ParserDatasetError(f"{document_id}.observation.nodes must be a list")
@@ -382,44 +395,19 @@ def normalize_parser_documents(documents: Iterable[object]) -> list[dict[str, An
     if len(set(ids)) != len(ids):
         raise ParserDatasetError("document_id values must be unique")
     try:
-        validate_parser_document_set(normalized)
+        validate_parser_artifact(normalized, {})
     except ValueError as exc:
         raise ParserDatasetError(str(exc)) from exc
     return normalized
 
 
-def _atomic_write(path: Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    temporary.write_bytes(content)
-    os.replace(temporary, path)
-
-
 @contextmanager
-def _exclusive_output_lock(root: Path):
-    lock_path = root / _LOCK_FILE
-    stream = lock_path.open("a+")
+def _parser_output_lock(root: Path):
     try:
-        try:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ParserDatasetError(f"parser dataset build is already active in {root}") from exc
-        yield
-    finally:
-        try:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-        finally:
-            stream.close()
-
-
-def _read_state(path: Path) -> Mapping[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ParserDatasetError("parser dataset output state is invalid JSON") from exc
-    if not isinstance(value, Mapping):
-        raise ParserDatasetError("parser dataset output state must be an object")
-    return value
+        with _exclusive_output_lock(root):
+            yield
+    except ArtifactStorageError as exc:
+        raise ParserDatasetError(str(exc)) from exc
 
 
 def write_parser_dataset(
@@ -433,20 +421,20 @@ def write_parser_dataset(
     root.mkdir(parents=True, exist_ok=True)
     normalized_id = _require_id(dataset_id, "dataset_id")
     normalized = normalize_parser_documents(documents)
+    try:
+        normalized_metadata = normalize_parser_metadata(metadata or {})
+        validate_parser_artifact(normalized, normalized_metadata)
+    except ValueError as exc:
+        raise ParserDatasetError(str(exc)) from exc
     samples_bytes = b"".join(_canonical_json(document) + b"\n" for document in normalized)
     samples_path = root / "samples.jsonl"
     samples_sha = _sha256_bytes(samples_bytes)
-    try:
-        normalized_metadata = normalize_parser_metadata(metadata or {})
-    except ValueError as exc:
-        raise ParserDatasetError(str(exc)) from exc
     metadata_sha = _sha256_bytes(_canonical_json(normalized_metadata))
-    profile = {
-        "schema_version": 1,
-        "dataset_id": normalized_id,
-        "samples_sha256": samples_sha,
-        "metadata_sha256": metadata_sha,
-    }
+    profile = dataset_state_profile(
+        dataset_id=normalized_id,
+        samples_sha256=samples_sha,
+        metadata_sha256=metadata_sha,
+    )
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "dataset_id": normalized_id,
@@ -460,9 +448,12 @@ def write_parser_dataset(
     }
     manifest_path = root / "manifest.json"
     state_path = root / _STATE_FILE
-    with _exclusive_output_lock(root):
+    with _parser_output_lock(root):
         if state_path.is_file():
-            state = _read_state(state_path)
+            try:
+                state = _read_state(state_path)
+            except ArtifactStorageError as exc:
+                raise ParserDatasetError(str(exc)) from exc
             if state.get("profile") != profile:
                 raise ParserDatasetError("parser dataset output profile differs from requested dataset")
             if state.get("status") == "completed":
@@ -499,9 +490,12 @@ def load_parser_dataset(manifest_path: str | Path, *, allow_draft: bool = False)
     if not path.is_file():
         raise ParserDatasetError(f"parser dataset manifest does not exist: {path}")
     try:
-        manifest = _require_mapping(json.loads(path.read_text(encoding="utf-8")), "parser dataset manifest")
-    except json.JSONDecodeError as exc:
-        raise ParserDatasetError(f"invalid parser dataset manifest JSON: {exc}") from exc
+        manifest = _require_mapping(
+            strict_json_loads(path.read_text(encoding="utf-8"), label="parser dataset manifest"),
+            "parser dataset manifest",
+        )
+    except ValueError as exc:
+        raise ParserDatasetError(str(exc)) from exc
     _reject_unknown(manifest, _MANIFEST_FIELDS, "parser dataset manifest")
     if set(manifest) != _MANIFEST_FIELDS:
         missing = sorted(_MANIFEST_FIELDS - set(manifest))
@@ -546,19 +540,32 @@ def load_parser_dataset(manifest_path: str | Path, *, allow_draft: bool = False)
         if not raw_line.strip():
             continue
         try:
-            documents.append(_normalize_document(json.loads(raw_line)))
-        except json.JSONDecodeError as exc:
-            raise ParserDatasetError(f"samples line {line_number} is invalid JSON") from exc
+            documents.append(_normalize_document(strict_json_loads(raw_line, label=f"samples line {line_number}")))
+        except ValueError as exc:
+            raise ParserDatasetError(str(exc)) from exc
     if len(documents) != manifest.get("document_count"):
         raise ParserDatasetError("document_count does not match samples_file")
     if len({document["document_id"] for document in documents}) != len(documents):
         raise ParserDatasetError("document_id values must be unique")
     try:
-        validate_parser_document_set(documents)
+        validate_parser_artifact(documents, normalized_metadata)
     except ValueError as exc:
         raise ParserDatasetError(str(exc)) from exc
     if not allow_draft and any(document["annotation_status"] != "complete" for document in documents):
         raise ParserDatasetError("parser dataset contains draft annotations")
+    state_path = path.parent / _STATE_FILE
+    if not state_path.is_file():
+        raise ParserDatasetError("parser dataset output state does not exist")
+    expected_state_profile = dataset_state_profile(
+        dataset_id=dataset_id,
+        samples_sha256=actual_samples_sha,
+        metadata_sha256=actual_metadata_sha,
+    )
+    try:
+        state = _read_state(state_path)
+        require_completed_dataset_state(state, expected_profile=expected_state_profile)
+    except (ArtifactStorageError, ValueError) as exc:
+        raise ParserDatasetError(str(exc)) from exc
     fingerprint = _sha256_bytes(
         _canonical_json({
             "schema_version": SCHEMA_VERSION,

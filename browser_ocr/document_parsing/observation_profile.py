@@ -37,6 +37,8 @@ _PROFILE_FIELDS = {
 _RAW_PROFILE_FIELDS = {*_PROFILE_FIELDS, "parser"}
 _RAW_IMPLEMENTATION_FIELDS = {*_IMPLEMENTATION_SHA_FIELDS, "parser", "parser_contract"}
 _ALLOWED_DETECTOR_MODELS = {"PP-OCRv5_mobile_det", "PP-OCRv6_tiny_det", "PP-OCRv6_small_det"}
+_ORACLE_FIELDS = {"producer", "truth_samples_sha256"}
+_SYNTHETIC_FIELDS = {"producer", "revision", "seed", "truth_samples_sha256"}
 
 
 def _require_sha256(value: object, label: str) -> str:
@@ -102,4 +104,44 @@ def runtime_observation_producer(raw: object, *, expected_image_sha256: str | No
     return profile
 
 
-__all__ = ["runtime_observation_producer", "runtime_observation_profile"]
+def parser_observation_profile(
+    kind: str,
+    raw: object,
+    *,
+    expected_image_sha256: str | None = None,
+) -> dict[str, Any]:
+    if kind == "runtime_ocr":
+        return runtime_observation_profile(raw, expected_image_sha256=expected_image_sha256)
+    if not isinstance(raw, Mapping):
+        raise ParserDatasetError("parser observation profile must be an object")
+    profile = dict(raw)
+    if kind == "oracle":
+        if set(profile) != _ORACLE_FIELDS:
+            raise ParserDatasetError("oracle observation profile has unsupported or missing fields")
+        if profile.get("producer") != "unified_truth":
+            raise ParserDatasetError("oracle observation profile producer must be unified_truth")
+        profile["truth_samples_sha256"] = _require_sha256(
+            profile.get("truth_samples_sha256"), "truth_samples_sha256"
+        )
+        return profile
+    if kind == "synthetic_ocr":
+        if set(profile) != _SYNTHETIC_FIELDS:
+            raise ParserDatasetError("synthetic_ocr observation profile has unsupported or missing fields")
+        if profile.get("producer") != "deterministic_synthetic_ocr":
+            raise ParserDatasetError(
+                "synthetic_ocr observation profile producer must be deterministic_synthetic_ocr"
+            )
+        revision = profile.get("revision")
+        if isinstance(revision, bool) or not isinstance(revision, int) or not 1 <= revision <= 2**31 - 1:
+            raise ParserDatasetError("synthetic_ocr observation profile revision must be a positive integer")
+        seed = profile.get("seed")
+        if isinstance(seed, bool) or not isinstance(seed, int) or not -(2**63) <= seed < 2**63:
+            raise ParserDatasetError("synthetic_ocr observation profile seed must be a signed 64-bit integer")
+        profile["truth_samples_sha256"] = _require_sha256(
+            profile.get("truth_samples_sha256"), "truth_samples_sha256"
+        )
+        return profile
+    raise ParserDatasetError("parser observation profile kind is unsupported")
+
+
+__all__ = ["parser_observation_profile", "runtime_observation_producer", "runtime_observation_profile"]

@@ -62,7 +62,7 @@ def _doc(*, source_kind: str = "synthetic", split: str = "train") -> dict:
         },
         "observation": {
             "kind": "oracle",
-            "profile": {"producer": "fixture"},
+            "profile": {"producer": "unified_truth", "truth_samples_sha256": "9" * 64},
             "nodes": [
                 {
                     "node_id": "n-product",
@@ -118,9 +118,99 @@ def _rewrite_samples(manifest_path: Path, documents: list[dict]) -> None:
     manifest["samples_sha256"] = hashlib.sha256(payload).hexdigest()
     manifest["document_count"] = len(documents)
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    state_path = manifest_path.parent / ".dataset-state.json"
+    if state_path.is_file():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["profile"]["samples_sha256"] = manifest["samples_sha256"]
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 class ParserTrainingDatasetContractTest(unittest.TestCase):
+    def test_strict_artifact_rejects_empty_document_set(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "at least one|empty"):
+                write_parser_dataset(Path(raw), dataset_id="empty-dataset", documents=[])
+
+    def test_loader_requires_authoritative_completed_state(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest_path = write_parser_dataset(root, dataset_id="state-bound", documents=[_doc()])
+            state_path = root / ".dataset-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["status"] = "running"
+            state_path.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ParserDatasetError, "completed|running|state"):
+                load_parser_dataset(manifest_path)
+
+    def test_metadata_must_describe_actual_document_set(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "metadata.*split|split.*metadata"):
+                write_parser_dataset(
+                    Path(raw) / "split",
+                    dataset_id="metadata-split-mismatch",
+                    documents=[_doc(split="train")],
+                    metadata={"split": "test"},
+                )
+            with self.assertRaisesRegex(ParserDatasetError, "metadata.*observation|observation.*metadata"):
+                write_parser_dataset(
+                    Path(raw) / "observation",
+                    dataset_id="metadata-observation-mismatch",
+                    documents=[_doc()],
+                    metadata={"observation_kind": "runtime_ocr"},
+                )
+            with self.assertRaisesRegex(ParserDatasetError, "truth_samples_sha256"):
+                write_parser_dataset(
+                    Path(raw) / "truth",
+                    dataset_id="metadata-truth-mismatch",
+                    documents=[_doc()],
+                    metadata={
+                        "builder": "parser_training_builder_v1",
+                        "truth_samples_sha256": "8" * 64,
+                        "observation_kind": "oracle",
+                        "split": "train",
+                        "seed": 112,
+                    },
+                )
+
+    def test_non_runtime_observation_profiles_are_strict_and_non_free_text(self) -> None:
+        oracle = _doc()
+        oracle["observation"]["profile"]["patient_name"] = "홍길동"
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "observation.*profile|profile.*unsupported"):
+                write_parser_dataset(Path(raw), dataset_id="oracle-profile-pii", documents=[oracle])
+
+        synthetic = _doc()
+        synthetic["observation"]["kind"] = "synthetic_ocr"
+        synthetic["observation"]["profile"] = {
+            "producer": "deterministic_synthetic_ocr",
+            "revision": 1,
+            "seed": 112,
+            "truth_samples_sha256": "9" * 64,
+            "note": "010-1234-5678",
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "observation.*profile|profile.*unsupported"):
+                write_parser_dataset(Path(raw), dataset_id="synthetic-profile-pii", documents=[synthetic])
+
+    def test_loader_rejects_non_standard_json_constants(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest_path = write_parser_dataset(root, dataset_id="strict-json", documents=[_doc()])
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            samples_path = root / manifest["samples_file"]
+            raw_sample = samples_path.read_text(encoding="utf-8").strip()
+            raw_sample = raw_sample.replace('"producer":"unified_truth"', '"bad":NaN,"producer":"unified_truth"')
+            payload = (raw_sample + "\n").encode("utf-8")
+            samples_path.write_bytes(payload)
+            manifest["samples_sha256"] = hashlib.sha256(payload).hexdigest()
+            manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+            state_path = root / ".dataset-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["profile"]["samples_sha256"] = manifest["samples_sha256"]
+            state_path.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ParserDatasetError, "strict JSON|invalid JSON|NaN|constant"):
+                load_parser_dataset(manifest_path)
+
     def test_round_trips_strict_document_dataset(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -441,17 +531,17 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
                 root,
                 dataset_id="metadata-bound",
                 documents=[_doc()],
-                metadata={"seed": 1, "builder": "parser_training_builder_v1"},
+                metadata={"seed": 1},
             )
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["metadata"] = {"seed": 999, "builder": "parser_training_builder_v1"}
+            manifest["metadata"] = {"seed": 999}
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaisesRegex(ParserDatasetError, "metadata"):
                 write_parser_dataset(
                     root,
                     dataset_id="metadata-bound",
                     documents=[_doc()],
-                    metadata={"seed": 1, "builder": "parser_training_builder_v1"},
+                    metadata={"seed": 1},
                 )
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 _TOKEN_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,127}$")
@@ -89,4 +89,85 @@ def normalize_parser_metadata(value: object) -> dict[str, Any]:
     return normalized
 
 
-__all__ = ["normalize_parser_metadata"]
+def validate_parser_metadata_for_documents(
+    metadata: Mapping[str, Any],
+    documents: Sequence[Mapping[str, Any]],
+) -> None:
+    if not documents:
+        raise ValueError("parser dataset metadata cannot describe an empty document set")
+
+    declared_split = metadata.get("split")
+    actual_splits = {str(document.get("split") or "") for document in documents}
+    if declared_split is not None and declared_split != "all" and actual_splits != {declared_split}:
+        raise ValueError("parser dataset metadata split disagrees with document splits")
+
+    declared_observation = metadata.get("observation_kind")
+    actual_observations = {
+        str(document.get("observation", {}).get("kind") or "")
+        for document in documents
+        if isinstance(document.get("observation"), Mapping)
+    }
+    if declared_observation is not None and actual_observations != {declared_observation}:
+        raise ValueError("parser dataset metadata observation_kind disagrees with document observations")
+
+    builder = metadata.get("builder")
+    if builder == "parser_training_builder_v1":
+        required = {"truth_samples_sha256", "observation_kind", "split", "seed"}
+        missing = sorted(required - set(metadata))
+        if missing:
+            raise ValueError(
+                "parser dataset metadata parser_training_builder_v1 is missing fields: " + ", ".join(missing)
+            )
+        if metadata["observation_kind"] not in {"oracle", "synthetic_ocr"}:
+            raise ValueError("parser training builder metadata requires oracle or synthetic_ocr observations")
+        if {document.get("source_kind") for document in documents} != {"synthetic"}:
+            raise ValueError("parser training builder metadata requires synthetic documents")
+        for document in documents:
+            observation = document.get("observation")
+            profile = observation.get("profile") if isinstance(observation, Mapping) else None
+            if not isinstance(profile, Mapping):
+                raise ValueError("parser training builder document observation profile is missing")
+            if profile.get("truth_samples_sha256") != metadata["truth_samples_sha256"]:
+                raise ValueError("parser dataset metadata truth_samples_sha256 disagrees with observation profile")
+            if metadata["observation_kind"] == "synthetic_ocr" and profile.get("seed") != metadata["seed"]:
+                raise ValueError("parser dataset metadata seed disagrees with synthetic observation profile")
+    elif builder == "parser_runtime_builder_v2":
+        required = {"truth_samples_sha256", "observation_kind", "split", "ocr_producer"}
+        missing = sorted(required - set(metadata))
+        if missing:
+            raise ValueError(
+                "parser dataset metadata parser_runtime_builder_v2 is missing fields: " + ", ".join(missing)
+            )
+        if metadata["observation_kind"] != "runtime_ocr":
+            raise ValueError("parser runtime builder metadata requires runtime_ocr observations")
+        if {document.get("source_kind") for document in documents} != {"synthetic"}:
+            raise ValueError("parser runtime builder metadata requires synthetic documents")
+    elif builder == "real_annotation_finalize_v1":
+        required = {"source_dataset_id", "source_manifest_sha256", "source_samples_sha256"}
+        missing = sorted(required - set(metadata))
+        if missing:
+            raise ValueError(
+                "parser dataset metadata real_annotation_finalize_v1 is missing fields: " + ", ".join(missing)
+            )
+        if {document.get("source_kind") for document in documents} != {"real_deidentified"}:
+            raise ValueError("real annotation metadata requires real_deidentified documents")
+        if actual_observations != {"runtime_ocr"}:
+            raise ValueError("real annotation metadata requires runtime_ocr observations")
+
+    producer = metadata.get("ocr_producer")
+    if producer is not None:
+        from .observation_profile import runtime_observation_producer
+
+        for document in documents:
+            observation = document.get("observation")
+            if not isinstance(observation, Mapping) or observation.get("kind") != "runtime_ocr":
+                raise ValueError("parser dataset metadata ocr_producer requires runtime_ocr documents")
+            current = runtime_observation_producer(
+                observation.get("profile"),
+                expected_image_sha256=str(document.get("image_sha256") or ""),
+            )
+            if current != producer:
+                raise ValueError("parser dataset metadata ocr_producer disagrees with document producer")
+
+
+__all__ = ["normalize_parser_metadata", "validate_parser_metadata_for_documents"]

@@ -174,6 +174,21 @@ class FullDocumentCliContractTest(unittest.TestCase):
             second = _runtime_environment_sha256("cpu")
         self.assertNotEqual(first, second)
 
+    def test_runtime_environment_hash_binds_python_wheel_native_payloads(self) -> None:
+        with patch(
+            "browser_ocr.finetune.full_document_cli._python_native_runtime_identity",
+            return_value={"onnxruntime": {"onnxruntime/capi/libonnxruntime.so": "a" * 64}},
+            create=True,
+        ):
+            first = _runtime_environment_sha256("cpu")
+        with patch(
+            "browser_ocr.finetune.full_document_cli._python_native_runtime_identity",
+            return_value={"onnxruntime": {"onnxruntime/capi/libonnxruntime.so": "b" * 64}},
+            create=True,
+        ):
+            second = _runtime_environment_sha256("cpu")
+        self.assertNotEqual(first, second)
+
     def test_ocr_producer_profile_binds_dictionary_selected_by_recognizer_config(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
