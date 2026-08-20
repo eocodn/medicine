@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,11 +22,39 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _archive_member_sha256(archive_path: Path, member_relative: str) -> str:
+    target = member_relative.lstrip("./")
+    with tarfile.open(archive_path, "r:*") as archive:
+        member = next((item for item in archive.getmembers() if item.name.lstrip("./") == target), None)
+        if member is None or not member.isfile():
+            raise ValueError(f"detector archive is missing expected member: {member_relative}")
+        stream = archive.extractfile(member)
+        if stream is None:
+            raise ValueError(f"detector archive member is unreadable: {member_relative}")
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+        return digest.hexdigest()
+
+
+def _verify_extracted_assets(archive_path: Path, archive_root: str, onnx_path: Path, config_path: Path) -> tuple[str, str]:
+    onnx_sha256 = _sha256_file(onnx_path)
+    config_sha256 = _sha256_file(config_path)
+    root = archive_root.rstrip("/")
+    expected_onnx_sha256 = _archive_member_sha256(archive_path, f"{root}/{onnx_path.name}")
+    expected_config_sha256 = _archive_member_sha256(archive_path, f"{root}/{config_path.name}")
+    if onnx_sha256 != expected_onnx_sha256 or config_sha256 != expected_config_sha256:
+        raise ValueError("extracted detector assets differ from the pinned archive")
+    return onnx_sha256, config_sha256
+
+
 @dataclass(frozen=True)
 class DetectorRuntime:
     model_name: str
     detector_edge: int
     archive_sha256: str
+    onnx_sha256: str
+    config_sha256: str
     model_bytes: int
     postprocess: dict[str, Any]
     preprocess: dict[str, Any]
@@ -83,6 +112,9 @@ def load_detector_runtime(
     if archive_sha256 != model["sha256"]:
         raise ValueError(f"detector archive SHA-256 mismatch: {archive_path}")
     validate_official_config(config_path, model_name, model)
+    onnx_sha256, config_sha256 = _verify_extracted_assets(
+        archive_path, str(model["archive_root"]), onnx_path, config_path
+    )
 
     cv2.setNumThreads(1)
     options = ort.SessionOptions()
@@ -100,6 +132,8 @@ def load_detector_runtime(
         model_name=model_name,
         detector_edge=detector_edge,
         archive_sha256=archive_sha256,
+        onnx_sha256=onnx_sha256,
+        config_sha256=config_sha256,
         model_bytes=onnx_path.stat().st_size,
         postprocess=dict(model["postprocess"]),
         preprocess=dict(model["preprocess"]),

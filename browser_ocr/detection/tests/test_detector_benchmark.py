@@ -1,10 +1,13 @@
+import io
 import json
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
 
+from browser_ocr.detection.runtime import _verify_extracted_assets
 from browser_ocr.detection.detector_benchmark import (
     db_postprocess,
     rectify_text_crop,
@@ -64,6 +67,28 @@ class DetectorBenchmarkCoreTest(unittest.TestCase):
             [[36, 18], [76, 18], [76, 202], [36, 202]],
         )
         self.assertGreater(crop.shape[1], crop.shape[0])
+
+    def test_extracted_detector_assets_must_match_pinned_archive_members(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "model.tar"
+            extracted = root / "model"
+            extracted.mkdir()
+            onnx = extracted / "inference.onnx"
+            config = extracted / "inference.yml"
+            onnx.write_bytes(b"onnx-bytes")
+            config.write_bytes(b"config-bytes")
+            with tarfile.open(archive, "w") as stream:
+                for name, content in (("model/inference.onnx", onnx.read_bytes()), ("model/inference.yml", config.read_bytes())):
+                    info = tarfile.TarInfo(name)
+                    info.size = len(content)
+                    stream.addfile(info, io.BytesIO(content))
+            onnx_sha, config_sha = _verify_extracted_assets(archive, "model", onnx, config)
+            self.assertEqual(len(onnx_sha), 64)
+            self.assertEqual(len(config_sha), 64)
+            onnx.write_bytes(b"tampered")
+            with self.assertRaisesRegex(ValueError, "pinned archive"):
+                _verify_extracted_assets(archive, "model", onnx, config)
 
     def test_official_inference_yaml_must_match_pinned_db_settings(self):
         pinned = {

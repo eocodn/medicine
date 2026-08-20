@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
@@ -8,6 +8,7 @@ import test from "node:test";
 import { buildDrugCatalog, buildHistoricalDrugExposure, normalizeDrugName } from "../drug_holdout.mjs";
 import { generateUnifiedCorpus } from "../generator.mjs";
 import { materializeUnifiedViews } from "../materialize.mjs";
+import { PARSER_STRUCTURE_VARIANTS } from "../parser_structure.mjs";
 import { validateUnifiedCorpus } from "../contract.mjs";
 
 function lines(text) {
@@ -58,6 +59,13 @@ test("one document corpus materializes aligned detection recognition parsing and
     assert.ok(corpus.samples.every((sample) => sample.drug_name_split === sample.split));
     assert.ok(corpus.samples.every((sample) => sample.drug_name_exposure === (sample.split === "train" ? "seen" : "unseen")));
     assert.ok(corpus.samples.every((sample) => ["prescription", "medication_bag"].includes(sample.document_type)));
+    assert.ok(corpus.samples.every((sample) => typeof sample.parser_structure_variant === "string" && sample.parser_structure_variant.length > 0));
+    assert.ok(corpus.samples.every((sample) => sample.scenario_tags.includes(`parser_structure_${sample.parser_structure_variant}`)));
+    const trainStructureVariants = new Set(corpus.samples.filter((sample) => sample.split === "train").map((sample) => sample.parser_structure_variant));
+    const valStructureVariants = new Set(corpus.samples.filter((sample) => sample.split === "val").map((sample) => sample.parser_structure_variant));
+    const testStructureVariants = new Set(corpus.samples.filter((sample) => sample.split === "test").map((sample) => sample.parser_structure_variant));
+    assert.equal([...trainStructureVariants].some((value) => valStructureVariants.has(value) || testStructureVariants.has(value)), false);
+    assert.equal([...valStructureVariants].some((value) => testStructureVariants.has(value)), false);
 
     const productOwners = new Map();
     const familyOwners = new Map();
@@ -155,14 +163,49 @@ test("one document corpus materializes aligned detection recognition parsing and
     assert.deepEqual(labeledRow.evidence.product_query, ["b0-label", "b0-product"]);
     assert.equal(classic.nodes.find((node) => node.node_id === "b0-label").semantic_role, "product_label");
 
+    assert.ok(parsing.every((item) => item.image_sha256 && item.width > 0 && item.height > 0));
+    assert.ok(parsing.every((item) => Array.isArray(item.scenario_tags) && Array.isArray(item.risk_tags)));
+    const parsingByDocument = new Map(parsing.map((item) => [item.document_id, item]));
+    const geometrySample = corpus.samples.find((sample) => sample.regions.some((region) => (
+      JSON.stringify(region.natural_text_polygon) !== JSON.stringify(region.polygon)
+    )));
+    assert.ok(geometrySample);
+    const geometryRegion = geometrySample.regions.find((region) => (
+      JSON.stringify(region.natural_text_polygon) !== JSON.stringify(region.polygon)
+    ));
+    assert.deepEqual(
+      parsingByDocument.get(geometrySample.id).nodes.find((node) => node.node_id === geometryRegion.region_id).natural_text_polygon,
+      geometryRegion.natural_text_polygon,
+    );
+
+    const parserTrainManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "train-synthetic-ocr", "manifest.json"), "utf8"));
+    const parserValManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "val-synthetic-ocr", "manifest.json"), "utf8"));
+    const parserOracleManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "oracle", "manifest.json"), "utf8"));
+    assert.equal(parserTrainManifest.task, "medication_document_parser");
+    assert.equal(parserTrainManifest.schema_version, 3);
+    assert.match(parserTrainManifest.metadata_sha256, /^[0-9a-f]{64}$/);
+    assert.equal(parserTrainManifest.document_count, corpus.samples.filter((sample) => sample.split === "train").length);
+    assert.equal(parserValManifest.document_count, corpus.samples.filter((sample) => sample.split === "val").length);
+    assert.equal(parserOracleManifest.document_count, corpus.samples.length);
+    const parserTrainDocuments = lines(await readFile(join(viewsRoot, "parsing", "datasets", "train-synthetic-ocr", "samples.jsonl"), "utf8"));
+    assert.ok(parserTrainDocuments.every((item) => item.split === "train" && item.source_kind === "synthetic"));
+    assert.ok(parserTrainDocuments.every((item) => item.observation.kind === "synthetic_ocr"));
+    assert.ok(parserTrainDocuments.every((item) => item.annotation_status === "complete"));
+    assert.ok(parserTrainDocuments.every((item) => item.gold_rows_reviewed === true));
+    assert.ok(parsing.some((item) => item.expected_rows.some((row) => row.draft.meal_relation === "after_meal")));
+
     const firstParsing = parsing.find((sample) => sample.positive_edges.length > 0);
     assert.ok(firstParsing);
     const byNode = new Map(firstParsing.nodes.map((node) => [node.node_id, node]));
     for (const edge of firstParsing.positive_edges) {
       assert.equal(byNode.get(edge.product_node_id).semantic_role, "product");
-      assert.ok(["dose", "frequency", "duration"].includes(byNode.get(edge.field_node_id).semantic_role));
+      assert.ok(["dose", "frequency", "duration", "instruction", "schedule"].includes(byNode.get(edge.field_node_id).semantic_role));
       assert.equal(byNode.get(edge.product_node_id).association_group, byNode.get(edge.field_node_id).association_group);
     }
+    const scheduleParsing = parsing.find((item) => item.nodes.some((node) => node.semantic_role === "schedule" && node.association_group !== "document"));
+    assert.ok(scheduleParsing);
+    const scheduleNodes = new Set(scheduleParsing.nodes.filter((node) => node.semantic_role === "schedule").map((node) => node.node_id));
+    assert.ok(scheduleParsing.positive_edges.some((edge) => scheduleNodes.has(edge.field_node_id)));
 
     const manifest = JSON.parse(await readFile(join(viewsRoot, "recognition", "manifest.json"), "utf8"));
     assert.equal(manifest.task, "text_recognition");
@@ -171,6 +214,43 @@ test("one document corpus materializes aligned detection recognition parsing and
     const split = JSON.parse(await readFile(join(viewsRoot, "recognition", "document-split.json"), "utf8"));
     assert.equal(split.parent_corpus_id, corpus.corpus_id);
     assert.deepEqual(Object.keys(split.splits).sort(), ["test", "train", "val"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("materializer ignores stale lock files but rejects corrupted completed artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "medicine-unified-integrity-"));
+  try {
+    const corpusRoot = join(root, "corpus");
+    const viewsRoot = join(corpusRoot, "views");
+    const catalog = drugCatalog();
+    const corpus = await generateUnifiedCorpus({
+      outputDir: corpusRoot,
+      count: 12,
+      seed: 991,
+      drugSplitSeed: 161,
+      historicalDrugExposure: historicalExposure(catalog),
+      drugCatalog: catalog,
+    });
+    await mkdir(viewsRoot, { recursive: true });
+    await writeFile(join(viewsRoot, ".materialize.lock"), "stale-lock-from-dead-process\n");
+    const first = await materializeUnifiedViews({
+      corpusPath: join(corpusRoot, "manifest.json"),
+      outputDir: viewsRoot,
+    });
+    assert.equal(first.status, "completed");
+    const reused = await materializeUnifiedViews({
+      corpusPath: join(corpusRoot, "manifest.json"),
+      outputDir: viewsRoot,
+    });
+    assert.deepEqual(reused, first);
+
+    await rm(join(viewsRoot, "parsing", "datasets", "train-synthetic-ocr", "manifest.json"), { force: true });
+    await assert.rejects(
+      materializeUnifiedViews({ corpusPath: join(corpusRoot, "manifest.json"), outputDir: viewsRoot }),
+      /completed.*artifact|artifact.*missing|parser dataset/iu,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -196,6 +276,10 @@ test("unified sample split is stable as corpus scale grows", async () => {
         largeByIndex.get(sample.sample_index).regions.filter((region) => region.semantic_role === "product").map((region) => [region.text, region.drug_family]),
       );
     }
+    assert.deepEqual(
+      new Set(large.samples.filter((sample) => sample.split === "train").map((sample) => sample.parser_structure_variant)),
+      new Set(PARSER_STRUCTURE_VARIANTS.train),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

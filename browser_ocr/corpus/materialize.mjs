@@ -1,15 +1,28 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
 import { validateUnifiedCorpus } from "./contract.mjs";
 import { RECOGNITION_EVAL_POLICY, recognitionOodTag } from "./evaluation_policy.mjs";
+import { buildOracleManifest, buildParsingItems, expectedRows } from "./parser_truth.mjs";
 
-const MATERIALIZER_VERSION = 7;
+const MATERIALIZER_VERSION = 13;
 const STAGES = ["detection", "recognition", "parsing", "e2e"];
 const STATE_FILE = ".materialize-state.json";
 const LOCK_FILE = ".materialize.lock";
+const COMPLETED_ARTIFACTS = [
+  "detection/manifest.json", "detection/samples.jsonl", "detection/train.jsonl", "detection/val.jsonl", "detection/test.jsonl",
+  "detection/paddle/export.json", "detection/paddle/train.txt", "detection/paddle/val.txt", "detection/paddle/test.txt",
+  "recognition/manifest.json", "recognition/samples.jsonl", "recognition/index.jsonl", "recognition/train.jsonl", "recognition/val.jsonl", "recognition/test.jsonl",
+  "recognition/document-split.json", "recognition/paddle/export.json", "recognition/paddle/train.txt", "recognition/paddle/val.txt", "recognition/paddle/test.txt", "recognition/.crop-state.json",
+  "parsing/manifest.json", "parsing/samples.jsonl", "parsing/train.jsonl", "parsing/val.jsonl", "parsing/test.jsonl",
+  "parsing/oracle-manifest.json", "parsing/oracle-train.json", "parsing/oracle-val.json", "parsing/oracle-test.json",
+  ...["oracle", "train-synthetic-ocr", "val-synthetic-ocr", "test-synthetic-ocr"].flatMap((name) => [
+    `parsing/datasets/${name}/manifest.json`, `parsing/datasets/${name}/samples.jsonl`, `parsing/datasets/${name}/.dataset-state.json`,
+  ]),
+  "e2e/manifest.json", "e2e/samples.jsonl", "e2e/train.jsonl", "e2e/val.jsonl", "e2e/test.jsonl",
+];
 
 function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
@@ -34,11 +47,6 @@ function slug(value) {
   return normalized || "other";
 }
 
-function roleValue(text) {
-  const match = String(text).match(/\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : null;
-}
-
 function drugFamilyByAssociation(sample) {
   return new Map(sample.regions
     .filter((region) => region.semantic_role === "product" && region.drug_family)
@@ -49,83 +57,6 @@ function recognitionDrugFamily(sample, region, families) {
   const family = region.drug_family || families.get(region.association_group);
   if (family) return family;
   return `context-${sha256(sample.id).slice(0, 12)}`;
-}
-
-function expectedRows(sample) {
-  const groups = new Map();
-  for (const region of sample.regions) {
-    if (!["product", "product_label", "dose", "frequency", "duration"].includes(region.semantic_role)) continue;
-    if (region.association_group === "document") continue;
-    const group = groups.get(region.association_group) ?? { product_labels: [] };
-    if (region.semantic_role === "product_label") group.product_labels.push(region);
-    else group[region.semantic_role] = region;
-    groups.set(region.association_group, group);
-  }
-  const rows = [];
-  for (const group of groups.values()) {
-    if (!group.product) continue;
-    const draft = {};
-    const productEvidence = [...group.product_labels, group.product];
-    const evidence = { product_query: productEvidence.map((region) => region.region_id) };
-    if (group.dose) {
-      const amount = roleValue(group.dose.text);
-      if (amount !== null) {
-        draft.dose_amount = amount;
-        evidence.dose_amount = [group.dose.region_id];
-        if (/포\s*\(정\)/.test(group.dose.text)) {
-          draft.dosage_text = group.dose.text.replace(/\s+/g, "");
-          evidence.dosage_text = [group.dose.region_id];
-        } else {
-          const compact = group.dose.text.replace(/\s+/g, "").toLowerCase();
-          let unit = null;
-          if (compact.includes("캡슐") || compact.includes("capsule")) unit = "capsule";
-          else if (compact.includes("정") || compact.includes("tablet")) unit = "tablet";
-          else if (compact.includes("포")) unit = "packet";
-          else if (compact.includes("ml")) unit = "mL";
-          if (unit) {
-            draft.dose_unit = unit;
-            evidence.dose_unit = [group.dose.region_id];
-          }
-        }
-      }
-    }
-    if (group.frequency) {
-      const value = roleValue(group.frequency.text);
-      if (value !== null) {
-        draft.frequency_per_day = value;
-        evidence.frequency_per_day = [group.frequency.region_id];
-      }
-    }
-    if (group.duration) {
-      const value = roleValue(group.duration.text);
-      if (value !== null) {
-        draft.prescription_days = value;
-        evidence.prescription_days = [group.duration.region_id];
-      }
-    }
-    rows.push({
-      row_id: productEvidence[0].region_id,
-      product_query: group.product.text.trim(),
-      draft,
-      uncertainty_codes: [],
-      evidence,
-    });
-  }
-  return rows;
-}
-
-function positiveEdges(sample) {
-  const products = sample.regions.filter((region) => region.semantic_role === "product" && region.association_group !== "document");
-  const fields = sample.regions.filter((region) => ["dose", "frequency", "duration"].includes(region.semantic_role) && region.association_group !== "document");
-  const edges = [];
-  for (const product of products) {
-    for (const field of fields) {
-      if (product.association_group === field.association_group) {
-        edges.push({ product_node_id: product.region_id, field_node_id: field.region_id, relation: "same_medication" });
-      }
-    }
-  }
-  return edges;
 }
 
 function run(command, args, cwd, { streamStderr = false } = {}) {
@@ -145,6 +76,126 @@ function run(command, args, cwd, { streamStderr = false } = {}) {
       else reject(new Error(`${command} failed with exit ${code}: ${stderr.trim().slice(-4000)}`));
     });
   });
+}
+
+function acquireMaterializeLock(python, lockPath) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(
+      python,
+      ["-m", "browser_ocr.corpus.materialize_lock", "--path", lockPath],
+      { cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      child.stdin.end();
+      reject(error);
+    };
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.on("error", fail);
+    child.on("close", (code) => {
+      if (!settled) {
+        fail(new Error(
+          code === 2
+            ? "unified corpus materialization is already running for this output directory"
+            : `materialization lock helper exited with ${code}: ${stderr.trim()}`,
+        ));
+      }
+    });
+    child.stdout.on("data", (chunk) => {
+      if (settled) return;
+      stdout += chunk.toString();
+      const newline = stdout.indexOf("\n");
+      if (newline < 0) return;
+      let payload;
+      try {
+        payload = JSON.parse(stdout.slice(0, newline));
+      } catch (error) {
+        fail(new Error(`materialization lock helper returned invalid JSON: ${error.message}`));
+        return;
+      }
+      if (payload.status !== "locked") {
+        fail(new Error("unified corpus materialization is already running for this output directory"));
+        return;
+      }
+      settled = true;
+      resolvePromise(child);
+    });
+  });
+}
+
+function releaseMaterializeLock(child) {
+  return new Promise((resolvePromise, reject) => {
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolvePromise();
+      else reject(new Error(`materialization lock helper release failed with ${code}: ${stderr.trim()}`));
+    });
+    child.stdin.end();
+  });
+}
+
+async function validateCorpusImages(corpusRoot, corpus) {
+  for (const sample of corpus.samples) {
+    const imagePath = resolve(corpusRoot, sample.image);
+    let actual;
+    try {
+      actual = await fileSha256(imagePath);
+    } catch (error) {
+      throw new Error(`unified corpus source image is missing or unreadable for ${sample.id}: ${error.message}`);
+    }
+    if (actual !== sample.image_sha256) {
+      throw new Error(`unified corpus source image SHA-256 mismatch for ${sample.id}`);
+    }
+  }
+}
+
+async function completedArtifactHashes(output) {
+  const hashes = {};
+  for (const artifact of COMPLETED_ARTIFACTS) {
+    const path = join(output, artifact);
+    try {
+      const info = await stat(path);
+      if (!info.isFile()) throw new Error("not a file");
+      hashes[artifact] = await fileSha256(path);
+    } catch (error) {
+      throw new Error(`completed materialization artifact is missing or unreadable: ${artifact}`);
+    }
+  }
+  return hashes;
+}
+
+async function validateCompletedMaterialization({ output, state, reportPath, python }) {
+  if (!/^[0-9a-f]{64}$/.test(String(state.report_sha256 || ""))) {
+    throw new Error("completed materialization state is missing report SHA-256");
+  }
+  if (await fileSha256(reportPath) !== state.report_sha256) {
+    throw new Error("completed materialization report SHA-256 mismatch");
+  }
+  const expectedArtifacts = state.artifact_sha256;
+  if (!expectedArtifacts || typeof expectedArtifacts !== "object" || Array.isArray(expectedArtifacts)) {
+    throw new Error("completed materialization state is missing artifact SHA-256 bindings");
+  }
+  const currentArtifacts = await completedArtifactHashes(output);
+  if (JSON.stringify(currentArtifacts) !== JSON.stringify(expectedArtifacts)) {
+    throw new Error("completed materialization artifact SHA-256 mismatch");
+  }
+  await run(python, [
+    "-m", "browser_ocr.corpus.materialize_helpers", "validate-recognition",
+    "--manifest", join(output, "recognition", "manifest.json"),
+  ], process.cwd());
+  for (const name of ["oracle", "train-synthetic-ocr", "val-synthetic-ocr", "test-synthetic-ocr"]) {
+    await run(python, [
+      "-m", "browser_ocr.document_parsing.dataset_cli", "validate",
+      "--manifest", join(output, "parsing", "datasets", name, "manifest.json"), "--json",
+    ], process.cwd());
+  }
+  return JSON.parse(await readFile(reportPath, "utf8"));
 }
 
 function progress(stage, completed, total) {
@@ -172,20 +223,17 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
   };
   await mkdir(output, { recursive: true });
   const lockPath = join(output, LOCK_FILE);
-  let lock;
-  try {
-    lock = await open(lockPath, "wx");
-  } catch (error) {
-    if (error?.code === "EEXIST") throw new Error("unified corpus materialization is already running for this output directory");
-    throw error;
-  }
+  const lock = await acquireMaterializeLock(python, lockPath);
   const statePath = join(output, STATE_FILE);
   const reportPath = join(output, "report.json");
   try {
+    await validateCorpusImages(corpusRoot, corpus);
     try {
       const state = JSON.parse(await readFile(statePath, "utf8"));
       if (JSON.stringify(state.profile) !== JSON.stringify(profile)) throw new Error("materialization profile differs from existing state");
-      if (state.status === "completed") return JSON.parse(await readFile(reportPath, "utf8"));
+      if (state.status === "completed") {
+        return await validateCompletedMaterialization({ output, state, reportPath, python });
+      }
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
       const entries = (await Promise.all(STAGES.map(async (stage) => {
@@ -206,6 +254,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       width: sample.width,
       height: sample.height,
       layout_family: sample.layout_family,
+      parser_structure_variant: sample.parser_structure_variant,
       capture_profile: sample.capture_profile,
       augmentation_difficulty: sample.augmentation_difficulty,
       augmentation_components: sample.capture.augmentation_components,
@@ -373,44 +422,9 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
     await atomicJson(statePath, { schema_version: 1, status: "running", profile, stage: "parsing" });
     const parsingDir = join(output, "parsing");
     await mkdir(parsingDir, { recursive: true });
-    const parsingItems = corpus.samples.map((sample) => ({
-      document_id: sample.id,
-      split: sample.split,
-      drug_name_split: sample.drug_name_split,
-      drug_name_exposure: sample.drug_name_exposure,
-      layout_family: sample.layout_family,
-      capture_profile: sample.capture_profile,
-      augmentation_difficulty: sample.augmentation_difficulty,
-      augmentation_components: sample.capture.augmentation_components,
-      nodes: sample.regions.map((region) => ({
-        node_id: region.region_id,
-        text: region.text,
-        confidence: 1.0,
-        polygon: region.polygon,
-        semantic_role: region.semantic_role,
-        association_group: region.association_group,
-        ...(region.drug_family ? {
-          drug_family: region.drug_family,
-          drug_name_split: region.drug_name_split,
-        } : {}),
-        region_class: region.region_class,
-        critical: region.critical,
-      })),
-      positive_edges: positiveEdges(sample),
-      expected_rows: expectedRows(sample),
-    }));
+    const parsingItems = buildParsingItems(corpus);
     await writeFile(join(parsingDir, "samples.jsonl"), jsonl(parsingItems));
-    const oracleManifest = {
-      schema_version: 2,
-      cases: corpus.samples.map((sample) => ({
-        case_id: sample.id,
-        source_kind: "synthetic",
-        scenario_tags: sample.scenario_tags,
-        risk_tags: sample.risk_tags,
-        boxes: sample.regions.map((region) => ({ box_id: region.region_id, text: region.text, confidence: 1.0, polygon: region.polygon })),
-        expected_rows: expectedRows(sample),
-      })),
-    };
+    const oracleManifest = buildOracleManifest(corpus);
     await atomicJson(join(parsingDir, "oracle-manifest.json"), oracleManifest);
     for (const name of ["train", "val", "test"]) {
       const selected = parsingItems.filter((item) => item.split === name);
@@ -424,7 +438,32 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       schema_version: 1, stage: "parsing", parent_corpus_id: corpus.corpus_id,
       samples_file: "samples.jsonl", oracle_manifest: "oracle-manifest.json",
       labels: ["semantic_role", "association_group", "same_medication"],
+      training_datasets: {
+        oracle: "datasets/oracle/manifest.json",
+        train_synthetic_ocr: "datasets/train-synthetic-ocr/manifest.json",
+        val_synthetic_ocr: "datasets/val-synthetic-ocr/manifest.json",
+        test_synthetic_ocr: "datasets/test-synthetic-ocr/manifest.json",
+      },
     });
+    const parserDatasetSpecs = [
+      { name: "oracle", observation: "oracle", split: null },
+      { name: "train-synthetic-ocr", observation: "synthetic_ocr", split: "train" },
+      { name: "val-synthetic-ocr", observation: "synthetic_ocr", split: "val" },
+      { name: "test-synthetic-ocr", observation: "synthetic_ocr", split: "test" },
+    ];
+    for (const spec of parserDatasetSpecs) {
+      const datasetArgs = [
+        "-m", "browser_ocr.document_parsing.dataset_cli", "build-synthetic",
+        "--truth-samples", join(parsingDir, "samples.jsonl"),
+        "--output-dir", join(parsingDir, "datasets", spec.name),
+        "--dataset-id", `parser-${corpus.generator.version}-${corpus.generator.seed}-${spec.name}`,
+        "--observation-kind", spec.observation,
+        "--seed", String(corpus.generator.seed),
+        "--json",
+      ];
+      if (spec.split) datasetArgs.push("--split", spec.split);
+      await run(python, datasetArgs, process.cwd(), { streamStderr: true });
+    }
     progress("parsing", parsingItems.length, parsingItems.length);
 
     await atomicJson(statePath, { schema_version: 1, status: "running", profile, stage: "e2e" });
@@ -437,6 +476,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       drug_name_exposure: sample.drug_name_exposure,
       image: sample.image,
       layout_family: sample.layout_family,
+      parser_structure_variant: sample.parser_structure_variant,
       capture_profile: sample.capture_profile,
       augmentation_difficulty: sample.augmentation_difficulty,
       augmentation_components: sample.capture.augmentation_components,
@@ -481,6 +521,12 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
         samples: parsingItems.length,
         oracle_manifest: "parsing/oracle-manifest.json",
         oracle_splits: { train: "parsing/oracle-train.json", val: "parsing/oracle-val.json", test: "parsing/oracle-test.json" },
+        training_datasets: {
+          oracle: "parsing/datasets/oracle/manifest.json",
+          train_synthetic_ocr: "parsing/datasets/train-synthetic-ocr/manifest.json",
+          val_synthetic_ocr: "parsing/datasets/val-synthetic-ocr/manifest.json",
+          test_synthetic_ocr: "parsing/datasets/test-synthetic-ocr/manifest.json",
+        },
       },
       detection: {
         split_files: { train: "detection/train.jsonl", val: "detection/val.jsonl", test: "detection/test.jsonl" },
@@ -489,13 +535,29 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       e2e: { split_files: { train: "e2e/train.jsonl", val: "e2e/val.jsonl", test: "e2e/test.jsonl" } },
     };
     await atomicJson(reportPath, report);
-    await atomicJson(statePath, { schema_version: 1, status: "completed", profile, report_sha256: await fileSha256(reportPath) });
+    await validateCorpusImages(corpusRoot, corpus);
+    const artifactSha256 = await completedArtifactHashes(output);
+    await validateCompletedMaterialization({
+      output,
+      state: {
+        report_sha256: await fileSha256(reportPath),
+        artifact_sha256: artifactSha256,
+      },
+      reportPath,
+      python,
+    });
+    await atomicJson(statePath, {
+      schema_version: 1,
+      status: "completed",
+      profile,
+      report_sha256: await fileSha256(reportPath),
+      artifact_sha256: artifactSha256,
+    });
     return report;
   } catch (error) {
     await atomicJson(statePath, { schema_version: 1, status: "failed", profile, error: error instanceof Error ? error.message : String(error) }).catch(() => {});
     throw error;
   } finally {
-    await lock.close();
-    await unlink(lockPath).catch((error) => { if (error?.code !== "ENOENT") throw error; });
+    await releaseMaterializeLock(lock);
   }
 }
