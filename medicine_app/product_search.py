@@ -5,6 +5,8 @@ import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from .product_search_components import split_ingredient_components
+
 
 _SEARCH_MODES = {"manual", "ocr"}
 _UNIT_SENTINEL = {
@@ -45,17 +47,6 @@ _COMPATIBILITY_RANGES = (
     (0xFE30, 0xFE4F),  # CJK compatibility forms
     (0xFF00, 0xFFEF),  # halfwidth/fullwidth forms
 )
-_INGREDIENT_COMPONENT_SEPARATORS = frozenset(("/", "·", "ㆍ", "∙", "⋅"))
-_BRACKET_PAIRS = {
-    "(": ")",
-    "[": "]",
-    "{": "}",
-    "<": ">",
-    "（": "）",
-    "［": "］",
-    "｛": "｝",
-    "〈": "〉",
-}
 _RAW_UNIT_SYMBOLS = {
     "㎎": "밀리그램",
     "㎍": "마이크로그램",
@@ -277,6 +268,64 @@ def raw_case_width_glob(token: str) -> str | None:
     return "*" + "".join(pieces) + "*"
 
 
+def _scan_normalized_tokens(
+    normalized: str,
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[tuple[str, str | None], ...],
+    tuple[str, ...],
+]:
+    """Tokenize one normalized field and apply slash-group unit inheritance."""
+    text_tokens: list[str] = []
+    number_tokens: list[str] = []
+    unit_tokens: list[str] = []
+    semantic_unit_tokens: list[str] = []
+    strength_atoms: list[tuple[str, str | None]] = []
+    number_spans: list[tuple[int, int]] = []
+    previous_kind: str | None = None
+    for match in _TOKEN_RE.finditer(normalized):
+        unit = match.group(1)
+        token = match.group(0).casefold()
+        if unit:
+            canonical_unit = unit.casefold()
+            unit_tokens.append(canonical_unit)
+            inherited = 0
+            if previous_kind == "number":
+                number, _bound_unit = strength_atoms[-1]
+                strength_atoms[-1] = (number, canonical_unit)
+                atom_index = len(strength_atoms) - 2
+                while atom_index >= 0 and strength_atoms[atom_index][1] is None:
+                    between = normalized[
+                        number_spans[atom_index][1]:number_spans[atom_index + 1][0]
+                    ].strip()
+                    if between != "/":
+                        break
+                    prior_number, _prior_unit = strength_atoms[atom_index]
+                    strength_atoms[atom_index] = (prior_number, canonical_unit)
+                    inherited += 1
+                    atom_index -= 1
+            semantic_unit_tokens.extend([canonical_unit] * (inherited + 1))
+            previous_kind = "unit"
+        elif token[0].isdigit():
+            number = _normalize_number(token)
+            number_tokens.append(number)
+            strength_atoms.append((number, None))
+            number_spans.append(match.span())
+            previous_kind = "number"
+        else:
+            text_tokens.append(token)
+            previous_kind = "text"
+    return (
+        tuple(text_tokens),
+        tuple(number_tokens),
+        tuple(unit_tokens),
+        tuple(strength_atoms),
+        tuple(semantic_unit_tokens),
+    )
+
+
 def parse_product_search_query(value: object, *, mode: str = "manual") -> ProductSearchQuery:
     mode = str(mode or "manual").strip().lower()
     if mode not in _SEARCH_MODES:
@@ -285,37 +334,17 @@ def parse_product_search_query(value: object, *, mode: str = "manual") -> Produc
     normalized = _canonical_text(original)
     if mode == "ocr":
         normalized = _OCR_TRAILING_REGIMEN_RE.sub(r"\1", normalized)
-    text_tokens: list[str] = []
-    number_tokens: list[str] = []
-    unit_tokens: list[str] = []
-    strength_atoms: list[tuple[str, str | None]] = []
-    previous_kind: str | None = None
-    for match in _TOKEN_RE.finditer(normalized):
-        unit = match.group(1)
-        token = match.group(0).casefold()
-        if unit:
-            canonical_unit = unit.casefold()
-            unit_tokens.append(canonical_unit)
-            if previous_kind == "number":
-                number, _unit = strength_atoms[-1]
-                strength_atoms[-1] = (number, canonical_unit)
-            previous_kind = "unit"
-        elif token[0].isdigit():
-            number = _normalize_number(token)
-            number_tokens.append(number)
-            strength_atoms.append((number, None))
-            previous_kind = "number"
-        else:
-            text_tokens.append(token)
-            previous_kind = "text"
+    text_tokens, number_tokens, unit_tokens, strength_atoms, _semantic_units = (
+        _scan_normalized_tokens(normalized)
+    )
     return ProductSearchQuery(
         original=original,
         mode=mode,
         normalized=normalized,
-        text_tokens=tuple(text_tokens),
-        number_tokens=tuple(number_tokens),
-        unit_tokens=tuple(unit_tokens),
-        strength_atoms=tuple(strength_atoms),
+        text_tokens=text_tokens,
+        number_tokens=number_tokens,
+        unit_tokens=unit_tokens,
+        strength_atoms=strength_atoms,
     )
 
 
@@ -424,27 +453,10 @@ def _field_text(
     tuple[str, ...],
     tuple[tuple[str, str | None], ...],
 ]:
-    text_tokens: list[str] = []
-    unit_tokens: list[str] = []
-    strength_atoms: list[tuple[str, str | None]] = []
-    previous_kind: str | None = None
-    for match in _TOKEN_RE.finditer(_canonical_text(value)):
-        unit = match.group(1)
-        token = match.group(0).casefold()
-        if unit:
-            canonical_unit = unit.casefold()
-            unit_tokens.append(canonical_unit)
-            if previous_kind == "number":
-                number, _bound_unit = strength_atoms[-1]
-                strength_atoms[-1] = (number, canonical_unit)
-            previous_kind = "unit"
-        elif token[0].isdigit():
-            strength_atoms.append((_normalize_number(token), None))
-            previous_kind = "number"
-        else:
-            text_tokens.append(token)
-            previous_kind = "text"
-    return "".join(text_tokens), tuple(unit_tokens), tuple(strength_atoms)
+    text_tokens, _numbers, _literal_units, strength_atoms, semantic_units = _scan_normalized_tokens(
+        _canonical_text(value)
+    )
+    return "".join(text_tokens), semantic_units, strength_atoms
 
 
 def _match_text_field(
@@ -485,41 +497,6 @@ def _match_text_field(
     )
 
 
-def _ingredient_components(value: object) -> tuple[str, ...]:
-    """Split canonical ingredient composition only at top-level separators.
-
-    Canonical ingredient text uses slash and middle-dot forms between distinct
-    components, but the same punctuation can occur inside parenthesized source
-    descriptors. Numeric qualifiers must stay within one top-level component.
-    """
-    text = str(value or "")
-    if not text:
-        return ()
-    components: list[str] = []
-    current: list[str] = []
-    closing_stack: list[str] = []
-    for char in text:
-        if char in _BRACKET_PAIRS:
-            closing_stack.append(_BRACKET_PAIRS[char])
-            current.append(char)
-            continue
-        if closing_stack and char == closing_stack[-1]:
-            closing_stack.pop()
-            current.append(char)
-            continue
-        if not closing_stack and char in _INGREDIENT_COMPONENT_SEPARATORS:
-            component = "".join(current).strip()
-            if component:
-                components.append(component)
-            current = []
-            continue
-        current.append(char)
-    component = "".join(current).strip()
-    if component:
-        components.append(component)
-    return tuple(components)
-
-
 def _match_ingredient_field(
     query: ProductSearchQuery,
     value: object,
@@ -531,7 +508,7 @@ def _match_ingredient_field(
     if query.number_tokens or query.unit_tokens:
         matches = [
             _match_text_field(query, component, field="ingredient_text", field_rank=1)
-            for component in _ingredient_components(value)
+            for component in split_ingredient_components(value)
         ]
         found = [match for match in matches if match is not None]
         return min(found, key=lambda match: match.sort_key) if found else None

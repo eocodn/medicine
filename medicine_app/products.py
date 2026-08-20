@@ -16,6 +16,7 @@ from .product_search import (
     raw_case_width_glob,
     raw_candidate_variants,
 )
+from .product_search_numeric import raw_numeric_compat_glob
 
 
 class ProductRepository:
@@ -208,9 +209,9 @@ class ProductRepository:
         return results
 
     @staticmethod
-    def _number_raw_variants(
+    def _number_candidate_patterns(
         number: str,
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[str, str], ...]:
         normalized_variants = [number]
         integer, dot, fraction = number.partition(".")
         if integer.isdigit() and len(integer) > 3:
@@ -219,15 +220,17 @@ class ProductRepository:
                 grouped = f"{grouped}.{fraction}"
             if grouped not in normalized_variants:
                 normalized_variants.append(grouped)
-        variants: list[str] = []
+        patterns: list[tuple[str, str]] = []
         for normalized in normalized_variants:
-            for raw in raw_candidate_variants(
-                normalized,
-                include_fullwidth=True,
-            ):
-                if raw not in variants:
-                    variants.append(raw)
-        return tuple(variants)
+            for raw in raw_candidate_variants(normalized, include_fullwidth=True):
+                candidate = ("LIKE", f"%{raw}%")
+                if candidate not in patterns:
+                    patterns.append(candidate)
+            compatibility = raw_numeric_compat_glob(normalized)
+            candidate = ("GLOB", compatibility) if compatibility else None
+            if candidate and candidate not in patterns:
+                patterns.append(candidate)
+        return tuple(patterns)
 
     @staticmethod
     def _structured_candidate_rows(
@@ -260,9 +263,9 @@ class ProductRepository:
             clauses.append("(" + text_joiner.join(text_clauses) + ")")
             for number in dict.fromkeys(query.number_tokens):
                 variant_clauses = []
-                for variant in ProductRepository._number_raw_variants(number):
-                    variant_clauses.append(f"p.{field} LIKE ?")
-                    params.append(f"%{variant}%")
+                for operator, pattern in ProductRepository._number_candidate_patterns(number):
+                    variant_clauses.append(f"p.{field} {operator} ?")
+                    params.append(pattern)
                 clauses.append("(" + " OR ".join(variant_clauses) + ")")
             return "(" + " AND ".join(clauses) + ")"
 

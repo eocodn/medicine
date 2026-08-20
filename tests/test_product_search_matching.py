@@ -58,9 +58,14 @@ class ProductSearchQueryTest(unittest.TestCase):
     def test_strength_atoms_keep_numbers_bound_to_their_units(self) -> None:
         concentration = parse_product_search_query("보령듀리세프건조시럽 125mg/5ml")
         shared_unit = parse_product_search_query("타진 10/5mg")
+        shared_triple = parse_product_search_query("스타레보 50/12.5/200mg")
 
         self.assertEqual(concentration.strength_atoms, (("125", "mg"), ("5", "ml")))
-        self.assertEqual(shared_unit.strength_atoms, (("10", None), ("5", "mg")))
+        self.assertEqual(shared_unit.strength_atoms, (("10", "mg"), ("5", "mg")))
+        self.assertEqual(
+            shared_triple.strength_atoms,
+            (("50", "mg"), ("12.5", "mg"), ("200", "mg")),
+        )
 
         self.assertIsNone(match_product_fields(
             parse_product_search_query("보령듀리세프건조시럽 5 mg"),
@@ -280,6 +285,30 @@ class ProductSearchIntegrationTest(unittest.TestCase):
                 "콤보정10mg/5mg",
                 "Alpha 10mg/Beta 5mg",
             )
+            add_product(
+                con,
+                "SHARED-TRIPLE",
+                "스타레보필름코팅정50/12.5/200밀리그램",
+                "Levodopa/Carbidopa/Entacapone",
+            )
+            add_product(
+                con,
+                "MALFORMED-COMPONENTS",
+                "플레인연조엑스",
+                "Angelica Gigas Root Soft Extract (2.8∼3.4→1)/Cassiae Cortex InteriorExtract(8.3∼12.5⟶1/Cyperus Rhizome Soft Extract (2.8~3.5→1)/Licorice Soft Extract(2.1~2.5→1)/Sappan Wood Extract(7.6∼11.4⟶1)",
+            )
+            add_product(
+                con,
+                "SUPERSCRIPT-STRENGTH",
+                "Supra²mg정",
+                "Synthetic Ingredient",
+            )
+            add_product(
+                con,
+                "SUPERSCRIPT-MULTI-STRENGTH",
+                "MultiSupra¹²mg정",
+                "Synthetic Ingredient",
+            )
         self.app = MedicationApp(self.canonical_db, self.personal_db)
 
     def tearDown(self) -> None:
@@ -342,6 +371,24 @@ class ProductSearchIntegrationTest(unittest.TestCase):
         self.assert_first("보령듀리세프건조시럽 125 mg", "CEF-125-5")
         self.assert_first("보령듀리세프건조시럽 5 ml", "CEF-125-5")
         self.assert_first("콤보 10 5 mg", "COMBO-REPEATED-UNIT")
+
+    def test_shared_trailing_unit_applies_to_each_slash_group_strength(self) -> None:
+        self.assert_first("타진서방정 10 mg", "TAJIN-10-5")
+        self.assert_first("타진서방정 5 mg", "TAJIN-10-5")
+        self.assert_first("스타레보 50 mg", "SHARED-TRIPLE")
+        self.assert_first("스타레보 12.5 mg", "SHARED-TRIPLE")
+        self.assert_first("스타레보 200 mg", "SHARED-TRIPLE")
+
+    def test_malformed_ingredient_brackets_do_not_leak_numbers_between_components(self) -> None:
+        self.assert_first("Cyperus 2.8", "MALFORMED-COMPONENTS")
+        self.assert_first("Licorice 2.1", "MALFORMED-COMPONENTS")
+        self.assertEqual(self.app.search_products("Cyperus 2.1", limit=10), [])
+        self.assertEqual(self.app.search_products("Licorice 2.8", limit=10), [])
+        self.assertEqual(self.app.search_products("Cassiae 2.1", limit=10), [])
+
+    def test_numeric_nfkc_compatibility_spelling_is_candidate_complete(self) -> None:
+        self.assert_first("Supra 2 mg", "SUPERSCRIPT-STRENGTH")
+        self.assert_first("MultiSupra 12 mg", "SUPERSCRIPT-MULTI-STRENGTH")
 
     def test_fullwidth_latin_case_variants_remain_candidate_complete(self) -> None:
         self.assert_first("ABC 5 mg", "FULLWIDTH-LATIN-MIXED")
