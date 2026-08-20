@@ -22,6 +22,10 @@ A dataset has `manifest.json` plus a JSONL sample file. Every sample must includ
 
 Do not put private real-photo corpora in this repository. Keep them outside Git and point the CLI at their manifest. For real samples, identifiers in `document_id`, source groups, and provenance must be pseudonymous and the image must already be de-identified before ingestion.
 
+## Real-photo parser holdout path
+
+The learned-parser data pipeline has a separate full-document path for already de-identified prescription photos. Private images stay outside this repository and are mounted read-only. `ocr-parser-real` reuses the selected `ocr-full-document` detector/crop/recognizer implementation, stores per-document runtime OCR snapshots under an ignored work directory, and emits human-annotation drafts. Real parser sources are val/test-only; training on real patient-derived images is intentionally not enabled by this contract. See `browser_ocr/document_parsing/README.md` for the source manifest and finalization workflow.
+
 ## Why split is graph-based
 
 A random crop split leaks information. Crops from the same photographed document share layout, print quality, camera conditions and often drug names. The splitter therefore joins each `document_id` to the selected holdout family and assigns the resulting connected components as a unit. This guarantees that neither the document nor the chosen family crosses train/validation/test.
