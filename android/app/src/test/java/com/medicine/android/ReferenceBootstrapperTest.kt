@@ -141,6 +141,11 @@ class ReferenceBootstrapperTest {
         )
 
     @Test
+    fun androidInstallerKeepsCurrentMainStateFilenameForInPlaceMigration() {
+        assertEquals("state.v1", REFERENCE_STATE_FILE)
+    }
+
+    @Test
     fun firstLaunchDownloadsFullReleaseAndInstallsItAsActive() {
         val root = Files.createTempDirectory("reference-bootstrap").toFile()
         try {
