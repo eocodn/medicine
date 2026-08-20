@@ -155,6 +155,19 @@ class PrescriptionCliTest(unittest.TestCase):
             )
         self.assertEqual(len(app.list_dose_logs(self.person["id"])), 1)
 
+        first_cancel_status, first_cancel = self.run_cli(
+            "dose-instance-cancel", "--instance", first["id"],
+        )
+        retry_cancel_status, retry_cancel = self.run_cli(
+            "dose-instance-cancel", "--instance", first["id"],
+        )
+        self.assertEqual((first_cancel_status, retry_cancel_status), (0, 0))
+        self.assertTrue(first_cancel["deleted"])
+        self.assertEqual(retry_cancel["status"], "canceled")
+        self.assertTrue(retry_cancel["deleted"])
+        with self.assertRaises(KeyError):
+            self.run_cli("dose-instance-cancel", "--instance", "never-existed")
+
     def test_meds_exposes_date_relative_course_progress(self) -> None:
         app = MedicationApp(self.canonical_db, self.personal_db)
         app.add_medication(

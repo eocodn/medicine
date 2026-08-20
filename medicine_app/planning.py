@@ -257,6 +257,21 @@ def record_instance(
 def cancel_instance_completion(con: sqlite3.Connection, instance_id: str) -> dict:
     row = con.execute("SELECT * FROM dose_instances WHERE id=?", (instance_id,)).fetchone()
     if row is None:
+        canceled_prn = con.execute(
+            """SELECT dose_instance_id,medication_id,person_id
+               FROM prn_requests
+               WHERE dose_instance_id=? AND state='canceled'""",
+            (instance_id,),
+        ).fetchone()
+        if canceled_prn is not None:
+            return {
+                "id": canceled_prn["dose_instance_id"],
+                "medication_id": canceled_prn["medication_id"],
+                "person_id": canceled_prn["person_id"],
+                "status": "canceled",
+                "completed_at": None,
+                "deleted": True,
+            }
         raise KeyError("dose instance not found")
     con.execute("DELETE FROM dose_logs WHERE dose_instance_id=?", (instance_id,))
     if str(row["schedule_key"]).startswith("prn:"):

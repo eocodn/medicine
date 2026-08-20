@@ -170,6 +170,29 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(recorded["status"], "taken")
         self.assertEqual(len(recorded["recent_logs"]), 1)
+        status, canceled = self.request(
+            "DELETE", f"/api/dose-instances/{recorded['id']}/completion"
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(canceled["deleted"])
+        status, repeated_cancel = self.request(
+            "DELETE", f"/api/dose-instances/{recorded['id']}/completion"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(repeated_cancel["status"], "canceled")
+        self.assertTrue(repeated_cancel["deleted"])
+        self.assertEqual(repeated_cancel["recent_logs"], [])
+        status, missing_cancel = self.request(
+            "DELETE", "/api/dose-instances/never-existed/completion"
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("not found", missing_cancel["detail"])
+
+        status, recorded = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes",
+            {"request_id": "prn-one-replacement", "occurred_at": "2026-08-10T12:30:00+09:00"},
+        )
+        self.assertEqual(status, 201)
         status, blocked = self.request(
             "POST", f"/api/medications/{medication['id']}/prn-intakes",
             {"request_id": "prn-two", "occurred_at": "2026-08-10T18:00:00+09:00"},

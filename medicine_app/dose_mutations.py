@@ -28,7 +28,10 @@ def record_scheduled_dose(
     preserve_existing_same_state = not occurred_at_supplied and not note_supplied
     when = occurred_value or datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
     datetime.fromisoformat(when)
-    with app._personal() as con:
+    # The instance row and its single dose-log row form one state transition.
+    # Acquire the write transaction before reading either row so concurrent
+    # record/cancel callers cannot interleave between observation and commit.
+    with app._personal(write_lock=True) as con:
         return record_instance(
             con,
             instance_id,

@@ -429,7 +429,7 @@ class MedicationApp:
         )
 
     def cancel_dose_instance(self, instance_id: str) -> dict:
-        with self._personal() as con:
+        with self._personal(write_lock=True) as con:
             return cancel_instance_completion(con, instance_id)
 
     def update_medication(
