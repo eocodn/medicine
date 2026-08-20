@@ -10,10 +10,11 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MedicineBridge(
-    referenceDatabase: File,
+    referenceDatabase: File?,
     personalDatabase: File,
     private val vault: PersonalDatabaseVault,
 ) {
+    private val apiLock = Any()
     private val api: PyObject
     private val requestExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     @Volatile private var responseHandler: ((String, String) -> Unit)? = null
@@ -27,10 +28,10 @@ class MedicineBridge(
                     .getModule("medicine_app.mobile_api")
                     .callAttr(
                         "create_bridge",
-                        referenceDatabase.absolutePath,
+                        referenceDatabase?.absolutePath,
                         personalDatabase.absolutePath,
                     )
-                    .also { it.callAttr("prepare_for_seal") }
+                    .also { created -> synchronized(apiLock) { created.callAttr("prepare_for_seal") } }
             } finally {
                 vault.sealAfterUse()
             }
@@ -44,6 +45,10 @@ class MedicineBridge(
 
     fun setResponseHandler(handler: (String, String) -> Unit) {
         responseHandler = handler
+    }
+
+    fun setReferenceAvailable(available: Boolean, reason: String? = null) = synchronized(apiLock) {
+        api.callAttr("set_reference_available", available, reason)
     }
 
     @JavascriptInterface
@@ -75,7 +80,9 @@ class MedicineBridge(
 
     private fun processRequest(request: BridgeRequest): String {
         val access = try {
-            api.callAttr("request_access", request.method, request.path).toString()
+            synchronized(apiLock) {
+                api.callAttr("request_access", request.method, request.path).toString()
+            }
         } catch (error: Throwable) {
             Log.e(TAG, "Native API bridge access classification failed", error)
             return failureEnvelope("native bridge failure")
@@ -103,7 +110,7 @@ class MedicineBridge(
             try {
                 val discardedReadOnlySnapshot = readOnly && vault.finishReadOnlyUse(openOrigin)
                 if (!discardedReadOnlySnapshot) {
-                    api.callAttr("prepare_for_seal")
+                    synchronized(apiLock) { api.callAttr("prepare_for_seal") }
                     vault.sealAfterUse()
                 }
             } catch (error: Throwable) {
@@ -114,7 +121,9 @@ class MedicineBridge(
         }
 
     private fun callApi(request: BridgeRequest): String = try {
-        api.callAttr("request", request.method, request.path, request.body).toString()
+        synchronized(apiLock) {
+            api.callAttr("request", request.method, request.path, request.body).toString()
+        }
     } catch (error: Throwable) {
         Log.e(TAG, "Native API bridge request failed", error)
         failureEnvelope("native bridge failure")

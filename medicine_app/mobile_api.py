@@ -33,6 +33,12 @@ _UPDATE_FIELDS = {
 _DOSE_FIELDS = {"status", "occurred_at", "note"}
 
 
+class ReferenceUnavailable(RuntimeError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, (date, datetime)):
         return value.isoformat()
@@ -81,8 +87,28 @@ class MobileApi:
     external or loopback web server.
     """
 
-    def __init__(self, canonical_db: str | Path, personal_db: str | Path) -> None:
+    def __init__(
+        self,
+        canonical_db: str | Path | None,
+        personal_db: str | Path,
+        *,
+        reference_unavailable_reason: str | None = None,
+    ) -> None:
         self.service = MedicationApp(canonical_db, personal_db)
+        self.reference_available = canonical_db is not None
+        self.reference_unavailable_reason = (
+            None if self.reference_available else (reference_unavailable_reason or "unavailable")
+        )
+
+    def set_reference_available(self, available: bool, reason: str | None = None) -> None:
+        if available and self.service.products is None:
+            raise ValueError("reference database is unavailable")
+        self.reference_available = bool(available)
+        self.reference_unavailable_reason = None if self.reference_available else (reason or "unavailable")
+
+    def _require_reference(self) -> None:
+        if not self.reference_available:
+            raise ReferenceUnavailable(self.reference_unavailable_reason or "unavailable")
 
     def request_access(self, method: str, raw_path: str) -> str:
         parsed = urlsplit(raw_path)
@@ -115,6 +141,11 @@ class MobileApi:
             }
         except (RevisionConflict, IdempotencyConflict) as exc:
             status, body = 409, {"detail": str(exc)}
+        except ReferenceUnavailable as exc:
+            status, body = 503, {
+                "detail": "reference data unavailable; app update required",
+                "reference_status": exc.reason,
+            }
         except FileNotFoundError as exc:
             status, body = 503, {"detail": str(exc)}
         except KeyError as exc:
@@ -145,7 +176,12 @@ class MobileApi:
         service = self.service
 
         if method == "GET" and path == "/api/health":
-            return 200, {"ok": True, "full_catalog": service.products.has_full_catalog()}
+            return 200, {
+                "ok": True,
+                "full_catalog": service.products.has_full_catalog() if self.reference_available else False,
+                "reference_available": self.reference_available,
+                "reference_status": self.reference_unavailable_reason,
+            }
         if method == "GET" and path == "/api/people":
             return 200, service.list_people()
         if method == "POST" and path == "/api/people":
@@ -158,6 +194,7 @@ class MobileApi:
         if method == "DELETE" and match:
             return 200, service.delete_person(match.group(1))
         if method == "GET" and path == "/api/products":
+            self._require_reference()
             term = (query.get("q") or [""])[-1].strip()
             if not term:
                 raise ValueError("q is required")
@@ -174,7 +211,11 @@ class MobileApi:
         if method == "GET" and match:
             person_id = match.group(1)
             target_date = (query.get("date") or [None])[-1]
-            return 200, service.get_dashboard(person_id, target_date)
+            return 200, service.get_dashboard(
+                person_id,
+                target_date,
+                include_current_assessment=self.reference_available,
+            )
 
         match = re.fullmatch(r"/api/people/([^/]+)/daily-plan", path)
         if method == "GET" and match:
@@ -183,6 +224,7 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/people/([^/]+)/medications/preview", path)
         if method == "POST" and match:
+            self._require_reference()
             payload = _validated_fields(_body_object(body_json), _PREVIEW_FIELDS)
             if not (payload.get("product_ref") or payload.get("product_code")):
                 raise ValueError("product_ref or product_code is required")
@@ -190,11 +232,13 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/people/([^/]+)/medications", path)
         if method == "POST" and match:
+            self._require_reference()
             payload = _validated_fields(_body_object(body_json), _CREATE_FIELDS)
             return 201, service.add_medication(match.group(1), **payload)
 
         match = re.fullmatch(r"/api/medications/([^/]+)", path)
         if method == "PATCH" and match:
+            self._require_reference()
             payload = _validated_fields(_body_object(body_json), _UPDATE_FIELDS)
             if "expected_revision" not in payload:
                 raise ValueError("expected_revision is required")
@@ -258,7 +302,7 @@ class MobileApi:
         return 404, {"detail": "route not found"}
 
 
-def create_bridge(canonical_db: str, personal_db: str) -> MobileApi:
+def create_bridge(canonical_db: str | None, personal_db: str) -> MobileApi:
     return MobileApi(canonical_db, personal_db)
 
 

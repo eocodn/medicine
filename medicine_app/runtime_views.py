@@ -74,7 +74,14 @@ def _apply_current_assessment_fields(medication: dict, assessment: dict) -> None
     medication["review_required"] = bool(assessment.get("requires_review"))
 
 
-def get_dashboard(app: Any, person_id: str, target_value: str | date | None, uuid_factory: Callable[[], str]) -> dict:
+def get_dashboard(
+    app: Any,
+    person_id: str,
+    target_value: str | date | None,
+    uuid_factory: Callable[[], str],
+    *,
+    include_current_assessment: bool = True,
+) -> dict:
     target = target_date(target_value)
     with app._personal() as personal_con:
         person = app._get_person_from_connection(personal_con, person_id)
@@ -84,26 +91,27 @@ def get_dashboard(app: Any, person_id: str, target_value: str | date | None, uui
             active_only=False,
         )
         medications = active_medications_for_date(all_medications, target)
-        product_cache: dict[str, dict] = {}
-        with app._canonical() as canonical_con:
-            current_products = resolve_current_products(
-                app,
-                all_medications,
-                canonical_con=canonical_con,
-                product_cache=product_cache,
-            )
-            for medication in medications:
-                assessment = assess_current_medication(
+        if include_current_assessment:
+            product_cache: dict[str, dict] = {}
+            with app._canonical() as canonical_con:
+                current_products = resolve_current_products(
                     app,
-                    personal_con,
-                    person,
-                    medication,
-                    as_of=target,
+                    all_medications,
                     canonical_con=canonical_con,
-                    current_products=current_products,
                     product_cache=product_cache,
                 )
-                _apply_current_assessment_fields(medication, assessment)
+                for medication in medications:
+                    assessment = assess_current_medication(
+                        app,
+                        personal_con,
+                        person,
+                        medication,
+                        as_of=target,
+                        canonical_con=canonical_con,
+                        current_products=current_products,
+                        product_cache=product_cache,
+                    )
+                    _apply_current_assessment_fields(medication, assessment)
         medications = sort_medications_by_time(medications, target)
         return {
             "person": person,

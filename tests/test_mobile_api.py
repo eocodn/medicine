@@ -106,6 +106,80 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(dashboard["person"]["id"], person["id"])
         self.assertEqual(dashboard["medications"], [])
 
+    def test_reference_unavailable_keeps_local_dashboard_but_blocks_safety_operations(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "업데이트필요",
+            "birth_date": "1990-01-01",
+            "sex": "male",
+            "pregnancy_status": "not_applicable",
+            "lactation_status": "not_applicable",
+        })
+        medication = self.api.service.add_medication(
+            person["id"],
+            product_ref="MFDS-A",
+            frequency_per_day=1,
+            schedule_times=["08:00"],
+            start_date="2026-08-20",
+            long_term=True,
+        )
+
+        self.api.set_reference_available(False, "update_required")
+
+        status, health = self.request("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertFalse(health["reference_available"])
+        self.assertFalse(health["full_catalog"])
+        self.assertEqual(health["reference_status"], "update_required")
+
+        status, dashboard = self.request(
+            "GET", f"/api/people/{person['id']}/dashboard?date=2026-08-20"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(dashboard["medications"][0]["id"], medication["id"])
+        self.assertNotIn("current_assessment", dashboard["medications"][0])
+        self.assertEqual(dashboard["daily_plan"]["doses"][0]["status"], "planned")
+
+        status, blocked_search = self.request("GET", "/api/products?q=%EC%95%BDA")
+        self.assertEqual(status, 503)
+        self.assertEqual(blocked_search["reference_status"], "update_required")
+        status, blocked_preview = self.request(
+            "POST", f"/api/people/{person['id']}/medications/preview", {"product_ref": "MFDS-A"}
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(blocked_preview["reference_status"], "update_required")
+
+    def test_reference_unavailable_mode_starts_without_canonical_database(self) -> None:
+        personal = self.personal_db.with_name("local-history-only.sqlite")
+        api = MobileApi(None, personal, reference_unavailable_reason="update_required")
+
+        created = json.loads(api.request(
+            "POST",
+            "/api/people",
+            json.dumps({
+                "name": "로컬기록",
+                "birth_date": "1990-01-01",
+                "sex": "male",
+                "pregnancy_status": "not_applicable",
+                "lactation_status": "not_applicable",
+            }, ensure_ascii=False),
+        ))
+        self.assertEqual(created["status"], 201)
+        person_id = created["body"]["id"]
+
+        health = json.loads(api.request("GET", "/api/health", ""))
+        self.assertEqual(health["status"], 200)
+        self.assertFalse(health["body"]["reference_available"])
+        self.assertEqual(health["body"]["reference_status"], "update_required")
+
+        dashboard = json.loads(api.request("GET", f"/api/people/{person_id}/dashboard", ""))
+        self.assertEqual(dashboard["status"], 200)
+        self.assertEqual(dashboard["body"]["person"]["id"], person_id)
+        self.assertEqual(dashboard["body"]["medications"], [])
+
+        products = json.loads(api.request("GET", "/api/products?q=test", ""))
+        self.assertEqual(products["status"], 503)
+        self.assertEqual(products["body"]["reference_status"], "update_required")
+
     def test_dose_completion_can_be_canceled_through_mobile_bridge(self) -> None:
         _, person = self.request("POST", "/api/people", {
             "name": "복용취소",
