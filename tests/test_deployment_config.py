@@ -57,16 +57,18 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertLess(workflow.index("medicine-canonical sync"), workflow.index("integrated-build"))
         self.assertIn("canonical verify", workflow)
         self.assertIn("canonical substance-verify", workflow)
-        self.assertIn("canonical reference-window-build", workflow)
-        self.assertIn("--output-dir data/db/reference-contracts", workflow)
+        self.assertIn("canonical reference-build-publish-r2", workflow)
+        self.assertIn("--output-dir artifacts/reference-release", workflow)
         self.assertIn("--allow-retired-previous-failure", workflow)
         self.assertIn("r2-public-audit", workflow)
-        self.assertIn("release-publish-r2", workflow)
         self.assertIn("--contract-dir data/db/reference-contracts", workflow)
         self.assertIn("retire_previous_contract", workflow)
         self.assertIn("--retire-previous-contract", workflow)
         self.assertIn("RETIRE_PREVIOUS_CONTRACT", workflow)
-        self.assertLess(workflow.index("r2-public-audit"), workflow.index("release-publish-r2"))
+        self.assertLess(
+            workflow.index("r2-public-audit"),
+            workflow.index("reference-build-publish-r2"),
+        )
 
     def test_scheduled_reference_publish_manages_one_github_failure_incident(self) -> None:
         workflow = Path(".github/workflows/reference-publish.yml").read_text()

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from medicine_reference.mfds_remark_registry import ReviewedMfdsRemark, reviewed_mfds_remark
+
+from .v1_identity import (
+    logical_dataset_id,
+    logical_dataset_id_oracle,
+)
 
 
 REFERENCE_CONTRACT_MAJOR = 1
@@ -307,144 +311,6 @@ def _verify_reviewed_semantic_materialization(database: sqlite3.Connection) -> N
         raise ValueError("reference semantic materialization has orphaned semantic facts")
 
 
-_LOGICAL_PROJECTIONS: tuple[tuple[str, str], ...] = (
-    (
-        "products",
-        """SELECT item_seq,product_name,manufacturer,ingredient_text,dosage_form,
-                  permit_date,cancel_date,cancel_name,permit_status
-           FROM products
-           ORDER BY item_seq,product_name,manufacturer,ingredient_text,dosage_form,
-                    permit_date,cancel_date,cancel_name,permit_status""",
-    ),
-    (
-        "product_identifiers",
-        """SELECT item_seq,system,value FROM product_identifiers
-           ORDER BY item_seq,system,value""",
-    ),
-    (
-        "product_flags",
-        """SELECT item_seq,category,flag_code,flag_name,ingredient_name,dosage_form,details,change_date
-           FROM product_flags
-           ORDER BY item_seq,category,flag_code,flag_name,ingredient_name,dosage_form,details,change_date""",
-    ),
-    (
-        "product_rules",
-        """SELECT category,item_seq,ingredient_code,ingredient_name,ingredient_name_en,
-                  paired_item_seq,paired_ingredient_code,paired_ingredient_name,
-                  paired_ingredient_name_en,effect_name,dosage_form,details,
-                  notification_date,change_date
-           FROM product_rules
-           ORDER BY category,item_seq,ingredient_code,ingredient_name,ingredient_name_en,
-                    paired_item_seq,paired_ingredient_code,paired_ingredient_name,
-                    paired_ingredient_name_en,effect_name,dosage_form,details,
-                    notification_date,change_date""",
-    ),
-    (
-        "ingredient_rules",
-        """SELECT category,sequence_text,ingredient_name,ingredient_name_ko,
-                  paired_ingredient_name,rule_value,dosage_form,note,details
-           FROM ingredient_rules
-           ORDER BY category,sequence_text,ingredient_name,ingredient_name_ko,
-                    paired_ingredient_name,rule_value,dosage_form,note,details""",
-    ),
-    (
-        "dose_criteria",
-        """SELECT i.category,i.sequence_text,i.ingredient_name,i.ingredient_name_ko,
-                  i.paired_ingredient_name,i.rule_value,i.dosage_form,i.note,i.details,
-                  d.maximum_daily_amount,d.maximum_daily_unit,d.parse_status,d.parse_reason
-           FROM dose_criteria d JOIN ingredient_rules i ON i.id=d.criterion_rule_id
-           ORDER BY i.category,i.sequence_text,i.ingredient_name,i.ingredient_name_ko,
-                    i.paired_ingredient_name,i.rule_value,i.dosage_form,i.note,i.details,
-                    d.maximum_daily_amount,d.maximum_daily_unit,d.parse_status,d.parse_reason""",
-    ),
-    (
-        "product_criterion_links",
-        """SELECT
-                  p.category,p.item_seq,p.ingredient_code,p.ingredient_name,p.ingredient_name_en,
-                  p.paired_item_seq,p.paired_ingredient_code,p.paired_ingredient_name,
-                  p.paired_ingredient_name_en,p.effect_name,p.dosage_form,p.details,
-                  p.notification_date,p.change_date,
-                  i.category,i.sequence_text,i.ingredient_name,i.ingredient_name_ko,
-                  i.paired_ingredient_name,i.rule_value,i.dosage_form,i.note,i.details,
-                  l.match_method,l.pair_orientation
-           FROM product_criterion_links l
-           JOIN product_rules p ON p.id=l.product_rule_id
-           JOIN ingredient_rules i ON i.id=l.criterion_rule_id
-           ORDER BY
-                  p.category,p.item_seq,p.ingredient_code,p.ingredient_name,p.ingredient_name_en,
-                  p.paired_item_seq,p.paired_ingredient_code,p.paired_ingredient_name,
-                  p.paired_ingredient_name_en,p.effect_name,p.dosage_form,p.details,
-                  p.notification_date,p.change_date,
-                  i.category,i.sequence_text,i.ingredient_name,i.ingredient_name_ko,
-                  i.paired_ingredient_name,i.rule_value,i.dosage_form,i.note,i.details,
-                  l.match_method,l.pair_orientation""",
-    ),
-    # Independent criterion/semantic multisets are insufficient: two logically
-    # duplicate criteria can carry different runtime semantics. Hash the joined
-    # runtime relation so product applicability is bound to those facts. Keep
-    # physical row IDs and exact source REMARK text out of logical identity.
-    (
-        "runtime_product_rule_criteria",
-        """SELECT
-                  p.category,p.item_seq,p.ingredient_name,p.paired_item_seq,
-                  p.paired_ingredient_name,p.effect_name,p.product_dosage_form,p.product_details,
-                  p.criterion_sequence_text,p.criterion_ingredient_name,p.criterion_ingredient_name_ko,
-                  p.criterion_paired_ingredient_name,p.criterion_rule_value,p.criterion_dosage_form,
-                  p.criterion_note,p.criterion_details,
-                  p.criterion_maximum_daily_amount,p.criterion_maximum_daily_unit,
-                  p.criterion_dose_parse_status,p.criterion_dose_parse_reason,
-                  p.match_method,p.pair_orientation,
-                  s.ordinal,s.semantic_role,s.evaluation_mode,s.evaluator_kind,s.fallback_action,
-                  s.qualifier_type,s.display_text,s.structured_payload_json
-           FROM product_rule_criteria p
-           LEFT JOIN reference_criterion_semantics s
-             ON s.criterion_rule_id=p.criterion_rule_id
-           ORDER BY
-                  p.category,p.item_seq,p.ingredient_name,p.paired_item_seq,
-                  p.paired_ingredient_name,p.effect_name,p.product_dosage_form,p.product_details,
-                  p.criterion_sequence_text,p.criterion_ingredient_name,p.criterion_ingredient_name_ko,
-                  p.criterion_paired_ingredient_name,p.criterion_rule_value,p.criterion_dosage_form,
-                  p.criterion_note,p.criterion_details,
-                  p.criterion_maximum_daily_amount,p.criterion_maximum_daily_unit,
-                  p.criterion_dose_parse_status,p.criterion_dose_parse_reason,
-                  p.match_method,p.pair_orientation,
-                  s.ordinal,s.semantic_role,s.evaluation_mode,s.evaluator_kind,s.fallback_action,
-                  s.qualifier_type,s.display_text,s.structured_payload_json""",
-    ),
-    (
-        "criterion_semantics",
-        """SELECT
-                  i.category,i.sequence_text,i.ingredient_name,i.ingredient_name_ko,
-                  i.paired_ingredient_name,i.rule_value,i.dosage_form,i.note,i.details,
-                  s.ordinal,s.semantic_role,s.evaluation_mode,s.evaluator_kind,
-                  s.fallback_action,s.qualifier_type,s.display_text,s.structured_payload_json
-           FROM reference_criterion_semantics s
-           JOIN ingredient_rules i ON i.id=s.criterion_rule_id
-           ORDER BY
-                  i.category,i.sequence_text,i.ingredient_name,i.ingredient_name_ko,
-                  i.paired_ingredient_name,i.rule_value,i.dosage_form,i.note,i.details,
-                  s.ordinal,s.semantic_role,s.evaluation_mode,s.evaluator_kind,
-                  s.fallback_action,s.qualifier_type,s.display_text,s.structured_payload_json""",
-    ),
-)
-
-
-def logical_dataset_id(database: sqlite3.Connection) -> str:
-    digest = hashlib.sha256()
-    digest.update(f"reference-contract\0{REFERENCE_CONTRACT_MAJOR}\n".encode("utf-8"))
-    for label, query in _LOGICAL_PROJECTIONS:
-        digest.update(f"section\0{label}\n".encode("utf-8"))
-        for row in database.execute(query):
-            encoded = json.dumps(
-                list(row),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            digest.update(encoded)
-            digest.update(b"\n")
-    return f"sha256:{digest.hexdigest()}"
-
-
 def write_contract_meta(database: sqlite3.Connection, dataset_id: str) -> None:
     database.execute(REFERENCE_CONTRACT_META_DDL)
     database.executemany(
@@ -462,6 +328,7 @@ def export_reference_database(
     *,
     manifest_path: str | Path | None = None,
     physical_policy_version: str | None = None,
+    progress=None,
 ) -> dict:
     """Frozen contract-v1 exporter entry point.
 
@@ -482,23 +349,35 @@ def export_reference_database(
         output_db,
         contract_major=REFERENCE_CONTRACT_MAJOR,
         materialize_semantics=materialize_reference_semantics,
-        logical_dataset_id=logical_dataset_id,
+        logical_dataset_id=lambda database: logical_dataset_id(
+            database,
+            physical_policy_version=selected_physical_policy,
+            progress=progress,
+        ),
         write_contract_meta=write_contract_meta,
         product_rule_criteria_view_ddl=PRODUCT_RULE_CRITERIA_VIEW_DDL,
         manifest_path=manifest_path,
         physical_policy_version=selected_physical_policy,
+        progress=progress,
     )
     if result.get("contract_major") != REFERENCE_CONTRACT_MAJOR:
         raise RuntimeError("contract-v1 exporter emitted the wrong contract major")
     return result
 
 
-def verify_reference_database(
+def verify_built_reference_database(
     database: str | Path,
     contract_major: int,
     dataset_id: str,
 ) -> dict:
-    """Frozen server-side verifier for a contract-v1 release candidate."""
+    """Verify a just-built C1 artifact without repeating its logical hash pass.
+
+    This entry point is safe only for the trusted exporter path which already
+    computed ``dataset_id`` from the same in-memory SQLite database.  The
+    publisher rebinds that trust to the final immutable SHA/size before any
+    external state change.  Arbitrary databases must use
+    :func:`verify_reference_database`, which recomputes logical identity.
+    """
     if contract_major != REFERENCE_CONTRACT_MAJOR:
         raise ValueError("contract-v1 verifier received a different contract major")
     from medicine_app.reference_contracts.v1 import verify_reference_database as runtime_verify
@@ -511,10 +390,29 @@ def verify_reference_database(
     uri = f"file:{Path(database).resolve()}?mode=ro"
     with sqlite3.connect(uri, uri=True, timeout=10) as con:
         _verify_frozen_runtime_views(con)
-        actual_dataset_id = logical_dataset_id(con)
+        _verify_reviewed_semantic_materialization(con)
+    return result
+
+
+def verify_reference_database(
+    database: str | Path,
+    contract_major: int,
+    dataset_id: str,
+    *,
+    progress=None,
+) -> dict:
+    """Frozen strict server-side verifier for an arbitrary C1 release candidate."""
+    result = verify_built_reference_database(database, contract_major, dataset_id)
+    uri = f"file:{Path(database).resolve()}?mode=ro"
+    with sqlite3.connect(uri, uri=True, timeout=10) as con:
+        # Keep the arbitrary-file verifier independent from the optimized
+        # exporter.  The oracle SQL is the frozen C1 identity specification;
+        # reusing the fast executor here would let one implementation defect
+        # validate itself.  Normal build->publish avoids this expensive pass by
+        # carrying an in-process byte-bound VerifiedContractArtifact instead.
+        actual_dataset_id = logical_dataset_id_oracle(con, progress=progress)
         if actual_dataset_id != str(dataset_id).lower():
             raise ValueError("reference logical dataset identity does not match release")
-        _verify_reviewed_semantic_materialization(con)
     return result
 
 
@@ -524,8 +422,10 @@ __all__ = [
     "ReferenceSemanticFact",
     "export_reference_database",
     "logical_dataset_id",
+    "logical_dataset_id_oracle",
     "materialize_reference_semantics",
     "semantic_facts_for_reviewed_remark",
+    "verify_built_reference_database",
     "verify_reference_database",
     "write_contract_meta",
 ]

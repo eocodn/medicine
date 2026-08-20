@@ -6,7 +6,12 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .reference_contracts.registry import implementation_for, supported_contract_majors
+from .reference_contracts.registry import (
+    VerifiedContractArtifact,
+    build_supported_contract_artifacts,
+    implementation_for,
+    supported_contract_majors,
+)
 from .release_r2 import _put_immutable, client_from_env
 from .release_signing import (
     KmsReleaseSigner,
@@ -23,6 +28,7 @@ from .release_window_artifacts import (
     RELEASE_PREFIX,
     contract_inventory as _contract_inventory,
     load_candidate as _load_candidate,
+    load_verified_artifact as _load_verified_artifact,
     prepare_contract as _prepare_contract,
 )
 from .release_window_protocol import (
@@ -52,6 +58,18 @@ def _validate_release_sequence(release_sequence: int) -> None:
         or release_sequence > (1 << 63) - 1
     ):
         raise ValueError("release_sequence must be a positive signed 64-bit integer")
+
+
+def _strict_verifier_with_progress(implementation, progress):
+    def verify(database, contract_major, dataset_id):
+        return implementation.verify(
+            database,
+            contract_major,
+            dataset_id,
+            progress=progress,
+        )
+
+    return verify
 
 
 
@@ -141,10 +159,10 @@ def _encode_root(root: dict, signer: ReleaseSigner | KmsReleaseSigner, release_s
     return encode_signed_envelope(signer.sign_payload(payload, release_sequence=release_sequence))
 
 
-def publish_contract_window(
+def _publish_loaded_contract_window(
     client,
     bucket: str,
-    candidates: list[ContractReleaseCandidate],
+    metadata: list[_CandidateMetadata],
     output_dir: str | Path,
     *,
     signer: ReleaseSigner | KmsReleaseSigner,
@@ -157,7 +175,6 @@ def publish_contract_window(
     if not str(bucket).strip():
         raise ValueError("R2 bucket is required")
     _validate_release_sequence(release_sequence)
-    metadata = [_load_candidate(candidate) for candidate in candidates]
     by_major = _validate_window(
         metadata,
         current_contract_major=current_contract_major,
@@ -258,12 +275,67 @@ def publish_contract_window(
     }
 
 
+def publish_contract_window(
+    client,
+    bucket: str,
+    candidates: list[ContractReleaseCandidate],
+    output_dir: str | Path,
+    *,
+    signer: ReleaseSigner | KmsReleaseSigner,
+    release_sequence: int,
+    current_contract_major: int,
+    minimum_supported_contract_major: int,
+    created_at: str | None = None,
+    allow_early_retirement: bool = False,
+) -> dict:
+    return _publish_loaded_contract_window(
+        client,
+        bucket,
+        [_load_candidate(candidate) for candidate in candidates],
+        output_dir,
+        signer=signer,
+        release_sequence=release_sequence,
+        current_contract_major=current_contract_major,
+        minimum_supported_contract_major=minimum_supported_contract_major,
+        created_at=created_at,
+        allow_early_retirement=allow_early_retirement,
+    )
+
+
+def publish_verified_contract_window(
+    client,
+    bucket: str,
+    artifacts: list[VerifiedContractArtifact],
+    output_dir: str | Path,
+    *,
+    signer: ReleaseSigner | KmsReleaseSigner,
+    release_sequence: int,
+    current_contract_major: int,
+    minimum_supported_contract_major: int,
+    created_at: str | None = None,
+    allow_early_retirement: bool = False,
+) -> dict:
+    return _publish_loaded_contract_window(
+        client,
+        bucket,
+        [_load_verified_artifact(artifact) for artifact in artifacts],
+        output_dir,
+        signer=signer,
+        release_sequence=release_sequence,
+        current_contract_major=current_contract_major,
+        minimum_supported_contract_major=minimum_supported_contract_major,
+        created_at=created_at,
+        allow_early_retirement=allow_early_retirement,
+    )
+
+
 def publish_contract_window_from_env(
     target_db: str | Path,
     mobile_manifest_path: str | Path,
     output_dir: str | Path,
     *,
     created_at: str | None = None,
+    progress=None,
 ) -> dict:
     bucket = os.environ.get("R2_BUCKET", "").strip()
     if not bucket:
@@ -279,7 +351,6 @@ def publish_contract_window_from_env(
     # Contract 1 has no predecessor.  When contract 2 is introduced the publish
     # workflow must supply both exporters through `publish_contract_window` so a
     # supported predecessor is never silently dropped.
-    implementation = implementation_for(major)
     return publish_contract_window(
         client_from_env(),
         bucket,
@@ -288,7 +359,7 @@ def publish_contract_window_from_env(
                 major,
                 target_db,
                 manifest_path,
-                verifier=implementation.verify,
+                verifier=_strict_verifier_with_progress(implementation_for(major), progress),
             )
         ],
         output_dir,
@@ -306,11 +377,40 @@ def publish_contract_directory_from_env(
     *,
     created_at: str | None = None,
     retire_previous_contract: bool = False,
+    progress=None,
 ) -> dict:
+    bucket, majors, client, signer, effective_retirement, selected_majors, minimum_supported = (
+        _publication_context_from_env(retire_previous_contract)
+    )
+    root = Path(contract_dir)
+    candidates = []
+    for major in selected_majors:
+        candidates.append(
+            ContractReleaseCandidate(
+                major,
+                root / f"contract-{major}.sqlite",
+                root / f"contract-{major}.manifest.json",
+                verifier=_strict_verifier_with_progress(implementation_for(major), progress),
+            )
+        )
+    return publish_contract_window(
+        client,
+        bucket,
+        candidates,
+        output_dir,
+        signer=signer,
+        release_sequence=release_sequence_from_env(),
+        current_contract_major=majors[-1],
+        minimum_supported_contract_major=minimum_supported,
+        created_at=created_at,
+        allow_early_retirement=effective_retirement,
+    )
+
+
+def _publication_context_from_env(retire_previous_contract: bool):
     bucket = os.environ.get("R2_BUCKET", "").strip()
     if not bucket:
         raise RuntimeError("R2_BUCKET is required")
-    root = Path(contract_dir)
     majors = supported_contract_majors()
     client = client_from_env()
     signer = release_signer_from_env()
@@ -334,27 +434,55 @@ def publish_contract_directory_from_env(
             raise ValueError("previous-contract retirement requires an N/N-1 contract window")
         selected_majors = (majors[-1],)
         minimum_supported = majors[-1]
-    candidates = [
-        ContractReleaseCandidate(
-            major,
-            root / f"contract-{major}.sqlite",
-            root / f"contract-{major}.manifest.json",
-            verifier=implementation_for(major).verify,
-        )
-        for major in selected_majors
-    ]
-    return publish_contract_window(
+    return (
+        bucket,
+        majors,
+        client,
+        signer,
+        effective_retirement,
+        selected_majors,
+        minimum_supported,
+    )
+
+
+def build_and_publish_contract_window_from_env(
+    canonical_db: str | Path,
+    contract_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    created_at: str | None = None,
+    retire_previous_contract: bool = False,
+    allow_previous_failure: bool = False,
+    progress=None,
+) -> dict:
+    """Build and publish one verified window without serializing trust between phases."""
+    bucket, majors, client, signer, effective_retirement, selected_majors, minimum_supported = (
+        _publication_context_from_env(retire_previous_contract)
+    )
+    # Resolve and validate the sequence before starting the expensive build.
+    # The publisher validates it again at the external-state boundary.
+    release_sequence = release_sequence_from_env()
+    _validate_release_sequence(release_sequence)
+    build, artifacts = build_supported_contract_artifacts(
+        canonical_db,
+        contract_dir,
+        allow_previous_failure=allow_previous_failure,
+        progress=progress,
+    )
+    selected = [artifact for artifact in artifacts if artifact.contract_major in selected_majors]
+    published = publish_verified_contract_window(
         client,
         bucket,
-        candidates,
+        selected,
         output_dir,
         signer=signer,
-        release_sequence=release_sequence_from_env(),
+        release_sequence=release_sequence,
         current_contract_major=majors[-1],
         minimum_supported_contract_major=minimum_supported,
         created_at=created_at,
         allow_early_retirement=effective_retirement,
     )
+    return {**published, "build": build}
 
 
 __all__ = [
@@ -365,7 +493,9 @@ __all__ = [
     "PROTOCOL_VERSION",
     "RELEASE_PREFIX",
     "ROOT_KEY",
+    "build_and_publish_contract_window_from_env",
     "publish_contract_window",
     "publish_contract_directory_from_env",
+    "publish_verified_contract_window",
     "publish_contract_window_from_env",
 ]
