@@ -30,16 +30,20 @@ The drug partition seed is intentionally independent from the document-generatio
 
 The root `drug_name_policy` binds the corpus to the canonical database SHA-256, MFDS source-snapshot SHA-256, assignment seed, selected checkpoint SHA-256, historical source dataset fingerprint, historical train-split SHA-256, historical vocabulary/family hashes, pool counts, and per-pool content hashes. Product typography is fitted to the declared layout slot so longer canonical names remain readable without colliding with adjacent regimen columns.
 
+## Parser structure holdout
+
+Generator v5 revision 8 adds parser-specific structural recipes before rendering. Training documents cover complete and partial medication rows, product-only rows, missing/partial headers, numeric cells, regimen-shaped distractors, and association-spacing stress. Recipe assignment advances by the document's ordinal within its actual split rather than raw sample index, preventing the 10-way document split from permanently masking train recipes. Validation/test use disjoint held-out recipe names, including short generic headers, fraction doses, no-header combinations, and header-only negatives. Product-only/header-only strata remove medication-associated instruction and schedule regions as well as numeric regimen values. The selected `parser_structure_variant` is stored on every document and the generator fingerprint binds the structure-recipe revision. This changes the source document itself rather than post-processing parser labels, so detector/recognizer/runtime-parser experiments see the same rendered structure.
+
 ## Materialized views
 
 `materialize` writes four views under one output root:
 
 - `detection/`: full-page references plus region polygons, with train/val/test JSONL files and PaddleOCR detection-training labels under `detection/paddle/`.
 - `recognition/`: perspective-normalized crops cut from the already-degraded full-page raster using GT region polygons. It includes the existing fine-tune dataset manifest plus a ready-to-use PaddleOCR `train.txt`, `val.txt`, and `test.txt` export.
-- `parsing/`: OCR nodes with semantic roles and association groups, positive `same_medication` edges, expected structured rows, and parser-compatible oracle manifests for all/train/val/test.
+- `parsing/`: authoritative document truth plus oracle manifests and strict learned-parser datasets. Materialization emits oracle and deterministic synthetic-OCR train/val/test manifests whose observed boxes may be dropped, split, merged, jittered or corrupted before geometry-based labeling. Relations include `same_medication` positives and cross-medication hard negatives.
 - `e2e/`: full-page images plus expected structured rows and critical region ids, preserving the same document split. The existing `browser_ocr.finetune.full_document_evaluation` evaluator can score detector→recognizer→parser result directories against the same canonical manifest.
 
-Recognition crops deliberately come from the final degraded raster rather than from pristine source text. Motion blur, JPEG compression, perspective, glare, printer degradation, and other document-level effects therefore reach recognizer training/evaluation exactly as they appear in the E2E image.
+Recognition crops deliberately come from the final degraded raster rather than from pristine source text. Motion blur, JPEG compression, perspective, glare, printer degradation, and other document-level effects therefore reach recognizer training/evaluation exactly as they appear in the E2E image. Crop checkpoints bind both source-image bytes and a rolling SHA-256 chain of completed crop outputs, so a same-path source change or mutated completed crop is rejected instead of being silently reused.
 
 Recognition metadata also records the fixed `severe-motion-downscale-jpeg-v1` OOD signature used by recognizer research. A document is tagged `degradation-hard-ood` only when it is hard difficulty and simultaneously has motion blur radius >= 3.5, downscale factor <= 0.65, JPEG quality <= 60, and all three corresponding augmentation components. The policy object is stored in the recognition manifest so training export filters and fixed evaluation slices use the same numeric definition. Critical medication crops additionally carry `critical-medication`.
 
@@ -80,7 +84,7 @@ docker compose run --rm ocr-corpus materialize --corpus /workspace/path/manifest
 docker compose run --rm ocr-corpus audit --corpus /workspace/path/manifest.json --json
 ```
 
-Generation and materialization use exclusive locks, atomic state files, content hashes, resumable checkpoints, and explicit progress on stderr. Reusing an output directory with a different generator/materializer profile fails rather than mixing artifacts.
+Generation and materialization use exclusive locks, atomic state files, content hashes, resumable checkpoints, and explicit progress on stderr. Materializer v13 uses a kernel advisory lock held by a helper process, so a dead process cannot strand an existence-based lock file; the lock file itself may persist harmlessly. Completed reuse revalidates the report SHA, a fixed set of stage/parser artifact hashes, recognition image hashes through the recognition dataset core, and all emitted parser datasets before returning success. Reusing an output directory with a different generator/materializer profile fails rather than mixing artifacts.
 
 ## Training and evaluation boundaries
 

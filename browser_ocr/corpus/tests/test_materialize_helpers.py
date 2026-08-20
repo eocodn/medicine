@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from browser_ocr.corpus.materialize_helpers import _ordered_crop_batches
+import cv2
+import numpy as np
+
+from browser_ocr.corpus.materialize_helpers import _ordered_crop_batches, crop_jobs
 
 
 class RecognitionCropBatchingTest(unittest.TestCase):
@@ -44,6 +50,53 @@ class RecognitionCropBatchingTest(unittest.TestCase):
             [[[2, 3], [4]]],
             [[[ordinal for ordinal, _job in group] for group in batch] for batch in batches],
         )
+
+    def test_completed_crop_checkpoint_binds_source_and_output_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "source.png"
+            output = root / "crop.png"
+            jobs = root / "jobs.json"
+            state = root / "state.json"
+            image = np.full((40, 80, 3), 255, dtype=np.uint8)
+            self.assertTrue(cv2.imwrite(str(source), image))
+            jobs.write_text(json.dumps({
+                "schema_version": 1,
+                "jobs": [{
+                    "image": str(source),
+                    "polygon": [[5, 5], [60, 5], [60, 25], [5, 25]],
+                    "output": str(output),
+                }],
+            }), encoding="utf-8")
+            crop_jobs(jobs, state)
+
+            tampered = np.zeros((20, 55, 3), dtype=np.uint8)
+            self.assertTrue(cv2.imwrite(str(output), tampered))
+            with self.assertRaisesRegex(ValueError, "checkpoint output.*changed|output.*SHA"):
+                crop_jobs(jobs, state)
+
+    def test_completed_crop_checkpoint_rejects_same_path_source_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "source.png"
+            output = root / "crop.png"
+            jobs = root / "jobs.json"
+            state = root / "state.json"
+            first = np.full((40, 80, 3), 255, dtype=np.uint8)
+            self.assertTrue(cv2.imwrite(str(source), first))
+            jobs.write_text(json.dumps({
+                "schema_version": 1,
+                "jobs": [{
+                    "image": str(source),
+                    "polygon": [[5, 5], [60, 5], [60, 25], [5, 25]],
+                    "output": str(output),
+                }],
+            }), encoding="utf-8")
+            crop_jobs(jobs, state)
+            second = np.zeros((40, 80, 3), dtype=np.uint8)
+            self.assertTrue(cv2.imwrite(str(source), second))
+            with self.assertRaisesRegex(ValueError, "checkpoint profile mismatch|source.*changed"):
+                crop_jobs(jobs, state)
 
 
 if __name__ == "__main__":

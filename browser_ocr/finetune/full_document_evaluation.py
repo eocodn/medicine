@@ -8,8 +8,9 @@ from collections import OrderedDict, defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from browser_ocr.document_parsing.region_alignment import match_regions_one_to_one
 
-_MATCH_CORE_COVERAGE = 0.8
+
 _CRITICAL_ROLES = {"product", "dose", "frequency", "duration"}
 _FIELD_EVIDENCE = {
     "product_query": "product",
@@ -21,100 +22,8 @@ _FIELD_EVIDENCE = {
 }
 
 
-def _polygon_area(polygon: Sequence[Sequence[float]]) -> float:
-    total = 0.0
-    for index, point in enumerate(polygon):
-        next_point = polygon[(index + 1) % len(polygon)]
-        total += float(point[0]) * float(next_point[1]) - float(next_point[0]) * float(point[1])
-    return abs(total) / 2.0
-
-
-def _signed_area(polygon: Sequence[Sequence[float]]) -> float:
-    total = 0.0
-    for index, point in enumerate(polygon):
-        next_point = polygon[(index + 1) % len(polygon)]
-        total += float(point[0]) * float(next_point[1]) - float(next_point[0]) * float(point[1])
-    return total / 2.0
-
-
-def _line_intersection(a: Sequence[float], b: Sequence[float], c: Sequence[float], d: Sequence[float]) -> list[float]:
-    denominator = (a[0] - b[0]) * (c[1] - d[1]) - (a[1] - b[1]) * (c[0] - d[0])
-    if abs(denominator) < 1e-9:
-        return [float(b[0]), float(b[1])]
-    determinant_a = a[0] * b[1] - a[1] * b[0]
-    determinant_b = c[0] * d[1] - c[1] * d[0]
-    return [
-        (determinant_a * (c[0] - d[0]) - (a[0] - b[0]) * determinant_b) / denominator,
-        (determinant_a * (c[1] - d[1]) - (a[1] - b[1]) * determinant_b) / denominator,
-    ]
-
-
-def _clip_convex(subject: Sequence[Sequence[float]], clip: Sequence[Sequence[float]]) -> list[list[float]]:
-    output = [[float(point[0]), float(point[1])] for point in subject]
-    clockwise = _signed_area(clip) < 0
-
-    def inside(point: Sequence[float], edge_start: Sequence[float], edge_end: Sequence[float]) -> bool:
-        cross = (edge_end[0] - edge_start[0]) * (point[1] - edge_start[1]) - (
-            edge_end[1] - edge_start[1]
-        ) * (point[0] - edge_start[0])
-        return cross <= 1e-9 if clockwise else cross >= -1e-9
-
-    for edge_index, edge_start in enumerate(clip):
-        edge_end = clip[(edge_index + 1) % len(clip)]
-        input_points = output
-        output = []
-        if not input_points:
-            break
-        previous = input_points[-1]
-        for current in input_points:
-            current_inside = inside(current, edge_start, edge_end)
-            previous_inside = inside(previous, edge_start, edge_end)
-            if current_inside:
-                if not previous_inside:
-                    output.append(_line_intersection(previous, current, edge_start, edge_end))
-                output.append(current)
-            elif previous_inside:
-                output.append(_line_intersection(previous, current, edge_start, edge_end))
-            previous = current
-    return output
-
-
-def _overlap(gt_polygon: Sequence[Sequence[float]], pred_polygon: Sequence[Sequence[float]]) -> tuple[float, float, float]:
-    gt_area = _polygon_area(gt_polygon)
-    pred_area = _polygon_area(pred_polygon)
-    intersection_polygon = _clip_convex(gt_polygon, pred_polygon)
-    intersection = _polygon_area(intersection_polygon) if len(intersection_polygon) >= 3 else 0.0
-    union = gt_area + pred_area - intersection
-    core_coverage = intersection / gt_area if gt_area > 0 else 0.0
-    prediction_coverage = intersection / pred_area if pred_area > 0 else 0.0
-    iou = intersection / union if union > 0 else 0.0
-    return core_coverage, prediction_coverage, iou
-
-
-def _core_polygon(region: Mapping[str, Any]) -> Sequence[Sequence[float]]:
-    return region.get("natural_text_polygon") or region["polygon"]
-
-
 def _match_regions(gt_regions: Sequence[Mapping[str, Any]], predicted_regions: Sequence[Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:
-    candidates: list[tuple[float, float, float, int, int]] = []
-    for gt_index, gt in enumerate(gt_regions):
-        for pred_index, pred in enumerate(predicted_regions):
-            core, pred_coverage, iou = _overlap(_core_polygon(gt), pred["polygon"])
-            if core >= _MATCH_CORE_COVERAGE:
-                candidates.append((core, pred_coverage, iou, gt_index, pred_index))
-    candidates.sort(reverse=True)
-    gt_used: set[int] = set()
-    pred_used: set[int] = set()
-    mapping: dict[str, Mapping[str, Any]] = {}
-    for _, _, _, gt_index, pred_index in candidates:
-        if gt_index in gt_used or pred_index in pred_used:
-            continue
-        gt_used.add(gt_index)
-        pred_used.add(pred_index)
-        pred = predicted_regions[pred_index]
-        raw_index = pred.get("index", pred_index + 1)
-        mapping[f"region-{int(raw_index):04d}"] = gt_regions[gt_index]
-    return mapping
+    return match_regions_one_to_one(gt_regions, predicted_regions, minimum_truth_coverage=0.8)
 
 
 def _number(text: str) -> float | None:

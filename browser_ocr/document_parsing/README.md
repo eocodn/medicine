@@ -85,3 +85,67 @@ docker compose run --rm ocr-document-parse \
 
 The command returns both the generated prediction envelope and the benchmark
 evaluation so later baselines can be compared under exactly the same contract.
+## Learned-parser dataset contract
+
+Learned parser training does not consume the legacy rule-parser corpus directly. The canonical training contract separates the **observed OCR graph** from authoritative labels and image-level medication gold:
+
+- `observation.kind`: `oracle`, deterministic `synthetic_ocr`, or actual `runtime_ocr`;
+- each observed node carries text, confidence, an ordered convex four-point polygon bounded by the declared image dimensions, and zero or more matched truth-region ids;
+- `label_status=labeled` carries a role/group target, while split/merge observations spanning incompatible truth roles/groups are `ambiguous` and are masked from supervised role/relation loss;
+- unmatched detector boxes are explicit `other` negatives;
+- relations contain both `same_medication` positives and `different_medication` hard negatives for dose, frequency, duration, instruction, and medication-associated schedule nodes;
+- `gold_rows` are image-level truth and do not depend on which regions OCR happened to observe. Learned-parser synthetic rows additionally carry deterministic, evidence-backed schedule/meal/route/PRN semantics when the associated instruction text proves them; the legacy deterministic-parser oracle/E2E rows intentionally retain their narrower core contract.
+- `gold_rows_reviewed` separates an explicitly reviewed empty image-level gold set from the default unfinished annotation state.
+- real documents preserve a pseudonymous lowercase-ASCII `source_id` plus the allowlisted de-identified-source `license_id` (`private-deidentified`) in the finalized parser sample; provenance fields are identifiers, not free-form text.
+
+Parser dataset schema v3 binds both `samples.jsonl` and manifest metadata by SHA-256 and emits/accepts only strict standards-compliant JSON. One shared artifact-validation boundary is used by both writer and loader: completed datasets must be non-empty, every document carries a typed `source_binding` for its synthetic truth or real source dataset, manifest metadata must agree with the actual document split/observation/source contract, and builder metadata such as truth/source hashes, seeds, and runtime OCR producer identity must agree with those document-bound identities. Manifest metadata itself is schema-constrained: only builder/runtime/source identity fields are accepted, builder ids are allowlisted, and arbitrary notes or patient-identifying fields are rejected on both write and load. Observation profiles are also typed by kind: oracle and deterministic synthetic OCR profiles have exact producer/hash/seed fields, while runtime OCR retains its exact pinned runtime profile, so none of these profiles can act as an arbitrary free-text side channel. Gold draft fields are type/domain checked (finite positive dose values, bounded integer frequency/duration, enum meal/route values, boolean PRN, HH:MM schedules, and ISO dates) and must also satisfy product cross-field invariants: PRN cannot carry a fixed frequency/schedule, an explicit frequency must match explicit schedule count, and explicit date/duration combinations cannot contradict each other. Complete samples must contain the exact relation matrix implied by every labeled product/field pair, and every positively labeled medication association group must have a corresponding `gold_row_id`; medication product/product-label/dose/frequency/duration nodes cannot use the reserved document-level association group. Extra image-level gold rows remain allowed for medications that OCR missed. Real-deidentified image SHA-256 values must remain unique even when an existing parser artifact is loaded, not only during source ingestion or writing, so val/test leakage cannot be reintroduced by repackaging. Runtime observations are revalidated by the dataset artifact contract itself and every `runtime_ocr` document in one dataset must resolve to the same image-independent OCR producer identity. Dataset outputs also carry an authoritative completed/running state and exclusive writer lock: normal loading requires the authoritative state to be `completed` and bound to the persisted dataset hashes; an exact rerun reuses the completed dataset, while a different seed/source/split/content profile is rejected instead of replacing it. Synthetic data may be used for train/validation/test; `real_deidentified` data is holdout-only and is rejected from `train`.
+
+Unified corpus materialization creates these parser datasets automatically:
+
+- `parsing/datasets/oracle/`
+- `parsing/datasets/train-synthetic-ocr/`
+- `parsing/datasets/val-synthetic-ocr/`
+- `parsing/datasets/test-synthetic-ocr/`
+
+The deterministic synthetic-OCR producer starts from canonical tight `natural_text_polygon` geometry, perturbs OCR observations (drop/split/merge/jitter/text/confidence/order/noise), and then labels them through the same tight-geometry alignment used for runtime OCR. It does not copy truth labels onto corrupted boxes blindly.
+
+Use the dataset Agent Control service directly when needed:
+
+```sh
+docker compose run --rm ocr-parser-data validate \
+  --manifest /workspace/path/to/parser-dataset/manifest.json --json
+
+docker compose run --rm ocr-parser-data build-runtime \
+  --truth-samples /workspace/path/to/views/parsing/samples.jsonl \
+  --results-root /workspace/path/to/full-document-results \
+  --output-dir /workspace/path/to/parser-runtime-val \
+  --dataset-id parser-runtime-val --split val --json
+```
+
+## Real de-identified prescription photos
+
+Private prescription photos stay outside Git. Ingestion accepts only an external `real_deidentified` source manifest whose documents are already de-identified, use pseudonymous lowercase ids, use the document id as the image filename stem, and declare `contains_patient_data=false`. Only `val` and `test` are accepted, and image SHA-256 values must be unique across the source manifest so the same photo cannot leak between validation and test under different pseudonyms.
+
+The GPU `ocr-parser-real` service sends every photo through the exact selected full-document detector/crop/recognizer path and writes runtime OCR results plus annotation drafts. Runtime observations use an exact metadata allowlist and require pinned detector/recognizer/config/implementation SHA-256 metadata plus hashes of the exact loaded detector ONNX/config bytes, the actual PaddleOCR inference Python source tree, the dictionary selected by the recognizer config, and a canonical fingerprint of the Python inference runtime environment. That runtime fingerprint includes installed Debian package versions and content hashes for the native shared-library set that backs the OCR stack, plus the actual native payload bytes installed by inference-critical Python wheels such as PaddlePaddle, ONNX Runtime, OpenCV, NumPy, and NVIDIA CUDA/cuDNN packages. Native file hashes are cached only while their size/mtime/ctime snapshot remains unchanged, so repeated documents avoid rehashing immutable binaries while binary replacement still changes producer identity. GPU profiles additionally bind the runtime-visible device selector plus Paddle-reported CUDA/cuDNN/device/capability identity and available NVIDIA driver identity. Model identifiers are bounded ASCII ids rather than free-form metadata. Arbitrary runtime-profile fields are rejected instead of being copied into de-identified artifacts. The detector runtime additionally verifies that extracted ONNX/config bytes match the pinned archive before inference. A batch checkpoint binds one normalized OCR producer identity, so an interrupted batch cannot resume with a different detector/recognizer/PaddleOCR/runtime environment and mix producers. The standalone `build-runtime` path and the strict parser artifact contract enforce the same one-producer-per-dataset invariant. Parser identity alone is deliberately stripped from the observation profile: changing the parser does not invalidate OCR observations produced by unchanged detector/recognizer inputs.
+
+```sh
+docker compose run --rm \
+  -v /absolute/deidentified-corpus:/real:ro \
+  ocr-parser-real \
+  --source-manifest /real/manifest.json \
+  --baseline-result /workspace/path/to/baseline-result.json \
+  --output-dir /workspace/browser_ocr/finetune/work/parser-real-holdout \
+  --json
+```
+
+Human annotation assigns node roles/groups and image-level `gold_rows`, then explicitly sets `gold_rows_reviewed=true` even when the reviewed image contains zero medication rows. A reviewed-empty gold set is accepted only when no OCR node has been positively assigned to a medication association group; each observed medication group must use a matching `gold_row_id`, while OCR-missed medications may still appear as extra gold rows. Annotation index schema v3 binds the exact source document set, source manifest/sample hashes, one homogeneous OCR producer identity, each per-document runtime result, and the immutable OCR/source projection by SHA-256. `ocr-parser-real`, `prepare-real`, and `finalize-real` share one output lock so they cannot concurrently mutate/read the same annotation snapshot. Rerunning either preparation command adopts only matching crash-window drafts and never rewrites human labels. Finalization repeats the exact source-set/path checks instead of trusting the index, preserves source/license provenance plus exact source manifest/sample hashes, and fails while any OCR node remains unlabeled or image-level gold remains unreviewed:
+
+```sh
+docker compose run --rm ocr-parser-data finalize-real \
+  --annotations-dir /workspace/browser_ocr/finetune/work/parser-real-holdout/annotations \
+  --dataset-id parser-real-holdout-v1 \
+  --output-dir /workspace/browser_ocr/finetune/work/parser-real-final \
+  --json
+```
+
+A missed medication can therefore remain present in `gold_rows` even when OCR produced no corresponding node. This keeps parser-only evaluation distinct from detector/recognizer end-to-end recall.
