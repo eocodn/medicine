@@ -67,6 +67,12 @@ async function drainDoseDesiredState(instanceId, entry) {
     return;
   }
   reconcileDoseMutation(updated);
+  if (updated.deleted === true) {
+    clearPendingDoseIntent(instanceId);
+    state.doseMutations.delete(instanceId);
+    renderAll();
+    return;
+  }
   if (entry.desiredStatus !== updated.status) {
     applyPendingDoseIntent(instanceId, entry.desiredStatus);
     renderHome();

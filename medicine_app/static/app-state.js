@@ -80,7 +80,6 @@ function reconcileDoseMutation(committed) {
     recomputeDoseSummary();
     changed = true;
   }
-  if (changed) state.dashboardStale = false;
   return changed;
 }
 

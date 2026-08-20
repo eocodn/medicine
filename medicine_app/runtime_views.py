@@ -175,7 +175,7 @@ def preview_medication(app: Any, person_id: str, draft_or_ref: Any, as_of: date 
                 canonical_con=canonical_con,
                 product_cache=product_cache,
             )
-            current_count = len(current_medications)
+            current_count = sum(1 for medication in current_medications if medication.get("active"))
     fingerprint = draft_hash(person_id, product, draft)
     warning_token = bind_warning_token(assessment, fingerprint)
     return {

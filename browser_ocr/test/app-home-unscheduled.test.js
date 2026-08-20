@@ -164,6 +164,39 @@ test("current dose reconciliation updates the local plan summary and recent hist
   });
 });
 
+test("dose reconciliation never clears an unrelated stale medication snapshot", () => {
+  const { context } = appContext();
+  const result = vm.runInContext(`
+    state.dashboardStale = true;
+    state.dashboard = {
+      medications: [{ id: "med-1", product_name: "변경된 약" }],
+      recent_logs: [],
+      daily_plan: {
+        date: "2026-08-20",
+        doses: [{ id: "dose-1", status: "planned", completed_at: null }],
+        summary: { planned: 1, taken: 0, skipped: 0 },
+      },
+    };
+    reconcileDoseMutation({
+      id: "dose-1",
+      status: "taken",
+      completed_at: "2026-08-20T08:05:00+09:00",
+      recent_logs: [{ id: "log-1", dose_instance_id: "dose-1", status: "taken" }],
+    });
+    ({
+      dashboardStale: state.dashboardStale,
+      status: state.dashboard.daily_plan.doses[0].status,
+      logCount: state.dashboard.recent_logs.length,
+    });
+  `, context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    dashboardStale: true,
+    status: "taken",
+    logCount: 1,
+  });
+});
+
 test("dose state intents keep the running write and coalesce queued changes to the latest desired state", async () => {
   const { context } = appContext();
   const requests = [];
@@ -219,6 +252,48 @@ test("dose state intents keep the running write and coalesce queued changes to t
 
   assert.equal(vm.runInContext(`state.dashboard.daily_plan.doses[0].status`, context), "skipped");
   assert.equal(vm.runInContext(`state.dashboard.recent_logs[0].status`, context), "skipped");
+  assert.equal(vm.runInContext(`state.doseMutations.size`, context), 0);
+});
+
+test("PRN undo treats authoritative deletion as terminal and never retries the deleted instance", async () => {
+  const { context } = appContext();
+  const requests = [];
+  context.window.MedicineLocalApi = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => requests.push({ path, options, resolve, reject }));
+    },
+  };
+  vm.runInContext(`
+    state.people = [{ id: "p1", name: "검토", sex: "male", age: 36 }];
+    state.currentPersonId = "p1";
+    state.dashboard = {
+      medications: [],
+      recent_logs: [{ id: "prn-log", dose_instance_id: "prn-1", status: "taken" }],
+      daily_plan: {
+        date: "2026-08-20",
+        doses: [],
+        prn_medications: [],
+        unscheduled_medications: [],
+        summary: { planned: 0, taken: 0, skipped: 0 },
+      },
+    };
+    cancelDoseInstance("prn-1");
+  `, context);
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.method, "DELETE");
+
+  requests[0].resolve({
+    id: "prn-1",
+    status: "canceled",
+    deleted: true,
+    completed_at: null,
+    recent_logs: [],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(requests.length, 1);
+  assert.equal(vm.runInContext(`state.dashboard.recent_logs.length`, context), 0);
   assert.equal(vm.runInContext(`state.doseMutations.size`, context), 0);
 });
 

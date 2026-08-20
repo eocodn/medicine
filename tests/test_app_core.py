@@ -147,8 +147,11 @@ class MedicationAppTest(unittest.TestCase):
         person = self.app.create_person(
             "Preview", "1980-01-01", "female", "not_pregnant", "not_breastfeeding"
         )
-        for product_ref in ("MFDS-X", "MFDS-Y", "MFDS-N"):
+        medications = [
             self.app.add_medication(person["id"], product_ref=product_ref, long_term=True)
+            for product_ref in ("MFDS-X", "MFDS-Y", "MFDS-N")
+        ]
+        self.app.deactivate_medication(medications[0]["id"])
         real_connect = sqlite3.connect
         connect_count = 0
 
@@ -161,7 +164,7 @@ class MedicationAppTest(unittest.TestCase):
             preview = self.app.preview_medication(person["id"], "MFDS-D", as_of=date(2026, 8, 20))
 
         self.assertEqual(preview["product"]["product_ref"], "MFDS-D")
-        self.assertEqual(preview["current_medication_count"], 3)
+        self.assertEqual(preview["current_medication_count"], 2)
         self.assertLessEqual(connect_count, 2)
 
     def test_profile_reproductive_status_is_normalized_and_editable(self) -> None:
