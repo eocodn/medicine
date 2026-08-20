@@ -16,6 +16,17 @@ class ReferenceContractImplementation:
     contract_major: int
     export: Exporter
     verify: Verifier
+    verify_built: Verifier | None = None
+
+
+@dataclass(frozen=True)
+class VerifiedContractArtifact:
+    contract_major: int
+    database: Path
+    manifest: Path
+    dataset_id: str
+    sha256: str
+    size_bytes: int
 
 
 _IMPLEMENTATIONS: dict[int, ReferenceContractImplementation] = {
@@ -23,6 +34,7 @@ _IMPLEMENTATIONS: dict[int, ReferenceContractImplementation] = {
         contract_major=v1.REFERENCE_CONTRACT_MAJOR,
         export=v1.export_reference_database,
         verify=v1.verify_reference_database,
+        verify_built=v1.verify_built_reference_database,
     ),
 }
 
@@ -47,15 +59,17 @@ def supported_contract_majors() -> tuple[int, ...]:
     return majors
 
 
-def build_supported_contract_window(
+def build_supported_contract_artifacts(
     canonical_db: str | Path,
     output_dir: str | Path,
     *,
     allow_previous_failure: bool = False,
-) -> dict:
+    progress=None,
+) -> tuple[dict, list[VerifiedContractArtifact]]:
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     contracts: list[dict] = []
+    artifacts: list[VerifiedContractArtifact] = []
     majors = supported_contract_majors()
     current = majors[-1]
     failed_previous: dict | None = None
@@ -70,8 +84,10 @@ def build_supported_contract_window(
                 canonical_db,
                 database,
                 manifest_path=manifest,
+                progress=progress,
             )
-            implementation.verify(database, major, str(result["dataset_id"]))
+            verifier = implementation.verify_built or implementation.verify
+            verifier(database, major, str(result["dataset_id"]))
         except Exception as exc:
             database.unlink(missing_ok=True)
             manifest.unlink(missing_ok=True)
@@ -93,6 +109,16 @@ def build_supported_contract_window(
                 "size_bytes": result["size_bytes"],
             }
         )
+        artifacts.append(
+            VerifiedContractArtifact(
+                contract_major=major,
+                database=database,
+                manifest=manifest,
+                dataset_id=str(result["dataset_id"]),
+                sha256=str(result["sha256"]),
+                size_bytes=int(result["size_bytes"]),
+            )
+        )
     payload = {
         "current_contract_major": majors[-1],
         "minimum_supported_contract_major": majors[0],
@@ -100,11 +126,29 @@ def build_supported_contract_window(
     }
     if failed_previous is not None:
         payload["failed_previous_contract"] = failed_previous
+    return payload, artifacts
+
+
+def build_supported_contract_window(
+    canonical_db: str | Path,
+    output_dir: str | Path,
+    *,
+    allow_previous_failure: bool = False,
+    progress=None,
+) -> dict:
+    payload, _ = build_supported_contract_artifacts(
+        canonical_db,
+        output_dir,
+        allow_previous_failure=allow_previous_failure,
+        progress=progress,
+    )
     return payload
 
 
 __all__ = [
     "ReferenceContractImplementation",
+    "VerifiedContractArtifact",
+    "build_supported_contract_artifacts",
     "build_supported_contract_window",
     "implementation_for",
     "supported_contract_majors",

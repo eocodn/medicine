@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from .release import apply_chunk_patch, prepare_release
 from .release_r2 import download_object_from_env
 from .release_r2_public import audit_public_bucket_from_env
 from .release_window import (
+    build_and_publish_contract_window_from_env,
     publish_contract_directory_from_env,
     publish_contract_window_from_env,
 )
@@ -52,6 +54,14 @@ def _emit(payload: dict, as_json: bool) -> None:
         return
     for key, value in payload.items():
         print(f"{key}: {value}")
+
+
+def _reference_progress(event: dict[str, object]) -> None:
+    print(
+        json.dumps({"reference_progress": event}, ensure_ascii=False, separators=(",", ":")),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -138,6 +148,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Surface an unbuildable N-1 candidate for signed-retirement publication",
     )
     reference_window_build.add_argument("--json", action="store_true")
+
+    reference_build_publish = sub.add_parser(
+        "reference-build-publish-r2",
+        help="Build the supported Reference Contract window and publish the verified bytes to R2",
+    )
+    reference_build_publish.add_argument("--db", type=Path, default=DEFAULT_DB)
+    reference_build_publish.add_argument(
+        "--contract-dir",
+        type=Path,
+        default=Path("data/db/reference-contracts"),
+    )
+    reference_build_publish.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("artifacts/reference-release"),
+    )
+    reference_build_publish.add_argument("--created-at")
+    reference_build_publish.add_argument(
+        "--retire-previous-contract",
+        action="store_true",
+        help="Explicitly advance the signed minimum support bound to current N",
+    )
+    reference_build_publish.add_argument(
+        "--allow-retired-previous-failure",
+        action="store_true",
+        help="Permit an unbuildable N-1 candidate only for an explicit/signed retirement path",
+    )
+    reference_build_publish.add_argument("--json", action="store_true")
 
     mobile_verify_runtime = sub.add_parser(
         "mobile-verify-runtime",
@@ -324,6 +362,17 @@ def main(argv=None) -> int:
             args.db,
             args.output_dir,
             allow_previous_failure=args.allow_retired_previous_failure,
+            progress=_reference_progress,
+        )
+    elif args.command == "reference-build-publish-r2":
+        payload = build_and_publish_contract_window_from_env(
+            args.db,
+            args.contract_dir,
+            args.output_dir,
+            created_at=args.created_at,
+            retire_previous_contract=args.retire_previous_contract,
+            allow_previous_failure=args.allow_retired_previous_failure,
+            progress=_reference_progress,
         )
     elif args.command == "mobile-verify-runtime":
         payload = verify_reference_database(
@@ -384,12 +433,17 @@ def main(argv=None) -> int:
                 args.output_dir,
                 created_at=args.created_at,
                 retire_previous_contract=args.retire_previous_contract,
+                progress=_reference_progress,
             )
         else:
             if args.retire_previous_contract:
                 raise ValueError("--retire-previous-contract requires --contract-dir")
             payload = publish_contract_window_from_env(
-                args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at
+                args.db,
+                args.mobile_manifest,
+                args.output_dir,
+                created_at=args.created_at,
+                progress=_reference_progress,
             )
     else:
         payload = verify_canonical_database(args.db)

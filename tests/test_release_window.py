@@ -12,12 +12,15 @@ from unittest import mock
 
 from medicine_canonical.release import sha256_file
 from medicine_canonical.cli import main as canonical_main
+from medicine_canonical.reference_contracts.registry import VerifiedContractArtifact
 from medicine_canonical.release_signing import ReleaseSigner, verify_signed_envelope
 from medicine_canonical.release_window import (
     ContractReleaseCandidate,
     ROOT_KEY,
+    build_and_publish_contract_window_from_env,
     publish_contract_directory_from_env,
     publish_contract_window,
+    publish_verified_contract_window,
 )
 from tests.test_release_r2 import FakeS3, TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM
 
@@ -121,6 +124,69 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "frozen contract verification failed"):
             self.publish([candidate], current=1, minimum=1, sequence=100, suffix="invalid-contract")
+        self.assertEqual(self.client.put_order, [])
+
+    def test_verified_candidate_rebinds_exact_bytes_without_repeating_frozen_verifier(self) -> None:
+        candidate = self.candidate(
+            1,
+            "verified-in-process",
+            b"verified" * 80_000,
+            "sha256:" + "8" * 64,
+            verifier=mock.Mock(side_effect=AssertionError("verifier must not repeat")),
+        )
+        artifact = VerifiedContractArtifact(
+            contract_major=1,
+            database=candidate.database,
+            manifest=candidate.manifest,
+            dataset_id="sha256:" + "8" * 64,
+            sha256=sha256_file(candidate.database),
+            size_bytes=candidate.database.stat().st_size,
+        )
+
+        result = publish_verified_contract_window(
+            self.client,
+            self.bucket,
+            [artifact],
+            self.root / "dist-verified-in-process",
+            signer=self.signer,
+            release_sequence=100,
+            current_contract_major=1,
+            minimum_supported_contract_major=1,
+            created_at="2026-08-20T00:00:00Z",
+        )
+
+        self.assertEqual(result["status"], "published")
+        self.assertEqual(self.client.put_order[-1], ROOT_KEY)
+
+    def test_verified_candidate_rejects_bytes_changed_after_build(self) -> None:
+        candidate = self.candidate(
+            1,
+            "verified-mutated",
+            b"verified" * 80_000,
+            "sha256:" + "7" * 64,
+        )
+        artifact = VerifiedContractArtifact(
+            contract_major=1,
+            database=candidate.database,
+            manifest=candidate.manifest,
+            dataset_id="sha256:" + "7" * 64,
+            sha256=sha256_file(candidate.database),
+            size_bytes=candidate.database.stat().st_size,
+        )
+        candidate.database.write_bytes(candidate.database.read_bytes() + b"tampered")
+
+        with self.assertRaisesRegex(ValueError, "changed after contract verification"):
+            publish_verified_contract_window(
+                self.client,
+                self.bucket,
+                [artifact],
+                self.root / "dist-verified-mutated",
+                signer=self.signer,
+                release_sequence=100,
+                current_contract_major=1,
+                minimum_supported_contract_major=1,
+                created_at="2026-08-20T00:00:00Z",
+            )
         self.assertEqual(self.client.put_order, [])
 
     def test_same_logical_dataset_with_new_physical_artifact_is_a_new_release(self) -> None:
@@ -410,9 +476,116 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
                 ])
         self.assertEqual(code, 0)
         self.assertTrue(publish.call_args.kwargs["retire_previous_contract"])
+        self.assertTrue(callable(publish.call_args.kwargs["progress"]))
 
         with self.assertRaisesRegex(ValueError, "requires --contract-dir"):
             canonical_main(["release-publish-r2", "--retire-previous-contract", "--json"])
+
+    def test_directory_publish_threads_progress_into_strict_verifier(self) -> None:
+        progress = mock.Mock()
+        verifier = mock.Mock(return_value={"status": "verified"})
+        with (
+            mock.patch.dict(os.environ, {"R2_BUCKET": self.bucket}),
+            mock.patch("medicine_canonical.release_window.supported_contract_majors", return_value=(1,)),
+            mock.patch(
+                "medicine_canonical.release_window.implementation_for",
+                return_value=SimpleNamespace(verify=verifier),
+            ),
+            mock.patch("medicine_canonical.release_window.client_from_env", return_value=self.client),
+            mock.patch("medicine_canonical.release_window.release_signer_from_env", return_value=self.signer),
+            mock.patch("medicine_canonical.release_window.release_sequence_from_env", return_value=202),
+            mock.patch(
+                "medicine_canonical.release_window.publish_contract_window",
+                return_value={"status": "published"},
+            ) as publish,
+        ):
+            publish_contract_directory_from_env(
+                self.root / "contracts",
+                self.root / "dist-progress",
+                progress=progress,
+            )
+
+        candidate = publish.call_args.args[2][0]
+        candidate.verifier(candidate.database, 1, "sha256:" + "1" * 64)
+        verifier.assert_called_once_with(
+            candidate.database,
+            1,
+            "sha256:" + "1" * 64,
+            progress=progress,
+        )
+
+    def test_cli_integrated_reference_publish_keeps_verified_build_in_process(self) -> None:
+        stdout = StringIO()
+        with mock.patch(
+            "medicine_canonical.cli.build_and_publish_contract_window_from_env",
+            return_value={"status": "published"},
+        ) as publish:
+            with redirect_stdout(stdout):
+                code = canonical_main([
+                    "reference-build-publish-r2",
+                    "--db", str(self.root / "canonical.sqlite"),
+                    "--contract-dir", str(self.root / "contracts"),
+                    "--output-dir", str(self.root / "dist-integrated"),
+                    "--retire-previous-contract",
+                    "--allow-retired-previous-failure",
+                    "--json",
+                ])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(publish.call_args.args[0], self.root / "canonical.sqlite")
+        self.assertEqual(publish.call_args.args[1], self.root / "contracts")
+        self.assertTrue(publish.call_args.kwargs["retire_previous_contract"])
+        self.assertTrue(publish.call_args.kwargs["allow_previous_failure"])
+        self.assertTrue(callable(publish.call_args.kwargs["progress"]))
+
+    def test_integrated_reference_publish_passes_exact_built_artifact_to_verified_path(self) -> None:
+        database = self.root / "integrated.sqlite"
+        manifest = self.root / "integrated.manifest.json"
+        database.write_bytes(b"integrated-contract")
+        manifest.write_text("{}", encoding="utf-8")
+        artifact = VerifiedContractArtifact(
+            contract_major=1,
+            database=database,
+            manifest=manifest,
+            dataset_id="sha256:" + "6" * 64,
+            sha256=sha256_file(database),
+            size_bytes=database.stat().st_size,
+        )
+        build_payload = {
+            "current_contract_major": 1,
+            "minimum_supported_contract_major": 1,
+            "contracts": [],
+        }
+
+        with (
+            mock.patch(
+                "medicine_canonical.release_window._publication_context_from_env",
+                return_value=(self.bucket, (1,), self.client, self.signer, False, (1,), 1),
+            ),
+            mock.patch(
+                "medicine_canonical.release_window.build_supported_contract_artifacts",
+                return_value=(build_payload, [artifact]),
+            ) as build,
+            mock.patch(
+                "medicine_canonical.release_window.release_sequence_from_env",
+                return_value=123,
+            ),
+            mock.patch(
+                "medicine_canonical.release_window.publish_verified_contract_window",
+                return_value={"status": "published", "release_sequence": 123},
+            ) as publish,
+        ):
+            result = build_and_publish_contract_window_from_env(
+                self.root / "canonical.sqlite",
+                self.root / "contracts",
+                self.root / "dist-integrated-direct",
+                allow_previous_failure=True,
+            )
+
+        self.assertIs(publish.call_args.args[2][0], artifact)
+        self.assertEqual(publish.call_args.kwargs["release_sequence"], 123)
+        self.assertTrue(build.call_args.kwargs["allow_previous_failure"])
+        self.assertIs(result["build"], build_payload)
 
     def test_changed_window_repairs_reused_contract_full_before_advancing_root(self) -> None:
         c1 = self.candidate(1, "reuse-repair", b"A" * 500_000, "sha256:" + "1" * 64)
