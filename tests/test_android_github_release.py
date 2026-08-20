@@ -272,6 +272,9 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("gh release upload", workflow)
         self.assertIn("SHA256SUMS", workflow)
         self.assertIn("./scripts/publish-release.sh", workflow)
+        publish_job = workflow.split("\n  publish:\n", 1)[1]
+        self.assertIn("actions/setup-python@v5", publish_job)
+        self.assertIn("cryptography==50.0.0", publish_job)
         self.assertNotIn("android_release_build.sh", workflow)
         self.assertNotIn("check-android-release.sh", workflow)
         self.assertNotIn("docker build", workflow)
@@ -306,7 +309,16 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn('apks=("${asset_dir}"/*.apk)', publish)
         self.assertIn("SHA256SUMS", publish)
         self.assertIn("--clobber", publish)
+        self.assertIn("verify-android-reference-contract.sh", publish)
         self.assertIn("--draft=false", publish)
+        self.assertLess(
+            publish.index("--clobber"),
+            publish.index("verify-android-reference-contract.sh"),
+        )
+        self.assertLess(
+            publish.index("verify-android-reference-contract.sh"),
+            publish.index("--draft=false"),
+        )
         self.assertIn("already published; leaving it unchanged", publish)
 
     def test_release_documentation_describes_cowi_style_exact_sha_handoff(self) -> None:

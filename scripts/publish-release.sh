@@ -44,6 +44,13 @@ gh release upload "${tag}" \
     "${checksum_file}" \
     --repo "${repository}" \
     --clobber
+
+# Reference publication is independent from GitHub Release publication. Fetch
+# and verify the live signed root at the final public state-change boundary so
+# a contract retirement after earlier release checks fails closed.
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+"${script_dir}/verify-android-reference-contract.sh"
+
 gh release edit "${tag}" \
     --repo "${repository}" \
     --draft=false
