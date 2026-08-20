@@ -1,6 +1,13 @@
+import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+
+from cryptography.hazmat.primitives import serialization
+
+from medicine_canonical.release_signing import ReleaseSigner, encode_signed_envelope
+from tests.test_release_r2 import TEST_PRIVATE_KEY_PEM
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +103,8 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("check-android-release.sh", workflow)
         self.assertIn("actions/setup-java@v4", workflow)
         self.assertIn("actions/setup-node@v4", workflow)
+        self.assertIn("actions/setup-python@v5", workflow)
+        self.assertIn("cryptography==50.0.0", workflow)
         self.assertIn("java-version: '17'", workflow)
         self.assertIn("node-version: '22'", workflow)
         self.assertIn("commandlinetools-linux-13114758_latest.zip", workflow)
@@ -115,6 +124,116 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("actions/cache/save@v5", workflow)
         self.assertIn("android-release-${{ github.sha }}-${{ github.run_id }}-arm64-v8a", workflow)
         self.assertIn("dist", workflow)
+
+    def test_signed_reference_root_gate_requires_android_contract_before_release(self) -> None:
+        script = ROOT / "scripts" / "verify-reference-contract-root.py"
+        signer = ReleaseSigner.from_private_pem("test-2026", TEST_PRIVATE_KEY_PEM)
+        public_key = serialization.load_pem_public_key(signer.public_key_pem())
+        public_der_hex = public_key.public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).hex()
+
+        def envelope(current: int, minimum: int, contracts: dict) -> bytes:
+            root = {
+                "protocol_version": 2,
+                "created_at": "2026-08-20T00:00:00Z",
+                "current_contract_major": current,
+                "minimum_supported_contract_major": minimum,
+                "contracts": contracts,
+            }
+            payload = (json.dumps(root, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            return encode_signed_envelope(signer.sign_payload(payload, release_sequence=42))
+
+        c1 = {
+            "1": {
+                "dataset_id": "sha256:" + "1" * 64,
+                "target": {"sha256": "2" * 64, "size_bytes": 10},
+                "full": {
+                    "key": "reference/v2/contracts/1/full/" + "2" * 64 + ".sqlite.gz",
+                    "compression": "gzip",
+                    "sha256": "3" * 64,
+                    "size_bytes": 5,
+                },
+                "patches": [],
+                "history": [],
+            }
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root_file = Path(td) / "latest.json"
+            root_file.write_bytes(envelope(1, 1, c1))
+            ok = subprocess.run(
+                [
+                    "python",
+                    str(script),
+                    "--root",
+                    str(root_file),
+                    "--contract-major",
+                    "1",
+                    "--key-id",
+                    "test-2026",
+                    "--public-key-der-hex",
+                    public_der_hex,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            self.assertIn("supports Android contract 1", ok.stdout)
+
+            malformed = {
+                "1": {
+                    "dataset_id": "NOT-A-DATASET-ID",
+                    "target": {"sha256": "2" * 64, "size_bytes": 10},
+                    "full": {"compression": "gzip"},
+                    "patches": [],
+                    "history": [],
+                }
+            }
+            root_file.write_bytes(envelope(1, 1, malformed))
+            rejected = subprocess.run(
+                [
+                    "python",
+                    str(script),
+                    "--root",
+                    str(root_file),
+                    "--contract-major",
+                    "1",
+                    "--key-id",
+                    "test-2026",
+                    "--public-key-der-hex",
+                    public_der_hex,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+
+            root_file.write_bytes(envelope(2, 2, {"2": {}}))
+            retired = subprocess.run(
+                [
+                    "python",
+                    str(script),
+                    "--root",
+                    str(root_file),
+                    "--contract-major",
+                    "1",
+                    "--key-id",
+                    "test-2026",
+                    "--public-key-der-hex",
+                    public_der_hex,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(retired.returncode, 0)
+            self.assertIn("not supported", retired.stderr)
 
     def test_android_gradle_wrapper_is_pinned_and_checksum_verified(self) -> None:
         gradlew = ROOT / "android" / "gradlew"
@@ -142,6 +261,8 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("'v*'", workflow)
         self.assertIn("actions: read", workflow)
         self.assertIn("contents: write", workflow)
+        self.assertIn("verify-android-reference-contract.sh", workflow)
+        self.assertIn("cryptography==50.0.0", workflow)
         self.assertIn("./scripts/verify-android-release-version.sh \"${GITHUB_REF_NAME}\"", workflow)
         self.assertIn("actions/workflows/android-release-check.yml/runs?head_sha=${GITHUB_SHA}", workflow)
         self.assertIn("event=workflow_dispatch&status=success", workflow)
@@ -151,15 +272,22 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("gh release upload", workflow)
         self.assertIn("SHA256SUMS", workflow)
         self.assertIn("./scripts/publish-release.sh", workflow)
+        publish_job = workflow.split("\n  publish:\n", 1)[1]
+        self.assertIn("actions/setup-python@v5", publish_job)
+        self.assertIn("cryptography==50.0.0", publish_job)
         self.assertNotIn("android_release_build.sh", workflow)
         self.assertNotIn("check-android-release.sh", workflow)
         self.assertNotIn("docker build", workflow)
 
     def test_android_release_check_packages_the_verified_apk_with_stable_name(self) -> None:
         script = (ROOT / "scripts" / "check-android-release.sh").read_text()
+        root_gate = (ROOT / "scripts" / "verify-android-reference-contract.sh").read_text()
         self.assertIn('workspace=$(CDPATH= cd "$(dirname "$0")/.." && pwd)', script)
         self.assertIn('cd "${workspace}"', script)
         self.assertIn("./scripts/verify-android-release-version.sh", script)
+        self.assertIn("./scripts/verify-android-reference-contract.sh", script)
+        self.assertNotIn("--location", root_gate)
+        self.assertNotIn(" -L", root_gate)
         self.assertIn("./gradlew --no-daemon --dependency-verification strict testDebugUnitTest lintDebug assembleDebug", script)
         self.assertNotIn("\ngradle --no-daemon", script)
         self.assertNotIn("./scripts/android_release_build.sh", script)
@@ -181,7 +309,16 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn('apks=("${asset_dir}"/*.apk)', publish)
         self.assertIn("SHA256SUMS", publish)
         self.assertIn("--clobber", publish)
+        self.assertIn("verify-android-reference-contract.sh", publish)
         self.assertIn("--draft=false", publish)
+        self.assertLess(
+            publish.index("--clobber"),
+            publish.index("verify-android-reference-contract.sh"),
+        )
+        self.assertLess(
+            publish.index("verify-android-reference-contract.sh"),
+            publish.index("--draft=false"),
+        )
         self.assertIn("already published; leaving it unchanged", publish)
 
     def test_release_documentation_describes_cowi_style_exact_sha_handoff(self) -> None:

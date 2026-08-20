@@ -52,7 +52,8 @@ class ConfirmationRequired(ValueError):
         self.assessment = assessment
 
 
-class RevisionConflict(ValueError): pass
+class RevisionConflict(ValueError):
+    pass
 
 
 class MedicationApp:

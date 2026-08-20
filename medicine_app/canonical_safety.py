@@ -6,13 +6,19 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
-from medicine_reference.mfds_remark_registry import ReviewedMfdsRemark, reviewed_mfds_remark
-
 from .canonical_runtime import (
     has_unlinked_product_rule, item_seq, linked_product_rows, resolved_product_rows,
 )
 from .dosage_forms import infer_administration_route
-from .interaction_timing import courses_overlap, interaction_timing_applies, parse_interaction_timing
+from .interaction_timing import courses_overlap, interaction_timing_applies
+from .reference_semantics import (
+    _dedupe_qualifiers,
+    _details_with_professional_review,
+    _mfds_criterion_note_requires_review,
+    _mfds_qualifiers,
+    _mfds_semantics,
+    _remark_interaction_timing,
+)
 from .safety import (
     _COUNT_UNITS, _draft_quantity, _frequency, _source_quantity,
     age_rule_evaluation, age_years,
@@ -44,41 +50,6 @@ def _canonical_details(row: Mapping[str, Any]) -> str | None:
     return row.get("product_details") or row.get("criterion_details")
 
 
-def _canonical_ingredient(row: Mapping[str, Any]) -> str | None:
-    return row.get("criterion_ingredient_name") or row.get("ingredient_name")
-
-
-def _canonical_paired_ingredient(row: Mapping[str, Any]) -> str | None:
-    return row.get("criterion_paired_ingredient_name") or row.get("paired_ingredient_name")
-
-
-def _mfds_remark(row: Mapping[str, Any]) -> ReviewedMfdsRemark | None:
-    dataset_key = str(row.get("criterion_source_dataset_key") or row.get("dataset_key") or "")
-    if not dataset_key.startswith("mfds_dur_ingredient:"):
-        return None
-    return reviewed_mfds_remark(row.get("category"), row.get("criterion_qualifier_note") or row.get("qualifier_note"))
-
-
-def _mfds_qualifiers(row: Mapping[str, Any]) -> list[dict[str, object]]:
-    qualifier = _mfds_remark(row)
-    return [qualifier.payload()] if qualifier is not None else []
-
-
-def _mfds_criterion_note_requires_review(row: Mapping[str, Any]) -> bool:
-    qualifier = _mfds_remark(row)
-    if qualifier is None:
-        return False
-    if row.get("match_method") == "mfds_unanimous_value":
-        return True
-    return qualifier.requires_review
-
-
-def _details_with_professional_review(details: Any) -> str:
-    advice = "세부 적용 조건이 있어 의사 또는 약사에게 확인하세요."
-    text = str(details or "").strip()
-    return f"{text} {advice}" if text else advice
-
-
 def _pregnancy_rule_display(value: Any) -> str:
     text = str(value or "").strip()
     if text in {"1", "2"}:
@@ -89,38 +60,6 @@ def _pregnancy_rule_display(value: Any) -> str:
 def _pregnancy_rule_is_conditional(value: Any) -> bool:
     """Keep applicability text embedded in the structured grade review-required."""
     return bool(re.search(r"[12]\s*등급\s*\(", str(value or "").strip()))
-
-
-def _remark_interaction_timing(
-    row: Mapping[str, Any], details: Any,
-) -> dict[str, Any]:
-    qualifier = _mfds_remark(row)
-    if qualifier is not None and qualifier.mode == "interaction_window":
-        hours = int(qualifier.value or "0")
-        return {
-            "status": "structured",
-            "kind": "minimum_separation",
-            "hours": hours,
-            "amount": hours,
-            "unit": "시간",
-            "direction": "symmetric",
-            "source_text": qualifier.remark,
-        }
-    return parse_interaction_timing(
-        details or "", _canonical_ingredient(row), _canonical_paired_ingredient(row)
-    )
-
-
-def _dedupe_qualifiers(values: list[dict[str, object]]) -> list[dict[str, object]]:
-    seen: set[tuple[object, object, object]] = set()
-    result: list[dict[str, object]] = []
-    for value in values:
-        key = (value.get("type"), value.get("text"), value.get("source_remark"))
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(value)
-    return result
 
 
 _DURATION_LIMIT_RE = re.compile(r"^\s*(?P<amount>\d+)\s*(?P<unit>일|주|개월)?\s*$")
@@ -159,9 +98,9 @@ def _combination_risks(
         for row in rows:
             candidate_side = "left" if row.get("item_seq") == target else "right"
             details = _canonical_details(row)
-            qualifiers = _mfds_qualifiers(row)
-            qualifier_review = _mfds_criterion_note_requires_review(row)
-            timing = _remark_interaction_timing(row, details)
+            qualifiers = _mfds_qualifiers(con, row)
+            qualifier_review = _mfds_criterion_note_requires_review(row, con)
+            timing = _remark_interaction_timing(row, details, con)
             if qualifier_review:
                 details = _details_with_professional_review(details)
             if not interaction_timing_applies(
@@ -256,7 +195,7 @@ def _person_specific_risks(
         qualifiers = _dedupe_qualifiers([
             qualifier
             for pregnancy_row in pregnancy_rows
-            for qualifier in _mfds_qualifiers(pregnancy_row)
+            for qualifier in _mfds_qualifiers(con, pregnancy_row)
         ])
         if qualifiers:
             finding["qualifiers"] = qualifiers
@@ -265,7 +204,7 @@ def _person_specific_risks(
         str(candidate["category"])
         for candidate in rows
         if candidate.get("match_method") == "mfds_unanimous_value"
-        and _mfds_remark(candidate) is not None
+        and bool(_mfds_semantics(con, candidate))
     }
     for row in rows:
         category = str(row["category"])
@@ -293,7 +232,7 @@ def _person_specific_risks(
                     "dataset_key": row.get("criterion_source_dataset_key"),
                     "source_row": row.get("criterion_source_row"),
                 }
-                qualifiers = _mfds_qualifiers(row)
+                qualifiers = _mfds_qualifiers(con, row)
                 if qualifiers:
                     finding["qualifiers"] = qualifiers
                 risks.append(finding)
@@ -317,10 +256,10 @@ def _person_specific_risks(
             "dataset_key": row.get("criterion_source_dataset_key"),
             "source_row": row.get("criterion_source_row"),
         }
-        qualifiers = _mfds_qualifiers(row)
+        qualifiers = _mfds_qualifiers(con, row)
         if qualifiers:
             finding["qualifiers"] = qualifiers
-        mfds_note_review = _mfds_criterion_note_requires_review(row) or (
+        mfds_note_review = _mfds_criterion_note_requires_review(row, con) or (
             row.get("match_method") == "mfds_unanimous_value"
             and category in unanimous_review_categories
         )
@@ -344,20 +283,29 @@ def _duplication_groups(
         value = row.get("criterion_rule_value") or row.get("effect_name")
         if not value:
             continue
-        qualifier = _mfds_remark(row)
-        requires_review = _mfds_criterion_note_requires_review(row)
-        if qualifier is not None and qualifier.mode == "form_exclusion":
+        semantics = _mfds_semantics(con, row)
+        qualifier = next(
+            (
+                semantic
+                for semantic in semantics
+                if semantic.get("evaluator_kind") == "excluded_route"
+            ),
+            None,
+        )
+        requires_review = _mfds_criterion_note_requires_review(row, con)
+        if qualifier is not None:
             route = infer_administration_route([
                 row.get("product_dosage_form") or product.get("dosage_form")
             ])
-            if route == qualifier.value:
+            excluded_route = (qualifier.get("structured_payload") or {}).get("route")
+            if route == excluded_route:
                 continue
             if route == "unknown":
                 requires_review = True
         group = str(value)
         entry = groups.setdefault(group, {"requires_review": False, "qualifiers": []})
         entry["requires_review"] = bool(entry["requires_review"] or requires_review)
-        entry["qualifiers"].extend(_mfds_qualifiers(row))
+        entry["qualifiers"].extend(_mfds_qualifiers(con, row))
     for entry in groups.values():
         entry["qualifiers"] = _dedupe_qualifiers(entry["qualifiers"])
     return groups
@@ -449,12 +397,12 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
         elif maximum_days is not None:
             distinct_days.add(maximum_days)
     duration_qualifiers = _dedupe_qualifiers([
-        qualifier for row in duration_rows for qualifier in _mfds_qualifiers(row)
+        qualifier for row in duration_rows for qualifier in _mfds_qualifiers(con, row)
     ])
     if duration_qualifiers:
         duration["qualifiers"] = duration_qualifiers
     duration_qualifier_review = any(
-        _mfds_criterion_note_requires_review(row) for row in duration_rows
+        _mfds_criterion_note_requires_review(row, con) for row in duration_rows
     )
     if not duration_rows:
         if target and has_unlinked_product_rule(con, target, "duration_caution"):
@@ -494,12 +442,12 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
     )
     frequency, frequency_reason = _frequency(draft)
     dose_qualifiers = _dedupe_qualifiers([
-        qualifier for row in dose_rows for qualifier in _mfds_qualifiers(row)
+        qualifier for row in dose_rows for qualifier in _mfds_qualifiers(con, row)
     ])
     if dose_qualifiers:
         dose["qualifiers"] = dose_qualifiers
     dose_qualifier_review = any(
-        _mfds_criterion_note_requires_review(row) for row in dose_rows
+        _mfds_criterion_note_requires_review(row, con) for row in dose_rows
     )
     if not dose_rows:
         if target and has_unlinked_product_rule(con, target, "dose_caution"):

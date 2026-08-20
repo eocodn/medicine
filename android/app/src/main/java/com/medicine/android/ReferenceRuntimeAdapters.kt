@@ -6,8 +6,8 @@ import java.io.FileOutputStream
 import java.util.zip.GZIPInputStream
 
 object ReferenceRuntimePolicy {
-    // Keep in lockstep with medicine_app.canonical_runtime._CANONICAL_SCHEMA_VERSION.
-    const val SCHEMA_VERSION = "10"
+    // Public app↔DB logical contract. Canonical schema/build policy are server-internal.
+    const val CONTRACT_MAJOR = 1
 }
 
 class PythonReferenceDatabaseVerifier : ReferenceDatabaseVerifier {
@@ -17,7 +17,7 @@ class PythonReferenceDatabaseVerifier : ReferenceDatabaseVerifier {
             .callAttr(
                 "verify_reference_database",
                 file.absolutePath,
-                version.schemaVersion,
+                version.contractMajor,
                 version.datasetId,
             )
         require(result.callAttr("get", "status").toString() == "verified") {

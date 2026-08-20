@@ -14,6 +14,8 @@ if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
     exit 1
 fi
 
+./scripts/verify-android-reference-contract.sh
+
 versionName="$(sed -n 's/^versionName=//p' android/release.properties | head -n 1)"
 versionCode="$(sed -n 's/^versionCode=//p' android/release.properties | head -n 1)"
 (

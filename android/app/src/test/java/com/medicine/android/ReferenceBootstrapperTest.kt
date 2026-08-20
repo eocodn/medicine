@@ -67,6 +67,31 @@ class ReferenceBootstrapperTest {
         }
     }
 
+    private class RetiredSource(
+        private val sequence: Long,
+        private val hash: String,
+    ) : ReferenceReleaseSource {
+        var downloads = 0
+
+        override fun fetchLatest(): VerifiedReferenceRelease {
+            throw ReferenceContractRetiredException(
+                releaseSequence = sequence,
+                rootHash = hash,
+                currentContractMajor = 2,
+                minimumSupportedContractMajor = 2,
+            )
+        }
+
+        override fun download(
+            artifact: ReferenceReleaseArtifact,
+            target: File,
+            progress: (Long, Long) -> Unit,
+        ) {
+            downloads += 1
+            error("retired contract must not download")
+        }
+    }
+
     private class FakeRebuilder : ReferenceArtifactRebuilder {
         var currentWasNull = false
         override fun rebuild(
@@ -97,21 +122,28 @@ class ReferenceBootstrapperTest {
     private fun sha(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
         .digest(bytes).joinToString("") { "%02x".format(it) }
 
-    private fun release(schemaVersion: String = "10", sequence: Long = 12): VerifiedReferenceRelease =
+    private fun release(contractMajor: Int = 1, sequence: Long = 12): VerifiedReferenceRelease =
         VerifiedReferenceRelease(
             releaseSequence = sequence,
+            rootHash = sha("root-$sequence".toByteArray()),
             datasetId = "sha256:" + sha("dataset-$sequence".toByteArray()),
-            schemaVersion = schemaVersion,
+            contractMajor = contractMajor,
             targetSha256 = sha(TARGET_BYTES),
             targetSizeBytes = TARGET_BYTES.size.toLong(),
             full = ReferenceReleaseArtifact(
-                key = "reference/v1/full/${sha(TARGET_BYTES)}.sqlite.gz",
+                contractMajor = contractMajor,
+                key = "reference/v2/contracts/$contractMajor/full/${sha(TARGET_BYTES)}.sqlite.gz",
                 sha256 = sha(FULL_BYTES),
                 sizeBytes = FULL_BYTES.size.toLong(),
                 kind = ReferenceArtifactKind.FULL_GZIP,
             ),
             patches = emptyList(),
         )
+
+    @Test
+    fun androidInstallerKeepsCurrentMainStateFilenameForInPlaceMigration() {
+        assertEquals("state.v1", REFERENCE_STATE_FILE)
+    }
 
     @Test
     fun firstLaunchDownloadsFullReleaseAndInstallsItAsActive() {
@@ -131,7 +163,7 @@ class ReferenceBootstrapperTest {
                 observer,
             )
 
-            val installed = bootstrapper.ensureInstalled("10")
+            val installed = bootstrapper.ensureInstalled(1)
 
             assertEquals(12, installed.version.releaseSequence)
             assertEquals(ReferenceArtifactKind.FULL_GZIP, source.downloads.single().kind)
@@ -149,6 +181,43 @@ class ReferenceBootstrapperTest {
     }
 
     @Test
+    fun retiredContractWithoutLkgReturnsUnavailableModeAndPersistsRetirement() {
+        val root = Files.createTempDirectory("reference-bootstrap-retired-empty").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val source = RetiredSource(33, "f".repeat(64))
+            val bootstrapper = ReferenceBootstrapper(
+                root,
+                store,
+                source,
+                FakeRebuilder(),
+                FixedStorageCapacity(Long.MAX_VALUE),
+            )
+
+            val selected = bootstrapper.ensureInstalledOrRetired(1)
+
+            assertNull(selected)
+            assertEquals(0, source.downloads)
+            assertTrue(store.isContractRetired(1))
+            assertEquals(33, store.snapshot().highestSeenRootSequence)
+            assertEquals("f".repeat(64), store.snapshot().highestSeenRootHash)
+
+            val reopened = ReferenceBootstrapper(
+                root,
+                ReferenceStore(root, storage, FakeDatabaseVerifier()),
+                source,
+                FakeRebuilder(),
+                FixedStorageCapacity(Long.MAX_VALUE),
+            ).ensureInstalledOrRetired(1)
+            assertNull(reopened)
+            assertEquals(0, source.downloads)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun existingLkgStartsWithoutNetwork() {
         val root = Files.createTempDirectory("reference-bootstrap-lkg").toFile()
         try {
@@ -159,7 +228,7 @@ class ReferenceBootstrapperTest {
                 currentRelease.datasetId,
                 currentRelease.targetSha256,
                 currentRelease.targetSizeBytes,
-                currentRelease.schemaVersion,
+                currentRelease.contractMajor,
                 currentRelease.releaseSequence,
             )
             store.installInitial(
@@ -174,7 +243,7 @@ class ReferenceBootstrapperTest {
                 source,
                 FakeRebuilder(),
                 FixedStorageCapacity(Long.MAX_VALUE),
-            ).ensureInstalled("10")
+            ).ensureInstalled(1)
 
             assertEquals(9, installed.version.releaseSequence)
             assertEquals(0, source.fetches)
@@ -185,10 +254,10 @@ class ReferenceBootstrapperTest {
     }
 
     @Test
-    fun incompatibleLatestSchemaIsRejectedBeforeArtifactDownload() {
-        val root = Files.createTempDirectory("reference-bootstrap-schema").toFile()
+    fun incompatibleLatestContractIsRejectedBeforeArtifactDownload() {
+        val root = Files.createTempDirectory("reference-bootstrap-contract").toFile()
         try {
-            val source = FakeSource(release(schemaVersion = "11"))
+            val source = FakeSource(release(contractMajor = 2))
             val error = runCatching {
                 ReferenceBootstrapper(
                     root,
@@ -196,11 +265,11 @@ class ReferenceBootstrapperTest {
                     source,
                     FakeRebuilder(),
                     FixedStorageCapacity(Long.MAX_VALUE),
-                ).ensureInstalled("10")
+                ).ensureInstalled(1)
             }.exceptionOrNull()
 
             assertNotNull(error)
-            assertTrue(error!!.message!!.contains("schema"))
+            assertTrue(error!!.message!!.contains("contract"))
             assertTrue(source.downloads.isEmpty())
         } finally {
             root.deleteRecursively()
@@ -219,7 +288,7 @@ class ReferenceBootstrapperTest {
                     source,
                     FakeRebuilder(),
                     FixedStorageCapacity(0),
-                ).ensureInstalled("10")
+                ).ensureInstalled(1)
             }.exceptionOrNull()
 
             assertTrue(error is ReferenceBootstrapStorageException)
@@ -244,7 +313,7 @@ class ReferenceBootstrapperTest {
                     source,
                     FakeRebuilder(),
                     FixedStorageCapacity(Long.MAX_VALUE),
-                ).ensureInstalled("10")
+                ).ensureInstalled(1)
             }.exceptionOrNull()
 
             assertNotNull(error)
@@ -273,8 +342,8 @@ class ReferenceBootstrapperTest {
                 FixedStorageCapacity(Long.MAX_VALUE),
             )
 
-            assertNotNull(runCatching { bootstrapper.ensureInstalled("10") }.exceptionOrNull())
-            val installed = bootstrapper.ensureInstalled("10")
+            assertNotNull(runCatching { bootstrapper.ensureInstalled(1) }.exceptionOrNull())
+            val installed = bootstrapper.ensureInstalled(1)
 
             assertEquals(listOf(0L, (FULL_BYTES.size / 2).coerceAtLeast(1).toLong()), source.resumeOffsets)
             assertEquals(12, installed.version.releaseSequence)
@@ -315,9 +384,9 @@ class ReferenceBootstrapperTest {
                 FixedStorageCapacity(Long.MAX_VALUE),
             )
 
-            val firstFuture = executor.submit<InstalledReferenceVersion> { first.ensureInstalled("10") }
+            val firstFuture = executor.submit<InstalledReferenceVersion> { first.ensureInstalled(1) }
             assertTrue(firstDownloadEntered.await(2, TimeUnit.SECONDS))
-            val secondFuture = executor.submit<InstalledReferenceVersion> { second.ensureInstalled("10") }
+            val secondFuture = executor.submit<InstalledReferenceVersion> { second.ensureInstalled(1) }
 
             assertFalse(secondFetchEntered.await(200, TimeUnit.MILLISECONDS))
             continueFirstDownload.countDown()
@@ -341,7 +410,7 @@ class ReferenceBootstrapperTest {
                 currentRelease.datasetId,
                 currentRelease.targetSha256,
                 currentRelease.targetSizeBytes,
-                currentRelease.schemaVersion,
+                currentRelease.contractMajor,
                 currentRelease.releaseSequence,
             )
             val store = ReferenceStore(root, stateStorage, FakeDatabaseVerifier())
@@ -354,7 +423,7 @@ class ReferenceBootstrapperTest {
                 source,
                 FakeRebuilder(),
                 FixedStorageCapacity(Long.MAX_VALUE),
-            ).ensureInstalled("10")
+            ).ensureInstalled(1)
 
             assertEquals(version, installed.version)
             assertTrue(source.downloads.isEmpty())
@@ -379,7 +448,7 @@ class ReferenceBootstrapperTest {
                 FakeSource(release(sequence = 12)),
                 FakeRebuilder(),
                 FixedStorageCapacity(Long.MAX_VALUE),
-            ).ensureInstalled("10")
+            ).ensureInstalled(1)
 
             assertFalse(stale.exists())
         } finally {
@@ -398,7 +467,7 @@ class ReferenceBootstrapperTest {
                 currentRelease.datasetId,
                 currentRelease.targetSha256,
                 currentRelease.targetSizeBytes,
-                currentRelease.schemaVersion,
+                currentRelease.contractMajor,
                 currentRelease.releaseSequence,
             )
             store.installInitial(
@@ -417,7 +486,7 @@ class ReferenceBootstrapperTest {
                 source,
                 FakeRebuilder(),
                 FixedStorageCapacity(Long.MAX_VALUE),
-            ).ensureInstalled("10")
+            ).ensureInstalled(1)
 
             assertFalse(artifactOrphan.exists())
             assertFalse(candidateOrphan.exists())

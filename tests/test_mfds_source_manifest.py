@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from medicine_app.canonical_runtime import _RUNTIME_SOURCE_FAMILIES
 from medicine_canonical.mfds_ingredient import MFDS_INGREDIENT_ENDPOINTS
 from medicine_canonical.schema import CORE_SOURCE_FAMILIES
 from medicine_canonical.source_policy import (
@@ -33,7 +32,6 @@ class MfdsSourceManifestTest(unittest.TestCase):
         self.assertEqual(PERMIT_SOURCE.filename, "mfds_permit_products.jsonl")
 
         self.assertIs(EXPECTED_CANONICAL_SOURCE_FAMILIES, MFDS_SOURCE_FAMILIES)
-        self.assertIs(_RUNTIME_SOURCE_FAMILIES, MFDS_SOURCE_FAMILIES)
         self.assertIs(EXPECTED_CANONICAL_SOURCE_KEYS, MFDS_SOURCE_KEYS)
         self.assertIs(CORE_SOURCE_FAMILIES, MFDS_SOURCE_FAMILY_SET)
         self.assertEqual(CANONICAL_SOURCE_POLICY, MFDS_SOURCE_POLICY)
@@ -111,14 +109,15 @@ class MfdsSourceManifestTest(unittest.TestCase):
             self.assertEqual(source.source_family, "mfds_dur_ingredient_api")
             self.assertEqual(source.source_locator.rsplit("/", 1)[-1], operation)
 
-    def test_shared_manifest_is_packaged_for_python_and_android_runtime(self) -> None:
+    def test_shared_manifest_is_packaged_for_server_but_not_android_runtime(self) -> None:
         pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
         android = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('"medicine_reference*"', pyproject)
         for dockerfile in ("Dockerfile", "Dockerfile.web", "Dockerfile.ui"):
             content = Path(dockerfile).read_text(encoding="utf-8")
             self.assertIn("COPY medicine_reference ./medicine_reference", content)
-        self.assertIn('include("medicine_reference/**/*.py")', android)
+        self.assertNotIn('include("medicine_reference/**/*.py")', android)
+        self.assertNotIn("mfds_remark_registry.tsv", android)
 
 
 if __name__ == "__main__":

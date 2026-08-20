@@ -192,7 +192,7 @@ def verify_signed_envelope(
         envelope = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("signed release envelope is invalid JSON") from exc
-    if not isinstance(envelope, dict) or set(envelope) != _ENVELOPE_FIELDS:
+    if not isinstance(envelope, dict) or not _ENVELOPE_FIELDS.issubset(envelope):
         raise ValueError("signed release envelope fields are invalid")
     if envelope.get("envelope_version") != RELEASE_SIGNATURE_ENVELOPE_VERSION:
         raise ValueError("signed release envelope version is unsupported")
@@ -228,8 +228,8 @@ def verify_signed_envelope(
         manifest = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("signed release payload is invalid JSON") from exc
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
-        raise ValueError("signed release payload schema is unsupported")
+    if not isinstance(manifest, dict):
+        raise ValueError("signed release payload must be a JSON object")
     return {
         "key_id": key_id,
         "release_sequence": release_sequence,

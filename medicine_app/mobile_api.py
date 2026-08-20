@@ -187,6 +187,7 @@ class MobileApi:
         if method == "DELETE" and match:
             return 200, service.delete_person(match.group(1))
         if method == "GET" and path == "/api/products":
+            self._require_reference()
             term = (query.get("q") or [""])[-1].strip()
             if not term:
                 raise ValueError("q is required")
@@ -216,6 +217,7 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/people/([^/]+)/medications/preview", path)
         if method == "POST" and match:
+            self._require_reference()
             payload = _validated_fields(_body_object(body_json), _PREVIEW_FIELDS)
             if not (payload.get("product_ref") or payload.get("product_code")):
                 raise ValueError("product_ref or product_code is required")
@@ -223,11 +225,13 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/people/([^/]+)/medications", path)
         if method == "POST" and match:
+            self._require_reference()
             payload = _validated_fields(_body_object(body_json), _CREATE_FIELDS)
             return 201, service.add_medication(match.group(1), **payload)
 
         match = re.fullmatch(r"/api/medications/([^/]+)", path)
         if method == "PATCH" and match:
+            self._require_reference()
             payload = _validated_fields(_body_object(body_json), _UPDATE_FIELDS)
             if "expected_revision" not in payload:
                 raise ValueError("expected_revision is required")
