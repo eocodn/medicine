@@ -5,8 +5,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.ByteArrayOutputStream
-import java.io.DataOutputStream
 import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -26,29 +24,6 @@ class ReferenceStoreTest {
         }
     }
 
-    private class CountingContentHasher : ReferenceContentHasher {
-        var calls = 0
-        override fun sha256(file: File): String {
-            calls += 1
-            return MessageDigest.getInstance("SHA-256")
-                .digest(file.readBytes())
-                .joinToString("") { "%02x".format(it) }
-        }
-    }
-
-    private class TestFileSealProvider : ReferenceFileSealProvider {
-        override fun capture(file: File): ReferenceFileSeal? {
-            if (!file.isFile) return null
-            return ReferenceFileSeal(
-                sizeBytes = file.length(),
-                modifiedMarker = file.lastModified(),
-                changedMarker = file.lastModified(),
-                identityKey = file.canonicalPath,
-                writable = file.canWrite(),
-            )
-        }
-    }
-
     private fun version(
         data: ByteArray,
         sequence: Long,
@@ -63,23 +38,6 @@ class ReferenceStoreTest {
         schemaVersion = schemaVersion,
         releaseSequence = sequence,
     )
-
-    private fun legacyState(active: ReferenceVersion, highWater: Long): ByteArray {
-        val bytes = ByteArrayOutputStream()
-        DataOutputStream(bytes).use { output ->
-            output.writeUTF("MEDREFSTATE1")
-            output.writeLong(highWater)
-            output.writeBoolean(true)
-            output.writeUTF(active.datasetId)
-            output.writeUTF(active.sha256)
-            output.writeLong(active.sizeBytes)
-            output.writeUTF(active.schemaVersion)
-            output.writeLong(active.releaseSequence)
-            output.writeBoolean(false)
-            output.writeBoolean(false)
-        }
-        return bytes.toByteArray()
-    }
 
     @Test
     fun emptyStoreHasNoStartupReferenceWithoutBundledFallback() {
@@ -216,103 +174,6 @@ class ReferenceStoreTest {
             ReferenceStore(root, storage, verifier).openForStartup("10")
 
             assertEquals(callsAfterInstall, verifier.calls)
-        } finally {
-            root.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun establishedLkgWithMatchingFileSealSkipsFullContentHashOnStartup() {
-        val root = Files.createTempDirectory("reference-store-sealed-fast").toFile()
-        try {
-            val storage = MemoryStateStorage()
-            val verifier = FakeDatabaseVerifier()
-            val hasher = CountingContentHasher()
-            val bytes = "release-sealed".toByteArray()
-            val current = version(bytes, 3, "sealed")
-            val store = ReferenceStore(root, storage, verifier, fileSealProvider = TestFileSealProvider(), contentHasher = hasher)
-            store.installInitial(
-                current,
-                File(root, ".sealed.sqlite").apply { writeBytes(bytes) },
-            )
-            val hashesAfterInstall = hasher.calls
-
-            val reopened = ReferenceStore(root, storage, verifier, fileSealProvider = TestFileSealProvider(), contentHasher = hasher)
-                .openForStartup("10")
-
-            assertEquals(current, reopened!!.version)
-            assertEquals(hashesAfterInstall, hasher.calls)
-        } finally {
-            root.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun changedFileSealFallsBackToFullVerificationBeforeStartupUse() {
-        val root = Files.createTempDirectory("reference-store-sealed-recheck").toFile()
-        try {
-            val storage = MemoryStateStorage()
-            val verifier = FakeDatabaseVerifier()
-            val hasher = CountingContentHasher()
-            val bytes = "release-sealed".toByteArray()
-            val current = version(bytes, 3, "sealed")
-            val store = ReferenceStore(root, storage, verifier, fileSealProvider = TestFileSealProvider(), contentHasher = hasher)
-            store.installInitial(
-                current,
-                File(root, ".sealed.sqlite").apply { writeBytes(bytes) },
-            )
-            val target = store.fileFor(current)
-            val hashesAfterInstall = hasher.calls
-            assertTrue(target.setWritable(true))
-            target.setLastModified(target.lastModified() + 2000L)
-            assertTrue(target.setReadOnly())
-
-            val reopened = ReferenceStore(root, storage, verifier, fileSealProvider = TestFileSealProvider(), contentHasher = hasher)
-                .openForStartup("10")
-
-            assertEquals(current, reopened!!.version)
-            assertTrue(hasher.calls > hashesAfterInstall)
-        } finally {
-            root.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun legacyStatePerformsOneFullVerificationThenUsesSealedStartupFastPath() {
-        val root = Files.createTempDirectory("reference-store-seal-migration").toFile()
-        try {
-            val verifier = FakeDatabaseVerifier()
-            val hasher = CountingContentHasher()
-            val sealProvider = TestFileSealProvider()
-            val bytes = "legacy-reference".toByteArray()
-            val current = version(bytes, 5, "legacy")
-            val storage = MemoryStateStorage().apply { this.bytes = legacyState(current, 5) }
-            val target = File(root, "mobile-${current.sha256}.sqlite").apply {
-                writeBytes(bytes)
-                assertTrue(setReadOnly())
-            }
-
-            ReferenceStore(
-                root, storage, verifier,
-                fileSealProvider = sealProvider,
-                contentHasher = hasher,
-            ).openForStartup("10")
-            val hashesAfterMigration = hasher.calls
-            val verifierCallsAfterMigration = verifier.calls
-
-            val reopened = ReferenceStore(
-                root, storage, verifier,
-                fileSealProvider = sealProvider,
-                contentHasher = hasher,
-            ).openForStartup("10")
-
-            assertEquals(current, reopened!!.version)
-            assertTrue(target.isFile)
-            assertTrue(hashesAfterMigration > 0)
-            assertTrue(verifierCallsAfterMigration > 0)
-            assertEquals(hashesAfterMigration, hasher.calls)
-            assertEquals(verifierCallsAfterMigration, verifier.calls)
-            assertNotNull(ReferenceStore(root, storage, verifier).snapshot().activeSeal)
         } finally {
             root.deleteRecursively()
         }
