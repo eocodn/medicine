@@ -20,18 +20,20 @@ class MedicineBridge(
     private val dispatcher: BridgeRequestDispatcher
 
     init {
-        vault.openForUse()
-        try {
-            api = Python.getInstance()
-                .getModule("medicine_app.mobile_api")
-                .callAttr(
-                    "create_bridge",
-                    referenceDatabase.absolutePath,
-                    personalDatabase.absolutePath,
-                )
-            api.callAttr("prepare_for_seal")
-        } finally {
-            vault.sealAfterUse()
+        api = PersonalDatabaseOperationCoordinator.exclusive {
+            vault.openForUse()
+            try {
+                Python.getInstance()
+                    .getModule("medicine_app.mobile_api")
+                    .callAttr(
+                        "create_bridge",
+                        referenceDatabase.absolutePath,
+                        personalDatabase.absolutePath,
+                    )
+                    .also { it.callAttr("prepare_for_seal") }
+            } finally {
+                vault.sealAfterUse()
+            }
         }
         dispatcher = BridgeRequestDispatcher(
             executor = requestExecutor,
@@ -89,26 +91,27 @@ class MedicineBridge(
         }
     }
 
-    private fun callPersonalApi(request: BridgeRequest, readOnly: Boolean): String {
-        val openOrigin = try {
-            vault.openForUse()
-        } catch (error: Throwable) {
-            Log.e(TAG, "Personal database vault open failed", error)
-            return failureEnvelope("personal data encryption failure")
-        }
-        var response = callApi(request)
-        try {
-            val discardedReadOnlySnapshot = readOnly && vault.finishReadOnlyUse(openOrigin)
-            if (!discardedReadOnlySnapshot) {
-                api.callAttr("prepare_for_seal")
-                vault.sealAfterUse()
+    private fun callPersonalApi(request: BridgeRequest, readOnly: Boolean): String =
+        PersonalDatabaseOperationCoordinator.exclusive {
+            val openOrigin = try {
+                vault.openForUse()
+            } catch (error: Throwable) {
+                Log.e(TAG, "Personal database vault open failed", error)
+                return@exclusive failureEnvelope("personal data encryption failure")
             }
-        } catch (error: Throwable) {
-            Log.e(TAG, "Personal database vault seal failed", error)
-            response = failureEnvelope("personal data encryption failure")
+            var response = callApi(request)
+            try {
+                val discardedReadOnlySnapshot = readOnly && vault.finishReadOnlyUse(openOrigin)
+                if (!discardedReadOnlySnapshot) {
+                    api.callAttr("prepare_for_seal")
+                    vault.sealAfterUse()
+                }
+            } catch (error: Throwable) {
+                Log.e(TAG, "Personal database vault seal failed", error)
+                response = failureEnvelope("personal data encryption failure")
+            }
+            response
         }
-        return response
-    }
 
     private fun callApi(request: BridgeRequest): String = try {
         api.callAttr("request", request.method, request.path, request.body).toString()
