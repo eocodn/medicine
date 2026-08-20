@@ -33,8 +33,27 @@ class R2PublicAuditTest(unittest.TestCase):
         self.assertEqual(result["object_count"], 3)
         self.assertEqual(result["unexpected_keys"], [])
 
+    def test_v1_and_v2_reference_namespaces_can_coexist_during_protocol_migration(self) -> None:
+        result = audit_public_bucket(
+            FakeS3(
+                [
+                    "reference/v1/latest.json",
+                    "reference/v1/full/legacy.sqlite.gz",
+                    "reference/v2/latest.json",
+                    "reference/v2/contracts/1/full/current.sqlite.gz",
+                ]
+            ),
+            "medicine-reference",
+        )
+
+        self.assertEqual(result["status"], "safe_to_expose")
+        self.assertEqual(
+            result["latest_keys"],
+            ["reference/v1/latest.json", "reference/v2/latest.json"],
+        )
+
     def test_any_non_reference_object_blocks_public_exposure(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "outside reference/v1/"):
+        with self.assertRaisesRegex(RuntimeError, "outside public reference namespaces"):
             audit_public_bucket(
                 FakeS3(["reference/v1/latest.json", "private/source.zip"]),
                 "medicine-reference",

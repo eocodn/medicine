@@ -18,8 +18,9 @@ from .integrated_build import assemble_integrated_databases, build_integrated_da
 from .mobile import build_mobile_database
 from medicine_app.reference_update import verify_reference_database
 from .release import apply_chunk_patch, prepare_release
-from .release_r2 import download_object_from_env, publish_release_from_env
+from .release_r2 import download_object_from_env
 from .release_r2_public import audit_public_bucket_from_env
+from .release_window import publish_contract_window_from_env
 from .release_signing import verify_signed_envelope
 from .source_layout import MfdsSourceLayout
 from .substance_build import (
@@ -342,7 +343,7 @@ def main(argv=None) -> int:
     elif args.command == "r2-public-audit":
         payload = audit_public_bucket_from_env()
     elif args.command == "release-publish-r2":
-        payload = publish_release_from_env(
+        payload = publish_contract_window_from_env(
             args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at
         )
     else:
