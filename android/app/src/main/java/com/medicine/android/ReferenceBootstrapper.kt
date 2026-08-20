@@ -5,6 +5,8 @@ import android.os.StatFs
 import java.io.File
 import java.security.MessageDigest
 
+internal const val REFERENCE_STATE_FILE = "state.v1"
+
 data class InstalledReference(
     val database: File,
     val datasetId: String,
@@ -185,8 +187,9 @@ class AndroidReferenceInstaller(
         }
         val store = ReferenceStore(
             referenceDir,
-            AtomicFileReferenceStateStorage(File(referenceDir, STATE_FILE)),
+            AtomicFileReferenceStateStorage(File(referenceDir, REFERENCE_STATE_FILE)),
             PythonReferenceDatabaseVerifier(),
+            fileSealProvider = AndroidReferenceFileSealProvider(),
         )
         val source = HttpsReferenceReleaseSource(
             baseUrl,
@@ -210,7 +213,4 @@ class AndroidReferenceInstaller(
         )
     }
 
-    companion object {
-        private const val STATE_FILE = "state.v2"
-    }
 }
