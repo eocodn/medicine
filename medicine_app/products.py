@@ -13,10 +13,17 @@ from .product_search import (
     fuzzy_candidate_fragments,
     match_product_fields,
     parse_product_search_query,
-    raw_case_width_glob,
     raw_candidate_variants,
 )
+from .product_search_candidate_text import text_candidate_anchor_patterns
 from .product_search_numeric import raw_numeric_compat_glob
+
+
+# Candidate SQL is only a bounded superset prefilter. Final matching validates
+# every token/strength, so dropping excess predicates can broaden candidates
+# but cannot turn a valid match into a miss or overflow SQLite expression depth.
+_MAX_CANDIDATE_TEXT_TOKENS = 3
+_MAX_CANDIDATE_NUMBERS = 3
 
 
 class ProductRepository:
@@ -241,39 +248,66 @@ class ProductRepository:
         fragments: tuple[str, ...] = (),
     ) -> list[sqlite3.Row]:
         status_sql = "" if include_inactive else "AND p.permit_status='active'"
-        text_tokens = fragments or query.text_tokens
-        if not text_tokens:
+        raw_text_tokens = tuple(dict.fromkeys(fragments or query.text_tokens))
+        if not raw_text_tokens:
             return []
+        text_limit = 6 if fragments else _MAX_CANDIDATE_TEXT_TOKENS
+        token_pattern_candidates = [
+            (index, token, text_candidate_anchor_patterns(token))
+            for index, token in enumerate(raw_text_tokens)
+        ]
+        fragment_has_unbounded_anchor = bool(
+            fragments
+            and (
+                len(raw_text_tokens) > text_limit
+                or any(
+                    not patterns
+                    for _index, _token, patterns in token_pattern_candidates
+                )
+            )
+        )
+        text_token_patterns = tuple(
+            (token, patterns)
+            for _index, token, patterns in sorted(
+                (candidate for candidate in token_pattern_candidates if candidate[2]),
+                key=lambda item: (-len(item[1]), item[0]),
+            )[:text_limit]
+        )
         params: list[object] = []
 
         def field_clause(field: str, *, fragment_mode: bool) -> str:
             clauses: list[str] = []
-            text_clauses: list[str] = []
-            for token in dict.fromkeys(text_tokens):
-                variant_clauses: list[str] = []
-                for variant in raw_candidate_variants(token):
-                    variant_clauses.append(f"p.{field} LIKE ?")
-                    params.append(f"%{variant}%")
-                case_width_glob = raw_case_width_glob(token)
-                if case_width_glob:
-                    variant_clauses.append(f"p.{field} GLOB ?")
-                    params.append(case_width_glob)
-                text_clauses.append("(" + " OR ".join(variant_clauses) + ")")
-            text_joiner = " OR " if fragment_mode else " AND "
-            clauses.append("(" + text_joiner.join(text_clauses) + ")")
-            for number in dict.fromkeys(query.number_tokens):
+            token_clauses: list[str] = []
+            text_params: list[object] = []
+            for _token, anchor_groups in text_token_patterns:
+                anchor_clauses: list[str] = []
+                for patterns in anchor_groups:
+                    variant_clauses = []
+                    for operator, pattern in patterns:
+                        variant_clauses.append(f"p.{field} {operator} ?")
+                        text_params.append(pattern)
+                    anchor_clauses.append("(" + " OR ".join(variant_clauses) + ")")
+                token_clauses.append("(" + " AND ".join(anchor_clauses) + ")")
+            if token_clauses and not (fragment_mode and fragment_has_unbounded_anchor):
+                text_joiner = " OR " if fragment_mode else " AND "
+                clauses.append("(" + text_joiner.join(token_clauses) + ")")
+                params.extend(text_params)
+            numbers = tuple(dict.fromkeys(query.number_tokens))
+            for number in numbers[:_MAX_CANDIDATE_NUMBERS]:
                 variant_clauses = []
                 for operator, pattern in ProductRepository._number_candidate_patterns(number):
                     variant_clauses.append(f"p.{field} {operator} ?")
                     params.append(pattern)
                 clauses.append("(" + " OR ".join(variant_clauses) + ")")
+            if not clauses:
+                return "(1=1)"
             return "(" + " AND ".join(clauses) + ")"
 
-        # Final matching is field-local: text and numeric qualifiers must be
-        # satisfied by the same product field. Candidate SQL mirrors that
-        # invariant so retrieval remains a superset without borrowing a name
-        # from one field and a strength from another. OCR fragment fallback is
-        # product-name-only because fuzzy matching is product-name-only.
+        # Final matching is field-local. Candidate SQL uses only bounded safe
+        # anchors from that same field, so it can broaden retrieval but never
+        # borrow a text qualifier from one field and a strength from another.
+        # OCR fragment fallback is product-name-only because fuzzy matching is
+        # product-name-only.
         fields = ("product_name",) if fragments else (
             "product_name",
             "ingredient_text",
