@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 
 from medicine_app.core import MedicationApp
-from medicine_app.product_search import match_product_fields, parse_product_search_query
+from medicine_app.product_search import (
+    match_product_fields,
+    parse_product_search_query,
+    raw_candidate_variants,
+)
+from medicine_app.products import ProductRepository
 from medicine_canonical.mobile import build_mobile_database
 from tests.canonical_fixture_support import add_product
 from tests.test_app_core import make_canonical_db
@@ -46,6 +51,20 @@ class ProductSearchQueryTest(unittest.TestCase):
 
         self.assertIsNotNone(exact)
         self.assertIsNone(collision)
+
+    def test_raw_candidate_variants_cover_nfkc_compatibility_equivalents(self) -> None:
+        self.assertIn("Ⅱ", raw_candidate_variants("ii"))
+        self.assertIn("ⅱ", raw_candidate_variants("ii"))
+        self.assertIn("１", raw_candidate_variants("1"))
+        self.assertNotIn("①", raw_candidate_variants("1"))
+        self.assertIn("fvⅢ", raw_candidate_variants("fviii"))
+
+    def test_compatibility_units_and_enclosed_markers_keep_search_semantics(self) -> None:
+        parsed = parse_product_search_query("약150㎎①수출명150㎎Capsule②")
+
+        self.assertEqual(parsed.number_tokens, ("150", "150"))
+        self.assertEqual(parsed.unit_tokens, ("mg", "mg"))
+        self.assertEqual(parsed.text_tokens, ("약", "수출명", "capsule"))
 
     def test_only_code_shaped_queries_use_identifier_candidate_lookup(self) -> None:
         self.assertTrue(parse_product_search_query("EDI-SYN-25").identifier_like)
@@ -159,6 +178,24 @@ class ProductSearchIntegrationTest(unittest.TestCase):
             )
             add_product(
                 con,
+                "CIRCLED-EXPORT",
+                "코러스시프로플록사신정500밀리그람(수출명①시프로플록사신정500mg②Super-cipro)(수출용)",
+                "Ciprofloxacin",
+            )
+            add_product(
+                con,
+                "SQUARE-UNIT-LATIN",
+                "동구염산클린다마이신캅셀150㎎[수출명:DongkooClindamycin150㎎Capsule]",
+                "Clindamycin",
+            )
+            add_product(
+                con,
+                "EMBEDDED-ROMAN",
+                "그린모노주250단위(건조FVⅢ:C단클론항체정제사람혈액응고제VⅢ:C인자)",
+                "Coagulation Factor VIII",
+            )
+            add_product(
+                con,
                 "ARONAMIN-GOLD",
                 "아로나민골드정",
                 "Vitamin Complex",
@@ -168,6 +205,30 @@ class ProductSearchIntegrationTest(unittest.TestCase):
                 "MOATAMIN-GOLD",
                 "모아타민골드비백정",
                 "Vitamin Complex",
+            )
+            add_product(
+                con,
+                "DOT-MIXTURE",
+                "혼합성분정",
+                "Pelargonium Sidoides 11% Ethanol Extract (1→8~10)·Glycerin Mixed Solution (8:2)",
+            )
+            add_product(
+                con,
+                "NESTED-SLASH",
+                "괄호성분정",
+                "Human Erythropoietin (rDNA/ Vector; Host: CH0 dhfr-ATCC CRL9096)/Glycerin 7",
+            )
+            add_product(
+                con,
+                "CROSS-FIELD",
+                "Borrower정",
+                "Unrelated Ingredient 5",
+            )
+            add_product(
+                con,
+                "FULLWIDTH-STRENGTH",
+                "풀위드정５밀리그램",
+                "Fullwidth Ingredient",
             )
         self.app = MedicationApp(self.canonical_db, self.personal_db)
 
@@ -203,6 +264,19 @@ class ProductSearchIntegrationTest(unittest.TestCase):
         self.assertEqual(self.app.search_products("Lipase 500", limit=10), [])
         self.assert_first("Biodiastase 500", "DIGEST-500")
 
+    def test_ingredient_component_matching_respects_top_level_composition_boundaries(self) -> None:
+        self.assertEqual(self.app.search_products("Glycerin 11", limit=10), [])
+        self.assert_first("Glycerin 8", "DOT-MIXTURE")
+        self.assert_first("Human Erythropoietin 9096", "NESTED-SLASH")
+
+    def test_structured_candidate_generation_does_not_borrow_numbers_across_fields(self) -> None:
+        query = parse_product_search_query("Borrower 5")
+        with sqlite3.connect(self.canonical_db) as con:
+            con.row_factory = sqlite3.Row
+            rows = ProductRepository._structured_candidate_rows(con, query, False)
+
+        self.assertNotIn("CROSS-FIELD", [row["item_seq"] for row in rows])
+
     def test_ascii_units_before_hangul_forms_and_thousands_are_normalized(self) -> None:
         self.assert_first("알로판 400mg", "ALLOPAN-400")
         self.assert_first("알로판 400 밀리그램", "ALLOPAN-400")
@@ -210,6 +284,7 @@ class ProductSearchIntegrationTest(unittest.TestCase):
         self.assert_first("글루파 1000 mg", "GLUPA-COMMA")
         self.assert_first("글루파 1,000 mg", "GLUPA-COMMA")
         self.assert_first("디3 베이스 10000", "D3-COMMA")
+        self.assert_first("풀위드 5", "FULLWIDTH-STRENGTH")
 
     def test_punctuation_separated_text_uses_normalized_matching(self) -> None:
         self.assert_first("하트만-용액", "HARTMANN")
@@ -285,6 +360,39 @@ class ProductSearchIntegrationTest(unittest.TestCase):
     def test_nfkc_equivalent_product_text_survives_candidate_generation(self) -> None:
         self.assert_first("지로티프Ⅱ", "ROMAN-II")
         self.assert_first("지로티프 II", "ROMAN-II")
+
+    def test_nfkc_equivalent_target_is_not_hidden_by_raw_ascii_candidate(self) -> None:
+        with sqlite3.connect(self.canonical_db) as con:
+            add_product(
+                con,
+                "ROMAN-DISTRACTOR",
+                "지로티프II가짜정",
+                "Distractor",
+            )
+        results = self.app.search_products("지로티프 II", limit=10)
+        refs = [row["product_ref"] for row in results]
+
+        self.assertIn("ROMAN-II", refs)
+        self.assertIn("ROMAN-DISTRACTOR", refs)
+
+    def test_nfkc_derived_numeric_tokens_retrieve_exact_circled_digit_product_name(self) -> None:
+        exact_name = "코러스시프로플록사신정500밀리그람(수출명①시프로플록사신정500mg②Super-cipro)(수출용)"
+        results = self.app.search_products(exact_name, limit=10)
+
+        self.assertIn("CIRCLED-EXPORT", [row["product_ref"] for row in results])
+
+    def test_nfkc_compatibility_spans_inside_text_tokens_retrieve_exact_product_name(self) -> None:
+        square_unit = "동구염산클린다마이신캅셀150㎎[수출명:DongkooClindamycin150㎎Capsule]"
+        embedded_roman = "그린모노주250단위(건조FVⅢ:C단클론항체정제사람혈액응고제VⅢ:C인자)"
+
+        self.assertIn(
+            "SQUARE-UNIT-LATIN",
+            [row["product_ref"] for row in self.app.search_products(square_unit, limit=10)],
+        )
+        self.assertIn(
+            "EMBEDDED-ROMAN",
+            [row["product_ref"] for row in self.app.search_products(embedded_roman, limit=10)],
+        )
 
     def test_explain_is_present_for_structured_legacy_and_identifier_paths(self) -> None:
         structured = self.app.search_products("씬지록신 25", limit=10, explain=True)[0]

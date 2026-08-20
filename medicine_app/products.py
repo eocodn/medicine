@@ -10,10 +10,10 @@ from .dosage_forms import infer_administration_route
 from .product_search import (
     ProductSearchMatch,
     ProductSearchQuery,
-    compatibility_candidate_fragments,
     fuzzy_candidate_fragments,
     match_product_fields,
     parse_product_search_query,
+    raw_candidate_variants,
 )
 
 
@@ -207,15 +207,25 @@ class ProductRepository:
         return results
 
     @staticmethod
-    def _number_raw_variants(number: str) -> tuple[str, ...]:
-        variants = [number]
+    def _number_raw_variants(
+        number: str,
+    ) -> tuple[str, ...]:
+        normalized_variants = [number]
         integer, dot, fraction = number.partition(".")
         if integer.isdigit() and len(integer) > 3:
             grouped = f"{int(integer):,}"
             if dot:
                 grouped = f"{grouped}.{fraction}"
-            if grouped not in variants:
-                variants.append(grouped)
+            if grouped not in normalized_variants:
+                normalized_variants.append(grouped)
+        variants: list[str] = []
+        for normalized in normalized_variants:
+            for raw in raw_candidate_variants(
+                normalized,
+                include_fullwidth=True,
+            ):
+                if raw not in variants:
+                    variants.append(raw)
         return tuple(variants)
 
     @staticmethod
@@ -230,38 +240,44 @@ class ProductRepository:
         text_tokens = fragments or query.text_tokens
         if not text_tokens:
             return []
-        text_clauses: list[str] = []
         params: list[object] = []
-        # Deterministic tokens narrow with AND. Do not cap this intermediate
-        # result: a fixed pre-ranking cap can discard the eventual best match.
-        # OCR fragments are alternatives because one fragment may contain the
-        # recognition error while another remains exact.
-        for token in text_tokens:
-            like = f"%{token}%"
-            text_clauses.append(
-                "(p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?)"
-            )
-            params.extend((like, like, like))
-        text_joiner = " OR " if fragments else " AND "
-        text_clause = text_joiner.join(text_clauses)
-        number_clauses: list[str] = []
-        if query.number_tokens:
-            for number in query.number_tokens:
+
+        def field_clause(field: str, *, fragment_mode: bool) -> str:
+            clauses: list[str] = []
+            text_clauses: list[str] = []
+            for token in dict.fromkeys(text_tokens):
                 variant_clauses: list[str] = []
+                for variant in raw_candidate_variants(token):
+                    variant_clauses.append(f"p.{field} LIKE ?")
+                    params.append(f"%{variant}%")
+                text_clauses.append("(" + " OR ".join(variant_clauses) + ")")
+            text_joiner = " OR " if fragment_mode else " AND "
+            clauses.append("(" + text_joiner.join(text_clauses) + ")")
+            for number in dict.fromkeys(query.number_tokens):
+                variant_clauses = []
                 for variant in ProductRepository._number_raw_variants(number):
-                    like = f"%{variant}%"
-                    variant_clauses.append(
-                        "(p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?)"
-                    )
-                    params.extend((like, like, like))
-                number_clauses.append("(" + " OR ".join(variant_clauses) + ")")
-        number_clause = ""
-        if number_clauses:
-            number_clause = " AND " + " AND ".join(number_clauses)
+                    variant_clauses.append(f"p.{field} LIKE ?")
+                    params.append(f"%{variant}%")
+                clauses.append("(" + " OR ".join(variant_clauses) + ")")
+            return "(" + " AND ".join(clauses) + ")"
+
+        # Final matching is field-local: text and numeric qualifiers must be
+        # satisfied by the same product field. Candidate SQL mirrors that
+        # invariant so retrieval remains a superset without borrowing a name
+        # from one field and a strength from another. OCR fragment fallback is
+        # product-name-only because fuzzy matching is product-name-only.
+        fields = ("product_name",) if fragments else (
+            "product_name",
+            "ingredient_text",
+            "manufacturer",
+        )
+        candidate_clause = " OR ".join(
+            field_clause(field, fragment_mode=bool(fragments)) for field in fields
+        )
         return con.execute(
             f"""SELECT p.*
                 FROM products p
-                WHERE (({text_clause}){number_clause}) {status_sql}
+                WHERE ({candidate_clause}) {status_sql}
                 """,
             params,
         ).fetchall()
@@ -369,16 +385,6 @@ class ProductRepository:
             rows = self._structured_candidate_rows(con, query, include_inactive)
             ranked.extend(self._rank_structured_rows(rows, query))
             ranked.sort(key=lambda item: item[0])
-            if not ranked and query.mode == "manual":
-                fragments = compatibility_candidate_fragments(query)
-                if fragments:
-                    rows = self._structured_candidate_rows(
-                        con,
-                        query,
-                        include_inactive,
-                        fragments=fragments,
-                    )
-                    ranked = self._rank_structured_rows(rows, query)
             if not ranked and query.mode == "ocr":
                 fragments = fuzzy_candidate_fragments(query)
                 if fragments:

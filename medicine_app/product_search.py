@@ -30,6 +30,32 @@ _OCR_TRAILING_REGIMEN_RE = re.compile(
     r"(__unit_(?:mg|ug|ml)__)(?:\s*)(\d+(?:\.\d+)?)(?:\s*)(?:정|캡슐|포)\s*$",
     re.IGNORECASE,
 )
+_ENCLOSED_ALPHANUMERIC_RE = re.compile(r"[\u2460-\u24ff]")
+_COMPATIBILITY_RANGES = (
+    (0x2070, 0x209F),  # superscripts/subscripts
+    (0x2100, 0x214F),  # letterlike symbols
+    (0x2150, 0x218F),  # number forms / Roman numerals
+    (0x2460, 0x24FF),  # enclosed alphanumerics
+    (0x3200, 0x33FF),  # enclosed CJK / compatibility units
+    (0xFE30, 0xFE4F),  # CJK compatibility forms
+    (0xFF00, 0xFFEF),  # halfwidth/fullwidth forms
+)
+_INGREDIENT_COMPONENT_SEPARATORS = frozenset(("/", "·", "ㆍ", "∙", "⋅"))
+_BRACKET_PAIRS = {
+    "(": ")",
+    "[": "]",
+    "{": "}",
+    "<": ">",
+    "（": "）",
+    "［": "］",
+    "｛": "｝",
+    "〈": "〉",
+}
+_RAW_UNIT_SYMBOLS = {
+    "㎎": "밀리그램",
+    "㎍": "마이크로그램",
+    "㎖": "밀리리터",
+}
 
 
 @dataclass(frozen=True)
@@ -84,14 +110,139 @@ def _normalize_number(value: str) -> str:
     return format(number.normalize(), "f")
 
 
+def _is_enclosed_numeric_marker(char: str) -> bool:
+    codepoint = ord(char)
+    if not 0x2460 <= codepoint <= 0x24FF:
+        return False
+    normalized = unicodedata.normalize("NFKC", char)
+    return any(value.isdigit() for value in normalized) and not any(
+        value.isalpha() for value in normalized
+    )
+
+
+def _replace_enclosed_numeric_marker(match: re.Match[str]) -> str:
+    char = match.group(0)
+    return " " if _is_enclosed_numeric_marker(char) else char
+
+
 def _canonical_text(value: object) -> str:
-    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    raw = _ENCLOSED_ALPHANUMERIC_RE.sub(
+        _replace_enclosed_numeric_marker,
+        str(value or ""),
+    )
+    for symbol, unit_name in _RAW_UNIT_SYMBOLS.items():
+        raw = raw.replace(symbol, f" {unit_name} ")
+    text = unicodedata.normalize("NFKC", raw).casefold()
     text = text.replace("µ", "μ")
     for pattern, unit in _ASCII_UNIT_PATTERNS:
         text = pattern.sub(f" {_UNIT_SENTINEL[unit]} ", text)
     for pattern, unit in _KOREAN_UNIT_PATTERNS:
         text = pattern.sub(f" {_UNIT_SENTINEL[unit]} ", text)
     return text
+
+
+def _single_compatibility_token(value: str) -> str | None:
+    """Return the one search token represented by a compatibility glyph.
+
+    Candidate SQL sees raw Contract-v1 text while the authoritative matcher
+    sees NFKC-normalized text. Building this bounded reverse map from Unicode
+    compatibility blocks lets candidate retrieval remain a superset of final
+    matching without adding a database-side normalized index.
+    """
+    normalized = _canonical_text(value)
+    matches = list(_TOKEN_RE.finditer(normalized))
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    unit = match.group(1)
+    token = match.group(0).casefold()
+    if unit:
+        return unit.casefold()
+    if token[0].isdigit():
+        return _normalize_number(token)
+    return token
+
+
+def _build_compatibility_equivalents() -> dict[str, tuple[str, ...]]:
+    equivalents: dict[str, list[str]] = {}
+    for start, end in _COMPATIBILITY_RANGES:
+        for codepoint in range(start, end + 1):
+            raw = chr(codepoint)
+            token = _single_compatibility_token(raw)
+            if token is None or raw.casefold() == token:
+                continue
+            values = equivalents.setdefault(token, [])
+            if raw not in values:
+                values.append(raw)
+    return {token: tuple(values) for token, values in equivalents.items()}
+
+
+_COMPATIBILITY_EQUIVALENTS = _build_compatibility_equivalents()
+_FULLWIDTH_BY_ASCII = {
+    unicodedata.normalize("NFKC", chr(codepoint)).casefold(): chr(codepoint)
+    for codepoint in range(0xFF01, 0xFF5F)
+    if len(unicodedata.normalize("NFKC", chr(codepoint)).casefold()) == 1
+}
+_EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST: dict[str, tuple[str, ...]] = {}
+for _key in _COMPATIBILITY_EQUIVALENTS:
+    if len(_key) < 2:
+        continue
+    _first = _key[0]
+    _EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST[_first] = tuple(sorted(
+        (*_EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST.get(_first, ()), _key),
+        key=len,
+        reverse=True,
+    ))
+
+
+def _embedded_compatibility_variants(token: str, *, limit: int = 24) -> tuple[str, ...]:
+    """Expand compatibility glyphs that can replace a span inside one token."""
+    variants: list[str] = []
+
+    def walk(index: int, pieces: list[str], replaced: bool) -> None:
+        if len(variants) >= limit:
+            return
+        if index >= len(token):
+            candidate = "".join(pieces)
+            if replaced and candidate != token and candidate not in variants:
+                variants.append(candidate)
+            return
+        for key in _EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST.get(token[index], ()):
+            if not token.startswith(key, index):
+                continue
+            for raw in _COMPATIBILITY_EQUIVALENTS[key]:
+                walk(index + len(key), [*pieces, raw], True)
+                if len(variants) >= limit:
+                    return
+        walk(index + 1, [*pieces, token[index]], replaced)
+
+    walk(0, [], False)
+    return tuple(variants)
+
+
+def raw_candidate_variants(
+    token: str,
+    *,
+    include_fullwidth: bool = True,
+) -> tuple[str, ...]:
+    """Return bounded raw spellings that normalize to the same search token."""
+    token = str(token or "").casefold()
+    if not token:
+        return ()
+    variants = [token]
+    if include_fullwidth:
+        fullwidth = "".join(_FULLWIDTH_BY_ASCII.get(char, char) for char in token)
+        if fullwidth != token:
+            variants.append(fullwidth)
+    is_number = bool(re.fullmatch(r"\d+(?:\.\d+)?", token))
+    if not is_number:
+        for raw in _COMPATIBILITY_EQUIVALENTS.get(token, ()):
+            if raw not in variants:
+                variants.append(raw)
+        for raw in _embedded_compatibility_variants(token):
+            if raw not in variants:
+                variants.append(raw)
+    return tuple(variants)
 
 
 def parse_product_search_query(value: object, *, mode: str = "manual") -> ProductSearchQuery:
@@ -245,18 +396,53 @@ def _match_text_field(
     )
 
 
+def _ingredient_components(value: object) -> tuple[str, ...]:
+    """Split canonical ingredient composition only at top-level separators.
+
+    Canonical ingredient text uses slash and middle-dot forms between distinct
+    components, but the same punctuation can occur inside parenthesized source
+    descriptors. Numeric qualifiers must stay within one top-level component.
+    """
+    text = str(value or "")
+    if not text:
+        return ()
+    components: list[str] = []
+    current: list[str] = []
+    closing_stack: list[str] = []
+    for char in text:
+        if char in _BRACKET_PAIRS:
+            closing_stack.append(_BRACKET_PAIRS[char])
+            current.append(char)
+            continue
+        if closing_stack and char == closing_stack[-1]:
+            closing_stack.pop()
+            current.append(char)
+            continue
+        if not closing_stack and char in _INGREDIENT_COMPONENT_SEPARATORS:
+            component = "".join(current).strip()
+            if component:
+                components.append(component)
+            current = []
+            continue
+        current.append(char)
+    component = "".join(current).strip()
+    if component:
+        components.append(component)
+    return tuple(components)
+
+
 def _match_ingredient_field(
     query: ProductSearchQuery,
     value: object,
 ) -> ProductSearchMatch | None:
-    # A numeric/unit qualifier belongs to one ingredient component. Matching
-    # numbers against the whole slash-separated field can bind another
-    # component's strength to the queried ingredient (e.g. Cellulase 500 when
-    # only Biodiastase is 500).
+    # A numeric/unit qualifier belongs to one top-level ingredient component.
+    # Matching numbers against the whole field can bind another component's
+    # strength to the queried ingredient (e.g. Glycerin borrowing 11% from a
+    # preceding Pelargonium component).
     if query.number_tokens or query.unit_tokens:
         matches = [
             _match_text_field(query, component, field="ingredient_text", field_rank=1)
-            for component in str(value or "").split("/")
+            for component in _ingredient_components(value)
         ]
         found = [match for match in matches if match is not None]
         return min(found, key=lambda match: match.sort_key) if found else None
@@ -270,23 +456,23 @@ def match_product_fields(
     ingredient_text: object = None,
     manufacturer: object = None,
 ) -> ProductSearchMatch | None:
-    matches = [
-        _match_text_field(
-            query,
-            product_name,
-            field="product_name",
-            field_rank=0,
-        ),
-        _match_ingredient_field(query, ingredient_text),
-        _match_text_field(
-            query,
-            manufacturer,
-            field="manufacturer",
-            field_rank=2,
-        ),
-    ]
-    found = [match for match in matches if match is not None]
-    return min(found, key=lambda match: match.sort_key) if found else None
+    product_match = _match_text_field(
+        query,
+        product_name,
+        field="product_name",
+        field_rank=0,
+    )
+    if product_match is not None:
+        return product_match
+    ingredient_match = _match_ingredient_field(query, ingredient_text)
+    if ingredient_match is not None:
+        return ingredient_match
+    return _match_text_field(
+        query,
+        manufacturer,
+        field="manufacturer",
+        field_rank=2,
+    )
 
 
 def fuzzy_candidate_fragments(query: ProductSearchQuery) -> tuple[str, ...]:
@@ -309,32 +495,11 @@ def fuzzy_candidate_fragments(query: ProductSearchQuery) -> tuple[str, ...]:
     return tuple(fragments[:6])
 
 
-def compatibility_candidate_fragments(query: ProductSearchQuery) -> tuple[str, ...]:
-    """Return raw-safe anchors for an exact normalized-match retry.
-
-    SQLite candidate filtering sees the contract-v1 raw product text, while
-    final matching sees NFKC-normalized text. If a compatibility glyph changes
-    bytes (for example Ⅱ -> II), a full normalized token can miss the row before
-    exact normalized matching gets a chance. This fallback is only used after
-    the deterministic candidate pass is empty; it does not relax final matching.
-    """
-    fragments: list[str] = []
-    for token in sorted(query.text_tokens, key=len, reverse=True):
-        if len(token) < 3:
-            continue
-        for fragment in (token, token[:3], token[-3:]):
-            if len(fragment) >= 3 and fragment not in fragments:
-                fragments.append(fragment)
-        if len(fragments) >= 6:
-            break
-    return tuple(fragments[:6])
-
-
 __all__ = [
     "ProductSearchMatch",
     "ProductSearchQuery",
-    "compatibility_candidate_fragments",
     "fuzzy_candidate_fragments",
     "match_product_fields",
     "parse_product_search_query",
+    "raw_candidate_variants",
 ]
