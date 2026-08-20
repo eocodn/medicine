@@ -135,16 +135,20 @@ class MainActivity : ComponentActivity() {
                     encryptedPersonalDatabase,
                     ::personalDatabaseKey,
                 )
-                StartupSession(
-                    bridge = MedicineBridge(reference.database, personalDatabase, vault),
-                    reference = reference,
-                )
+                val bridge = MedicineBridge(reference.database, personalDatabase, vault)
+                if (!reference.referenceAvailable) {
+                    bridge.setReferenceAvailable(
+                        false,
+                        reference.referenceUnavailableReason ?: "update_required",
+                    )
+                }
+                StartupSession(bridge = bridge, reference = reference)
             }.onSuccess { session ->
                 startupRunning.set(false)
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) setupWebView(session.bridge)
                 }
-                scheduleReferenceUpdate(session.reference)
+                scheduleReferenceUpdate(session.reference, session.bridge)
             }.onFailure { error ->
                 startupRunning.set(false)
                 Log.e(TAG, "Application startup failed", error)
@@ -158,6 +162,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startupFailureMessage(error: Throwable): String = when {
+        error is ReferenceContractRetiredException ->
+            "현재 앱 버전의 안전 데이터 지원이 종료되었습니다.\n앱을 업데이트해주세요."
         error is ReferenceBootstrapStorageException ->
             "안전 데이터를 저장할 공간이 부족합니다.\n공간을 확보한 뒤 다시 시도해주세요."
         error.hasCause<UnknownHostException>() ||
@@ -178,7 +184,7 @@ class MainActivity : ComponentActivity() {
         return false
     }
 
-    private fun scheduleReferenceUpdate(reference: InstalledReference) {
+    private fun scheduleReferenceUpdate(reference: InstalledReference, bridge: MedicineBridge) {
         val baseUrl = BuildConfig.REFERENCE_UPDATE_BASE_URL.trim()
         if (baseUrl.isEmpty()) {
             Log.i(TAG, "Reference updater is disabled: no distribution base URL configured")
@@ -207,6 +213,9 @@ class MainActivity : ComponentActivity() {
                 }
                 if (result.status == ReferenceUpdateStatus.FAILED) {
                     Log.e(TAG, "Reference update failed: ${result.detail}")
+                } else if (result.status == ReferenceUpdateStatus.UPDATE_REQUIRED) {
+                    bridge.setReferenceAvailable(false, "update_required")
+                    Log.w(TAG, "Reference contract retired; safety-data operations are blocked")
                 } else {
                     Log.i(TAG, "Reference update result=${result.status} sequence=${result.releaseSequence}")
                 }

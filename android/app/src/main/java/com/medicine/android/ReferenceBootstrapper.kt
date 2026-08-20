@@ -12,7 +12,12 @@ data class InstalledReference(
     val store: ReferenceStore,
     val referenceDir: File,
     val recoveryReason: String? = null,
-)
+) {
+    val referenceAvailable: Boolean
+        get() = !store.isContractRetired(version.contractMajor)
+    val referenceUnavailableReason: String?
+        get() = if (referenceAvailable) null else "update_required"
+}
 
 interface ReferenceStorageCapacity {
     fun availableBytes(path: File): Long
@@ -40,13 +45,13 @@ class ReferenceBootstrapper(
     private val storageCapacity: ReferenceStorageCapacity,
     private val observer: ReferenceUpdateObserver = NoOpReferenceBootstrapObserver,
 ) {
-    fun ensureInstalled(expectedSchemaVersion: String): InstalledReferenceVersion =
+    fun ensureInstalled(expectedContractMajor: Int): InstalledReferenceVersion =
         ReferenceOperationCoordinator.exclusive {
-            ensureInstalledExclusive(expectedSchemaVersion)
+            ensureInstalledExclusive(expectedContractMajor)
         }
 
-    private fun ensureInstalledExclusive(expectedSchemaVersion: String): InstalledReferenceVersion {
-        store.openForStartup(expectedSchemaVersion)?.let {
+    private fun ensureInstalledExclusive(expectedContractMajor: Int): InstalledReferenceVersion {
+        store.openForStartup(expectedContractMajor)?.let {
             cleanupBootstrapFiles()
             observer.phase("ready")
             return it
@@ -54,8 +59,9 @@ class ReferenceBootstrapper(
 
         observer.phase("manifest")
         val release = source.fetchLatest()
-        require(release.schemaVersion == expectedSchemaVersion) {
-            "reference release schema is incompatible with this app"
+        store.observeSignedRoot(release.releaseSequence, release.rootHash)
+        require(release.contractMajor == expectedContractMajor) {
+            "reference release contract is incompatible with this app"
         }
         val state = store.snapshot()
         require(release.releaseSequence >= state.highestActivatedSequence) {
@@ -65,7 +71,7 @@ class ReferenceBootstrapper(
             datasetId = release.datasetId,
             sha256 = release.targetSha256,
             sizeBytes = release.targetSizeBytes,
-            schemaVersion = release.schemaVersion,
+            contractMajor = release.contractMajor,
             releaseSequence = release.releaseSequence,
         )
         val artifact = release.full
@@ -193,7 +199,7 @@ class AndroidReferenceInstaller(
             PythonReferenceArtifactRebuilder(),
             AndroidReferenceStorageCapacity(),
             observer,
-        ).ensureInstalled(ReferenceRuntimePolicy.SCHEMA_VERSION)
+        ).ensureInstalled(ReferenceRuntimePolicy.CONTRACT_MAJOR)
         return InstalledReference(
             database = selected.file,
             datasetId = selected.version.datasetId,
@@ -205,6 +211,6 @@ class AndroidReferenceInstaller(
     }
 
     companion object {
-        private const val STATE_FILE = "state.v1"
+        private const val STATE_FILE = "state.v2"
     }
 }

@@ -1,6 +1,7 @@
 package com.medicine.android
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -28,14 +29,14 @@ class ReferenceStoreTest {
         data: ByteArray,
         sequence: Long,
         dataset: String,
-        schemaVersion: String = "10",
+        contractMajor: Int = 1,
     ): ReferenceVersion = ReferenceVersion(
         datasetId = "sha256:" + MessageDigest.getInstance("SHA-256")
             .digest(dataset.toByteArray())
             .joinToString("") { "%02x".format(it) },
         sha256 = MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { "%02x".format(it) },
         sizeBytes = data.size.toLong(),
-        schemaVersion = schemaVersion,
+        contractMajor = contractMajor,
         releaseSequence = sequence,
     )
 
@@ -44,7 +45,7 @@ class ReferenceStoreTest {
         val root = Files.createTempDirectory("reference-store-empty").toFile()
         try {
             val storage = MemoryStateStorage()
-            val selected = ReferenceStore(root, storage, FakeDatabaseVerifier()).openForStartup("10")
+            val selected = ReferenceStore(root, storage, FakeDatabaseVerifier()).openForStartup(1)
             assertNull(selected)
             assertEquals(0, ReferenceStore(root, storage, FakeDatabaseVerifier()).snapshot().highestActivatedSequence)
         } finally {
@@ -72,7 +73,7 @@ class ReferenceStoreTest {
             assertNull(store.snapshot().previous)
             assertNull(store.snapshot().pending)
             assertEquals(12, store.snapshot().highestActivatedSequence)
-            assertEquals(initial, ReferenceStore(root, storage, verifier).openForStartup("10")!!.version)
+            assertEquals(initial, ReferenceStore(root, storage, verifier).openForStartup(1)!!.version)
         } finally {
             root.deleteRecursively()
         }
@@ -118,7 +119,7 @@ class ReferenceStoreTest {
             assertEquals(update, store.snapshot().pending)
             assertEquals(1, store.snapshot().highestActivatedSequence)
 
-            val activated = ReferenceStore(root, storage, verifier).openForStartup("10")!!
+            val activated = ReferenceStore(root, storage, verifier).openForStartup(1)!!
             assertEquals(update, activated.version)
             assertEquals(update, ReferenceStore(root, storage, verifier).snapshot().active)
             assertEquals(current, ReferenceStore(root, storage, verifier).snapshot().previous)
@@ -141,13 +142,13 @@ class ReferenceStoreTest {
             val store = ReferenceStore(root, storage, verifier)
             store.installInitial(current, File(root, ".one.sqlite").apply { writeBytes(currentBytes) })
             store.stagePending(seven, File(root, ".seven.sqlite").apply { writeBytes(sevenBytes) })
-            ReferenceStore(root, storage, verifier).openForStartup("10")
+            ReferenceStore(root, storage, verifier).openForStartup(1)
 
             ReferenceStore(root, storage, verifier).fileFor(seven).apply {
                 assertTrue(setWritable(true))
                 writeText("invalid-corruption")
             }
-            val recovered = ReferenceStore(root, storage, verifier).openForStartup("10")!!
+            val recovered = ReferenceStore(root, storage, verifier).openForStartup(1)!!
 
             assertEquals(current, recovered.version)
             assertTrue(recovered.recoveryReason!!.contains("previous"))
@@ -171,7 +172,7 @@ class ReferenceStoreTest {
             )
             val callsAfterInstall = verifier.calls
 
-            ReferenceStore(root, storage, verifier).openForStartup("10")
+            ReferenceStore(root, storage, verifier).openForStartup(1)
 
             assertEquals(callsAfterInstall, verifier.calls)
         } finally {
@@ -186,13 +187,13 @@ class ReferenceStoreTest {
             val storage = MemoryStateStorage()
             val verifier = FakeDatabaseVerifier()
             val bytes = "release-old-schema".toByteArray()
-            val old = version(bytes, 4, "old", schemaVersion = "9")
+            val old = version(bytes, 4, "old", contractMajor = 2)
             ReferenceStore(root, storage, verifier).installInitial(
                 old,
                 File(root, ".old.sqlite").apply { writeBytes(bytes) },
             )
 
-            assertNull(ReferenceStore(root, storage, verifier).openForStartup("10"))
+            assertNull(ReferenceStore(root, storage, verifier).openForStartup(1))
             assertEquals(4, ReferenceStore(root, storage, verifier).snapshot().highestActivatedSequence)
         } finally {
             root.deleteRecursively()
@@ -205,12 +206,54 @@ class ReferenceStoreTest {
         try {
             val storage = MemoryStateStorage().apply { bytes = "corrupt-state".toByteArray() }
             val error = runCatching {
-                ReferenceStore(root, storage, FakeDatabaseVerifier()).openForStartup("10")
+                ReferenceStore(root, storage, FakeDatabaseVerifier()).openForStartup(1)
             }.exceptionOrNull()
 
             assertNotNull(error)
             assertTrue(error is IllegalArgumentException)
             assertTrue(error!!.message!!.contains("invalid reference state"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun signedRootHighWaterRejectsOlderSequenceAndSameSequenceDifferentRoot() {
+        val root = Files.createTempDirectory("reference-store-root-high-water").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val firstHash = "a".repeat(64)
+            val otherHash = "b".repeat(64)
+
+            store.observeSignedRoot(20, firstHash)
+            store.observeSignedRoot(20, firstHash)
+
+            assertEquals(20, store.snapshot().highestSeenRootSequence)
+            assertEquals(firstHash, store.snapshot().highestSeenRootHash)
+            assertTrue(runCatching { store.observeSignedRoot(19, firstHash) }.isFailure)
+            assertTrue(runCatching { store.observeSignedRoot(20, otherHash) }.isFailure)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun observedContractRetirementPersistsAcrossRestartButDoesNotRetireNextContract() {
+        val root = Files.createTempDirectory("reference-store-retired-contract").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val signedRootHash = "d".repeat(64)
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+
+            store.markContractRetired(1, 12, signedRootHash)
+
+            val reopened = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            assertTrue(reopened.isContractRetired(1))
+            assertFalse(reopened.isContractRetired(2))
+            assertEquals(1, reopened.snapshot().highestRetiredContractMajor)
+            assertEquals(12, reopened.snapshot().highestSeenRootSequence)
+            assertEquals(signedRootHash, reopened.snapshot().highestSeenRootHash)
         } finally {
             root.deleteRecursively()
         }

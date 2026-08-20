@@ -241,6 +241,10 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.webkit:webkit:1.13.0")
     testImplementation("junit:junit:4.13.2")
+    // Android ships org.json at runtime; use the matching JVM implementation so
+    // contract-manifest parsing is exercised by local unit tests instead of the
+    // Android stub methods returning default values.
+    testImplementation("org.json:json:20160810")
 }
 
 dependencyLocking {

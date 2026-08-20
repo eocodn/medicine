@@ -329,17 +329,17 @@ class DeploymentConfigTest(unittest.TestCase):
         app_service = compose.split("\n  app:\n", 1)[1].split("\n  web:\n", 1)[0]
         self.assertIn('entrypoint: ["python", "-m", "medicine_app.cli"]', app_service)
 
-    def test_android_bootstrap_schema_matches_embedded_runtime_schema(self) -> None:
+    def test_android_bootstrap_contract_matches_embedded_runtime_contract(self) -> None:
         kotlin = Path(
             "android/app/src/main/java/com/medicine/android/ReferenceRuntimeAdapters.kt"
         ).read_text()
-        python_runtime = Path("medicine_app/canonical_runtime.py").read_text()
+        python_runtime = Path("medicine_app/reference_update.py").read_text()
 
-        android_schema = re.search(r'const val SCHEMA_VERSION = "([0-9]+)"', kotlin)
-        runtime_schema = re.search(r'_CANONICAL_SCHEMA_VERSION = "([0-9]+)"', python_runtime)
-        self.assertIsNotNone(android_schema)
-        self.assertIsNotNone(runtime_schema)
-        self.assertEqual(android_schema.group(1), runtime_schema.group(1))
+        android_contract = re.search(r'const val CONTRACT_MAJOR = ([0-9]+)', kotlin)
+        runtime_contract = re.search(r'REFERENCE_CONTRACT_MAJOR = ([0-9]+)', python_runtime)
+        self.assertIsNotNone(android_contract)
+        self.assertIsNotNone(runtime_contract)
+        self.assertEqual(android_contract.group(1), runtime_contract.group(1))
 
     def test_canonical_reviewed_corpora_are_included_in_built_package(self) -> None:
         config = tomllib.loads(Path("pyproject.toml").read_text())
@@ -367,12 +367,13 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("medicine-r2-smoke/", workflow)
         self.assertIn("r2-public-audit", workflow)
 
-    def test_android_packages_mfds_remark_runtime_registry(self) -> None:
+    def test_android_excludes_mfds_remark_registry_and_requires_materialized_semantics(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
-        self.assertIn('include("medicine_reference/**/*.py")', gradle)
-        self.assertIn('include("medicine_reference/data/mfds_remark_registry.tsv")', gradle)
-        self.assertNotIn('include("medicine_canonical/mfds_remark_registry.py")', gradle)
-        self.assertNotIn('include("medicine_canonical/data/mfds_remark_registry.tsv")', gradle)
+        verifier = Path("medicine_app/reference_update.py").read_text()
+        self.assertNotIn('include("medicine_reference/**/*.py")', gradle)
+        self.assertNotIn("mfds_remark_registry.tsv", gradle)
+        self.assertIn('"reference_criterion_semantics"', verifier)
+        self.assertIn("_verify_contract_schema(con)", verifier)
 
     def test_android_build_does_not_generate_or_package_reference_snapshot(self) -> None:
         compose = Path("compose.yaml").read_text()

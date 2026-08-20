@@ -15,14 +15,14 @@ data class ReferenceVersion(
     val datasetId: String,
     val sha256: String,
     val sizeBytes: Long,
-    val schemaVersion: String,
+    val contractMajor: Int,
     val releaseSequence: Long,
 ) {
     init {
         require(DATASET_ID.matches(datasetId)) { "invalid reference dataset id" }
         require(SHA256.matches(sha256)) { "invalid reference SHA-256" }
         require(sizeBytes > 0) { "invalid reference size" }
-        require(schemaVersion.matches(Regex("[1-9][0-9]*"))) { "invalid reference schema version" }
+        require(contractMajor > 0) { "invalid reference contract major" }
         require(releaseSequence >= 0) { "invalid reference release sequence" }
     }
 
@@ -37,9 +37,18 @@ data class ReferenceStoreState(
     val previous: ReferenceVersion? = null,
     val pending: ReferenceVersion? = null,
     val highestActivatedSequence: Long = 0,
+    val highestSeenRootSequence: Long = 0,
+    val highestSeenRootHash: String? = null,
+    val highestRetiredContractMajor: Int = 0,
 ) {
     init {
         require(highestActivatedSequence >= 0) { "invalid reference activation sequence" }
+        require(highestSeenRootSequence >= 0) { "invalid signed root sequence" }
+        require(highestRetiredContractMajor >= 0) { "invalid retired reference contract major" }
+        require(
+            (highestSeenRootSequence == 0L && highestSeenRootHash == null) ||
+                (highestSeenRootSequence > 0L && highestSeenRootHash?.matches(Regex("[0-9a-f]{64}")) == true)
+        ) { "invalid signed root high-water mark" }
         require(active == null || active.releaseSequence <= highestActivatedSequence) {
             "active reference sequence exceeds activation high-water mark"
         }
@@ -104,14 +113,12 @@ class ReferenceStore(
 
     fun snapshot(): ReferenceStoreState = decodeState(stateStorage.read())
 
-    fun openForStartup(expectedSchemaVersion: String): InstalledReferenceVersion? {
-        require(expectedSchemaVersion.matches(Regex("[1-9][0-9]*"))) {
-            "invalid expected reference schema version"
-        }
+    fun openForStartup(expectedContractMajor: Int): InstalledReferenceVersion? {
+        require(expectedContractMajor > 0) { "invalid expected reference contract major" }
         var recoveryReason: String? = null
         var state = snapshot()
 
-        val activation = activatePendingIfValid(state, expectedSchemaVersion)
+        val activation = activatePendingIfValid(state, expectedContractMajor)
         state = activation.state
         recoveryReason = recoveryReason ?: activation.recoveryReason
 
@@ -119,7 +126,7 @@ class ReferenceStore(
         // startup only rechecks immutable content identity. Schema compatibility is
         // still checked before exposing it to the current embedded Python runtime.
         fun startupCompatible(version: ReferenceVersion): Boolean =
-            version.schemaVersion == expectedSchemaVersion && isContentVerified(version)
+            version.contractMajor == expectedContractMajor && isContentVerified(version)
 
         val selected = when {
             state.active != null && startupCompatible(state.active) -> state.active
@@ -145,6 +152,39 @@ class ReferenceStore(
 
     fun cleanupForBootstrap(version: ReferenceVersion) {
         cleanupUnreferenced(snapshot(), extraKeep = setOf(version))
+    }
+
+    fun observeSignedRoot(releaseSequence: Long, rootHash: String) {
+        require(releaseSequence > 0) { "signed root sequence must be positive" }
+        require(rootHash.matches(Regex("[0-9a-f]{64}"))) { "invalid signed root hash" }
+        val state = snapshot()
+        when {
+            releaseSequence < state.highestSeenRootSequence ->
+                throw IllegalArgumentException("signed reference root rollback is not allowed")
+            releaseSequence == state.highestSeenRootSequence ->
+                require(state.highestSeenRootHash == rootHash) {
+                    "signed reference root changed without advancing sequence"
+                }
+            else -> writeState(
+                state.copy(
+                    highestSeenRootSequence = releaseSequence,
+                    highestSeenRootHash = rootHash,
+                )
+            )
+        }
+    }
+
+    fun markContractRetired(contractMajor: Int, releaseSequence: Long, rootHash: String) {
+        require(contractMajor > 0) { "retired reference contract major must be positive" }
+        observeSignedRoot(releaseSequence, rootHash)
+        val state = snapshot()
+        if (contractMajor <= state.highestRetiredContractMajor) return
+        writeState(state.copy(highestRetiredContractMajor = contractMajor))
+    }
+
+    fun isContractRetired(contractMajor: Int): Boolean {
+        require(contractMajor > 0) { "reference contract major must be positive" }
+        return snapshot().highestRetiredContractMajor >= contractMajor
     }
 
     fun installInitial(version: ReferenceVersion, candidate: File?): InstalledReferenceVersion {
@@ -180,6 +220,9 @@ class ReferenceStore(
             previous = null,
             pending = null,
             highestActivatedSequence = maxOf(state.highestActivatedSequence, version.releaseSequence),
+            highestSeenRootSequence = state.highestSeenRootSequence,
+            highestSeenRootHash = state.highestSeenRootHash,
+            highestRetiredContractMajor = state.highestRetiredContractMajor,
         )
         writeState(activated)
         cleanupUnreferenced(activated)
@@ -230,10 +273,10 @@ class ReferenceStore(
 
     private fun activatePendingIfValid(
         state: ReferenceStoreState,
-        expectedSchemaVersion: String,
+        expectedContractMajor: Int,
     ): PendingActivation {
         val pending = state.pending ?: return PendingActivation(state)
-        if (pending.schemaVersion != expectedSchemaVersion || !isDatabaseVerified(pending)) {
+        if (pending.contractMajor != expectedContractMajor || !isDatabaseVerified(pending)) {
             fileFor(pending).delete()
             val cleared = state.copy(pending = null)
             writeState(cleared)
@@ -262,6 +305,9 @@ class ReferenceStore(
             previous = validCurrent,
             pending = null,
             highestActivatedSequence = maxOf(state.highestActivatedSequence, pending.releaseSequence),
+            highestSeenRootSequence = state.highestSeenRootSequence,
+            highestSeenRootHash = state.highestSeenRootHash,
+            highestRetiredContractMajor = state.highestRetiredContractMajor,
         )
         writeState(activated)
         return PendingActivation(activated)
@@ -315,13 +361,16 @@ class ReferenceStore(
     }
 
     companion object {
-        private const val STATE_MAGIC = "MEDREFSTATE1"
+        private const val STATE_MAGIC = "MEDREFSTATE2"
 
         private fun encodeState(state: ReferenceStoreState): ByteArray {
             val bytes = ByteArrayOutputStream()
             DataOutputStream(bytes).use { output ->
                 output.writeUTF(STATE_MAGIC)
                 output.writeLong(state.highestActivatedSequence)
+                output.writeLong(state.highestSeenRootSequence)
+                output.writeUTF(state.highestSeenRootHash ?: "")
+                output.writeInt(state.highestRetiredContractMajor)
                 writeVersion(output, state.active)
                 writeVersion(output, state.previous)
                 writeVersion(output, state.pending)
@@ -335,11 +384,17 @@ class ReferenceStore(
                 DataInputStream(ByteArrayInputStream(bytes)).use { input ->
                     require(input.readUTF() == STATE_MAGIC) { "unsupported reference state format" }
                     val highWater = input.readLong()
+                    val rootHighWater = input.readLong()
+                    val rootHash = input.readUTF().ifEmpty { null }
+                    val retiredContractMajor = input.readInt()
                     val state = ReferenceStoreState(
                         active = readVersion(input),
                         previous = readVersion(input),
                         pending = readVersion(input),
                         highestActivatedSequence = highWater,
+                        highestSeenRootSequence = rootHighWater,
+                        highestSeenRootHash = rootHash,
+                        highestRetiredContractMajor = retiredContractMajor,
                     )
                     require(input.read() == -1) { "trailing reference state data" }
                     return state
@@ -355,7 +410,7 @@ class ReferenceStore(
             output.writeUTF(version.datasetId)
             output.writeUTF(version.sha256)
             output.writeLong(version.sizeBytes)
-            output.writeUTF(version.schemaVersion)
+            output.writeInt(version.contractMajor)
             output.writeLong(version.releaseSequence)
         }
 
@@ -365,7 +420,7 @@ class ReferenceStore(
                 datasetId = input.readUTF(),
                 sha256 = input.readUTF(),
                 sizeBytes = input.readLong(),
-                schemaVersion = input.readUTF(),
+                contractMajor = input.readInt(),
                 releaseSequence = input.readLong(),
             )
         }

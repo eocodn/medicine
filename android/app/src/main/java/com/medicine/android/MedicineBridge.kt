@@ -31,6 +31,10 @@ class MedicineBridge(
         }
     }
 
+    fun setReferenceAvailable(available: Boolean, reason: String? = null) = synchronized(lock) {
+        api.callAttr("set_reference_available", available, reason)
+    }
+
     @JavascriptInterface
     fun request(method: String, path: String, body: String?): String = synchronized(lock) {
         try {

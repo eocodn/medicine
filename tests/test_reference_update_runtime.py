@@ -60,6 +60,18 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
         )
         self.assertEqual(result["status"], "verified")
 
+    def test_runtime_verifier_requires_materialized_contract_semantics_table(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute("DROP TABLE reference_criterion_semantics")
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "reference contract schema"):
+            verify_reference_database(
+                self.mobile,
+                expected_contract_major=1,
+                expected_dataset_id=self.release["dataset_id"],
+            )
+
     def test_runtime_contract_major_is_shared_with_mobile_builder(self) -> None:
         self.assertEqual(REFERENCE_CONTRACT_MAJOR, BUILDER_CONTRACT_MAJOR)
 
