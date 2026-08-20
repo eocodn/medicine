@@ -258,6 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
     prn_intake.add_argument("--medication", required=True)
     prn_intake.add_argument("--at")
     prn_intake.add_argument("--note")
+    prn_intake.add_argument("--request-id", required=True)
     prn_intake.add_argument("--json", action="store_true")
 
     screenshot = sub.add_parser("screenshot")
@@ -350,7 +351,12 @@ def _dispatch(args, app: MedicationApp):
     elif args.command == "dose-instance-cancel":
         payload = app.cancel_dose_instance(args.instance)
     elif args.command == "prn-intake":
-        payload = app.record_prn_dose(args.medication, args.at, args.note)
+        payload = app.record_prn_dose(
+            args.medication,
+            args.at,
+            args.note,
+            request_id=args.request_id,
+        )
     else:
         raise AssertionError(args.command)
 

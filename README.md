@@ -254,7 +254,9 @@ docker compose run --rm app med-add \
 
 # 필요시 약을 실제 복용했을 때 기록
 docker compose run --rm app prn-intake \
-  --medication <MEDICATION_ID> --json
+  --medication <MEDICATION_ID> \
+  --request-id <UNIQUE_REQUEST_ID> \
+  --json
 
 # 하루 복용 계획
 docker compose run --rm app daily-plan \

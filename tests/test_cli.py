@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import medicine_app.cli as cli_module
 from medicine_app.cli import build_parser, main
-from medicine_app.core import MedicationApp
+from medicine_app.core import IdempotencyConflict, MedicationApp
 from tests.test_prescription_safety import make_canonical_db
 
 
@@ -109,6 +109,51 @@ class PrescriptionCliTest(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(canceled["status"], "planned")
         self.assertIsNone(canceled["completed_at"])
+
+    def test_prn_intake_requires_request_id_and_retries_exactly_once(self) -> None:
+        app = MedicationApp(self.canonical_db, self.personal_db)
+        draft = {
+            "product_ref": "MFDS-SAFE",
+            "as_needed": True,
+            "prn_max_per_day": 3,
+            "dose_amount": 5,
+            "dose_unit": "mg",
+            "start_date": "2026-08-20",
+            "prescription_days": 7,
+        }
+        preview = app.preview_medication(self.person["id"], draft)
+        medication = app.add_medication(
+            self.person["id"], **draft,
+            acknowledge_warnings=True,
+            warning_token=preview["warning_token"],
+        )
+
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args([
+                "prn-intake", "--medication", medication["id"],
+            ])
+
+        request = (
+            "prn-intake", "--medication", medication["id"],
+            "--at", "2026-08-20T12:00:00+09:00",
+            "--note", "증상 시",
+            "--request-id", "cli-prn-1",
+        )
+        first_status, first = self.run_cli(*request)
+        retry_status, retry = self.run_cli(*request)
+
+        self.assertEqual((first_status, retry_status), (0, 0))
+        self.assertEqual(retry["id"], first["id"])
+        self.assertEqual(len(app.list_dose_logs(self.person["id"])), 1)
+
+        with self.assertRaises(IdempotencyConflict):
+            self.run_cli(
+                "prn-intake", "--medication", medication["id"],
+                "--at", "2026-08-20T13:00:00+09:00",
+                "--note", "다른 증상",
+                "--request-id", "cli-prn-1",
+            )
+        self.assertEqual(len(app.list_dose_logs(self.person["id"])), 1)
 
     def test_meds_exposes_date_relative_course_progress(self) -> None:
         app = MedicationApp(self.canonical_db, self.personal_db)
