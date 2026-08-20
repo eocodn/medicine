@@ -337,6 +337,15 @@ class ReferenceStore(
         expectedContractMajor: Int,
     ): PendingActivation {
         val pending = state.pending ?: return PendingActivation(state)
+        if (pending.releaseSequence < state.highestSeenRootSequence) {
+            fileFor(pending).takeIf { pending != state.active && pending != state.previous }?.delete()
+            val cleared = state.copy(pending = null, pendingSeal = null)
+            writeState(cleared)
+            return PendingActivation(
+                cleared,
+                "pending reference predates a newer signed root; retained current LKG",
+            )
+        }
         if (pending.contractMajor != expectedContractMajor || !isDatabaseVerified(pending)) {
             fileFor(pending).delete()
             val cleared = state.copy(pending = null, pendingSeal = null)

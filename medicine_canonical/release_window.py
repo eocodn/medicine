@@ -494,6 +494,11 @@ def publish_contract_window(
         "release_sequence": release_sequence,
         "root": root,
         "cleanup": cleanup,
+        "skipped_patch_bases": {
+            str(major): contract.skipped_bases
+            for major, contract in sorted(prepared.items())
+            if contract.skipped_bases
+        },
     }
 
 

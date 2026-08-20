@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .release import (
@@ -66,6 +66,7 @@ class PreparedContract:
     entry: dict
     full_path: Path | None
     patch_paths: dict[str, Path]
+    skipped_bases: list[dict[str, str]] = field(default_factory=list)
 
 
 def contract_prefix(contract_major: int) -> str:
@@ -175,18 +176,32 @@ def prepare_contract(
     }
 
     recent = recent_bases(previous_entry)
-    history = recent[: FULL_SNAPSHOT_RETENTION - 1]
+    history: list[dict] = []
     patches: list[dict] = []
     patch_paths: dict[str, Path] = {}
+    skipped_bases: list[dict[str, str]] = []
     seen_source_sha: set[str] = set()
     for index, base in enumerate(recent):
         source_sha = str(base["target"]["sha256"])
+        base_dir = temporary_root / f"contract-{major}-base-{index}"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            previous_db, previous_dataset_id = download_base(client, bucket, base, base_dir)
+        except Exception as exc:
+            # Historical fulls exist only to preserve rollback/history and build
+            # optional direct patches. A missing or corrupt old base must never
+            # prevent a verified self-contained new full from advancing the
+            # authoritative root. Do not re-advertise an unusable base either.
+            skipped_bases.append({
+                "key": str(base.get("full", {}).get("key") or ""),
+                "error": type(exc).__name__,
+            })
+            continue
+        if len(history) < FULL_SNAPSHOT_RETENTION - 1:
+            history.append(base)
         if source_sha == metadata.target_sha256 or source_sha in seen_source_sha:
             continue
         seen_source_sha.add(source_sha)
-        base_dir = temporary_root / f"contract-{major}-base-{index}"
-        base_dir.mkdir(parents=True, exist_ok=True)
-        previous_db, previous_dataset_id = download_base(client, bucket, base, base_dir)
         patch_key = f"{prefix}/patch/{source_sha}-{metadata.target_sha256}.mpatch"
         patch_path = root / patch_key
         patch = create_chunk_patch(
@@ -231,6 +246,7 @@ def prepare_contract(
         },
         full_path=full_path,
         patch_paths=patch_paths,
+        skipped_bases=skipped_bases,
     )
 
 

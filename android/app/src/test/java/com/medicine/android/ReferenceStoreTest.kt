@@ -184,6 +184,37 @@ class ReferenceStoreTest {
     }
 
     @Test
+    fun pendingReleaseOlderThanObservedSignedRootIsDiscardedBeforeActivation() {
+        val root = Files.createTempDirectory("reference-store-stale-pending").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val verifier = FakeDatabaseVerifier()
+            val currentBytes = "release-one".toByteArray()
+            val current = version(currentBytes, 1, "one")
+            val store = ReferenceStore(root, storage, verifier)
+            store.installInitial(current, File(root, ".one.sqlite").apply { writeBytes(currentBytes) })
+
+            val pendingBytes = "release-ten".toByteArray()
+            val pending = version(pendingBytes, 10, "ten")
+            store.stagePending(pending, File(root, ".ten.sqlite").apply { writeBytes(pendingBytes) })
+            store.observeSignedRoot(11, "a".repeat(64))
+
+            val reopened = ReferenceStore(root, storage, verifier)
+            val selected = reopened.openForStartup(1)!!
+            val state = reopened.snapshot()
+
+            assertEquals(current, selected.version)
+            assertNull(state.pending)
+            assertEquals(1, state.highestActivatedSequence)
+            assertEquals(11, state.highestSeenRootSequence)
+            assertFalse(reopened.fileFor(pending).exists())
+            assertTrue(selected.recoveryReason!!.contains("newer signed root"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun corruptedActiveFallsBackToPreviousWithoutLoweringHighWater() {
         val root = Files.createTempDirectory("reference-store-fallback").toFile()
         try {

@@ -160,6 +160,29 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         self.assertIn((self.bucket, full_key), self.client.objects)
         self.assertEqual(self.client.put_order, [full_key])
 
+    def test_missing_historical_full_does_not_block_changed_target_publish(self) -> None:
+        first = self.candidate(1, "missing-base", b"A" * 500_000, "sha256:" + "1" * 64)
+        self.publish([first], current=1, minimum=1, sequence=100, suffix="missing-base")
+        previous_root = self.verified_root()["manifest"]
+        previous_full = previous_root["contracts"]["1"]["full"]["key"]
+        self.client.objects.pop((self.bucket, previous_full))
+        second = self.candidate(1, "missing-next", b"B" * 500_000, "sha256:" + "2" * 64)
+
+        result = self.publish([second], current=1, minimum=1, sequence=101, suffix="missing-next")
+
+        self.assertEqual(result["status"], "published")
+        verified = self.verified_root()
+        self.assertEqual(verified["release_sequence"], 101)
+        entry = verified["manifest"]["contracts"]["1"]
+        self.assertEqual(entry["target"]["sha256"], sha256_file(second.database))
+        self.assertEqual(entry["patches"], [])
+        self.assertEqual(entry["history"], [])
+        self.assertIn((self.bucket, entry["full"]["key"]), self.client.objects)
+        self.assertEqual(
+            result["skipped_patch_bases"]["1"],
+            [{"key": previous_full, "error": "FakeNotFound"}],
+        )
+
     def test_immutable_upload_failure_does_not_advance_signed_root(self) -> None:
         first = self.candidate(1, "upload-base", b"A" * 500_000, "sha256:" + "1" * 64)
         self.publish([first], current=1, minimum=1, sequence=100, suffix="upload-base")
