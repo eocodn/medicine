@@ -264,6 +264,10 @@ def cancel_instance_completion(con: sqlite3.Connection, instance_id: str) -> dic
         # that intake removes the ad-hoc occurrence instead of leaving an invisible
         # planned dose which can never appear in a fixed daily schedule.
         snapshot = dict(row)
+        con.execute(
+            "UPDATE prn_requests SET state='canceled' WHERE dose_instance_id=?",
+            (instance_id,),
+        )
         con.execute("DELETE FROM dose_instances WHERE id=?", (instance_id,))
         snapshot.update(status="canceled", completed_at=None, deleted=True)
         return snapshot

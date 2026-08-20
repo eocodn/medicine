@@ -342,7 +342,11 @@ def _dispatch(args, app: MedicationApp):
     elif args.command == "daily-plan":
         payload = app.get_daily_plan(args.person, args.date)
     elif args.command == "dose-instance":
-        payload = app.record_dose_instance(args.instance, args.status, args.at)
+        payload = (
+            app.record_dose_instance(args.instance, args.status, args.at)
+            if args.at is not None
+            else app.record_dose_instance(args.instance, args.status)
+        )
     elif args.command == "dose-instance-cancel":
         payload = app.cancel_dose_instance(args.instance)
     elif args.command == "prn-intake":

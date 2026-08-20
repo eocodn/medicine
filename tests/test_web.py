@@ -38,7 +38,7 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('src="/static/timeline.js?v=20260811b"', response.text)
         self.assertIn('src="/static/prescription.js?v=', response.text)
         self.assertIn('src="/static/app.js?v=', response.text)
-        self.assertIn('src="/static/dose-actions.js?v=20260820perf1"', response.text)
+        self.assertIn('src="/static/dose-actions.js?v=20260820perf2"', response.text)
         self.assertIn('src="/static/ocr-review.js?v=', response.text)
         self.assertIn("약을 검색하세요", response.text)
         self.assertNotIn("로컬 우선", response.text)
@@ -394,6 +394,51 @@ class WebApiTest(unittest.TestCase):
         dashboard = self.client.get(f"/api/people/{person['id']}/dashboard", params={"date": "2026-08-10"})
         self.assertEqual(dashboard.json()["daily_plan"]["summary"]["taken"], 1)
         self.assertEqual(dashboard.json()["medications"][0]["course_progress"]["remaining_days"], 1)
+
+    def test_explicit_null_note_clears_scheduled_dose_note_through_web_api(self) -> None:
+        person = self.client.post(
+            "/api/people",
+            json={
+                "name": "메모삭제",
+                "birth_date": "1990-01-01",
+                "sex": "male",
+                "pregnancy_status": "not_applicable",
+                "lactation_status": "not_applicable",
+            },
+        ).json()
+        added = self.client.post(
+            f"/api/people/{person['id']}/medications",
+            json={
+                "product_ref": "MFDS-A",
+                "frequency_per_day": 1,
+                "schedule_times": ["08:00"],
+                "start_date": "2026-08-20",
+                "long_term": True,
+            },
+        )
+        self.assertEqual(added.status_code, 201)
+        plan = self.client.get(
+            f"/api/people/{person['id']}/daily-plan",
+            params={"date": "2026-08-20"},
+        ).json()
+        instance_id = plan["doses"][0]["id"]
+        first = self.client.post(
+            f"/api/dose-instances/{instance_id}",
+            json={
+                "status": "taken",
+                "occurred_at": "2026-08-20T08:05:00+09:00",
+                "note": "memo",
+            },
+        )
+        self.assertEqual(first.status_code, 200)
+
+        cleared = self.client.post(
+            f"/api/dose-instances/{instance_id}",
+            json={"status": "taken", "note": None},
+        )
+
+        self.assertEqual(cleared.status_code, 200)
+        self.assertIsNone(cleared.json()["recent_logs"][0]["note"])
 
 
 if __name__ == "__main__":

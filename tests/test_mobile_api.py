@@ -8,6 +8,7 @@ import unittest
 import warnings
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 from medicine_app.mobile_api import MobileApi
 from tests.test_app_core import make_canonical_db
@@ -155,19 +156,95 @@ class MobileApiTest(unittest.TestCase):
             long_term=True, start_date="2026-08-10",
         )
 
+        status, missing_request_id = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes",
+            {"occurred_at": "2026-08-10T11:00:00+09:00"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("request_id", missing_request_id["detail"])
+
         status, recorded = self.request(
             "POST", f"/api/medications/{medication['id']}/prn-intakes",
-            {"occurred_at": "2026-08-10T12:00:00+09:00"},
+            {"request_id": "prn-one", "occurred_at": "2026-08-10T12:00:00+09:00"},
         )
         self.assertEqual(status, 201)
         self.assertEqual(recorded["status"], "taken")
         self.assertEqual(len(recorded["recent_logs"]), 1)
         status, blocked = self.request(
             "POST", f"/api/medications/{medication['id']}/prn-intakes",
-            {"occurred_at": "2026-08-10T18:00:00+09:00"},
+            {"request_id": "prn-two", "occurred_at": "2026-08-10T18:00:00+09:00"},
         )
         self.assertEqual(status, 400)
         self.assertIn("maximum", blocked["detail"])
+
+    def test_prn_retry_after_post_commit_response_failure_does_not_duplicate_intake(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "필요시재시도", "birth_date": "1990-01-01", "sex": "male",
+            "pregnancy_status": "not_applicable", "lactation_status": "not_applicable",
+        })
+        medication = self.api.service.add_medication(
+            person["id"], product_ref="MFDS-A", as_needed=True, prn_max_per_day=3,
+            long_term=True, start_date="2026-08-20",
+        )
+        payload = {
+            "request_id": "prn-retry-1",
+            "occurred_at": "2026-08-20T12:00:00+09:00",
+            "note": "증상 시",
+        }
+
+        with patch.object(
+            self.api.service,
+            "with_recent_dose_logs",
+            side_effect=RuntimeError("forced post-commit response failure"),
+        ):
+            status, failed = self.request(
+                "POST", f"/api/medications/{medication['id']}/prn-intakes", payload,
+            )
+
+        self.assertEqual(status, 500)
+        self.assertEqual(failed["detail"], "unexpected server error")
+        self.assertEqual(len(self.api.service.list_dose_logs(person["id"])), 1)
+
+        status, retried = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes", payload,
+        )
+
+        self.assertEqual(status, 201)
+        self.assertEqual(len(retried["recent_logs"]), 1)
+        self.assertEqual(retried["recent_logs"][0]["request_id"], "prn-retry-1")
+        self.assertEqual(len(self.api.service.list_dose_logs(person["id"])), 1)
+
+        status, conflict = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes",
+            {**payload, "occurred_at": "2026-08-20T13:00:00+09:00"},
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("request_id", conflict["detail"])
+
+    def test_explicit_null_note_clears_existing_scheduled_dose_note(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "메모삭제", "birth_date": "1990-01-01", "sex": "male",
+            "pregnancy_status": "not_applicable", "lactation_status": "not_applicable",
+        })
+        self.api.service.add_medication(
+            person["id"], product_ref="MFDS-A", frequency_per_day=1,
+            schedule_times=["08:00"], start_date="2026-08-20", long_term=True,
+        )
+        _, plan = self.request("GET", f"/api/people/{person['id']}/daily-plan?date=2026-08-20")
+        instance_id = plan["doses"][0]["id"]
+        self.request("POST", f"/api/dose-instances/{instance_id}", {
+            "status": "taken",
+            "occurred_at": "2026-08-20T08:05:00+09:00",
+            "note": "memo",
+        })
+
+        status, updated = self.request("POST", f"/api/dose-instances/{instance_id}", {
+            "status": "taken",
+            "note": None,
+        })
+
+        self.assertEqual(status, 200)
+        self.assertIsNone(updated["recent_logs"][0]["note"])
 
     def test_confirmation_and_validation_errors_keep_http_compatible_envelopes(self) -> None:
         _, person = self.request("POST", "/api/people", {

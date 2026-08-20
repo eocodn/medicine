@@ -101,6 +101,7 @@ class DoseInstanceUpdate(BaseModel):
 
 
 class PrnIntakeCreate(BaseModel):
+    request_id: str
     occurred_at: str | None = None
     note: str | None = None
 
@@ -253,8 +254,16 @@ def create_web_app(
     @app.post("/api/medications/{medication_id}/prn-intakes", status_code=201)
     def record_prn_intake(medication_id: str, payload: PrnIntakeCreate) -> dict:
         try:
+            request_id = payload.request_id.strip()
+            if not request_id:
+                raise ValueError("request_id is required")
             return service.with_recent_dose_logs(
-                service.record_prn_dose(medication_id, payload.occurred_at, payload.note)
+                service.record_prn_dose(
+                    medication_id,
+                    payload.occurred_at,
+                    payload.note,
+                    request_id=request_id,
+                )
             )
         except Exception as exc:
             raise _translate_error(exc) from exc
@@ -278,8 +287,13 @@ def create_web_app(
     @app.post("/api/dose-instances/{instance_id}")
     def update_dose_instance(instance_id: str, payload: DoseInstanceUpdate) -> dict:
         try:
+            metadata = {}
+            if "occurred_at" in payload.model_fields_set:
+                metadata["occurred_at"] = payload.occurred_at
+            if "note" in payload.model_fields_set:
+                metadata["note"] = payload.note
             return service.with_recent_dose_logs(
-                service.record_dose_instance(instance_id, payload.status, payload.occurred_at, payload.note)
+                service.record_dose_instance(instance_id, payload.status, **metadata)
             )
         except Exception as exc:
             raise _translate_error(exc) from exc

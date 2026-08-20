@@ -184,7 +184,8 @@ async function loadDashboard() {
       do {
         entry.dirty = false;
         const dashboard = await api(`/api/people/${personId}/dashboard`);
-        if (state.currentPersonId === personId) {
+        if (state.currentPersonId === personId && !entry.dirty) {
+          reconcilePrnRequestIds(dashboard?.recent_logs || []);
           state.dashboard = dashboard;
           state.dashboardDate = dashboard?.daily_plan?.date || todayInKorea();
           state.dashboardStale = false;

@@ -10,6 +10,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterator
 
+from .dose_mutations import MISSING as _MISSING, record_prn_dose as write_prn_dose, record_scheduled_dose
+from .errors import IdempotencyConflict
 from .persistence import ensure_personal_schema
 from .medication_policy import (
     dur_review_required, medication_update_values, require_active_permit, resolve_product,
@@ -17,11 +19,9 @@ from .medication_policy import (
 from .planning import (
     cancel_instance_completion,
     clock_sort_key,
-    record_instance,
     sort_medications_by_time,
 )
 from .prescriptions import draft_hash, normalize_draft, require_explicit_course_bound
-from .prn import record_prn_intake
 from .products import ProductRepository
 from .assessment import (
     assess_current_medication,
@@ -41,9 +41,6 @@ from .runtime_views import (
 )
 from .safety import APP_TIMEZONE
 
-DOSE_STATUS_VALUES = {"taken", "skipped"}
-
-
 def _uuid() -> str:
     return str(uuid.uuid4())
 
@@ -56,9 +53,6 @@ class ConfirmationRequired(ValueError):
 
 
 class RevisionConflict(ValueError): pass
-
-
-class IdempotencyConflict(ValueError): pass
 
 
 @contextmanager
@@ -416,29 +410,23 @@ class MedicationApp:
         self,
         instance_id: str,
         status: str,
-        occurred_at: str | None = None,
-        note: str | None = None,
+        occurred_at: str | None | object = _MISSING,
+        note: str | None | object = _MISSING,
     ) -> dict:
-        if status not in DOSE_STATUS_VALUES:
-            raise ValueError("status must be taken or skipped")
-        preserve_existing_same_state = occurred_at is None and note is None
-        when = occurred_at or datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
-        datetime.fromisoformat(when)
-        with self._personal() as con:
-            return record_instance(
-                con,
-                instance_id,
-                status,
-                when,
-                note,
-                _uuid,
-                preserve_existing_same_state=preserve_existing_same_state,
-            )
+        return record_scheduled_dose(self, instance_id, status, _uuid, occurred_at, note)
 
     def record_prn_dose(
-        self, medication_id: str, occurred_at: str | None = None, note: str | None = None
+        self,
+        medication_id: str,
+        occurred_at: str | None = None,
+        note: str | None = None,
+        *,
+        request_id: str | None = None,
     ) -> dict:
-        return record_prn_intake(self, medication_id, occurred_at, note, _uuid)
+        return write_prn_dose(
+            self, medication_id, occurred_at, note, _uuid,
+            request_id=request_id,
+        )
 
     def cancel_dose_instance(self, instance_id: str) -> dict:
         with self._personal() as con:

@@ -19,8 +19,41 @@ const state = {
   searchTimer: null,
   searchRequestId: 0,
   doseMutations: new Map(),
+  prnRequests: new Map(),
   dashboardLoads: new Map(),
 };
+
+function prnRequestStorageKey(medicationId) {
+  return `medicine.prnRequest.${medicationId}`;
+}
+
+function pendingPrnRequestId(medicationId) {
+  let requestId = state.prnRequests.get(medicationId);
+  if (!requestId) {
+    requestId = localStorage.getItem(prnRequestStorageKey(medicationId));
+    if (requestId) state.prnRequests.set(medicationId, requestId);
+  }
+  return requestId;
+}
+
+function rememberPrnRequestId(medicationId, requestId) {
+  state.prnRequests.set(medicationId, requestId);
+  localStorage.setItem(prnRequestStorageKey(medicationId), requestId);
+}
+
+function clearPrnRequestId(medicationId) {
+  state.prnRequests.delete(medicationId);
+  localStorage.removeItem(prnRequestStorageKey(medicationId));
+}
+
+function reconcilePrnRequestIds(logs) {
+  for (const log of logs || []) {
+    if (!log?.medication_id || !log?.request_id) continue;
+    if (pendingPrnRequestId(log.medication_id) === log.request_id) {
+      clearPrnRequestId(log.medication_id);
+    }
+  }
+}
 
 function markDashboardStale() {
   state.dashboardStale = true;
@@ -66,6 +99,7 @@ function reconcileDoseMutation(committed) {
   if (!committed || !state.dashboard) return false;
   let changed = false;
   if (Array.isArray(committed.recent_logs)) {
+    reconcilePrnRequestIds(committed.recent_logs);
     state.dashboard = {
       ...state.dashboard,
       recent_logs: committed.recent_logs,

@@ -305,7 +305,16 @@ test("dashboard refresh is single-flight and collapses concurrent refreshes to o
       return new Promise((resolve, reject) => requests.push({ path, resolve, reject }));
     },
   };
-  vm.runInContext(`state.currentPersonId = "p1";`, context);
+  vm.runInContext(`
+    state.currentPersonId = "p1";
+    state.dashboardStale = true;
+    state.dashboard = {
+      person: { id: "p1" },
+      medications: [{ id: "visible-before-refresh" }],
+      recent_logs: [],
+      daily_plan: { date: "2026-08-20", doses: [], summary: {} },
+    };
+  `, context);
 
   const first = vm.runInContext(`loadDashboard()`, context);
   const second = vm.runInContext(`loadDashboard()`, context);
@@ -320,6 +329,11 @@ test("dashboard refresh is single-flight and collapses concurrent refreshes to o
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(requests.length, 2);
+  assert.equal(vm.runInContext(`state.dashboardStale`, context), true);
+  assert.equal(
+    vm.runInContext(`state.dashboard.medications[0].id`, context),
+    "visible-before-refresh",
+  );
   requests[1].resolve({
     person: { id: "p1" },
     medications: [{ id: "latest" }],
@@ -329,5 +343,6 @@ test("dashboard refresh is single-flight and collapses concurrent refreshes to o
   await Promise.all([first, second]);
 
   assert.equal(vm.runInContext(`state.dashboard.medications[0].id`, context), "latest");
+  assert.equal(vm.runInContext(`state.dashboardStale`, context), false);
   assert.equal(vm.runInContext(`state.dashboardLoads.size`, context), 0);
 });

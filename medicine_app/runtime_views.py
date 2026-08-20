@@ -44,13 +44,23 @@ def list_dose_logs_from_connection(
         """
         SELECT l.*,
                COALESCE(l.product_name_snapshot,m.product_name) AS product_name,
-               COALESCE(l.dosage_text_snapshot,m.dosage_text) AS dosage_text
-        FROM dose_logs l JOIN medications m ON m.id=l.medication_id
+               COALESCE(l.dosage_text_snapshot,m.dosage_text) AS dosage_text,
+               r.request_id AS request_id
+        FROM dose_logs l
+        JOIN medications m ON m.id=l.medication_id
+        LEFT JOIN prn_requests r
+          ON r.dose_instance_id=l.dose_instance_id AND r.state='active'
         WHERE l.person_id=? ORDER BY l.occurred_at DESC, l.rowid DESC LIMIT ?
         """,
         (person_id, limit),
     ).fetchall()
-    return [dict(row) for row in rows]
+    result = []
+    for row in rows:
+        item = dict(row)
+        if item.get("request_id") is None:
+            item.pop("request_id", None)
+        result.append(item)
+    return result
 
 
 def _apply_current_assessment_fields(medication: dict, assessment: dict) -> None:

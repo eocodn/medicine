@@ -220,9 +220,15 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/medications/([^/]+)/prn-intakes", path)
         if method == "POST" and match:
-            payload = _validated_fields(_body_object(body_json), {"occurred_at", "note"})
+            payload = _validated_fields(_body_object(body_json), {"occurred_at", "note", "request_id"})
+            request_id = str(payload.get("request_id") or "").strip()
+            if not request_id:
+                raise ValueError("request_id is required")
             dose = service.record_prn_dose(
-                match.group(1), payload.get("occurred_at"), payload.get("note")
+                match.group(1),
+                payload.get("occurred_at"),
+                payload.get("note"),
+                request_id=request_id,
             )
             return 201, service.with_recent_dose_logs(dose)
 
@@ -239,8 +245,13 @@ class MobileApi:
             payload = _validated_fields(_body_object(body_json), _DOSE_FIELDS)
             if "status" not in payload:
                 raise ValueError("status is required")
+            metadata = {}
+            if "occurred_at" in payload:
+                metadata["occurred_at"] = payload["occurred_at"]
+            if "note" in payload:
+                metadata["note"] = payload["note"]
             dose = service.record_dose_instance(
-                match.group(1), payload["status"], payload.get("occurred_at"), payload.get("note")
+                match.group(1), payload["status"], **metadata
             )
             return 200, service.with_recent_dose_logs(dose)
 

@@ -1,3 +1,40 @@
+function newPrnRequestId() {
+  if (typeof crypto?.randomUUID === "function") return `prn-${crypto.randomUUID()}`;
+  return `prn-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function recordPrnIntake(medicationId, button = null) {
+  const originalText = button?.textContent || "";
+  let requestId = pendingPrnRequestId(medicationId);
+  if (!requestId) {
+    requestId = newPrnRequestId();
+    rememberPrnRequestId(medicationId, requestId);
+  }
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "처리 중…";
+  }
+  try {
+    const updated = await api(`/api/medications/${medicationId}/prn-intakes`, {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId }),
+    });
+    clearPrnRequestId(medicationId);
+    reconcileDoseMutation(updated);
+    renderAll();
+    toast("필요시 복용을 기록했어요");
+  } catch (error) {
+    if (error?.status && error.status < 500) clearPrnRequestId(medicationId);
+    if (button) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = originalText;
+    }
+    toast(error.message);
+  }
+}
+
 function queueDoseDesiredState(instanceId, desiredStatus, button = null) {
   if (button) {
     button.disabled = true;
