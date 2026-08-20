@@ -174,8 +174,6 @@ class ReferenceUpdater(
 
     private fun checkForUpdateExclusive(current: InstalledReferenceVersion): ReferenceUpdateResult {
         var releaseSequence: Long? = null
-        var candidate: File? = null
-        var downloaded: File? = null
         return try {
             observer.phase("manifest")
             val release = try {
@@ -187,6 +185,7 @@ class ReferenceUpdater(
                     retired.releaseSequence,
                     retired.rootHash,
                 )
+                cleanupUpdateFiles()
                 observer.phase("update-required")
                 return ReferenceUpdateResult(
                     ReferenceUpdateStatus.UPDATE_REQUIRED,
@@ -201,6 +200,7 @@ class ReferenceUpdater(
             }
             val state = store.snapshot()
             if (release.releaseSequence < state.highestActivatedSequence) {
+                cleanupUpdateFiles()
                 return ReferenceUpdateResult(
                     ReferenceUpdateStatus.ROLLBACK_REJECTED,
                     release.releaseSequence,
@@ -211,11 +211,13 @@ class ReferenceUpdater(
                 current.version.sizeBytes == release.targetSizeBytes &&
                 current.version.datasetId == release.datasetId
             if (sameTarget) {
+                cleanupUpdateFiles()
                 return ReferenceUpdateResult(ReferenceUpdateStatus.UP_TO_DATE, release.releaseSequence)
             }
             if (release.releaseSequence == state.highestActivatedSequence &&
                 current.version.releaseSequence == state.highestActivatedSequence
             ) {
+                cleanupUpdateFiles()
                 return ReferenceUpdateResult(
                     ReferenceUpdateStatus.FAILED,
                     release.releaseSequence,
@@ -227,26 +229,6 @@ class ReferenceUpdater(
                 it.fromSha256 == current.version.sha256 && it.fromSizeBytes == current.version.sizeBytes
             }
             require(matchingPatches.size <= 1) { "multiple direct patches match the active reference" }
-            val artifact = matchingPatches.singleOrNull() ?: release.full
-            observer.phase(
-                if (artifact.kind == ReferenceArtifactKind.CHUNK_PATCH) "patch-download" else "full-download",
-            )
-
-            downloaded = File(
-                referenceDir,
-                ".artifact-${release.releaseSequence}-${artifact.sha256}.part",
-            )
-            source.download(artifact, downloaded) { completed, total ->
-                observer.progress("download", completed, total)
-            }
-
-            observer.phase("rebuild")
-            candidate = File(
-                referenceDir,
-                ".candidate-${release.releaseSequence}-${release.targetSha256}.sqlite",
-            )
-            candidate.delete()
-            rebuilder.rebuild(current, artifact, downloaded, candidate)
             val targetVersion = ReferenceVersion(
                 datasetId = release.datasetId,
                 sha256 = release.targetSha256,
@@ -254,13 +236,48 @@ class ReferenceUpdater(
                 contractMajor = release.contractMajor,
                 releaseSequence = release.releaseSequence,
             )
+            val patch = matchingPatches.singleOrNull()
+            val prepared = if (patch == null) {
+                prepareArtifact(current, release, release.full, preserveCheckpointOnFailure = true)
+            } else {
+                try {
+                    prepareArtifact(current, release, patch, preserveCheckpointOnFailure = false)
+                } catch (patchError: Exception) {
+                    // A signed patch is only an optimization. Any failure before
+                    // state mutation falls back to the mandatory signed full;
+                    // the full remains the authoritative recovery path.
+                    observer.phase("patch-fallback-full")
+                    try {
+                        prepareArtifact(
+                            current,
+                            release,
+                            release.full,
+                            preserveCheckpointOnFailure = true,
+                        )
+                    } catch (fullError: Exception) {
+                        throw IllegalStateException(
+                            "reference full fallback failed after patch failure: " +
+                                (fullError.message ?: fullError.javaClass.simpleName),
+                            fullError,
+                        ).also { it.addSuppressed(patchError) }
+                    }
+                }
+            }
             observer.phase("verify-and-stage")
-            store.stagePending(targetVersion, candidate)
-            downloaded.delete()
+            try {
+                store.stagePending(targetVersion, prepared.candidate)
+            } finally {
+                if (prepared.candidate.exists()) {
+                    check(prepared.candidate.delete()) { "cannot remove reference update candidate" }
+                }
+            }
+            if (prepared.downloaded.exists()) {
+                check(prepared.downloaded.delete()) { "cannot remove staged reference artifact" }
+            }
+            cleanupUpdateFiles()
             observer.phase("staged")
             ReferenceUpdateResult(ReferenceUpdateStatus.STAGED, release.releaseSequence)
         } catch (error: Exception) {
-            candidate?.delete()
             observer.phase("failed")
             ReferenceUpdateResult(
                 status = if (error.message?.contains("rollback") == true) {
@@ -271,6 +288,66 @@ class ReferenceUpdater(
                 releaseSequence = releaseSequence,
                 detail = error.message ?: error.javaClass.simpleName,
             )
+        }
+    }
+
+    private data class PreparedArtifactFiles(
+        val downloaded: File,
+        val candidate: File,
+    )
+
+    private fun prepareArtifact(
+        current: InstalledReferenceVersion,
+        release: VerifiedReferenceRelease,
+        artifact: ReferenceReleaseArtifact,
+        preserveCheckpointOnFailure: Boolean,
+    ): PreparedArtifactFiles {
+        val downloaded = File(
+            referenceDir,
+            ".artifact-${release.releaseSequence}-${artifact.sha256}.part",
+        )
+        cleanupUpdateFiles(keepArtifact = downloaded)
+        val candidate = File(
+            referenceDir,
+            ".candidate-${release.releaseSequence}-${release.targetSha256}.sqlite",
+        )
+        if (candidate.exists()) {
+            check(candidate.delete()) { "cannot remove stale reference update candidate" }
+        }
+        try {
+            observer.phase(
+                if (artifact.kind == ReferenceArtifactKind.CHUNK_PATCH) {
+                    "patch-download"
+                } else {
+                    "full-download"
+                },
+            )
+            source.download(artifact, downloaded) { completed, total ->
+                observer.progress("download", completed, total)
+            }
+            observer.phase("rebuild")
+            rebuilder.rebuild(current, artifact, downloaded, candidate)
+            return PreparedArtifactFiles(downloaded, candidate)
+        } catch (error: Exception) {
+            if (candidate.exists()) {
+                check(candidate.delete()) { "cannot remove failed reference update candidate" }
+            }
+            if (!preserveCheckpointOnFailure && downloaded.exists()) {
+                check(downloaded.delete()) { "cannot discard failed reference patch checkpoint" }
+            }
+            throw error
+        }
+    }
+
+    private fun cleanupUpdateFiles(keepArtifact: File? = null) {
+        val keep = keepArtifact?.canonicalFile
+        referenceDir.listFiles()?.forEach { file ->
+            if (!file.isFile) return@forEach
+            val artifact = file.name.startsWith(".artifact-") && file.name.endsWith(".part")
+            val candidate = file.name.startsWith(".candidate-") && file.name.endsWith(".sqlite")
+            if (candidate || (artifact && file.canonicalFile != keep)) {
+                check(file.delete()) { "cannot remove stale reference update file ${file.name}" }
+            }
         }
     }
 }
