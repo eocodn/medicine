@@ -161,6 +161,12 @@ class ProductSearchIntegrationTest(unittest.TestCase):
             )
             add_product(
                 con,
+                "TAJIN-5-2.5",
+                "타진서방정 5/2.5mg",
+                "Oxycodone/Naloxone",
+            )
+            add_product(
+                con,
                 "ALPRAM-025",
                 "알프람정0.25밀리그램(알프라졸람)",
                 "Alprazolam",
@@ -374,10 +380,17 @@ class ProductSearchIntegrationTest(unittest.TestCase):
 
     def test_shared_trailing_unit_applies_to_each_slash_group_strength(self) -> None:
         self.assert_first("타진서방정 10 mg", "TAJIN-10-5")
-        self.assert_first("타진서방정 5 mg", "TAJIN-10-5")
+        self.assert_first("타진서방정 5 mg", "TAJIN-5-2.5")
+        self.assert_first("타진 5 mg", "TAJIN-5-2.5")
+        self.assert_first("타진서방정 5 2.5 mg", "TAJIN-5-2.5")
         self.assert_first("스타레보 50 mg", "SHARED-TRIPLE")
         self.assert_first("스타레보 12.5 mg", "SHARED-TRIPLE")
         self.assert_first("스타레보 200 mg", "SHARED-TRIPLE")
+
+    def test_long_structured_query_does_not_depend_on_python_recursion_depth(self) -> None:
+        for token in ("a" * 1500, "i" * 1500):
+            with self.subTest(token=token[0]):
+                self.assertEqual(self.app.search_products(token + " 5", limit=10), [])
 
     def test_malformed_ingredient_brackets_do_not_leak_numbers_between_components(self) -> None:
         self.assert_first("Cyperus 2.8", "MALFORMED-COMPONENTS")

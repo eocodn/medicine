@@ -85,7 +85,7 @@ class ProductSearchMatch:
     field: str
     tier: str
     fuzzy: bool
-    sort_key: tuple[int, int, int, int]
+    sort_key: tuple[int, ...]
 
     def explanation(self) -> dict[str, object]:
         return {
@@ -202,25 +202,29 @@ for _key in _COMPATIBILITY_EQUIVALENTS:
 def _embedded_compatibility_variants(token: str, *, limit: int = 24) -> tuple[str, ...]:
     """Expand compatibility glyphs that can replace a span inside one token."""
     variants: list[str] = []
+    if not any(char in _EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST for char in token):
+        return ()
 
-    def walk(index: int, pieces: list[str], replaced: bool) -> None:
-        if len(variants) >= limit:
-            return
+    # The traversal is intentionally iterative. Search input is not length-
+    # bounded, so a recursive walk would make otherwise harmless long tokens
+    # depend on Python's recursion limit. Push branches in reverse recursive
+    # order to preserve the previous deterministic variant ordering.
+    stack: list[tuple[int, str, bool]] = [(0, "", False)]
+    while stack and len(variants) < limit:
+        index, prefix, replaced = stack.pop()
         if index >= len(token):
-            candidate = "".join(pieces)
-            if replaced and candidate != token and candidate not in variants:
-                variants.append(candidate)
-            return
+            if replaced and prefix != token and prefix not in variants:
+                variants.append(prefix)
+            continue
+
+        stack.append((index + 1, prefix + token[index], replaced))
+        replacement_branches: list[tuple[int, str, bool]] = []
         for key in _EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST.get(token[index], ()):
             if not token.startswith(key, index):
                 continue
             for raw in _COMPATIBILITY_EQUIVALENTS[key]:
-                walk(index + len(key), [*pieces, raw], True)
-                if len(variants) >= limit:
-                    return
-        walk(index + 1, [*pieces, token[index]], replaced)
-
-    walk(0, [], False)
+                replacement_branches.append((index + len(key), prefix + raw, True))
+        stack.extend(reversed(replacement_branches))
     return tuple(variants)
 
 
@@ -360,24 +364,26 @@ def _ordered_subsequence(needle: tuple[str, ...], haystack: tuple[str, ...]) -> 
     return False
 
 
-def _ordered_strength_atoms(
+def _strength_alignment_penalty(
     needle: tuple[tuple[str, str | None], ...],
     haystack: tuple[tuple[str, str | None], ...],
-) -> bool:
-    """Match exact numbers in order while binding an explicit query unit to that number."""
+) -> int | None:
+    """Return how far ordered exact strengths are displaced in the candidate."""
     if not needle:
-        return True
+        return 0
     cursor = 0
-    for candidate_number, candidate_unit in haystack:
+    penalty = 0
+    for candidate_index, (candidate_number, candidate_unit) in enumerate(haystack):
         query_number, query_unit = needle[cursor]
         if candidate_number != query_number:
             continue
         if query_unit is not None and candidate_unit != query_unit:
             continue
+        penalty += candidate_index - cursor
         cursor += 1
         if cursor == len(needle):
-            return True
-    return False
+            return penalty
+    return None
 
 
 def _edit_distance_at_most_one(left: str, right: str) -> int | None:
@@ -469,7 +475,8 @@ def _match_text_field(
     compact, field_units, field_strength_atoms = _field_text(value)
     if not compact or not query.text_tokens:
         return None
-    if not _ordered_strength_atoms(query.strength_atoms, field_strength_atoms):
+    strength_alignment = _strength_alignment_penalty(query.strength_atoms, field_strength_atoms)
+    if strength_alignment is None:
         return None
     if not _ordered_subsequence(query.unit_tokens, field_units):
         return None
@@ -493,7 +500,7 @@ def _match_text_field(
         field=field,
         tier=tier,
         fuzzy=bool(fuzzy_count),
-        sort_key=(field_rank, fuzzy_count, 0 if prefix else 1, gap),
+        sort_key=(field_rank, fuzzy_count, 0 if prefix else 1, strength_alignment, gap),
     )
 
 
