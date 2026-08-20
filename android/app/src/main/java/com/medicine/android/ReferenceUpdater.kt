@@ -180,116 +180,142 @@ class ReferenceUpdater(
                 source.fetchLatest()
             } catch (retired: ReferenceContractRetiredException) {
                 releaseSequence = retired.releaseSequence
-                store.markContractRetired(
-                    current.version.contractMajor,
-                    retired.releaseSequence,
-                    retired.rootHash,
-                )
-                cleanupUpdateFiles()
-                observer.phase("update-required")
-                return ReferenceUpdateResult(
-                    ReferenceUpdateStatus.UPDATE_REQUIRED,
-                    retired.releaseSequence,
-                    "reference contract ${current.version.contractMajor} is retired",
-                )
+                return retirementResult(current, retired)
             }
             releaseSequence = release.releaseSequence
             store.observeSignedRoot(release.releaseSequence, release.rootHash)
             require(release.contractMajor == current.version.contractMajor) {
                 "reference release contract does not match installed runtime"
             }
-            val state = store.snapshot()
-            if (release.releaseSequence < state.highestActivatedSequence) {
-                cleanupUpdateFiles()
-                return ReferenceUpdateResult(
-                    ReferenceUpdateStatus.ROLLBACK_REJECTED,
-                    release.releaseSequence,
-                    "signed release sequence is below the activation high-water mark",
-                )
-            }
-            val sameTarget = current.version.sha256 == release.targetSha256 &&
-                current.version.sizeBytes == release.targetSizeBytes &&
-                current.version.datasetId == release.datasetId
-            if (sameTarget) {
-                cleanupUpdateFiles()
-                return ReferenceUpdateResult(ReferenceUpdateStatus.UP_TO_DATE, release.releaseSequence)
-            }
-            if (release.releaseSequence == state.highestActivatedSequence &&
-                current.version.releaseSequence == state.highestActivatedSequence
-            ) {
-                cleanupUpdateFiles()
-                return ReferenceUpdateResult(
-                    ReferenceUpdateStatus.FAILED,
-                    release.releaseSequence,
-                    "activated release sequence has a different signed target identity",
-                )
-            }
+            terminalResult(current, release)?.let { return it }
 
-            val matchingPatches = release.patches.filter {
-                it.fromSha256 == current.version.sha256 && it.fromSizeBytes == current.version.sizeBytes
-            }
-            require(matchingPatches.size <= 1) { "multiple direct patches match the active reference" }
-            val targetVersion = ReferenceVersion(
-                datasetId = release.datasetId,
-                sha256 = release.targetSha256,
-                sizeBytes = release.targetSizeBytes,
-                contractMajor = release.contractMajor,
-                releaseSequence = release.releaseSequence,
-            )
-            val patch = matchingPatches.singleOrNull()
-            val prepared = if (patch == null) {
-                prepareArtifact(current, release, release.full, preserveCheckpointOnFailure = true)
-            } else {
-                try {
-                    prepareArtifact(current, release, patch, preserveCheckpointOnFailure = false)
-                } catch (patchError: Exception) {
-                    // A signed patch is only an optimization. Any failure before
-                    // state mutation falls back to the mandatory signed full;
-                    // the full remains the authoritative recovery path.
-                    observer.phase("patch-fallback-full")
-                    try {
-                        prepareArtifact(
-                            current,
-                            release,
-                            release.full,
-                            preserveCheckpointOnFailure = true,
-                        )
-                    } catch (fullError: Exception) {
-                        throw IllegalStateException(
-                            "reference full fallback failed after patch failure: " +
-                                (fullError.message ?: fullError.javaClass.simpleName),
-                            fullError,
-                        ).also { it.addSuppressed(patchError) }
-                    }
-                }
-            }
-            observer.phase("verify-and-stage")
-            try {
-                store.stagePending(targetVersion, prepared.candidate)
-            } finally {
-                if (prepared.candidate.exists()) {
-                    check(prepared.candidate.delete()) { "cannot remove reference update candidate" }
-                }
-            }
-            if (prepared.downloaded.exists()) {
-                check(prepared.downloaded.delete()) { "cannot remove staged reference artifact" }
-            }
-            cleanupUpdateFiles()
+            val prepared = preparePreferredArtifact(current, release)
+            stagePrepared(targetVersion(release), prepared)
             observer.phase("staged")
             ReferenceUpdateResult(ReferenceUpdateStatus.STAGED, release.releaseSequence)
         } catch (error: Exception) {
             observer.phase("failed")
-            ReferenceUpdateResult(
-                status = if (error.message?.contains("rollback") == true) {
-                    ReferenceUpdateStatus.ROLLBACK_REJECTED
-                } else {
-                    ReferenceUpdateStatus.FAILED
-                },
-                releaseSequence = releaseSequence,
-                detail = error.message ?: error.javaClass.simpleName,
-            )
+            failureResult(error, releaseSequence)
         }
     }
+
+    private fun retirementResult(
+        current: InstalledReferenceVersion,
+        retired: ReferenceContractRetiredException,
+    ): ReferenceUpdateResult {
+        store.markContractRetired(
+            current.version.contractMajor,
+            retired.releaseSequence,
+            retired.rootHash,
+        )
+        cleanupUpdateFiles()
+        observer.phase("update-required")
+        return ReferenceUpdateResult(
+            ReferenceUpdateStatus.UPDATE_REQUIRED,
+            retired.releaseSequence,
+            "reference contract ${current.version.contractMajor} is retired",
+        )
+    }
+
+    private fun terminalResult(
+        current: InstalledReferenceVersion,
+        release: VerifiedReferenceRelease,
+    ): ReferenceUpdateResult? {
+        val state = store.snapshot()
+        val result = when {
+            release.releaseSequence < state.highestActivatedSequence -> ReferenceUpdateResult(
+                ReferenceUpdateStatus.ROLLBACK_REJECTED,
+                release.releaseSequence,
+                "signed release sequence is below the activation high-water mark",
+            )
+            current.version.sha256 == release.targetSha256 &&
+                current.version.sizeBytes == release.targetSizeBytes &&
+                current.version.datasetId == release.datasetId -> ReferenceUpdateResult(
+                ReferenceUpdateStatus.UP_TO_DATE,
+                release.releaseSequence,
+            )
+            release.releaseSequence == state.highestActivatedSequence &&
+                current.version.releaseSequence == state.highestActivatedSequence -> ReferenceUpdateResult(
+                ReferenceUpdateStatus.FAILED,
+                release.releaseSequence,
+                "activated release sequence has a different signed target identity",
+            )
+            else -> null
+        }
+        if (result != null) cleanupUpdateFiles()
+        return result
+    }
+
+    private fun targetVersion(release: VerifiedReferenceRelease) = ReferenceVersion(
+        datasetId = release.datasetId,
+        sha256 = release.targetSha256,
+        sizeBytes = release.targetSizeBytes,
+        contractMajor = release.contractMajor,
+        releaseSequence = release.releaseSequence,
+    )
+
+    private fun preparePreferredArtifact(
+        current: InstalledReferenceVersion,
+        release: VerifiedReferenceRelease,
+    ): PreparedArtifactFiles {
+        val matchingPatches = release.patches.filter {
+            it.fromSha256 == current.version.sha256 && it.fromSizeBytes == current.version.sizeBytes
+        }
+        require(matchingPatches.size <= 1) { "multiple direct patches match the active reference" }
+        val patch = matchingPatches.singleOrNull()
+            ?: return prepareArtifact(
+                current,
+                release,
+                release.full,
+                preserveCheckpointOnFailure = true,
+            )
+        return try {
+            prepareArtifact(current, release, patch, preserveCheckpointOnFailure = false)
+        } catch (patchError: Exception) {
+            // A signed patch is only an optimization. Any failure before state
+            // mutation falls back to the mandatory signed full.
+            observer.phase("patch-fallback-full")
+            try {
+                prepareArtifact(
+                    current,
+                    release,
+                    release.full,
+                    preserveCheckpointOnFailure = true,
+                )
+            } catch (fullError: Exception) {
+                throw IllegalStateException(
+                    "reference full fallback failed after patch failure: " +
+                        (fullError.message ?: fullError.javaClass.simpleName),
+                    fullError,
+                ).also { it.addSuppressed(patchError) }
+            }
+        }
+    }
+
+    private fun stagePrepared(targetVersion: ReferenceVersion, prepared: PreparedArtifactFiles) {
+        observer.phase("verify-and-stage")
+        try {
+            store.stagePending(targetVersion, prepared.candidate)
+        } finally {
+            if (prepared.candidate.exists()) {
+                check(prepared.candidate.delete()) { "cannot remove reference update candidate" }
+            }
+        }
+        if (prepared.downloaded.exists()) {
+            check(prepared.downloaded.delete()) { "cannot remove staged reference artifact" }
+        }
+        cleanupUpdateFiles()
+    }
+
+    private fun failureResult(error: Exception, releaseSequence: Long?) = ReferenceUpdateResult(
+        status = if (error.message?.contains("rollback") == true) {
+            ReferenceUpdateStatus.ROLLBACK_REJECTED
+        } else {
+            ReferenceUpdateStatus.FAILED
+        },
+        releaseSequence = releaseSequence,
+        detail = error.message ?: error.javaClass.simpleName,
+    )
 
     private data class PreparedArtifactFiles(
         val downloaded: File,
