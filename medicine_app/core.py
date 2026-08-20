@@ -5,6 +5,7 @@ import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterator
@@ -16,7 +17,6 @@ from .medication_policy import (
 from .planning import (
     cancel_instance_completion,
     clock_sort_key,
-    materialize_daily_plan,
     record_instance,
     sort_medications_by_time,
 )
@@ -32,17 +32,20 @@ from .assessment import (
     requires_acknowledgement,
 )
 from .profiles import create_person_record, delete_person_record, person_dict, update_person_record
-from .safety import APP_TIMEZONE, age_years
+from .runtime_views import (
+    get_daily_plan as build_daily_plan,
+    get_dashboard as build_dashboard,
+    list_dose_logs as build_dose_logs,
+    preview_medication as build_medication_preview,
+    with_recent_dose_logs as attach_recent_dose_logs,
+)
+from .safety import APP_TIMEZONE
 
 DOSE_STATUS_VALUES = {"taken", "skipped"}
 
 
 def _uuid() -> str:
     return str(uuid.uuid4())
-
-
-def _row(row: sqlite3.Row | None) -> dict | None:
-    return dict(row) if row is not None else None
 
 
 class ConfirmationRequired(ValueError):
@@ -52,12 +55,10 @@ class ConfirmationRequired(ValueError):
         self.assessment = assessment
 
 
-class RevisionConflict(ValueError):
-    pass
+class RevisionConflict(ValueError): pass
 
 
-class IdempotencyConflict(ValueError):
-    pass
+class IdempotencyConflict(ValueError): pass
 
 
 @contextmanager
@@ -82,12 +83,40 @@ class MedicationApp:
             raise FileNotFoundError(f"canonical database not found: {self.canonical_db}")
         self.personal_db.parent.mkdir(parents=True, exist_ok=True)
         self.products = ProductRepository(self.canonical_db)
+        self._personal_read_only: ContextVar[bool] = ContextVar(
+            f"medicine_personal_read_only_{id(self)}",
+            default=False,
+        )
         with _schema_lock(self.personal_db):
             with self._personal() as con:
                 ensure_personal_schema(con)
 
     @contextmanager
+    def personal_read_only(self) -> Iterator[None]:
+        token = self._personal_read_only.set(True)
+        try:
+            yield
+        finally:
+            self._personal_read_only.reset(token)
+
+    @contextmanager
     def _personal(self, *, write_lock: bool = False) -> Iterator[sqlite3.Connection]:
+        read_only = self._personal_read_only.get()
+        if read_only and write_lock:
+            raise RuntimeError("personal database is read-only for this request")
+        if read_only:
+            uri = f"file:{self.personal_db.resolve()}?mode=ro"
+            con = sqlite3.connect(uri, uri=True, timeout=10)
+            con.row_factory = sqlite3.Row
+            con.execute("PRAGMA query_only = ON")
+            con.execute("PRAGMA foreign_keys = ON")
+            con.execute("PRAGMA busy_timeout = 5000")
+            try:
+                yield con
+            finally:
+                con.close()
+            return
+
         con = sqlite3.connect(self.personal_db, timeout=10)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys = ON")
@@ -257,9 +286,20 @@ class MedicationApp:
             return medication
 
     def _resolve_product(
-        self, resolved_ref: str | None, manual_name: str | None, ingredient_name: str | None
+        self,
+        resolved_ref: str | None,
+        manual_name: str | None,
+        ingredient_name: str | None,
+        *,
+        canonical_con: sqlite3.Connection | None = None,
     ) -> dict:
-        return resolve_product(self.products, resolved_ref, manual_name, ingredient_name)
+        return resolve_product(
+            self.products,
+            resolved_ref,
+            manual_name,
+            ingredient_name,
+            canonical_con=canonical_con,
+        )
 
 
     def get_medication(self, medication_id: str) -> dict:
@@ -296,9 +336,7 @@ class MedicationApp:
         row = con.execute("SELECT * FROM people WHERE id=?", (person_id,)).fetchone()
         if row is None:
             raise KeyError("person not found")
-        data = dict(row)
-        data["age"] = age_years(data["birth_date"])
-        return data
+        return person_dict(row)
 
     def _list_medications_from_connection(
         self, con: sqlite3.Connection, person_id: str, *, active_only: bool = True, exclude_id: str | None = None
@@ -365,22 +403,14 @@ class MedicationApp:
                     medication["review_required"] = bool(current_assessment.get("requires_review"))
         return sort_medications_by_time(medications, target)
 
+    def get_dashboard(self, person_id: str, target_date: str | date | None = None) -> dict:
+        return build_dashboard(self, person_id, target_date, _uuid)
+
     def get_daily_plan(self, person_id: str, target_date: str | date | None = None) -> dict:
-        self.get_person(person_id)
-        if target_date is None:
-            target = datetime.now(APP_TIMEZONE).date()
-        elif isinstance(target_date, date):
-            target = target_date
-        else:
-            target = date.fromisoformat(target_date)
-        medications = self.list_medications(
-            person_id,
-            active_only=True,
-            as_of=target,
-            include_current_assessment=False,
-        )
-        with self._personal() as con:
-            return materialize_daily_plan(con, person_id, medications, target, _uuid)
+        return build_daily_plan(self, person_id, target_date, _uuid)
+
+    def with_recent_dose_logs(self, dose: dict) -> dict:
+        return attach_recent_dose_logs(self, dose)
 
     def record_dose_instance(
         self,
@@ -391,10 +421,19 @@ class MedicationApp:
     ) -> dict:
         if status not in DOSE_STATUS_VALUES:
             raise ValueError("status must be taken or skipped")
+        preserve_existing_same_state = occurred_at is None and note is None
         when = occurred_at or datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
         datetime.fromisoformat(when)
         with self._personal() as con:
-            return record_instance(con, instance_id, status, when, note, _uuid)
+            return record_instance(
+                con,
+                instance_id,
+                status,
+                when,
+                note,
+                _uuid,
+                preserve_existing_same_state=preserve_existing_same_state,
+            )
 
     def record_prn_dose(
         self, medication_id: str, occurred_at: str | None = None, note: str | None = None
@@ -508,43 +547,10 @@ class MedicationApp:
         return self.stop_medication(medication_id, expected_revision=current["revision"])
 
     def list_dose_logs(self, person_id: str, limit: int = 50) -> list[dict]:
-        self.get_person(person_id)
-        with self._personal() as con:
-            rows = con.execute(
-                """
-                SELECT l.*,
-                       COALESCE(l.product_name_snapshot,m.product_name) AS product_name,
-                       COALESCE(l.dosage_text_snapshot,m.dosage_text) AS dosage_text
-                FROM dose_logs l JOIN medications m ON m.id=l.medication_id
-                WHERE l.person_id=? ORDER BY l.occurred_at DESC, l.rowid DESC LIMIT ?
-                """,
-                (person_id, limit),
-            ).fetchall()
-        return [dict(row) for row in rows]
+        return build_dose_logs(self, person_id, limit)
 
     def preview_medication(self, person_id: str, draft_or_ref, as_of: date | None = None) -> dict:
-        raw = dict(draft_or_ref) if isinstance(draft_or_ref, dict) else {"product_ref": draft_or_ref}
-        product_ref = raw.pop("product_ref", None) or raw.pop("product_code", None)
-        product = self._resolve_product(product_ref, raw.pop("manual_name", None), raw.pop("ingredient_name", None))
-        draft = normalize_draft(raw)
-        with self._personal() as con:
-            person = self._get_person_from_connection(con, person_id)
-            assessment = assess_medication(self, con, person, product, draft, False, as_of=as_of)
-            current_count = len(self._list_medications_from_connection(con, person_id))
-        fingerprint = draft_hash(person_id, product, draft)
-        warning_token = bind_warning_token(assessment, fingerprint)
-        return {
-            "person": person, "product": product, "draft": draft,
-            "current_medication_count": current_count,
-            "risks": assessment["risks"],
-            "review_items": assessment.get("review_items") or [],
-            "dur_checks": assessment["dur_checks"],
-            "quantitative_checks": {
-                "duration": assessment["duration"], "dose": assessment["dose"]
-            },
-            "warning_token": warning_token,
-            "coverage": assessment["coverage"],
-        }
+        return build_medication_preview(self, person_id, draft_or_ref, as_of)
 
     @staticmethod
     def _replace_schedules(

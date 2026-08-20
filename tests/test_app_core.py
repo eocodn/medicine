@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from medicine_app.core import MedicationApp
 from medicine_app.safety import age_rule_matches
@@ -112,6 +113,56 @@ class MedicationAppTest(unittest.TestCase):
         self.assertEqual([p["name"] for p in self.app.list_people()], ["Alice", "Bob"])
         self.assertEqual(len(self.app.list_medications(alice["id"])), 1)
         self.assertEqual(self.app.list_medications(bob["id"]), [])
+
+    def test_dashboard_reuses_request_scoped_database_connections(self) -> None:
+        person = self.app.create_person(
+            "Dashboard", "1980-01-01", "female", "not_pregnant", "not_breastfeeding"
+        )
+        for product_ref in ("MFDS-X", "MFDS-Y", "MFDS-N"):
+            self.app.add_medication(
+                person["id"], product_ref=product_ref, long_term=True,
+                frequency_per_day=1, schedule_times=["08:00"],
+            )
+        expected = {
+            "person": self.app.get_person(person["id"]),
+            "medications": self.app.list_medications(person["id"], as_of="2026-08-20"),
+            "recent_logs": self.app.list_dose_logs(person["id"], limit=20),
+            "daily_plan": self.app.get_daily_plan(person["id"], "2026-08-20"),
+        }
+        real_connect = sqlite3.connect
+        connect_count = 0
+
+        def counted_connect(*args, **kwargs):
+            nonlocal connect_count
+            connect_count += 1
+            return real_connect(*args, **kwargs)
+
+        with patch("sqlite3.connect", side_effect=counted_connect):
+            actual = self.app.get_dashboard(person["id"], "2026-08-20")
+
+        self.assertEqual(actual, expected)
+        self.assertLessEqual(connect_count, 2)
+
+    def test_medication_preview_reuses_request_scoped_database_connections(self) -> None:
+        person = self.app.create_person(
+            "Preview", "1980-01-01", "female", "not_pregnant", "not_breastfeeding"
+        )
+        for product_ref in ("MFDS-X", "MFDS-Y", "MFDS-N"):
+            self.app.add_medication(person["id"], product_ref=product_ref, long_term=True)
+        real_connect = sqlite3.connect
+        connect_count = 0
+
+        def counted_connect(*args, **kwargs):
+            nonlocal connect_count
+            connect_count += 1
+            return real_connect(*args, **kwargs)
+
+        with patch("sqlite3.connect", side_effect=counted_connect):
+            preview = self.app.preview_medication(person["id"], "MFDS-D", as_of=date(2026, 8, 20))
+
+        self.assertEqual(preview["product"]["product_ref"], "MFDS-D")
+        self.assertEqual(preview["current_medication_count"], 3)
+        self.assertLessEqual(connect_count, 2)
 
     def test_profile_reproductive_status_is_normalized_and_editable(self) -> None:
         male = self.app.create_person(
@@ -462,6 +513,27 @@ class MedicationAppTest(unittest.TestCase):
 
         self.assertTrue(log["occurred_at"].endswith("+09:00"))
 
+    def test_repeating_same_dose_state_without_new_metadata_is_idempotent(self) -> None:
+        person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")
+        self.app.add_medication(
+            person["id"], product_code="MFDS-A", schedule_times=["08:00"],
+            start_date="2026-08-10", long_term=True,
+        )
+        plan = self.app.get_daily_plan(person["id"], "2026-08-10")
+        instance_id = plan["doses"][0]["id"]
+        first = self.app.record_dose_instance(
+            instance_id,
+            "taken",
+            "2026-08-10T08:05:00+09:00",
+        )
+
+        repeated = self.app.record_dose_instance(instance_id, "taken")
+
+        self.assertEqual(repeated["completed_at"], first["completed_at"])
+        logs = self.app.list_dose_logs(person["id"])
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0]["occurred_at"], "2026-08-10T08:05:00+09:00")
+
     def test_schedule_independent_dose_logging_is_not_exposed(self) -> None:
         self.assertFalse(hasattr(self.app, "record_dose"))
 
@@ -555,9 +627,14 @@ class MedicationAppTest(unittest.TestCase):
         )
 
         first = self.app.get_daily_plan(person["id"], "2026-08-10")
+        observer = sqlite3.connect(self.personal_db)
+        data_version_before = observer.execute("PRAGMA data_version").fetchone()[0]
         second = self.app.get_daily_plan(person["id"], "2026-08-10")
+        data_version_after = observer.execute("PRAGMA data_version").fetchone()[0]
+        observer.close()
         self.assertEqual(len(first["doses"]), 2)
         self.assertEqual([dose["id"] for dose in first["doses"]], [dose["id"] for dose in second["doses"]])
+        self.assertEqual(data_version_after, data_version_before)
         self.assertTrue(all(dose["status"] == "planned" for dose in first["doses"]))
 
         completed = self.app.record_dose_instance(first["doses"][0]["id"], "taken", "2026-08-10T08:05:00+09:00")

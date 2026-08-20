@@ -120,13 +120,17 @@ test("home dose actions prioritize normal completion and compact completed state
 
   assert.match(index, /\/static\/styles\.css\?v=20260819ux2/);
   assert.match(index, /\/static\/prescription-dur\.js\?v=20260818dur1/);
-  assert.match(index, /\/static\/prescription\.js\?v=20260819ux4/);
-  assert.match(index, /\/static\/app-state\.js\?v=20260819ux4/);
-  assert.match(index, /\/static\/app\.js\?v=20260819ux4/);
+  assert.match(index, /\/static\/prescription\.js\?v=20260820perf1/);
+  assert.match(index, /\/static\/app-state\.js\?v=20260820perf1/);
+  assert.match(index, /\/static\/app\.js\?v=20260820perf1/);
+  assert.match(index, /\/static\/dose-actions\.js\?v=20260820perf1/);
   assert.match(app, /class="dose-primary-action"[^>]*data-instance-taken[^>]*>✓ 사용했어요<\/button>/);
   assert.match(app, /class="dose-skip-action"[^>]*data-instance-skipped[^>]*>건너뛰기<\/button>/);
-  assert.match(app, /class="dose-status taken"[^>]*>✓ 복용 완료<\/span>/);
-  assert.match(app, /class="dose-status skipped"[^>]*>– 건너뜀<\/span>/);
+  assert.match(app, /class="dose-status taken"/);
+  assert.match(app, /pendingLabel \|\| "✓ 복용 완료"/);
+  assert.match(app, /class="dose-status skipped"/);
+  assert.match(app, /pendingLabel \|\| "– 건너뜀"/);
+  assert.match(app, /const pendingLabel = item\._pending \? "저장 중…" : null/);
   assert.match(app, /class="dose-cancel-action"[^>]*data-instance-cancel[^>]*>취소<\/button>/);
   assert.match(styles, /\.dose-actions\.planned[^{]*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto;/);
   assert.match(styles, /\.dose-primary-action\s*\{[^}]*background:\s*var\(--brand-soft\);[^}]*color:\s*var\(--brand\);/);

@@ -18,11 +18,70 @@ const state = {
   pendingStopMedicationId: null,
   searchTimer: null,
   searchRequestId: 0,
+  doseMutations: new Map(),
+  dashboardLoads: new Map(),
 };
 
 function markDashboardStale() {
   state.dashboardStale = true;
   state.dashboardDate = null;
+}
+
+function recomputeDoseSummary() {
+  const plan = state.dashboard?.daily_plan;
+  if (!plan) return;
+  const doses = plan.doses || [];
+  plan.summary = {
+    planned: doses.filter((item) => item.status === "planned").length,
+    taken: doses.filter((item) => item.status === "taken").length,
+    skipped: doses.filter((item) => item.status === "skipped").length,
+  };
+}
+
+function currentDoseStatus(instanceId) {
+  const localDose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
+  if (localDose) return localDose.status;
+  const log = (state.dashboard?.recent_logs || []).find((item) => item.dose_instance_id === instanceId);
+  return log?.status || null;
+}
+
+function applyPendingDoseIntent(instanceId, desiredStatus) {
+  const localDose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
+  if (!localDose) return false;
+  localDose.status = desiredStatus;
+  if (desiredStatus === "planned") localDose.completed_at = null;
+  localDose._pending = true;
+  recomputeDoseSummary();
+  return true;
+}
+
+function clearPendingDoseIntent(instanceId) {
+  const localDose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
+  if (!localDose) return false;
+  delete localDose._pending;
+  return true;
+}
+
+function reconcileDoseMutation(committed) {
+  if (!committed || !state.dashboard) return false;
+  let changed = false;
+  if (Array.isArray(committed.recent_logs)) {
+    state.dashboard = {
+      ...state.dashboard,
+      recent_logs: committed.recent_logs,
+    };
+    changed = true;
+  }
+  const localDose = (state.dashboard.daily_plan?.doses || []).find((item) => item.id === committed.id);
+  if (localDose) {
+    localDose.status = committed.status;
+    localDose.completed_at = committed.completed_at;
+    delete localDose._pending;
+    recomputeDoseSummary();
+    changed = true;
+  }
+  if (changed) state.dashboardStale = false;
+  return changed;
 }
 
 function reconcileCommittedMedication(committed) {

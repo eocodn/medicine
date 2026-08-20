@@ -76,5 +76,5 @@ test("PRN medication card exposes actual-intake recording", () => {
 
 test("recent instance-linked history can be corrected from the shared UI", () => {
   assert.match(app, /data-log-cancel/);
-  assert.match(app, /cancelDoseInstance\(button\.dataset\.logCancel\)/);
+  assert.match(app, /cancelDoseInstance\(button\.dataset\.logCancel,\s*button\)/);
 });

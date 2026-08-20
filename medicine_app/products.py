@@ -136,7 +136,13 @@ class ProductRepository:
         if not product_ref:
             raise ValueError("product_ref is required")
         with self._canonical() as con:
-            row = con.execute("SELECT * FROM products WHERE item_seq=?", (product_ref,)).fetchone()
-            if row is None:
-                raise KeyError("product not found")
-            return self._decorate_product(row, con)
+            return self.get_from_connection(con, product_ref)
+
+    def get_from_connection(self, con: sqlite3.Connection, product_ref: str) -> dict:
+        product_ref = product_ref.strip()
+        if not product_ref:
+            raise ValueError("product_ref is required")
+        row = con.execute("SELECT * FROM products WHERE item_seq=?", (product_ref,)).fetchone()
+        if row is None:
+            raise KeyError("product not found")
+        return self._decorate_product(row, con)

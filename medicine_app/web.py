@@ -202,12 +202,7 @@ def create_web_app(
     @app.get("/api/people/{person_id}/dashboard")
     def dashboard(person_id: str, date: str | None = None) -> dict:
         try:
-            return {
-                "person": service.get_person(person_id),
-                "medications": service.list_medications(person_id, as_of=date),
-                "recent_logs": service.list_dose_logs(person_id, limit=20),
-                "daily_plan": service.get_daily_plan(person_id, date),
-            }
+            return service.get_dashboard(person_id, date)
         except Exception as exc:
             raise _translate_error(exc) from exc
 
@@ -258,7 +253,9 @@ def create_web_app(
     @app.post("/api/medications/{medication_id}/prn-intakes", status_code=201)
     def record_prn_intake(medication_id: str, payload: PrnIntakeCreate) -> dict:
         try:
-            return service.record_prn_dose(medication_id, payload.occurred_at, payload.note)
+            return service.with_recent_dose_logs(
+                service.record_prn_dose(medication_id, payload.occurred_at, payload.note)
+            )
         except Exception as exc:
             raise _translate_error(exc) from exc
 
@@ -281,14 +278,16 @@ def create_web_app(
     @app.post("/api/dose-instances/{instance_id}")
     def update_dose_instance(instance_id: str, payload: DoseInstanceUpdate) -> dict:
         try:
-            return service.record_dose_instance(instance_id, payload.status, payload.occurred_at, payload.note)
+            return service.with_recent_dose_logs(
+                service.record_dose_instance(instance_id, payload.status, payload.occurred_at, payload.note)
+            )
         except Exception as exc:
             raise _translate_error(exc) from exc
 
     @app.delete("/api/dose-instances/{instance_id}/completion")
     def cancel_dose_instance_completion(instance_id: str) -> dict:
         try:
-            return service.cancel_dose_instance(instance_id)
+            return service.with_recent_dose_logs(service.cancel_dose_instance(instance_id))
         except Exception as exc:
             raise _translate_error(exc) from exc
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import nullcontext
 from datetime import date
 from typing import Any, Mapping
 
@@ -36,7 +37,13 @@ def _fallback_product(medication: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _current_products(app: Any, medications: list[dict]) -> list[dict]:
+def _current_products(
+    app: Any,
+    medications: list[dict],
+    *,
+    canonical_con: sqlite3.Connection | None = None,
+    product_cache: dict[str, dict] | None = None,
+) -> list[dict]:
     result = []
     for medication in medications:
         ref = medication.get("catalog_item_seq")
@@ -44,12 +51,35 @@ def _current_products(app: Any, medications: list[dict]) -> list[dict]:
             result.append(_fallback_product(medication))
             continue
         try:
-            product = app.get_product(str(ref))
+            key = str(ref)
+            if product_cache is not None and key in product_cache:
+                product = product_cache[key]
+            elif canonical_con is not None:
+                product = app.products.get_from_connection(canonical_con, key)
+                if product_cache is not None:
+                    product_cache[key] = product
+            else:
+                product = app.get_product(key)
         except (KeyError, FileNotFoundError, sqlite3.DatabaseError):
             result.append(_fallback_product(medication))
         else:
             result.append({**medication, **product, "id": medication["id"]})
     return result
+
+
+def resolve_current_products(
+    app: Any,
+    medications: list[dict],
+    *,
+    canonical_con: sqlite3.Connection | None = None,
+    product_cache: dict[str, dict] | None = None,
+) -> list[dict]:
+    return _current_products(
+        app,
+        medications,
+        canonical_con=canonical_con,
+        product_cache=product_cache,
+    )
 
 def _profile_rule_categories(
     con: sqlite3.Connection,
@@ -148,21 +178,36 @@ def assess_medication(
     exclude_medication_id: str | None = None,
     as_of: date | None = None,
     additional_current: list[Mapping[str, Any]] | None = None,
+    preloaded_current: list[Mapping[str, Any]] | None = None,
+    canonical_con: sqlite3.Connection | None = None,
+    product_cache: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
-    current = app._list_medications_from_connection(
-        personal_con, person["id"], active_only=False, exclude_id=exclude_medication_id
-    )
-    current = _current_products(app, current)
+    if preloaded_current is None:
+        current = app._list_medications_from_connection(
+            personal_con, person["id"], active_only=False, exclude_id=exclude_medication_id
+        )
+        current = _current_products(
+            app,
+            current,
+            canonical_con=canonical_con,
+            product_cache=product_cache,
+        )
+    else:
+        current = [
+            dict(item) for item in preloaded_current
+            if exclude_medication_id is None or str(item.get("id")) != str(exclude_medication_id)
+        ]
     if additional_current:
         current.extend(dict(item) for item in additional_current)
     review_items = _duplicate_review_items(current, product, draft)
     first_profile_date, last_profile_date = _course_profile_dates(draft, as_of)
-    with app._canonical() as canonical_con:
-        dataset = canonical_manifest(canonical_con)
+    canonical_scope = nullcontext(canonical_con) if canonical_con is not None else app._canonical()
+    with canonical_scope as active_canonical_con:
+        dataset = canonical_manifest(active_canonical_con)
         product_risks = collect_qualitative_risks(
-            canonical_con, product, person, current, as_of, candidate_course=draft
+            active_canonical_con, product, person, current, as_of, candidate_course=draft
         )
-        quantitative = evaluate_quantitative(canonical_con, product, draft)
+        quantitative = evaluate_quantitative(active_canonical_con, product, draft)
         pediatric = age_years(person["birth_date"], first_profile_date) < 19
         if pediatric and quantitative["dose"].get("result") in {"within", "not_applicable"}:
             quantitative["dose"] = {
@@ -174,14 +219,14 @@ def assess_medication(
             quantitative["dose"]["pediatric_review"] = True
 
         target = item_seq(product)
-        issues = category_resolution_issues(canonical_con, target) if target else {}
-        relevant_profile_categories = _profile_rule_categories(canonical_con, product, person)
+        issues = category_resolution_issues(active_canonical_con, target) if target else {}
+        relevant_profile_categories = _profile_rule_categories(active_canonical_con, product, person)
         coverage = coverage_summary(
             product, dataset, person,
             relevant_profile_categories=relevant_profile_categories,
             category_issues=issues,
         )
-        detailed_product_categories = linked_categories(canonical_con, target) if target else set()
+        detailed_product_categories = linked_categories(active_canonical_con, target) if target else set()
 
     risks = _dedupe_risks(product_risks)
     dur_checks = build_dur_checks(
@@ -304,12 +349,23 @@ def assess_current_medication(
     medication: Mapping[str, Any],
     *,
     as_of: date | None = None,
+    canonical_con: sqlite3.Connection | None = None,
+    current_products: list[Mapping[str, Any]] | None = None,
+    product_cache: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     """Re-evaluate a stored medication without mutating its revision history."""
     ref = medication.get("catalog_item_seq")
     if ref:
         try:
-            product = app.get_product(str(ref))
+            key = str(ref)
+            if product_cache is not None and key in product_cache:
+                product = product_cache[key]
+            elif canonical_con is not None:
+                product = app.products.get_from_connection(canonical_con, key)
+                if product_cache is not None:
+                    product_cache[key] = product
+            else:
+                product = app.get_product(key)
         except (KeyError, FileNotFoundError, sqlite3.DatabaseError):
             product = _fallback_product(medication)
     else:
@@ -340,6 +396,9 @@ def assess_current_medication(
         False,
         exclude_medication_id=str(medication["id"]),
         as_of=as_of,
+        preloaded_current=current_products,
+        canonical_con=canonical_con,
+        product_cache=product_cache,
     )
     assessment["permit_status"] = product.get("permit_status")
     assessment["permit_status_name"] = product.get("permit_status_name")
@@ -353,5 +412,6 @@ __all__ = [
     "bind_warning_token",
     "has_dur_alert",
     "has_split_prohibition",
+    "resolve_current_products",
     "requires_acknowledgement",
 ]

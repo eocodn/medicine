@@ -84,9 +84,28 @@ class MobileApi:
     def __init__(self, canonical_db: str | Path, personal_db: str | Path) -> None:
         self.service = MedicationApp(canonical_db, personal_db)
 
+    def request_access(self, method: str, raw_path: str) -> str:
+        parsed = urlsplit(raw_path)
+        path = parsed.path
+        normalized_method = method.upper().strip()
+        if normalized_method == "GET" and path in {"/api/health", "/api/products"}:
+            return "reference"
+        if normalized_method == "GET" and path == "/api/people":
+            return "personal_read"
+        if normalized_method == "POST" and re.fullmatch(r"/api/people/[^/]+/medications/preview", path):
+            return "personal_read"
+        if normalized_method == "GET" and re.fullmatch(r"/api/medications/[^/]+/history", path):
+            return "personal_read"
+        return "personal_write"
+
     def request(self, method: str, path: str, body_json: str | None = None) -> str:
         try:
-            status, body = self._dispatch(method.upper().strip(), path, body_json)
+            normalized_method = method.upper().strip()
+            if self.request_access(normalized_method, path) == "personal_read":
+                with self.service.personal_read_only():
+                    status, body = self._dispatch(normalized_method, path, body_json)
+            else:
+                status, body = self._dispatch(normalized_method, path, body_json)
         except ConfirmationRequired as exc:
             status, body = 409, {
                 "confirmation_required": True,
@@ -155,12 +174,7 @@ class MobileApi:
         if method == "GET" and match:
             person_id = match.group(1)
             target_date = (query.get("date") or [None])[-1]
-            return 200, {
-                "person": service.get_person(person_id),
-                "medications": service.list_medications(person_id, as_of=target_date),
-                "recent_logs": service.list_dose_logs(person_id, limit=20),
-                "daily_plan": service.get_daily_plan(person_id, target_date),
-            }
+            return 200, service.get_dashboard(person_id, target_date)
 
         match = re.fullmatch(r"/api/people/([^/]+)/daily-plan", path)
         if method == "GET" and match:
@@ -207,9 +221,10 @@ class MobileApi:
         match = re.fullmatch(r"/api/medications/([^/]+)/prn-intakes", path)
         if method == "POST" and match:
             payload = _validated_fields(_body_object(body_json), {"occurred_at", "note"})
-            return 201, service.record_prn_dose(
+            dose = service.record_prn_dose(
                 match.group(1), payload.get("occurred_at"), payload.get("note")
             )
+            return 201, service.with_recent_dose_logs(dose)
 
         match = re.fullmatch(r"/api/medications/([^/]+)/history", path)
         if method == "GET" and match:
@@ -217,16 +232,17 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/dose-instances/([^/]+)/completion", path)
         if method == "DELETE" and match:
-            return 200, service.cancel_dose_instance(match.group(1))
+            return 200, service.with_recent_dose_logs(service.cancel_dose_instance(match.group(1)))
 
         match = re.fullmatch(r"/api/dose-instances/([^/]+)", path)
         if method == "POST" and match:
             payload = _validated_fields(_body_object(body_json), _DOSE_FIELDS)
             if "status" not in payload:
                 raise ValueError("status is required")
-            return 200, service.record_dose_instance(
+            dose = service.record_dose_instance(
                 match.group(1), payload["status"], payload.get("occurred_at"), payload.get("note")
             )
+            return 200, service.with_recent_dose_logs(dose)
 
         return 404, {"detail": "route not found"}
 

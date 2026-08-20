@@ -29,11 +29,12 @@ function formatDoseText(value) {
 async function api(path, options = {}) {
   const local = window.MedicineLocalApi?.request(path, options);
   if (local !== undefined) return local;
+  const { coalesceKey: _coalesceKey, ...fetchOptions } = options;
   let response;
   try {
     response = await fetch(path, {
-      ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...fetchOptions,
+      headers: { "Content-Type": "application/json", ...(fetchOptions.headers || {}) },
     });
   } catch (error) {
     console.error("api transport failed", { path, error });
@@ -171,10 +172,30 @@ async function loadHealth() {
 }
 async function loadDashboard() {
   if (!state.currentPersonId) return;
-  const dashboard = await api(`/api/people/${state.currentPersonId}/dashboard`);
-  state.dashboard = dashboard;
-  state.dashboardDate = dashboard?.daily_plan?.date || todayInKorea();
-  state.dashboardStale = false;
+  const personId = state.currentPersonId;
+  const existing = state.dashboardLoads.get(personId);
+  if (existing) {
+    existing.dirty = true;
+    return existing.promise;
+  }
+  const entry = { dirty: false, promise: null };
+  entry.promise = (async () => {
+    try {
+      do {
+        entry.dirty = false;
+        const dashboard = await api(`/api/people/${personId}/dashboard`);
+        if (state.currentPersonId === personId) {
+          state.dashboard = dashboard;
+          state.dashboardDate = dashboard?.daily_plan?.date || todayInKorea();
+          state.dashboardStale = false;
+        }
+      } while (entry.dirty && state.currentPersonId === personId);
+    } finally {
+      if (state.dashboardLoads.get(personId) === entry) state.dashboardLoads.delete(personId);
+    }
+  })();
+  state.dashboardLoads.set(personId, entry);
+  return entry.promise;
 }
 
 function renderAll() {
@@ -235,11 +256,12 @@ function renderHome() {
 
   $$('[data-instance-taken]', root).forEach((button) => button.addEventListener("click", () => completeDoseInstance(button.dataset.instanceTaken, "taken", button)));
   $$('[data-instance-skipped]', root).forEach((button) => button.addEventListener("click", () => completeDoseInstance(button.dataset.instanceSkipped, "skipped", button)));
-  $$('[data-instance-cancel]', root).forEach((button) => button.addEventListener("click", () => cancelDoseInstance(button.dataset.instanceCancel)));
+  $$('[data-instance-cancel]', root).forEach((button) => button.addEventListener("click", () => cancelDoseInstance(button.dataset.instanceCancel, button)));
 }
 
 function scheduleHtml(item) {
   const stateClass = item.status === "taken" ? "done taken" : item.status === "skipped" ? "done skipped" : "planned";
+  const pendingLabel = item._pending ? "저장 중…" : null;
   const mealRelation = item.meal_relation && item.meal_relation !== "unspecified"
     ? mealRelationLabel(item.meal_relation) : null;
   const doseMeta = [item.dose_text ? formatDoseText(item.dose_text) : "복용량 미입력", mealRelation]
@@ -249,12 +271,13 @@ function scheduleHtml(item) {
       <span class="schedule-time">${escapeHtml(item.scheduled_time || item.slot_label || "시간 미정")}</span>
       <div class="schedule-name"><strong>${escapeHtml(item.product_name)}</strong><span>${escapeHtml(doseMeta)}</span></div>
       ${item.status === "taken"
-        ? `<div class="dose-result"><span class="dose-status taken">✓ 복용 완료</span><button class="dose-cancel-action" data-instance-cancel="${item.id}" type="button">취소</button></div>`
+        ? `<div class="dose-result"><span class="dose-status taken">${pendingLabel || "✓ 복용 완료"}</span><button class="dose-cancel-action" data-instance-cancel="${item.id}" type="button">취소</button></div>`
         : item.status === "skipped"
-          ? `<div class="dose-result"><span class="dose-status skipped">– 건너뜀</span><button class="dose-cancel-action" data-instance-cancel="${item.id}" type="button">취소</button></div>`
+          ? `<div class="dose-result"><span class="dose-status skipped">${pendingLabel || "– 건너뜀"}</span><button class="dose-cancel-action" data-instance-cancel="${item.id}" type="button">취소</button></div>`
           : `<div class="dose-actions planned">
               <button class="dose-primary-action" data-instance-taken="${item.id}" type="button">✓ 사용했어요</button>
               <button class="dose-skip-action" data-instance-skipped="${item.id}" type="button">건너뛰기</button>
+              ${pendingLabel ? `<span class="dose-status">${pendingLabel}</span>` : ""}
             </div>`}
     </div>`;
 }
@@ -315,60 +338,10 @@ function renderMedications() {
     </div>`).join("") : `<div class="empty-state"><strong>기록이 아직 없어요</strong>약을 복용한 뒤 완료 버튼을 눌러보세요.</div>`;
 
   $$('[data-dur-alert]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationSafety(button.dataset.durAlert)));
-  $$('[data-prn-taken]', medsRoot).forEach((button) => button.addEventListener("click", () => recordPrnIntake(button.dataset.prnTaken)));
+  $$('[data-prn-taken]', medsRoot).forEach((button) => button.addEventListener("click", () => recordPrnIntake(button.dataset.prnTaken, button)));
   $$('[data-edit]', medsRoot).forEach((button) => button.addEventListener("click", () => openMedicationEdit(button.dataset.edit)));
   $$('[data-stop]', medsRoot).forEach((button) => button.addEventListener("click", () => stopMedication(button.dataset.stop)));
-  $$('[data-log-cancel]', historyRoot).forEach((button) => button.addEventListener("click", () => cancelDoseInstance(button.dataset.logCancel)));
-}
-
-async function completeDoseInstance(instanceId, status, button = null) {
-  const originalText = button?.textContent || "";
-  if (button) {
-    button.disabled = true;
-    button.setAttribute("aria-busy", "true");
-    button.textContent = "처리 중…";
-  }
-  let updated;
-  try {
-    updated = await api(`/api/dose-instances/${instanceId}`, {
-      method: "POST",
-      body: JSON.stringify({ status }),
-    });
-  } catch (error) {
-    if (button) {
-      button.disabled = false;
-      button.removeAttribute("aria-busy");
-      button.textContent = originalText;
-    }
-    toast(error.message);
-    return;
-  }
-
-  const localDose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
-  if (localDose) {
-    localDose.status = updated.status;
-    localDose.completed_at = updated.completed_at;
-    renderAll();
-  } else if (button) {
-    button.removeAttribute("aria-busy");
-    button.textContent = status === "taken" ? "✓ 저장됨" : "건너뜀 저장됨";
-  }
-
-  try {
-    await loadDashboard();
-    renderAll();
-  } catch (error) {
-    console.error("dashboard refresh after dose completion failed", error);
-    toast("복용 기록은 저장됐지만 화면을 새로고침하지 못했어요. 앱을 다시 열면 저장된 기록을 확인할 수 있어요.");
-  }
-}
-
-async function cancelDoseInstance(instanceId) {
-  try {
-    await api(`/api/dose-instances/${instanceId}/completion`, { method: "DELETE" });
-    await loadDashboard();
-    renderAll();
-  } catch (error) { toast(error.message); }
+  $$('[data-log-cancel]', historyRoot).forEach((button) => button.addEventListener("click", () => cancelDoseInstance(button.dataset.logCancel, button)));
 }
 
 function stopMedication(medicationId) {
@@ -431,7 +404,9 @@ async function runDrugSearch(successMessage = "") {
   const requestId = ++state.searchRequestId;
   status.textContent = "";
   try {
-    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`);
+    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`, {
+      coalesceKey: "product-search",
+    });
     if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
     state.fullCatalog = true;
     status.textContent = successMessage;

@@ -8,6 +8,12 @@ import javax.crypto.CipherInputStream
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+enum class PersonalDatabaseOpenOrigin {
+    SEALED_SNAPSHOT,
+    RECOVERY_PLAINTEXT,
+    EMPTY,
+}
+
 class PersonalDatabaseVault(
     private val plain: File,
     private val encrypted: File,
@@ -17,19 +23,28 @@ class PersonalDatabaseVault(
     private val sealTemp = File(encrypted.parentFile, "${encrypted.name}.tmp")
     private val openTemp = File(plain.parentFile, "${plain.name}.tmp")
 
-    fun openForUse() {
+    fun openForUse(): PersonalDatabaseOpenOrigin {
         // A plaintext DB left by process death may contain a committed request
         // newer than the encrypted snapshot. SQLite recovery runs on that file,
         // then MedicineBridge checkpoints and reseals it immediately.
-        if (plain.exists()) return
+        if (plain.exists()) return PersonalDatabaseOpenOrigin.RECOVERY_PLAINTEXT
         val source = when {
             encrypted.isFile -> encrypted
             backup.isFile -> backup
-            else -> return
+            else -> return PersonalDatabaseOpenOrigin.EMPTY
         }
         openTemp.delete()
         decrypt(source, openTemp)
         check(openTemp.renameTo(plain)) { "could not open personal database vault" }
+        return PersonalDatabaseOpenOrigin.SEALED_SNAPSHOT
+    }
+
+    fun finishReadOnlyUse(origin: PersonalDatabaseOpenOrigin): Boolean {
+        if (origin != PersonalDatabaseOpenOrigin.SEALED_SNAPSHOT) return false
+        if (plain.isFile) check(plain.delete()) { "could not remove read-only personal database plaintext" }
+        deleteIfPresent(File(plain.path + "-wal"))
+        deleteIfPresent(File(plain.path + "-shm"))
+        return true
     }
 
     fun sealAfterUse() {

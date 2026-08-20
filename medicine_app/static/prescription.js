@@ -108,13 +108,26 @@ function syncLongTermFields(root = document) {
   $("#duration-days-field", root)?.classList.toggle("is-disabled", longTerm);
 }
 
-async function recordPrnIntake(medicationId) {
+async function recordPrnIntake(medicationId, button = null) {
+  const originalText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "처리 중…";
+  }
   try {
-    await api(`/api/medications/${medicationId}/prn-intakes`, { method: "POST", body: "{}" });
-    await loadDashboard();
+    const updated = await api(`/api/medications/${medicationId}/prn-intakes`, { method: "POST", body: "{}" });
+    reconcileDoseMutation(updated);
     renderAll();
     toast("필요시 복용을 기록했어요");
-  } catch (error) { toast(error.message); }
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = originalText;
+    }
+    toast(error.message);
+  }
 }
 
 function friendlyErrorMessage(message) {

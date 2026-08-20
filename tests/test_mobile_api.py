@@ -55,6 +55,27 @@ class MobileApiTest(unittest.TestCase):
         leaked = [warning for warning in caught if "unclosed database" in str(warning.message)]
         self.assertEqual(leaked, [])
 
+    def test_request_access_distinguishes_reference_reads_personal_reads_and_writes(self) -> None:
+        self.assertEqual(self.api.request_access("GET", "/api/health"), "reference")
+        self.assertEqual(self.api.request_access("GET", "/api/products?q=%EC%95%BDA"), "reference")
+        self.assertEqual(self.api.request_access("GET", "/api/people"), "personal_read")
+        self.assertEqual(
+            self.api.request_access("POST", "/api/people/example/medications/preview"),
+            "personal_read",
+        )
+        self.assertEqual(
+            self.api.request_access("GET", "/api/medications/example/history"),
+            "personal_read",
+        )
+        self.assertEqual(self.api.request_access("GET", "/api/people/example/dashboard"), "personal_write")
+        self.assertEqual(self.api.request_access("POST", "/api/dose-instances/example"), "personal_write")
+
+    def test_personal_read_scope_rejects_write_connections(self) -> None:
+        with self.api.service.personal_read_only():
+            with self.assertRaisesRegex(RuntimeError, "read-only"):
+                with self.api.service._personal(write_lock=True):
+                    pass
+
     def test_people_search_dashboard_and_dose_routes_share_the_core(self) -> None:
         status, health = self.request("GET", "/api/health")
         self.assertEqual(status, 200)
@@ -103,6 +124,9 @@ class MobileApiTest(unittest.TestCase):
         })
         self.assertEqual(status, 200)
         self.assertEqual(completed["status"], "taken")
+        self.assertNotIn("dose_state", completed)
+        self.assertEqual(len(completed["recent_logs"]), 1)
+        self.assertEqual(completed["recent_logs"][0]["dose_instance_id"], instance["id"])
 
         status, legacy = self.request("POST", f"/api/medications/{instance['medication_id']}/logs", {
             "status": "taken",
@@ -114,6 +138,8 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(canceled["status"], "planned")
         self.assertIsNone(canceled["completed_at"])
+        self.assertNotIn("dose_state", canceled)
+        self.assertEqual(canceled["recent_logs"], [])
 
         _, dashboard = self.request("GET", f"/api/people/{person['id']}/dashboard?date=2026-08-10")
         self.assertEqual(dashboard["daily_plan"]["doses"][0]["status"], "planned")
@@ -135,6 +161,7 @@ class MobileApiTest(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         self.assertEqual(recorded["status"], "taken")
+        self.assertEqual(len(recorded["recent_logs"]), 1)
         status, blocked = self.request(
             "POST", f"/api/medications/{medication['id']}/prn-intakes",
             {"occurred_at": "2026-08-10T18:00:00+09:00"},
