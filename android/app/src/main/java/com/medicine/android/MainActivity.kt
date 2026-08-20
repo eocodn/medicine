@@ -38,9 +38,11 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private var webView: WebView? = null
+    private var medicineBridge: MedicineBridge? = null
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var pendingCaptureUri: Uri? = null
     private var pendingCaptureFile: File? = null
@@ -321,10 +323,21 @@ class MainActivity : ComponentActivity() {
                 override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
                     !isAllowedOrigin(Uri.parse(url))
             }
-            loadUrl(APP_URL)
         }
         webView = view
+        medicineBridge = bridge
+        bridge.setResponseHandler { requestId, response ->
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val target = webView ?: return@runOnUiThread
+                target.evaluateJavascript(
+                    "window.MedicineLocalApi?.resolve(${JSONObject.quote(requestId)}, ${JSONObject.quote(response)})",
+                    null,
+                )
+            }
+        }
         setContentView(view)
+        view.loadUrl(APP_URL)
     }
 
     private fun createCameraCaptureIntent(): Intent {
@@ -389,6 +402,8 @@ class MainActivity : ComponentActivity() {
         pendingCaptureFile = null
         pendingCaptureUri = null
         startupExecutor.shutdownNow()
+        medicineBridge?.close()
+        medicineBridge = null
         webView?.let { view ->
             view.stopLoading()
             view.removeJavascriptInterface("MedicineNative")

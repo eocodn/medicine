@@ -8,6 +8,7 @@ const assert = require("node:assert/strict");
 const index = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/index.html"), "utf8");
 const app = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/app.js"), "utf8");
 const prescription = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/prescription.js"), "utf8");
+const doseActions = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/dose-actions.js"), "utf8");
 const dialog = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/dialog.js"), "utf8");
 
 
@@ -70,11 +71,20 @@ test("search result copy has a partial DUR coverage state", () => {
 
 test("PRN medication card exposes actual-intake recording", () => {
   assert.match(app, /data-prn-taken/);
-  assert.match(prescription, /prn-intakes/);
+  assert.match(doseActions, /prn-intakes/);
+  assert.match(doseActions, /request_id/);
+});
+
+
+test("mutation invariant policy loads before dose action callers", () => {
+  const policyIndex = index.indexOf("/static/mutation-invariants.js");
+  const doseActionsIndex = index.indexOf("/static/dose-actions.js");
+  assert.ok(policyIndex >= 0);
+  assert.ok(doseActionsIndex > policyIndex);
 });
 
 
 test("recent instance-linked history can be corrected from the shared UI", () => {
   assert.match(app, /data-log-cancel/);
-  assert.match(app, /cancelDoseInstance\(button\.dataset\.logCancel\)/);
+  assert.match(app, /cancelDoseInstance\(button\.dataset\.logCancel,\s*button\)/);
 });

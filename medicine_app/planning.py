@@ -126,41 +126,55 @@ def materialize_daily_plan(
 
     existing = con.execute(
         """
-        SELECT id, medication_id, schedule_key, status
+        SELECT id, medication_id, schedule_key, status, scheduled_time, slot_label, dose_text
         FROM dose_instances WHERE person_id=? AND scheduled_date=?
         """,
         (person_id, target.isoformat()),
     ).fetchall()
+    existing_by_key = {
+        (row["medication_id"], row["schedule_key"]): row
+        for row in existing
+    }
     for row in existing:
         key = (row["medication_id"], row["schedule_key"])
         if row["status"] == "planned" and key not in desired_keys:
             con.execute("DELETE FROM dose_instances WHERE id=?", (row["id"],))
 
+    medication_by_id = {med["id"]: med for med in scheduled}
     for item in desired:
-        con.execute(
-            """
-            INSERT OR IGNORE INTO dose_instances(
-                id,medication_id,person_id,scheduled_date,schedule_key,scheduled_time,
-                slot_label,dose_text,product_name_snapshot,ingredient_name_snapshot,status
-            ) VALUES(?,?,?,?,?,?,?,?,?,?, 'planned')
-            """,
-            (
-                uuid_factory(), item["medication_id"], person_id, item["scheduled_date"],
-                item["schedule_key"], item["scheduled_time"], item["slot_label"], item["dose_text"],
-                next(med["product_name"] for med in scheduled if med["id"] == item["medication_id"]),
-                next((med.get("ingredient_name") for med in scheduled if med["id"] == item["medication_id"]), None),
-            ),
-        )
+        key = (item["medication_id"], item["schedule_key"])
+        current = existing_by_key.get(key)
+        if current is None:
+            medication = medication_by_id[item["medication_id"]]
+            con.execute(
+                """
+                INSERT OR IGNORE INTO dose_instances(
+                    id,medication_id,person_id,scheduled_date,schedule_key,scheduled_time,
+                    slot_label,dose_text,product_name_snapshot,ingredient_name_snapshot,status
+                ) VALUES(?,?,?,?,?,?,?,?,?,?, 'planned')
+                """,
+                (
+                    uuid_factory(), item["medication_id"], person_id, item["scheduled_date"],
+                    item["schedule_key"], item["scheduled_time"], item["slot_label"], item["dose_text"],
+                    medication["product_name"], medication.get("ingredient_name"),
+                ),
+            )
+            continue
+        if current["status"] != "planned":
+            continue
+        if (
+            current["scheduled_time"] == item["scheduled_time"]
+            and current["slot_label"] == item["slot_label"]
+            and current["dose_text"] == item["dose_text"]
+        ):
+            continue
         con.execute(
             """
             UPDATE dose_instances
             SET scheduled_time=?, slot_label=?, dose_text=?
-            WHERE medication_id=? AND scheduled_date=? AND schedule_key=? AND status='planned'
+            WHERE id=? AND status='planned'
             """,
-            (
-                item["scheduled_time"], item["slot_label"], item["dose_text"], item["medication_id"],
-                item["scheduled_date"], item["schedule_key"],
-            ),
+            (item["scheduled_time"], item["slot_label"], item["dose_text"], current["id"]),
         )
 
     rows = list(con.execute(
@@ -201,18 +215,23 @@ def record_instance(
     occurred_at: str,
     note: str | None,
     uuid_factory: Callable[[], str],
+    *,
+    preserve_existing_same_state: bool = False,
 ) -> dict:
     row = con.execute("SELECT * FROM dose_instances WHERE id=?", (instance_id,)).fetchone()
     if row is None:
         raise KeyError("dose instance not found")
 
+    existing_log = con.execute(
+        "SELECT id,status,occurred_at,note FROM dose_logs WHERE dose_instance_id=?", (instance_id,)
+    ).fetchone()
+    if preserve_existing_same_state and row["status"] == status and existing_log is not None:
+        return dict(row)
+
     con.execute(
         "UPDATE dose_instances SET status=?, completed_at=? WHERE id=?",
         (status, occurred_at, instance_id),
     )
-    existing_log = con.execute(
-        "SELECT id FROM dose_logs WHERE dose_instance_id=?", (instance_id,)
-    ).fetchone()
     if existing_log is None:
         con.execute(
             """
@@ -238,6 +257,21 @@ def record_instance(
 def cancel_instance_completion(con: sqlite3.Connection, instance_id: str) -> dict:
     row = con.execute("SELECT * FROM dose_instances WHERE id=?", (instance_id,)).fetchone()
     if row is None:
+        canceled_prn = con.execute(
+            """SELECT dose_instance_id,medication_id,person_id
+               FROM prn_requests
+               WHERE dose_instance_id=? AND state='canceled'""",
+            (instance_id,),
+        ).fetchone()
+        if canceled_prn is not None:
+            return {
+                "id": canceled_prn["dose_instance_id"],
+                "medication_id": canceled_prn["medication_id"],
+                "person_id": canceled_prn["person_id"],
+                "status": "canceled",
+                "completed_at": None,
+                "deleted": True,
+            }
         raise KeyError("dose instance not found")
     con.execute("DELETE FROM dose_logs WHERE dose_instance_id=?", (instance_id,))
     if str(row["schedule_key"]).startswith("prn:"):
@@ -245,6 +279,10 @@ def cancel_instance_completion(con: sqlite3.Connection, instance_id: str) -> dic
         # that intake removes the ad-hoc occurrence instead of leaving an invisible
         # planned dose which can never appear in a fixed daily schedule.
         snapshot = dict(row)
+        con.execute(
+            "UPDATE prn_requests SET state='canceled' WHERE dose_instance_id=?",
+            (instance_id,),
+        )
         con.execute("DELETE FROM dose_instances WHERE id=?", (instance_id,))
         snapshot.update(status="canceled", completed_at=None, deleted=True)
         return snapshot

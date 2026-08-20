@@ -72,6 +72,7 @@ async function selectPerson(personId) {
   state.currentPersonId = personId;
   localStorage.setItem("medicine.currentPersonId", personId);
   await loadDashboard();
+  recoverPersistedDoseIntents(personId);
   renderAll();
   showScreen("home", { focus: true });
 }

@@ -108,15 +108,6 @@ function syncLongTermFields(root = document) {
   $("#duration-days-field", root)?.classList.toggle("is-disabled", longTerm);
 }
 
-async function recordPrnIntake(medicationId) {
-  try {
-    await api(`/api/medications/${medicationId}/prn-intakes`, { method: "POST", body: "{}" });
-    await loadDashboard();
-    renderAll();
-    toast("필요시 복용을 기록했어요");
-  } catch (error) { toast(error.message); }
-}
-
 function friendlyErrorMessage(message) {
   const text = String(message || "");
   const exact = {

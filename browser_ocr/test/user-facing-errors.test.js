@@ -66,20 +66,52 @@ test("known backend validation stays friendly while unknown internal details are
   assert.equal(context.friendlyErrorMessage("personal data encryption failure"), "요청을 처리하지 못했어요");
 });
 
-test("native bridge never falls back to raw backend detail when the mapper is unavailable", () => {
+test("native bridge is promise-based and never falls back to raw backend detail", async () => {
+  let request = null;
   const window = {
     MedicineNative: {
-      request() {
-        return JSON.stringify({ status: 500, body: { detail: "native bridge failure" } });
+      requestAsync(requestId, method, path, body, coalesceKey) {
+        request = { requestId, method, path, body, coalesceKey };
       },
     },
   };
   const context = runStatic("native-api.js", { window, console });
+  const pending = context.window.MedicineLocalApi.request("/api/health");
 
-  assert.throws(
-    () => context.window.MedicineLocalApi.request("/api/health"),
+  assert.equal(typeof pending?.then, "function");
+  assert.equal(request.method, "GET");
+  assert.equal(request.path, "/api/health");
+  context.window.MedicineLocalApi.resolve(
+    request.requestId,
+    JSON.stringify({ status: 500, body: { detail: "native bridge failure" } }),
+  );
+
+  await assert.rejects(
+    pending,
     (error) => error.message === "요청을 처리하지 못했어요" && error.status === 500,
   );
+});
+
+test("native bridge forwards latest-only coalescing keys", async () => {
+  let request = null;
+  const window = {
+    MedicineNative: {
+      requestAsync(requestId, method, path, body, coalesceKey) {
+        request = { requestId, method, path, body, coalesceKey };
+      },
+    },
+  };
+  const context = runStatic("native-api.js", { window, console });
+  const pending = context.window.MedicineLocalApi.request("/api/products?q=a", {
+    coalesceKey: "product-search",
+  });
+
+  assert.equal(request.coalesceKey, "product-search");
+  context.window.MedicineLocalApi.resolve(
+    request.requestId,
+    JSON.stringify({ status: 200, body: [{ product_name: "A" }] }),
+  );
+  assert.equal((await pending)[0].product_name, "A");
 });
 
 test("ordinary user-facing toast copy is not rewritten by backend error sanitization", () => {
@@ -102,9 +134,10 @@ test("transport failures become a generic user-facing request error", async () =
 test("changed error-handling assets use fresh cache keys", () => {
   const index = fs.readFileSync(path.join(staticDir, "index.html"), "utf8");
 
-  assert.match(index, /native-api\.js\?v=20260817err1/);
+  assert.match(index, /native-api\.js\?v=20260820perf1/);
   assert.match(index, /prescription-dur\.js\?v=20260818dur1/);
-  assert.match(index, /prescription\.js\?v=20260819ux4/);
-  assert.match(index, /app-state\.js\?v=20260819ux4/);
-  assert.match(index, /app\.js\?v=20260819ux4/);
+  assert.match(index, /prescription\.js\?v=20260820perf2/);
+  assert.match(index, /app-state\.js\?v=20260820perf4/);
+  assert.match(index, /app\.js\?v=20260820perf4/);
+  assert.match(index, /dose-actions\.js\?v=20260820perf4/);
 });

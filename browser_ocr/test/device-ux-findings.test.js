@@ -113,15 +113,18 @@ test("a committed medication remains in local state when only the dashboard refr
   assert.ok(events.some((item) => item.startsWith("toast:약은 저장")));
 });
 
-test("dose action handlers provide immediate busy feedback and pass the clicked button", () => {
+test("dose action handlers provide immediate feedback and coalesce queued state changes", () => {
   const app = source("app.js");
+  const doseActions = source("dose-actions.js");
   assert.match(app, /completeDoseInstance\([^,]+,[^,]+,\s*button\)/);
-  assert.match(app, /button\.disabled\s*=\s*true/);
-  assert.match(app, /button\.setAttribute\("aria-busy",\s*"true"\)/);
-  assert.match(app, /처리 중/);
-  assert.match(app, /button\.disabled\s*=\s*false/);
-  assert.match(app, /dashboard refresh after dose completion failed/);
-  assert.match(app, /복용 기록은 저장됐지만 화면을 새로고침하지 못했어요/);
+  assert.match(app, /cancelDoseInstance\([^,]+,\s*button\)/);
+  assert.match(doseActions, /button\.disabled\s*=\s*true/);
+  assert.match(doseActions, /button\.setAttribute\("aria-busy",\s*"true"\)/);
+  assert.match(doseActions, /처리 중/);
+  assert.match(doseActions, /state\.doseMutations\.get\(instanceId\)/);
+  assert.match(doseActions, /entry\.desiredStatus\s*!==\s*updated\.status/);
+  assert.match(doseActions, /drainDoseDesiredState\(instanceId,\s*entry\)/);
+  assert.match(doseActions, /reconcileDoseMutation\(updated\)/);
 });
 
 test("profile deletion uses an in-app destructive confirmation sheet", () => {

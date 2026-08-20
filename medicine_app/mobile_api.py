@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs, urlsplit
 
 from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, RevisionConflict
+from .mobile_request_policy import classify_mobile_request
 
 
 _PERSON_FIELDS = {"name", "birth_date", "sex", "pregnancy_status", "lactation_status", "notes"}
@@ -96,13 +97,13 @@ class MobileApi:
     ) -> None:
         self.service = MedicationApp(canonical_db, personal_db)
         self.reference_available = canonical_db is not None
-        self.reference_unavailable_reason: str | None = (
-            None
-            if self.reference_available
-            else (reference_unavailable_reason or "unavailable")
+        self.reference_unavailable_reason = (
+            None if self.reference_available else (reference_unavailable_reason or "unavailable")
         )
 
     def set_reference_available(self, available: bool, reason: str | None = None) -> None:
+        if available and self.service.products is None:
+            raise ValueError("reference database is unavailable")
         self.reference_available = bool(available)
         self.reference_unavailable_reason = None if self.reference_available else (reason or "unavailable")
 
@@ -110,9 +111,20 @@ class MobileApi:
         if not self.reference_available:
             raise ReferenceUnavailable(self.reference_unavailable_reason or "unavailable")
 
+    def request_access(self, method: str, raw_path: str) -> str:
+        return classify_mobile_request(method, raw_path).access
+
     def request(self, method: str, path: str, body_json: str | None = None) -> str:
         try:
-            status, body = self._dispatch(method.upper().strip(), path, body_json)
+            normalized_method = method.upper().strip()
+            policy = classify_mobile_request(normalized_method, path)
+            if policy.requires_reference:
+                self._require_reference()
+            if policy.access == "personal_read":
+                with self.service.personal_read_only():
+                    status, body = self._dispatch(normalized_method, path, body_json)
+            else:
+                status, body = self._dispatch(normalized_method, path, body_json)
         except ConfirmationRequired as exc:
             status, body = 409, {
                 "confirmation_required": True,
@@ -122,13 +134,13 @@ class MobileApi:
             }
         except (RevisionConflict, IdempotencyConflict) as exc:
             status, body = 409, {"detail": str(exc)}
-        except FileNotFoundError as exc:
-            status, body = 503, {"detail": str(exc)}
         except ReferenceUnavailable as exc:
             status, body = 503, {
                 "detail": "reference data unavailable; app update required",
                 "reference_status": exc.reason,
             }
+        except FileNotFoundError as exc:
+            status, body = 503, {"detail": str(exc)}
         except KeyError as exc:
             status, body = 404, {"detail": str(exc).strip("'")}
         except ValueError as exc:
@@ -192,16 +204,11 @@ class MobileApi:
         if method == "GET" and match:
             person_id = match.group(1)
             target_date = (query.get("date") or [None])[-1]
-            return 200, {
-                "person": service.get_person(person_id),
-                "medications": service.list_medications(
-                    person_id,
-                    as_of=target_date,
-                    include_current_assessment=self.reference_available,
-                ),
-                "recent_logs": service.list_dose_logs(person_id, limit=20),
-                "daily_plan": service.get_daily_plan(person_id, target_date),
-            }
+            return 200, service.get_dashboard(
+                person_id,
+                target_date,
+                include_current_assessment=self.reference_available,
+            )
 
         match = re.fullmatch(r"/api/people/([^/]+)/daily-plan", path)
         if method == "GET" and match:
@@ -250,10 +257,17 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/medications/([^/]+)/prn-intakes", path)
         if method == "POST" and match:
-            payload = _validated_fields(_body_object(body_json), {"occurred_at", "note"})
-            return 201, service.record_prn_dose(
-                match.group(1), payload.get("occurred_at"), payload.get("note")
+            payload = _validated_fields(_body_object(body_json), {"occurred_at", "note", "request_id"})
+            request_id = str(payload.get("request_id") or "").strip()
+            if not request_id:
+                raise ValueError("request_id is required")
+            dose = service.record_prn_dose(
+                match.group(1),
+                payload.get("occurred_at"),
+                payload.get("note"),
+                request_id=request_id,
             )
+            return 201, service.with_recent_dose_logs(dose)
 
         match = re.fullmatch(r"/api/medications/([^/]+)/history", path)
         if method == "GET" and match:
@@ -261,16 +275,22 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/dose-instances/([^/]+)/completion", path)
         if method == "DELETE" and match:
-            return 200, service.cancel_dose_instance(match.group(1))
+            return 200, service.with_recent_dose_logs(service.cancel_dose_instance(match.group(1)))
 
         match = re.fullmatch(r"/api/dose-instances/([^/]+)", path)
         if method == "POST" and match:
             payload = _validated_fields(_body_object(body_json), _DOSE_FIELDS)
             if "status" not in payload:
                 raise ValueError("status is required")
-            return 200, service.record_dose_instance(
-                match.group(1), payload["status"], payload.get("occurred_at"), payload.get("note")
+            metadata = {}
+            if "occurred_at" in payload:
+                metadata["occurred_at"] = payload["occurred_at"]
+            if "note" in payload:
+                metadata["note"] = payload["note"]
+            dose = service.record_dose_instance(
+                match.group(1), payload["status"], **metadata
             )
+            return 200, service.with_recent_dose_logs(dose)
 
         return 404, {"detail": "route not found"}
 

@@ -61,4 +61,39 @@ class PersonalDatabaseVaultTest {
         assertThrows(Exception::class.java) { vault.openForUse() }
         assertFalse(plain.exists())
     }
+
+    @Test
+    fun readOnlyUseOfSealedSnapshotCanDiscardPlaintextWithoutReencrypting() {
+        val dir = Files.createTempDirectory("medicine-vault-readonly").toFile()
+        val plain = dir.resolve("personal.sqlite")
+        val encrypted = dir.resolve("personal.sqlite.enc")
+        plain.writeText("private-health-data")
+        val vault = PersonalDatabaseVault(plain, encrypted) { key() }
+        vault.sealAfterUse()
+        val encryptedBefore = encrypted.readBytes()
+
+        val opened = vault.openForUse()
+        val discarded = vault.finishReadOnlyUse(opened)
+
+        assertTrue(discarded)
+        assertFalse(plain.exists())
+        assertTrue(encryptedBefore.contentEquals(encrypted.readBytes()))
+    }
+
+    @Test
+    fun crashRecoveryPlaintextCannotBeDiscardedAsReadOnlySnapshot() {
+        val dir = Files.createTempDirectory("medicine-vault-readonly-recovery").toFile()
+        val plain = dir.resolve("personal.sqlite")
+        val encrypted = dir.resolve("personal.sqlite.enc")
+        val vault = PersonalDatabaseVault(plain, encrypted) { key() }
+        plain.writeText("old")
+        vault.sealAfterUse()
+        vault.openForUse()
+        plain.writeText("newer-committed-state")
+
+        val opened = vault.openForUse()
+
+        assertFalse(vault.finishReadOnlyUse(opened))
+        assertTrue(plain.exists())
+    }
 }

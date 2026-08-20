@@ -53,9 +53,20 @@ def medication_update_values(current: Mapping[str, Any], changes: Mapping[str, A
     return values
 
 
-def resolve_product(products: Any, resolved_ref: str | None, manual_name: str | None, ingredient_name: str | None) -> dict:
+def resolve_product(
+    products: Any,
+    resolved_ref: str | None,
+    manual_name: str | None,
+    ingredient_name: str | None,
+    *,
+    canonical_con: Any | None = None,
+) -> dict:
     if resolved_ref:
-        product = products.get(resolved_ref)
+        product = (
+            products.get_from_connection(canonical_con, resolved_ref)
+            if canonical_con is not None
+            else products.get(resolved_ref)
+        )
         return {**product, "med_source": "catalog_search"}
     name = (manual_name or "").strip()
     if not name:

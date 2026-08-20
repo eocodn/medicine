@@ -8,6 +8,7 @@ import unittest
 import warnings
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 from medicine_app.mobile_api import MobileApi
 from tests.test_app_core import make_canonical_db
@@ -55,6 +56,27 @@ class MobileApiTest(unittest.TestCase):
         leaked = [warning for warning in caught if "unclosed database" in str(warning.message)]
         self.assertEqual(leaked, [])
 
+    def test_request_access_distinguishes_reference_reads_personal_reads_and_writes(self) -> None:
+        self.assertEqual(self.api.request_access("GET", "/api/health"), "reference")
+        self.assertEqual(self.api.request_access("GET", "/api/products?q=%EC%95%BDA"), "reference")
+        self.assertEqual(self.api.request_access("GET", "/api/people"), "personal_read")
+        self.assertEqual(
+            self.api.request_access("POST", "/api/people/example/medications/preview"),
+            "personal_read",
+        )
+        self.assertEqual(
+            self.api.request_access("GET", "/api/medications/example/history"),
+            "personal_read",
+        )
+        self.assertEqual(self.api.request_access("GET", "/api/people/example/dashboard"), "personal_write")
+        self.assertEqual(self.api.request_access("POST", "/api/dose-instances/example"), "personal_write")
+
+    def test_personal_read_scope_rejects_write_connections(self) -> None:
+        with self.api.service.personal_read_only():
+            with self.assertRaisesRegex(RuntimeError, "read-only"):
+                with self.api.service._personal(write_lock=True):
+                    pass
+
     def test_people_search_dashboard_and_dose_routes_share_the_core(self) -> None:
         status, health = self.request("GET", "/api/health")
         self.assertEqual(status, 200)
@@ -84,12 +106,13 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(dashboard["person"]["id"], person["id"])
         self.assertEqual(dashboard["medications"], [])
 
-    def test_reference_retirement_blocks_safety_operations_but_keeps_local_history_available(self) -> None:
+    def test_reference_retirement_blocks_safety_operations_but_keeps_local_state_available(self) -> None:
         _, person = self.request("POST", "/api/people", {
             "name": "업데이트필요",
             "birth_date": "1990-01-01",
             "sex": "male",
             "pregnancy_status": "not_applicable",
+            "lactation_status": "not_applicable",
         })
         medication = self.api.service.add_medication(
             person["id"],
@@ -126,6 +149,7 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(dashboard["medications"][0]["id"], medication["id"])
         self.assertNotIn("current_assessment", dashboard["medications"][0])
+        self.assertEqual(dashboard["daily_plan"]["doses"][0]["status"], "planned")
 
         status, history = self.request("GET", f"/api/medications/{medication['id']}/history")
         self.assertEqual(status, 200)
@@ -147,6 +171,7 @@ class MobileApiTest(unittest.TestCase):
                 "birth_date": "1990-01-01",
                 "sex": "male",
                 "pregnancy_status": "not_applicable",
+                "lactation_status": "not_applicable",
             }, ensure_ascii=False),
         ))
         self.assertEqual(created["status"], 201)
@@ -160,6 +185,11 @@ class MobileApiTest(unittest.TestCase):
         people = json.loads(api.request("GET", "/api/people", ""))
         self.assertEqual(people["status"], 200)
         self.assertEqual(people["body"][0]["id"], person_id)
+
+        dashboard = json.loads(api.request("GET", f"/api/people/{person_id}/dashboard", ""))
+        self.assertEqual(dashboard["status"], 200)
+        self.assertEqual(dashboard["body"]["person"]["id"], person_id)
+        self.assertEqual(dashboard["body"]["medications"], [])
 
         products = json.loads(api.request("GET", "/api/products?q=test", ""))
         self.assertEqual(products["status"], 503)
@@ -184,6 +214,9 @@ class MobileApiTest(unittest.TestCase):
         })
         self.assertEqual(status, 200)
         self.assertEqual(completed["status"], "taken")
+        self.assertNotIn("dose_state", completed)
+        self.assertEqual(len(completed["recent_logs"]), 1)
+        self.assertEqual(completed["recent_logs"][0]["dose_instance_id"], instance["id"])
 
         status, legacy = self.request("POST", f"/api/medications/{instance['medication_id']}/logs", {
             "status": "taken",
@@ -195,6 +228,8 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(canceled["status"], "planned")
         self.assertIsNone(canceled["completed_at"])
+        self.assertNotIn("dose_state", canceled)
+        self.assertEqual(canceled["recent_logs"], [])
 
         _, dashboard = self.request("GET", f"/api/people/{person['id']}/dashboard?date=2026-08-10")
         self.assertEqual(dashboard["daily_plan"]["doses"][0]["status"], "planned")
@@ -210,18 +245,118 @@ class MobileApiTest(unittest.TestCase):
             long_term=True, start_date="2026-08-10",
         )
 
+        status, missing_request_id = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes",
+            {"occurred_at": "2026-08-10T11:00:00+09:00"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("request_id", missing_request_id["detail"])
+
         status, recorded = self.request(
             "POST", f"/api/medications/{medication['id']}/prn-intakes",
-            {"occurred_at": "2026-08-10T12:00:00+09:00"},
+            {"request_id": "prn-one", "occurred_at": "2026-08-10T12:00:00+09:00"},
         )
         self.assertEqual(status, 201)
         self.assertEqual(recorded["status"], "taken")
+        self.assertEqual(len(recorded["recent_logs"]), 1)
+        status, canceled = self.request(
+            "DELETE", f"/api/dose-instances/{recorded['id']}/completion"
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(canceled["deleted"])
+        status, repeated_cancel = self.request(
+            "DELETE", f"/api/dose-instances/{recorded['id']}/completion"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(repeated_cancel["status"], "canceled")
+        self.assertTrue(repeated_cancel["deleted"])
+        self.assertEqual(repeated_cancel["recent_logs"], [])
+        status, missing_cancel = self.request(
+            "DELETE", "/api/dose-instances/never-existed/completion"
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("not found", missing_cancel["detail"])
+
+        status, recorded = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes",
+            {"request_id": "prn-one-replacement", "occurred_at": "2026-08-10T12:30:00+09:00"},
+        )
+        self.assertEqual(status, 201)
         status, blocked = self.request(
             "POST", f"/api/medications/{medication['id']}/prn-intakes",
-            {"occurred_at": "2026-08-10T18:00:00+09:00"},
+            {"request_id": "prn-two", "occurred_at": "2026-08-10T18:00:00+09:00"},
         )
         self.assertEqual(status, 400)
         self.assertIn("maximum", blocked["detail"])
+
+    def test_prn_retry_after_post_commit_response_failure_does_not_duplicate_intake(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "필요시재시도", "birth_date": "1990-01-01", "sex": "male",
+            "pregnancy_status": "not_applicable", "lactation_status": "not_applicable",
+        })
+        medication = self.api.service.add_medication(
+            person["id"], product_ref="MFDS-A", as_needed=True, prn_max_per_day=3,
+            long_term=True, start_date="2026-08-20",
+        )
+        payload = {
+            "request_id": "prn-retry-1",
+            "occurred_at": "2026-08-20T12:00:00+09:00",
+            "note": "증상 시",
+        }
+
+        with patch.object(
+            self.api.service,
+            "with_recent_dose_logs",
+            side_effect=RuntimeError("forced post-commit response failure"),
+        ):
+            status, failed = self.request(
+                "POST", f"/api/medications/{medication['id']}/prn-intakes", payload,
+            )
+
+        self.assertEqual(status, 500)
+        self.assertEqual(failed["detail"], "unexpected server error")
+        self.assertEqual(len(self.api.service.list_dose_logs(person["id"])), 1)
+
+        status, retried = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes", payload,
+        )
+
+        self.assertEqual(status, 201)
+        self.assertEqual(len(retried["recent_logs"]), 1)
+        self.assertEqual(retried["recent_logs"][0]["request_id"], "prn-retry-1")
+        self.assertEqual(len(self.api.service.list_dose_logs(person["id"])), 1)
+
+        status, conflict = self.request(
+            "POST", f"/api/medications/{medication['id']}/prn-intakes",
+            {**payload, "occurred_at": "2026-08-20T13:00:00+09:00"},
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("request_id", conflict["detail"])
+
+    def test_explicit_null_note_clears_existing_scheduled_dose_note(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "메모삭제", "birth_date": "1990-01-01", "sex": "male",
+            "pregnancy_status": "not_applicable", "lactation_status": "not_applicable",
+        })
+        self.api.service.add_medication(
+            person["id"], product_ref="MFDS-A", frequency_per_day=1,
+            schedule_times=["08:00"], start_date="2026-08-20", long_term=True,
+        )
+        _, plan = self.request("GET", f"/api/people/{person['id']}/daily-plan?date=2026-08-20")
+        instance_id = plan["doses"][0]["id"]
+        self.request("POST", f"/api/dose-instances/{instance_id}", {
+            "status": "taken",
+            "occurred_at": "2026-08-20T08:05:00+09:00",
+            "note": "memo",
+        })
+
+        status, updated = self.request("POST", f"/api/dose-instances/{instance_id}", {
+            "status": "taken",
+            "note": None,
+        })
+
+        self.assertEqual(status, 200)
+        self.assertIsNone(updated["recent_logs"][0]["note"])
 
     def test_confirmation_and_validation_errors_keep_http_compatible_envelopes(self) -> None:
         _, person = self.request("POST", "/api/people", {

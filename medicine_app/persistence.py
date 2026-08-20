@@ -200,6 +200,16 @@ def ensure_personal_schema(con: sqlite3.Connection) -> None:
             medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE RESTRICT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS prn_requests (
+            request_id TEXT PRIMARY KEY,
+            medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+            person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+            payload_hash TEXT NOT NULL,
+            dose_instance_id TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('active','canceled')),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         """
     )
     _add_missing_columns(con, "people", PERSON_COLUMNS)
@@ -289,6 +299,10 @@ def ensure_personal_schema(con: sqlite3.Connection) -> None:
             ON medication_requests(person_id);
         CREATE INDEX IF NOT EXISTS idx_medication_requests_medication
             ON medication_requests(medication_id);
+        CREATE INDEX IF NOT EXISTS idx_prn_requests_person
+            ON prn_requests(person_id);
+        CREATE INDEX IF NOT EXISTS idx_prn_requests_instance
+            ON prn_requests(dose_instance_id);
 
         -- Legacy ALTER TABLE cannot provide a CURRENT_TIMESTAMP default.
         CREATE TRIGGER IF NOT EXISTS trg_medications_set_updated_at_on_insert
