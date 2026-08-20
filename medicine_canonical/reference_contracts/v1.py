@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 
 from medicine_reference.mfds_remark_registry import ReviewedMfdsRemark, reviewed_mfds_remark
 
@@ -11,11 +12,6 @@ from medicine_reference.mfds_remark_registry import ReviewedMfdsRemark, reviewed
 REFERENCE_CONTRACT_MAJOR = 1
 
 REFERENCE_CONTRACT_META_DDL = """CREATE TABLE reference_contract_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-)"""
-
-REFERENCE_BUILD_META_DDL = """CREATE TABLE reference_build_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 )"""
@@ -33,6 +29,45 @@ REFERENCE_CRITERION_SEMANTICS_DDL = """CREATE TABLE reference_criterion_semantic
     source_remark TEXT NOT NULL,
     PRIMARY KEY(criterion_rule_id, ordinal)
 ) WITHOUT ROWID"""
+
+PRODUCT_RULE_CRITERIA_VIEW_DDL = """CREATE VIEW product_rule_criteria AS
+SELECT
+    i.id AS criterion_rule_id,
+    r.source_dataset_key AS product_source_dataset_key,
+    r.source_row AS product_source_row,
+    i.source_dataset_key AS criterion_source_dataset_key,
+    i.source_row AS criterion_source_row,
+    r.category,
+    r.item_seq,
+    r.ingredient_code,
+    r.ingredient_name,
+    r.ingredient_name_en,
+    r.paired_item_seq,
+    r.paired_ingredient_code,
+    r.paired_ingredient_name,
+    r.paired_ingredient_name_en,
+    r.effect_name,
+    r.dosage_form AS product_dosage_form,
+    r.details AS product_details,
+    i.sequence_text AS criterion_sequence_text,
+    i.ingredient_name AS criterion_ingredient_name,
+    i.ingredient_name_ko AS criterion_ingredient_name_ko,
+    i.paired_ingredient_name AS criterion_paired_ingredient_name,
+    i.rule_value AS criterion_rule_value,
+    i.dosage_form AS criterion_dosage_form,
+    i.note AS criterion_note,
+    i.qualifier_note AS criterion_qualifier_note,
+    i.details AS criterion_details,
+    d.maximum_daily_amount AS criterion_maximum_daily_amount,
+    d.maximum_daily_unit AS criterion_maximum_daily_unit,
+    d.parse_status AS criterion_dose_parse_status,
+    d.parse_reason AS criterion_dose_parse_reason,
+    l.match_method,
+    l.pair_orientation
+FROM product_criterion_links l
+JOIN product_rules r ON r.id = l.product_rule_id
+JOIN ingredient_rules i ON i.id = l.criterion_rule_id
+LEFT JOIN dose_criteria d ON d.criterion_rule_id = i.id"""
 
 
 @dataclass(frozen=True)
@@ -275,28 +310,68 @@ def write_contract_meta(database: sqlite3.Connection, dataset_id: str) -> None:
     )
 
 
-def write_build_meta(
-    database: sqlite3.Connection,
+def export_reference_database(
+    canonical_db: str | Path,
+    output_db: str | Path,
     *,
-    canonical_schema_version: str,
-    physical_policy_version: str,
-) -> None:
-    database.execute(REFERENCE_BUILD_META_DDL)
-    database.executemany(
-        "INSERT INTO reference_build_meta(key,value) VALUES(?,?)",
-        [
-            ("canonical_schema_version", canonical_schema_version),
-            ("physical_policy_version", physical_policy_version),
-        ],
+    manifest_path: str | Path | None = None,
+    physical_policy_version: str | None = None,
+) -> dict:
+    """Frozen contract-v1 exporter entry point.
+
+    Future contract majors get separate versioned entry points.  The shared
+    mobile builder may continue to own physical storage mechanics, but release
+    orchestration must call this versioned function so N-1 never silently
+    switches to a newer logical contract exporter.
+    """
+    from medicine_canonical.mobile import MOBILE_PHYSICAL_POLICY_VERSION, _build_mobile_database
+
+    selected_physical_policy = (
+        MOBILE_PHYSICAL_POLICY_VERSION
+        if physical_policy_version is None
+        else physical_policy_version
+    )
+    result = _build_mobile_database(
+        canonical_db,
+        output_db,
+        contract_major=REFERENCE_CONTRACT_MAJOR,
+        materialize_semantics=materialize_reference_semantics,
+        logical_dataset_id=logical_dataset_id,
+        write_contract_meta=write_contract_meta,
+        product_rule_criteria_view_ddl=PRODUCT_RULE_CRITERIA_VIEW_DDL,
+        manifest_path=manifest_path,
+        physical_policy_version=selected_physical_policy,
+    )
+    if result.get("contract_major") != REFERENCE_CONTRACT_MAJOR:
+        raise RuntimeError("contract-v1 exporter emitted the wrong contract major")
+    return result
+
+
+def verify_reference_database(
+    database: str | Path,
+    contract_major: int,
+    dataset_id: str,
+) -> dict:
+    """Frozen server-side verifier for a contract-v1 release candidate."""
+    if contract_major != REFERENCE_CONTRACT_MAJOR:
+        raise ValueError("contract-v1 verifier received a different contract major")
+    from medicine_app.reference_contracts.v1 import verify_reference_database as runtime_verify
+
+    return runtime_verify(
+        database,
+        expected_contract_major=contract_major,
+        expected_dataset_id=dataset_id,
     )
 
 
 __all__ = [
     "REFERENCE_CONTRACT_MAJOR",
+    "PRODUCT_RULE_CRITERIA_VIEW_DDL",
     "ReferenceSemanticFact",
+    "export_reference_database",
     "logical_dataset_id",
     "materialize_reference_semantics",
     "semantic_facts_for_reviewed_remark",
-    "write_build_meta",
+    "verify_reference_database",
     "write_contract_meta",
 ]

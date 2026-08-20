@@ -72,6 +72,57 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
                 expected_dataset_id=self.release["dataset_id"],
             )
 
+    def test_runtime_verifier_rejects_missing_runtime_required_product_column(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute("ALTER TABLE products DROP COLUMN manufacturer")
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "products.*manufacturer"):
+            verify_reference_database(
+                self.mobile,
+                expected_contract_major=1,
+                expected_dataset_id=self.release["dataset_id"],
+            )
+
+    def test_runtime_verifier_ignores_non_runtime_source_snapshot_provenance_columns(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute("ALTER TABLE source_snapshots DROP COLUMN source_locator")
+            con.commit()
+
+        result = verify_reference_database(
+            self.mobile,
+            expected_contract_major=1,
+            expected_dataset_id=self.release["dataset_id"],
+        )
+        self.assertEqual(result["status"], "verified")
+
+    def test_runtime_verifier_rejects_malformed_known_semantic_payload(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            criterion_rule_id = con.execute(
+                "SELECT id FROM ingredient_rules ORDER BY id LIMIT 1"
+            ).fetchone()[0]
+            ordinal = con.execute(
+                """SELECT COALESCE(MAX(ordinal),-1)+1
+                   FROM reference_criterion_semantics WHERE criterion_rule_id=?""",
+                (criterion_rule_id,),
+            ).fetchone()[0]
+            con.execute(
+                """INSERT INTO reference_criterion_semantics(
+                       criterion_rule_id,ordinal,semantic_role,evaluation_mode,evaluator_kind,
+                       fallback_action,qualifier_type,display_text,structured_payload_json,source_remark
+                   ) VALUES(?,?,'applicability_condition','runtime_evaluable','minimum_separation',
+                            'review_required','timing','24시간 이내 병용금기','{}','24시간 이내 병용금기')""",
+                (criterion_rule_id, ordinal),
+            )
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "minimum_separation.*payload"):
+            verify_reference_database(
+                self.mobile,
+                expected_contract_major=1,
+                expected_dataset_id=self.release["dataset_id"],
+            )
+
     def test_runtime_contract_major_is_shared_with_mobile_builder(self) -> None:
         self.assertEqual(REFERENCE_CONTRACT_MAJOR, BUILDER_CONTRACT_MAJOR)
 

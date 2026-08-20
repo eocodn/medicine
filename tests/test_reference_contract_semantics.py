@@ -4,12 +4,22 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest import mock
 
+from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.mobile import build_mobile_database
 from medicine_canonical.reference_contracts.v1 import (
     REFERENCE_CONTRACT_MAJOR,
+    export_reference_database,
     semantic_facts_for_reviewed_remark,
+    verify_reference_database,
+)
+from medicine_canonical.reference_contracts.registry import (
+    build_supported_contract_window,
+    supported_contract_majors,
 )
 from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
 from tests.canonical_fixture_support import add_linked_rule, add_product
@@ -74,6 +84,61 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.assertEqual(build["physical_policy_version"], "8")
         self.assertNotIn("canonical_schema_version", contract)
         self.assertNotIn("physical_policy_version", contract)
+
+    def test_checked_in_v1_exporter_and_verifier_are_frozen_entry_points(self) -> None:
+        exported_db = self.mobile.with_name("v1-export.sqlite")
+        exported_manifest = self.mobile.with_name("v1-export.manifest.json")
+
+        with mock.patch(
+            "medicine_canonical.mobile.build_mobile_database",
+            side_effect=AssertionError("mutable default exporter must not own frozen contract v1"),
+        ):
+            release = export_reference_database(
+                self.canonical,
+                exported_db,
+                manifest_path=exported_manifest,
+            )
+        with mock.patch(
+            "medicine_app.reference_update.verify_reference_database",
+            side_effect=AssertionError("mutable verifier dispatcher must not own frozen contract v1"),
+        ):
+            verified = verify_reference_database(
+                exported_db,
+                REFERENCE_CONTRACT_MAJOR,
+                release["dataset_id"],
+            )
+
+        self.assertEqual(release["contract_major"], 1)
+        self.assertEqual(verified["status"], "verified")
+
+    def test_supported_contract_window_builder_emits_every_registered_major(self) -> None:
+        output = self.mobile.parent / "contract-window"
+
+        result = build_supported_contract_window(self.canonical, output)
+
+        self.assertEqual(supported_contract_majors(), (1,))
+        self.assertEqual(result["current_contract_major"], 1)
+        self.assertEqual(result["minimum_supported_contract_major"], 1)
+        self.assertEqual([entry["contract_major"] for entry in result["contracts"]], [1])
+        self.assertTrue(Path(result["contracts"][0]["database"]).is_file())
+        self.assertTrue(Path(result["contracts"][0]["manifest"]).is_file())
+
+    def test_reference_window_build_cli_uses_registered_contract_set(self) -> None:
+        output = self.mobile.parent / "cli-contract-window"
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = canonical_main([
+                "reference-window-build",
+                "--db", str(self.canonical),
+                "--output-dir", str(output),
+                "--json",
+            ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["current_contract_major"], 1)
+        self.assertEqual([entry["contract_major"] for entry in payload["contracts"]], [1])
 
     def test_review_required_remark_is_materialized_as_opaque_condition(self) -> None:
         row = self._semantic_for_remark(
