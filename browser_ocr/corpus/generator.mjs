@@ -29,7 +29,7 @@ import { PARSER_STRUCTURE_REVISION, applyParserStructureVariant } from "./parser
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 5;
-const GENERATOR_REVISION = 6;
+const GENERATOR_REVISION = 7;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -46,6 +46,17 @@ function splitForIndex(index, seed) {
   if (bucket < 8) return "train";
   if (bucket === 8) return "val";
   return "test";
+}
+
+function splitOrdinalForIndex(index, seed, split) {
+  const fullCycles = Math.floor(index / 10);
+  const perCycle = split === "train" ? 8 : 1;
+  let ordinal = fullCycles * perCycle;
+  const cycleStart = fullCycles * 10;
+  for (let candidate = cycleStart; candidate < index; candidate += 1) {
+    if (splitForIndex(candidate, seed) === split) ordinal += 1;
+  }
+  return ordinal;
 }
 
 function documentType(layoutFamily) {
@@ -127,11 +138,12 @@ function buildSamplePlan(index, seed, drugAssignment) {
   const layoutRandom = rng(baseSeed ^ 0xa511e9b3);
   const captureRandom = rng(baseSeed ^ 0x63d83595);
   const split = splitForIndex(index, seed);
+  const splitOrdinal = splitOrdinalForIndex(index, seed, split);
   const drugPool = drugAssignment.pools[split];
   if (!Array.isArray(drugPool) || drugPool.length === 0) throw new Error(`drug pool ${split} is empty`);
   const productMetadata = new Map(drugPool.map((product) => [normalizeDrugName(product.product_name), product]));
   const baseLayout = buildLayout(index, layoutRandom, { products: drugPool.map((product) => product.product_name) });
-  const layout = applyParserStructureVariant(baseLayout, { index, split, random: layoutRandom });
+  const layout = applyParserStructureVariant(baseLayout, { index, split, splitOrdinal, random: layoutRandom });
   const captureIndex = Math.floor(index / LAYOUT_FAMILIES.length) % CAPTURE_PROFILES.length;
   const capture = captureForSample(index, captureIndex, captureRandom, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
   const appearance = appearanceForIndex(index);

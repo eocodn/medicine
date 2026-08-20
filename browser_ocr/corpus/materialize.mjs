@@ -7,7 +7,7 @@ import { validateUnifiedCorpus } from "./contract.mjs";
 import { RECOGNITION_EVAL_POLICY, recognitionOodTag } from "./evaluation_policy.mjs";
 import { buildOracleManifest, buildParsingItems, expectedRows } from "./parser_truth.mjs";
 
-const MATERIALIZER_VERSION = 8;
+const MATERIALIZER_VERSION = 9;
 const STAGES = ["detection", "recognition", "parsing", "e2e"];
 const STATE_FILE = ".materialize-state.json";
 const LOCK_FILE = ".materialize.lock";

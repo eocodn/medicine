@@ -9,11 +9,37 @@ from browser_ocr.document_parsing.training_builders import (
     build_runtime_dataset,
     build_synthetic_dataset,
 )
-from browser_ocr.document_parsing.training_dataset import load_parser_dataset
+from browser_ocr.document_parsing.training_dataset import ParserDatasetError, load_parser_dataset
 
 
 def _poly(x: float, y: float, w: float = 80, h: float = 24) -> list[list[float]]:
     return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+
+
+def _runtime_profile() -> dict:
+    return {
+        "schema_version": 2,
+        "image_sha256": "a" * 64,
+        "baseline_result_sha256": "1" * 64,
+        "recognizer_checkpoint_sha256": "b" * 64,
+        "recognizer_config_sha256": "2" * 64,
+        "recognizer_device": "cpu",
+        "detector_manifest_sha256": "3" * 64,
+        "detector_model": "PP-OCRv5_mobile_det",
+        "detector_edge": 640,
+        "detector_threads": 1,
+        "detector_asset_sha256": "4" * 64,
+        "parser": "must-not-enter-observation-profile",
+        "implementation": {
+            "full_document": "5" * 64,
+            "full_document_cli": "6" * 64,
+            "crop_refinement": "d" * 64,
+            "parser": "c" * 64,
+            "parser_contract": "7" * 64,
+            "detector_runtime": "8" * 64,
+            "detector_benchmark": "9" * 64,
+        },
+    }
 
 
 def _truth_sample() -> dict:
@@ -27,7 +53,7 @@ def _truth_sample() -> dict:
         "scenario_tags": ["prescription", "table"],
         "risk_tags": ["row_association"],
         "nodes": [
-            {"node_id": "p", "text": "가나다정", "confidence": 1.0, "polygon": _poly(10, 10), "semantic_role": "product", "association_group": "m1", "region_class": "medication", "critical": True},
+            {"node_id": "p", "text": "가나다정", "confidence": 1.0, "polygon": _poly(5, 5, 100, 34), "natural_text_polygon": _poly(10, 10), "semantic_role": "product", "association_group": "m1", "region_class": "medication", "critical": True},
             {"node_id": "d", "text": "1정", "confidence": 1.0, "polygon": _poly(120, 10), "semantic_role": "dose", "association_group": "m1", "region_class": "medication", "critical": True},
             {"node_id": "f", "text": "3회", "confidence": 1.0, "polygon": _poly(220, 10), "semantic_role": "frequency", "association_group": "m1", "region_class": "medication", "critical": True},
             {"node_id": "t", "text": "5일", "confidence": 1.0, "polygon": _poly(320, 10), "semantic_role": "duration", "association_group": "m1", "region_class": "medication", "critical": True},
@@ -80,6 +106,7 @@ class ParserTrainingBuildersTest(unittest.TestCase):
             self.assertEqual(document["split"], "val")
             self.assertEqual(document["gold_rows"][0]["gold_row_id"], "m1")
             self.assertEqual(document["observation"]["kind"], "oracle")
+            self.assertEqual(document["observation"]["nodes"][0]["polygon"], _poly(10, 10))
             self.assertEqual(sum(r["label"] == "same_medication" for r in document["relations"]), 3)
 
     def test_synthetic_ocr_builder_is_deterministic_and_marks_provenance(self) -> None:
@@ -116,13 +143,7 @@ class ParserTrainingBuildersTest(unittest.TestCase):
             result_root.mkdir(parents=True)
             result_root.joinpath("result.json").write_text(json.dumps({
                 "status": "ok",
-                "profile": {
-                    "schema_version": 2,
-                    "recognizer_checkpoint_sha256": "b" * 64,
-                    "detector_model": "PP-OCRv5_mobile_det",
-                    "parser": "must-not-enter-observation-profile",
-                    "implementation": {"parser": "c" * 64, "crop_refinement": "d" * 64},
-                },
+                "profile": _runtime_profile(),
                 "image": {"sha256": "a" * 64, "width": 1280, "height": 1600},
                 "regions": [
                     {"index": 1, "text": "가나다정", "recognition_score": 0.99, "polygon": _poly(10, 10)},
@@ -141,6 +162,27 @@ class ParserTrainingBuildersTest(unittest.TestCase):
             self.assertEqual(document["observation"]["nodes"][0]["semantic_role"], "product")
             self.assertNotIn("parser", document["observation"]["profile"])
             self.assertNotIn("parser", document["observation"]["profile"]["implementation"])
+
+    def test_runtime_builder_rejects_unpinned_ocr_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            truth = _write_truth(root)
+            result_root = root / "results" / "synthetic-000001"
+            result_root.mkdir(parents=True)
+            result_root.joinpath("result.json").write_text(json.dumps({
+                "status": "ok",
+                "profile": {},
+                "image": {"sha256": "a" * 64, "width": 1280, "height": 1600},
+                "regions": [],
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(ParserDatasetError, "runtime.*profile"):
+                build_runtime_dataset(
+                    truth_samples_path=truth,
+                    results_root=root / "results",
+                    output_dir=root / "runtime",
+                    dataset_id="runtime-unpinned",
+                    split="val",
+                )
 
 
 if __name__ == "__main__":

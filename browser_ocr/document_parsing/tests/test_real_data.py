@@ -8,6 +8,7 @@ from pathlib import Path
 
 from browser_ocr.document_parsing.real_data import (
     ParserDatasetError,
+    annotation_immutable_sha256,
     finalize_real_annotation,
     load_real_source_manifest,
     prepare_real_annotation,
@@ -18,6 +19,32 @@ def _write_image(path: Path) -> str:
     content = b"\xff\xd8\xfffixture-deidentified-photo"
     path.write_bytes(content)
     return hashlib.sha256(content).hexdigest()
+
+
+def _runtime_profile(image_sha256: str) -> dict:
+    return {
+        "schema_version": 2,
+        "image_sha256": image_sha256,
+        "baseline_result_sha256": "1" * 64,
+        "recognizer_checkpoint_sha256": "2" * 64,
+        "recognizer_config_sha256": "3" * 64,
+        "recognizer_device": "cpu",
+        "detector_manifest_sha256": "4" * 64,
+        "detector_model": "PP-OCRv5_mobile_det",
+        "detector_edge": 640,
+        "detector_threads": 1,
+        "detector_asset_sha256": "5" * 64,
+        "parser": "geometry_rule_v2",
+        "implementation": {
+            "full_document": "6" * 64,
+            "full_document_cli": "7" * 64,
+            "crop_refinement": "8" * 64,
+            "parser": "9" * 64,
+            "parser_contract": "a" * 64,
+            "detector_runtime": "b" * 64,
+            "detector_benchmark": "c" * 64,
+        },
+    }
 
 
 class RealParserDataTest(unittest.TestCase):
@@ -93,12 +120,7 @@ class RealParserDataTest(unittest.TestCase):
             sample = source.samples[0]
             runtime_result = {
                 "status": "ok",
-                "profile": {
-                    "schema_version": 2,
-                    "recognizer_checkpoint_sha256": "b" * 64,
-                    "parser": "geometry_rule_v2",
-                    "implementation": {"parser": "c" * 64, "crop_refinement": "d" * 64},
-                },
+                "profile": _runtime_profile(sample["image_sha256"]),
                 "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
                 "regions": [
                     {"index": 1, "text": "가나다정", "recognition_score": 0.98, "polygon": [[10, 10], [100, 10], [100, 35], [10, 35]]},
@@ -114,7 +136,7 @@ class RealParserDataTest(unittest.TestCase):
             draft["observation"]["nodes"][0].update(label_status="labeled", semantic_role="product", association_group="m1")
             draft["observation"]["nodes"][1].update(label_status="labeled", semantic_role="dose", association_group="m1")
             draft["gold_rows"] = [{"gold_row_id": "m1", "product_query": "가나다정", "draft": {"dose_amount": 1, "dose_unit": "tablet"}}]
-            completed = finalize_real_annotation(draft)
+            completed = finalize_real_annotation(draft, expected_immutable_sha256=annotation_immutable_sha256(draft))
             self.assertEqual(completed["annotation_status"], "complete")
             self.assertEqual(completed["relations"][0]["label"], "same_medication")
             self.assertEqual(completed["source_kind"], "real_deidentified")
@@ -126,13 +148,45 @@ class RealParserDataTest(unittest.TestCase):
             sample = source.samples[0]
             runtime_result = {
                 "status": "ok",
-                "profile": {},
+                "profile": _runtime_profile(sample["image_sha256"]),
                 "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
                 "regions": [{"index": 1, "text": "가나다정", "recognition_score": 0.98, "polygon": [[10, 10], [100, 10], [100, 35], [10, 35]]}],
             }
             draft = prepare_real_annotation(sample, runtime_result)
             with self.assertRaisesRegex(ParserDatasetError, "unlabeled"):
-                finalize_real_annotation(draft)
+                finalize_real_annotation(draft, expected_immutable_sha256=annotation_immutable_sha256(draft))
+
+    def test_finalize_rejects_mutated_immutable_ocr_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = load_real_source_manifest(self._manifest(root))
+            sample = source.samples[0]
+            runtime_result = {
+                "status": "ok",
+                "profile": _runtime_profile(sample["image_sha256"]),
+                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                "regions": [{"index": 1, "text": "가나다정", "recognition_score": 0.98, "polygon": [[10, 10], [100, 10], [100, 35], [10, 35]]}],
+            }
+            draft = prepare_real_annotation(sample, runtime_result)
+            immutable_sha = annotation_immutable_sha256(draft)
+            draft["observation"]["nodes"][0]["text"] = "변조된정"
+            draft["observation"]["nodes"][0].update(label_status="labeled", semantic_role="product", association_group="m1")
+            draft["gold_rows"] = [{"gold_row_id": "m1", "product_query": "가나다정", "draft": {}}]
+            with self.assertRaisesRegex(ParserDatasetError, "immutable.*SHA"):
+                finalize_real_annotation(draft, expected_immutable_sha256=immutable_sha)
+
+    def test_prepare_rejects_unpinned_runtime_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = load_real_source_manifest(self._manifest(root))
+            sample = source.samples[0]
+            with self.assertRaisesRegex(ParserDatasetError, "runtime.*profile"):
+                prepare_real_annotation(sample, {
+                    "status": "ok",
+                    "profile": {},
+                    "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                    "regions": [],
+                })
 
 
 if __name__ == "__main__":

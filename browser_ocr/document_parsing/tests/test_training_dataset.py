@@ -128,6 +128,35 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
             with self.assertRaisesRegex(ParserDatasetError, "SHA-256"):
                 load_parser_dataset(manifest_path)
 
+    def test_completed_dataset_is_idempotent_and_rejects_profile_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            first = write_parser_dataset(
+                root,
+                dataset_id="stable-output",
+                documents=[_doc()],
+                metadata={"seed": 1},
+            )
+            first_bytes = first.read_bytes()
+            second = write_parser_dataset(
+                root,
+                dataset_id="stable-output",
+                documents=[_doc()],
+                metadata={"seed": 1},
+            )
+            self.assertEqual(second, first)
+            self.assertEqual(first.read_bytes(), first_bytes)
+
+            changed = _doc()
+            changed["observation"]["nodes"][0]["text"] = "다른약정"
+            with self.assertRaisesRegex(ParserDatasetError, "profile differs"):
+                write_parser_dataset(
+                    root,
+                    dataset_id="stable-output",
+                    documents=[changed],
+                    metadata={"seed": 2},
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ import test from "node:test";
 import { buildDrugCatalog, buildHistoricalDrugExposure, normalizeDrugName } from "../drug_holdout.mjs";
 import { generateUnifiedCorpus } from "../generator.mjs";
 import { materializeUnifiedViews } from "../materialize.mjs";
+import { PARSER_STRUCTURE_VARIANTS } from "../parser_structure.mjs";
 import { validateUnifiedCorpus } from "../contract.mjs";
 
 function lines(text) {
@@ -164,6 +165,18 @@ test("one document corpus materializes aligned detection recognition parsing and
 
     assert.ok(parsing.every((item) => item.image_sha256 && item.width > 0 && item.height > 0));
     assert.ok(parsing.every((item) => Array.isArray(item.scenario_tags) && Array.isArray(item.risk_tags)));
+    const parsingByDocument = new Map(parsing.map((item) => [item.document_id, item]));
+    const geometrySample = corpus.samples.find((sample) => sample.regions.some((region) => (
+      JSON.stringify(region.natural_text_polygon) !== JSON.stringify(region.polygon)
+    )));
+    assert.ok(geometrySample);
+    const geometryRegion = geometrySample.regions.find((region) => (
+      JSON.stringify(region.natural_text_polygon) !== JSON.stringify(region.polygon)
+    ));
+    assert.deepEqual(
+      parsingByDocument.get(geometrySample.id).nodes.find((node) => node.node_id === geometryRegion.region_id).natural_text_polygon,
+      geometryRegion.natural_text_polygon,
+    );
 
     const parserTrainManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "train-synthetic-ocr", "manifest.json"), "utf8"));
     const parserValManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "val-synthetic-ocr", "manifest.json"), "utf8"));
@@ -182,9 +195,13 @@ test("one document corpus materializes aligned detection recognition parsing and
     const byNode = new Map(firstParsing.nodes.map((node) => [node.node_id, node]));
     for (const edge of firstParsing.positive_edges) {
       assert.equal(byNode.get(edge.product_node_id).semantic_role, "product");
-      assert.ok(["dose", "frequency", "duration", "instruction"].includes(byNode.get(edge.field_node_id).semantic_role));
+      assert.ok(["dose", "frequency", "duration", "instruction", "schedule"].includes(byNode.get(edge.field_node_id).semantic_role));
       assert.equal(byNode.get(edge.product_node_id).association_group, byNode.get(edge.field_node_id).association_group);
     }
+    const scheduleParsing = parsing.find((item) => item.nodes.some((node) => node.semantic_role === "schedule" && node.association_group !== "document"));
+    assert.ok(scheduleParsing);
+    const scheduleNodes = new Set(scheduleParsing.nodes.filter((node) => node.semantic_role === "schedule").map((node) => node.node_id));
+    assert.ok(scheduleParsing.positive_edges.some((edge) => scheduleNodes.has(edge.field_node_id)));
 
     const manifest = JSON.parse(await readFile(join(viewsRoot, "recognition", "manifest.json"), "utf8"));
     assert.equal(manifest.task, "text_recognition");
@@ -218,6 +235,10 @@ test("unified sample split is stable as corpus scale grows", async () => {
         largeByIndex.get(sample.sample_index).regions.filter((region) => region.semantic_role === "product").map((region) => [region.text, region.drug_family]),
       );
     }
+    assert.deepEqual(
+      new Set(large.samples.filter((sample) => sample.split === "train").map((sample) => sample.parser_structure_variant)),
+      new Set(PARSER_STRUCTURE_VARIANTS.train),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,6 +1,6 @@
 import { DOCUMENT_HEIGHT, DOCUMENT_WIDTH, estimateRenderedTextBox } from "../detection/synthetic_layouts.mjs";
 
-export const PARSER_STRUCTURE_REVISION = 1;
+export const PARSER_STRUCTURE_REVISION = 2;
 
 const TRAIN_VARIANTS = [
   "complete",
@@ -176,7 +176,7 @@ function headerOnly(regions) {
   ));
 }
 
-export function parserStructureVariantForSample(index, split) {
+export function parserStructureVariantForSample(index, split, splitOrdinal = index) {
   const pools = { train: TRAIN_VARIANTS, val: VAL_VARIANTS, test: TEST_VARIANTS };
   const pool = pools[split];
   if (!pool) throw new Error(`unsupported parser structure split: ${split}`);
@@ -184,13 +184,11 @@ export function parserStructureVariantForSample(index, split) {
   // stress recipes begin after that fixture band, while larger corpora still
   // cycle through every training recipe deterministically.
   if (split === "train" && index < 6) return "complete";
-  if (split === "train") return pool[(index - 6) % pool.length];
-  const cycle = Math.floor(index / 10);
-  return pool[cycle % pool.length];
+  return pool[splitOrdinal % pool.length];
 }
 
-export function applyParserStructureVariant(layout, { index, split, random }) {
-  const variant = parserStructureVariantForSample(index, split);
+export function applyParserStructureVariant(layout, { index, split, splitOrdinal = index, random }) {
+  const variant = parserStructureVariantForSample(index, split, splitOrdinal);
   let regions = layout.regions.map((region) => structuredClone(region));
   if (variant === "drop_dose") regions = dropRoleForOneGroup(regions, "dose", random);
   else if (variant === "drop_frequency") regions = dropRoleForOneGroup(regions, "frequency", random);

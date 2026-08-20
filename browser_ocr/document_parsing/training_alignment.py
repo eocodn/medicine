@@ -4,8 +4,8 @@ from typing import Any, Mapping, Sequence
 
 from .region_alignment import match_region_candidates, observed_region_id
 
-MODEL_ROLES = {"product", "product_label", "dose", "frequency", "duration", "instruction", "header", "other"}
-_FIELD_ROLES = {"dose", "frequency", "duration", "instruction"}
+MODEL_ROLES = {"product", "product_label", "dose", "frequency", "duration", "instruction", "schedule", "header", "other"}
+_FIELD_ROLES = {"dose", "frequency", "duration", "instruction", "schedule"}
 
 
 def normalize_semantic_role(value: object) -> str:

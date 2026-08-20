@@ -93,10 +93,10 @@ Learned parser training does not consume the legacy rule-parser corpus directly.
 - each observed node carries text, confidence, polygon, and zero or more matched truth-region ids;
 - `label_status=labeled` carries a role/group target, while split/merge observations spanning incompatible truth roles/groups are `ambiguous` and are masked from supervised role/relation loss;
 - unmatched detector boxes are explicit `other` negatives;
-- relations contain both `same_medication` positives and `different_medication` hard negatives for dose, frequency, duration, and instruction nodes;
+- relations contain both `same_medication` positives and `different_medication` hard negatives for dose, frequency, duration, instruction, and medication-associated schedule nodes;
 - `gold_rows` are image-level truth and do not depend on which regions OCR happened to observe.
 
-The strict manifest binds `samples.jsonl` by SHA-256. Synthetic data may be used for train/validation/test; `real_deidentified` data is holdout-only and is rejected from `train`.
+The strict manifest binds `samples.jsonl` by SHA-256. Dataset outputs also carry an authoritative completed/running state and exclusive writer lock: an exact rerun reuses the completed dataset, while a different seed/source/split/content profile is rejected instead of replacing it. Synthetic data may be used for train/validation/test; `real_deidentified` data is holdout-only and is rejected from `train`.
 
 Unified corpus materialization creates these parser datasets automatically:
 
@@ -105,7 +105,7 @@ Unified corpus materialization creates these parser datasets automatically:
 - `parsing/datasets/val-synthetic-ocr/`
 - `parsing/datasets/test-synthetic-ocr/`
 
-The deterministic synthetic-OCR producer perturbs OCR observations (drop/split/merge/jitter/text/confidence/order/noise) and then labels them through the same geometry alignment used for runtime OCR. It does not copy truth labels onto corrupted boxes blindly.
+The deterministic synthetic-OCR producer starts from canonical tight `natural_text_polygon` geometry, perturbs OCR observations (drop/split/merge/jitter/text/confidence/order/noise), and then labels them through the same tight-geometry alignment used for runtime OCR. It does not copy truth labels onto corrupted boxes blindly.
 
 Use the dataset Agent Control service directly when needed:
 
@@ -124,7 +124,7 @@ docker compose run --rm ocr-parser-data build-runtime \
 
 Private prescription photos stay outside Git. Ingestion accepts only an external `real_deidentified` source manifest whose documents are already de-identified, use pseudonymous lowercase ids, use the document id as the image filename stem, and declare `contains_patient_data=false`. Only `val` and `test` are accepted.
 
-The GPU `ocr-parser-real` service sends every photo through the exact selected full-document detector/crop/recognizer path and writes immutable runtime OCR results plus annotation drafts. Parser identity is deliberately stripped from the observation profile: changing the parser does not invalidate OCR observations produced by unchanged detector/recognizer inputs.
+The GPU `ocr-parser-real` service sends every photo through the exact selected full-document detector/crop/recognizer path and writes runtime OCR results plus annotation drafts. Runtime observations require pinned detector/recognizer/config/implementation SHA-256 metadata. Parser identity alone is deliberately stripped from the observation profile: changing the parser does not invalidate OCR observations produced by unchanged detector/recognizer inputs.
 
 ```sh
 docker compose run --rm \
@@ -136,7 +136,7 @@ docker compose run --rm \
   --json
 ```
 
-Human annotation assigns node roles/groups and image-level `gold_rows`. Finalization fails while any OCR node remains unlabeled:
+Human annotation assigns node roles/groups and image-level `gold_rows`. The annotation index separately binds the source manifest, source sample list, per-document runtime result, and immutable OCR observation projection by SHA-256. Rerunning either preparation command reuses the completed binding and never rewrites human labels. Finalization rechecks those hashes and fails while any OCR node remains unlabeled:
 
 ```sh
 docker compose run --rm ocr-parser-data finalize-real \

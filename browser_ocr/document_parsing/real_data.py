@@ -23,6 +23,7 @@ _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,63}$")
 class RealSourceDataset:
     root: Path
     manifest_path: Path
+    samples_path: Path
     dataset_id: str
     samples: tuple[dict[str, Any], ...]
 
@@ -54,6 +55,45 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def annotation_immutable_sha256(annotation: Mapping[str, Any]) -> str:
+    observation = annotation.get("observation")
+    if not isinstance(observation, Mapping):
+        raise ParserDatasetError("real annotation observation must be an object")
+    nodes = observation.get("nodes")
+    if not isinstance(nodes, list):
+        raise ParserDatasetError("real annotation observation nodes must be a list")
+    immutable_nodes: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            raise ParserDatasetError("real annotation observation node must be an object")
+        immutable_nodes.append({
+            "node_id": node.get("node_id"),
+            "text": node.get("text"),
+            "confidence": node.get("confidence"),
+            "polygon": node.get("polygon"),
+            "target_region_ids": node.get("target_region_ids"),
+        })
+    payload = {
+        "document_id": annotation.get("document_id"),
+        "split": annotation.get("split"),
+        "source_kind": annotation.get("source_kind"),
+        "image_sha256": annotation.get("image_sha256"),
+        "width": annotation.get("width"),
+        "height": annotation.get("height"),
+        "layout_family": annotation.get("layout_family"),
+        "scenario_tags": annotation.get("scenario_tags"),
+        "risk_tags": annotation.get("risk_tags"),
+        "privacy": annotation.get("privacy"),
+        "observation": {
+            "kind": observation.get("kind"),
+            "profile": observation.get("profile"),
+            "nodes": immutable_nodes,
+        },
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _validate_raster_signature(path: Path, label: str) -> None:
@@ -168,7 +208,13 @@ def load_real_source_manifest(manifest_path: str | Path) -> RealSourceDataset:
         })
     if not samples:
         raise ParserDatasetError("real source manifest has no samples")
-    return RealSourceDataset(root=path.parent, manifest_path=path, dataset_id=dataset_id, samples=tuple(samples))
+    return RealSourceDataset(
+        root=path.parent,
+        manifest_path=path,
+        samples_path=samples_path,
+        dataset_id=dataset_id,
+        samples=tuple(samples),
+    )
 
 
 def _runtime_nodes(regions: object) -> list[dict[str, Any]]:
@@ -233,14 +279,27 @@ def prepare_real_annotation(sample: Mapping[str, Any], runtime_result: Mapping[s
         "scenario_tags": list(sample["scenario_tags"]),
         "risk_tags": list(sample["risk_tags"]),
         "privacy": {"contains_patient_data": False, "deidentified": True},
-        "observation": {"kind": "runtime_ocr", "profile": runtime_observation_profile(profile), "nodes": _runtime_nodes(runtime_result.get("regions"))},
+        "observation": {
+            "kind": "runtime_ocr",
+            "profile": runtime_observation_profile(
+                profile,
+                expected_image_sha256=str(sample["image_sha256"]),
+            ),
+            "nodes": _runtime_nodes(runtime_result.get("regions")),
+        },
         "relations": [],
         "gold_rows": [],
         "annotation_status": "draft",
     }
 
 
-def finalize_real_annotation(annotation: Mapping[str, Any]) -> dict[str, Any]:
+def finalize_real_annotation(
+    annotation: Mapping[str, Any],
+    *,
+    expected_immutable_sha256: str,
+) -> dict[str, Any]:
+    if annotation_immutable_sha256(annotation) != expected_immutable_sha256:
+        raise ParserDatasetError("real annotation immutable snapshot SHA-256 mismatch")
     document = dict(annotation)
     observation = document.get("observation")
     if not isinstance(observation, Mapping) or observation.get("kind") != "runtime_ocr":
@@ -258,6 +317,7 @@ def finalize_real_annotation(annotation: Mapping[str, Any]) -> dict[str, Any]:
 __all__ = [
     "ParserDatasetError",
     "RealSourceDataset",
+    "annotation_immutable_sha256",
     "finalize_real_annotation",
     "load_real_source_manifest",
     "prepare_real_annotation",

@@ -70,6 +70,20 @@ class ParserTrainingAlignmentTest(unittest.TestCase):
             ],
         )
 
+    def test_schedule_edges_are_supervised_with_hard_negatives(self) -> None:
+        nodes = [
+            {"node_id": "p1", "label_status": "labeled", "semantic_role": "product", "association_group": "m1"},
+            {"node_id": "p2", "label_status": "labeled", "semantic_role": "product", "association_group": "m2"},
+            {"node_id": "s1", "label_status": "labeled", "semantic_role": "schedule", "association_group": "m1"},
+        ]
+        self.assertEqual(
+            build_relation_labels(nodes),
+            [
+                {"product_node_id": "p1", "field_node_id": "s1", "label": "same_medication"},
+                {"product_node_id": "p2", "field_node_id": "s1", "label": "different_medication"},
+            ],
+        )
+
     def test_input_order_only_changes_node_ids_when_runtime_indices_change(self) -> None:
         gt = [_gt("p", "product", "m1", 10, 10), _gt("d", "dose", "m1", 120, 10)]
         observed = [

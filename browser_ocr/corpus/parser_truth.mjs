@@ -71,7 +71,7 @@ export function expectedRows(sample) {
 
 export function positiveEdges(sample) {
   const products = sample.regions.filter((region) => region.semantic_role === "product" && region.association_group !== "document");
-  const fields = sample.regions.filter((region) => ["dose", "frequency", "duration", "instruction"].includes(region.semantic_role) && region.association_group !== "document");
+  const fields = sample.regions.filter((region) => ["dose", "frequency", "duration", "instruction", "schedule"].includes(region.semantic_role) && region.association_group !== "document");
   const edges = [];
   for (const product of products) {
     for (const field of fields) {
@@ -104,6 +104,7 @@ export function buildParsingItems(corpus) {
       text: region.text,
       confidence: 1.0,
       polygon: region.polygon,
+      natural_text_polygon: region.natural_text_polygon,
       semantic_role: region.semantic_role,
       association_group: region.association_group,
       ...(region.drug_family ? {

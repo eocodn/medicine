@@ -40,7 +40,7 @@ test("parser structure recipes are split-specific and train covers its recipe po
 test("product-only and numeric recipes alter document truth rather than parser postprocessing", () => {
   const productRandom = rng(41);
   const productBase = buildLayout(10, productRandom, { products: products() });
-  const productOnly = applyParserStructureVariant(productBase, { index: 10, split: "train", random: productRandom });
+  const productOnly = applyParserStructureVariant(productBase, { index: 10, split: "train", splitOrdinal: 4, random: productRandom });
   assert.equal(productOnly.parser_structure_variant, "product_only");
   const groups = [...new Set(productOnly.regions.filter((region) => region.semantic_role === "product").map((region) => region.association_group))];
   assert.ok(groups.some((group) => {
@@ -50,7 +50,7 @@ test("product-only and numeric recipes alter document truth rather than parser p
 
   const numericRandom = rng(43);
   const numericBase = buildLayout(13, numericRandom, { products: products() });
-  const numeric = applyParserStructureVariant(numericBase, { index: 13, split: "train", random: numericRandom });
+  const numeric = applyParserStructureVariant(numericBase, { index: 13, split: "train", splitOrdinal: 7, random: numericRandom });
   assert.equal(numeric.parser_structure_variant, "numeric_cells");
   assert.ok(numeric.regions.filter((region) => ["dose", "frequency", "duration"].includes(region.semantic_role)).every((region) => /^\d+(?:\.\d+)?$/.test(region.text)));
 });
@@ -58,7 +58,7 @@ test("product-only and numeric recipes alter document truth rather than parser p
 test("held-out recipes include fraction/partial-header and header-only negatives", () => {
   const fractionRandom = rng(47);
   const fractionBase = buildLayout(15, fractionRandom, { products: products() });
-  const fraction = applyParserStructureVariant(fractionBase, { index: 15, split: "val", random: fractionRandom });
+  const fraction = applyParserStructureVariant(fractionBase, { index: 15, split: "val", splitOrdinal: 1, random: fractionRandom });
   assert.equal(fraction.parser_structure_variant, "fraction_dose_partial_headers");
   assert.ok(fraction.regions.some((region) => region.semantic_role === "dose" && region.text === "1/2정"));
   const fractionRows = expectedRows({ regions: fraction.regions });
@@ -66,7 +66,7 @@ test("held-out recipes include fraction/partial-header and header-only negatives
 
   const negativeRandom = rng(53);
   const negativeBase = buildLayout(25, negativeRandom, { products: products() });
-  const negative = applyParserStructureVariant(negativeBase, { index: 25, split: "val", random: negativeRandom });
+  const negative = applyParserStructureVariant(negativeBase, { index: 25, split: "val", splitOrdinal: 2, random: negativeRandom });
   assert.equal(negative.parser_structure_variant, "header_only_negative");
   assert.equal(negative.regions.some((region) => ["product", "product_label", "dose", "frequency", "duration"].includes(region.semantic_role) && region.association_group !== "document"), false);
 });

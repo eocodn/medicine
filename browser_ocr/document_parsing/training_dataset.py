@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import math
 import os
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -16,6 +18,8 @@ from .training_alignment import MODEL_ROLES
 SCHEMA_VERSION = 1
 TASK = "medication_document_parser"
 SOURCE_POLICY = "synthetic_train_real_holdout_v1"
+_STATE_FILE = ".dataset-state.json"
+_LOCK_FILE = ".dataset.lock"
 _ALLOWED_SPLITS = {"train", "val", "test"}
 _ALLOWED_SOURCES = {"synthetic", "real_deidentified"}
 _ALLOWED_OBSERVATIONS = {"oracle", "synthetic_ocr", "runtime_ocr"}
@@ -290,7 +294,7 @@ def _normalize_document(value: object) -> dict[str, Any]:
             raise ParserDatasetError(f"{document_id}.relations[{index}] cannot reference ambiguous/unlabeled nodes")
         if node_by_id[product_id]["semantic_role"] != "product":
             raise ParserDatasetError(f"{document_id}.relations[{index}] product node is not labeled product")
-        if node_by_id[field_id]["semantic_role"] not in {"dose", "frequency", "duration", "instruction"}:
+        if node_by_id[field_id]["semantic_role"] not in {"dose", "frequency", "duration", "instruction", "schedule"}:
             raise ParserDatasetError(f"{document_id}.relations[{index}] field node has unsupported role")
         key = (product_id, field_id)
         if key in relation_keys:
@@ -337,6 +341,33 @@ def _atomic_write(path: Path, content: bytes) -> None:
     os.replace(temporary, path)
 
 
+@contextmanager
+def _exclusive_output_lock(root: Path):
+    lock_path = root / _LOCK_FILE
+    stream = lock_path.open("a+")
+    try:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ParserDatasetError(f"parser dataset build is already active in {root}") from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        finally:
+            stream.close()
+
+
+def _read_state(path: Path) -> Mapping[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ParserDatasetError("parser dataset output state is invalid JSON") from exc
+    if not isinstance(value, Mapping):
+        raise ParserDatasetError("parser dataset output state must be an object")
+    return value
+
+
 def write_parser_dataset(
     output_dir: str | Path,
     *,
@@ -351,6 +382,13 @@ def write_parser_dataset(
     samples_bytes = b"".join(_canonical_json(document) + b"\n" for document in normalized)
     samples_path = root / "samples.jsonl"
     samples_sha = _sha256_bytes(samples_bytes)
+    normalized_metadata = dict(metadata or {})
+    profile = {
+        "schema_version": 1,
+        "dataset_id": normalized_id,
+        "samples_sha256": samples_sha,
+        "metadata_sha256": _sha256_bytes(_canonical_json(normalized_metadata)),
+    }
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "dataset_id": normalized_id,
@@ -359,12 +397,40 @@ def write_parser_dataset(
         "samples_file": "samples.jsonl",
         "samples_sha256": samples_sha,
         "document_count": len(normalized),
-        "metadata": dict(metadata or {}),
+        "metadata": normalized_metadata,
     }
-    _atomic_write(samples_path, samples_bytes)
     manifest_path = root / "manifest.json"
-    _atomic_write(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n")
-    return manifest_path
+    state_path = root / _STATE_FILE
+    with _exclusive_output_lock(root):
+        if state_path.is_file():
+            state = _read_state(state_path)
+            if state.get("profile") != profile:
+                raise ParserDatasetError("parser dataset output profile differs from requested dataset")
+            if state.get("status") == "completed":
+                dataset = load_parser_dataset(manifest_path, allow_draft=True)
+                if dataset.dataset_id != normalized_id or _sha256_file(dataset.root / "samples.jsonl") != samples_sha:
+                    raise ParserDatasetError("completed parser dataset state disagrees with persisted dataset")
+                return manifest_path
+            if state.get("status") != "running":
+                raise ParserDatasetError("parser dataset output state has unsupported status")
+        else:
+            unexpected = [
+                path.name for path in root.iterdir()
+                if path.name != _LOCK_FILE
+            ]
+            if unexpected:
+                raise ParserDatasetError("parser dataset output is non-empty without authoritative state")
+        _atomic_write(
+            state_path,
+            json.dumps({"schema_version": 1, "status": "running", "profile": profile}, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n",
+        )
+        _atomic_write(samples_path, samples_bytes)
+        _atomic_write(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n")
+        _atomic_write(
+            state_path,
+            json.dumps({"schema_version": 1, "status": "completed", "profile": profile}, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + b"\n",
+        )
+        return manifest_path
 
 
 def load_parser_dataset(manifest_path: str | Path, *, allow_draft: bool = False) -> ParserDataset:

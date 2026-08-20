@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -7,11 +8,76 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from browser_ocr.document_parsing.dataset_cli import build_parser, main
-from browser_ocr.document_parsing.training_dataset import write_parser_dataset
+from browser_ocr.document_parsing.dataset_cli import _finalize_real, _prepare_real, build_parser, main
+from browser_ocr.document_parsing.training_dataset import ParserDatasetError, write_parser_dataset
 
 
 class ParserDatasetCliTest(unittest.TestCase):
+    def _real_source_and_result(self, root: Path) -> tuple[Path, Path]:
+        source = root / "source"
+        source.mkdir(parents=True)
+        image = source / "rx-001.jpg"
+        image_bytes = b"\xff\xd8\xffdeidentified"
+        image.write_bytes(image_bytes)
+        image_sha = hashlib.sha256(image_bytes).hexdigest()
+        (source / "samples.jsonl").write_text(json.dumps({
+            "document_id": "rx-001",
+            "image": "rx-001.jpg",
+            "image_sha256": image_sha,
+            "split": "val",
+            "document_type": "prescription",
+            "layout_family": "real_unknown",
+            "privacy": {"contains_patient_data": False, "deidentified": True},
+            "provenance": {"source_id": "source-a", "license_id": "private-deidentified"},
+            "scenario_tags": ["prescription"],
+            "risk_tags": ["real_photo"],
+        }) + "\n", encoding="utf-8")
+        manifest = source / "manifest.json"
+        manifest.write_text(json.dumps({
+            "schema_version": 1,
+            "dataset_id": "real-fixture",
+            "source_kind": "real_deidentified",
+            "patient_data_policy": "forbid",
+            "samples_file": "samples.jsonl",
+        }), encoding="utf-8")
+        results = root / "results" / "rx-001"
+        results.mkdir(parents=True)
+        profile = {
+            "schema_version": 2,
+            "image_sha256": image_sha,
+            "baseline_result_sha256": "1" * 64,
+            "recognizer_checkpoint_sha256": "2" * 64,
+            "recognizer_config_sha256": "3" * 64,
+            "recognizer_device": "cpu",
+            "detector_manifest_sha256": "4" * 64,
+            "detector_model": "PP-OCRv5_mobile_det",
+            "detector_edge": 640,
+            "detector_threads": 1,
+            "detector_asset_sha256": "5" * 64,
+            "parser": "geometry_rule_v2",
+            "implementation": {
+                "full_document": "6" * 64,
+                "full_document_cli": "7" * 64,
+                "crop_refinement": "8" * 64,
+                "parser": "9" * 64,
+                "parser_contract": "a" * 64,
+                "detector_runtime": "b" * 64,
+                "detector_benchmark": "c" * 64,
+            },
+        }
+        (results / "result.json").write_text(json.dumps({
+            "status": "ok",
+            "profile": profile,
+            "image": {"sha256": image_sha, "width": 1200, "height": 1600},
+            "regions": [{
+                "index": 1,
+                "text": "가나다정",
+                "recognition_score": 0.98,
+                "polygon": [[10, 10], [100, 10], [100, 35], [10, 35]],
+            }],
+        }), encoding="utf-8")
+        return manifest, root / "results"
+
     def test_parser_exposes_dataset_controls(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["validate", "--manifest", "/tmp/manifest.json", "--json"])
@@ -48,6 +114,49 @@ class ParserDatasetCliTest(unittest.TestCase):
             payload = json.loads(output.getvalue())
             self.assertEqual(payload["documents"], 1)
             self.assertEqual(payload["splits"]["val"], 1)
+
+    def test_prepare_real_rerun_preserves_human_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source_manifest, results_root = self._real_source_and_result(root)
+            output = root / "annotations-out"
+            first = _prepare_real(str(source_manifest), str(results_root), str(output))
+            self.assertFalse(first["reused"])
+            annotation_path = output / "annotations" / "rx-001.json"
+            annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+            annotation["observation"]["nodes"][0].update(
+                label_status="labeled",
+                semantic_role="product",
+                association_group="m1",
+            )
+            annotation["gold_rows"] = [{"gold_row_id": "m1", "product_query": "가나다정", "draft": {}}]
+            annotation_path.write_text(json.dumps(annotation, ensure_ascii=False), encoding="utf-8")
+
+            second = _prepare_real(str(source_manifest), str(results_root), str(output))
+            self.assertTrue(second["reused"])
+            preserved = json.loads(annotation_path.read_text(encoding="utf-8"))
+            self.assertEqual(preserved["observation"]["nodes"][0]["semantic_role"], "product")
+
+    def test_finalize_real_rechecks_source_and_runtime_snapshot_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source_manifest, results_root = self._real_source_and_result(root)
+            output = root / "annotations-out"
+            _prepare_real(str(source_manifest), str(results_root), str(output))
+            annotation_path = output / "annotations" / "rx-001.json"
+            annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+            annotation["observation"]["nodes"][0].update(
+                label_status="labeled",
+                semantic_role="product",
+                association_group="m1",
+            )
+            annotation["gold_rows"] = [{"gold_row_id": "m1", "product_query": "가나다정", "draft": {}}]
+            annotation_path.write_text(json.dumps(annotation, ensure_ascii=False), encoding="utf-8")
+
+            runtime_path = results_root / "rx-001" / "result.json"
+            runtime_path.write_text(runtime_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ParserDatasetError, "runtime OCR result SHA-256"):
+                _finalize_real(str(output / "annotations"), "real-final", str(root / "final"))
 
 
 if __name__ == "__main__":

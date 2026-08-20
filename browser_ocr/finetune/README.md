@@ -24,7 +24,7 @@ Do not put private real-photo corpora in this repository. Keep them outside Git 
 
 ## Real-photo parser holdout path
 
-The learned-parser data pipeline has a separate full-document path for already de-identified prescription photos. Private images stay outside this repository and are mounted read-only. `ocr-parser-real` reuses the selected `ocr-full-document` detector/crop/recognizer implementation, stores per-document runtime OCR snapshots under an ignored work directory, and emits human-annotation drafts. Real parser sources are val/test-only; training on real patient-derived images is intentionally not enabled by this contract. See `browser_ocr/document_parsing/README.md` for the source manifest and finalization workflow.
+The learned-parser data pipeline has a separate full-document path for already de-identified prescription photos. Private images stay outside this repository and are mounted read-only. `ocr-parser-real` reuses the selected `ocr-full-document` detector/crop/recognizer implementation, stores per-document runtime OCR snapshots under an ignored work directory, and emits human-annotation drafts whose immutable source/OCR content is SHA-256-bound separately from editable labels. Completed preparation is idempotent and will not rewrite human annotations. Real parser sources are val/test-only; training on real patient-derived images is intentionally not enabled by this contract. See `browser_ocr/document_parsing/README.md` for the source manifest and finalization workflow.
 
 ## Why split is graph-based
 

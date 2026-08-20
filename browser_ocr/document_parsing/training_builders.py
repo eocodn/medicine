@@ -69,7 +69,7 @@ def _truth_regions(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "semantic_role": str(raw.get("semantic_role") or "other"),
                 "association_group": str(raw.get("association_group") or "") or None,
                 "polygon": raw.get("polygon"),
-                "natural_text_polygon": raw.get("polygon"),
+                "natural_text_polygon": raw.get("natural_text_polygon") or raw.get("polygon"),
             }
         )
     return regions
@@ -127,7 +127,7 @@ def _oracle_nodes(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "node_id": str(raw["node_id"]),
                 "text": str(raw.get("text") or ""),
                 "confidence": float(raw.get("confidence", 1.0)),
-                "polygon": raw["polygon"],
+                "polygon": raw.get("natural_text_polygon") or raw["polygon"],
                 "target_region_ids": [str(raw["node_id"])],
                 "label_status": "labeled",
                 "semantic_role": role,
@@ -183,7 +183,7 @@ def _synthetic_observed_regions(sample: Mapping[str, Any], seed: int) -> list[di
         drop_rate = 0.06 if role in {"product", "dose", "frequency", "duration"} else 0.035
         if rng.random() < drop_rate:
             continue
-        polygon = _jitter_polygon(raw["polygon"], rng, width, height)
+        polygon = _jitter_polygon(raw.get("natural_text_polygon") or raw["polygon"], rng, width, height)
         text = _corrupt_text(str(raw.get("text") or ""), rng)
         confidence = round(rng.uniform(0.72, 0.995), 6)
         x1, y1, x2, y2 = _bbox(polygon)
@@ -354,7 +354,10 @@ def build_runtime_dataset(
             _base_document(
                 sample,
                 observation_kind="runtime_ocr",
-                observation_profile=runtime_observation_profile(result.get("profile")),
+                observation_profile=runtime_observation_profile(
+                    result.get("profile"),
+                    expected_image_sha256=str(sample["image_sha256"]),
+                ),
                 nodes=nodes,
             )
         )
