@@ -181,6 +181,7 @@ class AndroidReferenceInstaller(
             referenceDir,
             AtomicFileReferenceStateStorage(File(referenceDir, STATE_FILE)),
             PythonReferenceDatabaseVerifier(),
+            fileSealProvider = AndroidReferenceFileSealProvider(),
         )
         val source = HttpsReferenceReleaseSource(
             baseUrl,

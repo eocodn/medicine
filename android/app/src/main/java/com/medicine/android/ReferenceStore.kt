@@ -32,11 +32,45 @@ data class ReferenceVersion(
     }
 }
 
+data class ReferenceFileSeal(
+    val sizeBytes: Long,
+    val modifiedMarker: Long,
+    val changedMarker: Long,
+    val identityKey: String,
+    val writable: Boolean,
+)
+
+interface ReferenceFileSealProvider {
+    fun capture(file: File): ReferenceFileSeal?
+}
+
+interface ReferenceContentHasher {
+    fun sha256(file: File): String
+}
+
+private object Sha256ReferenceContentHasher : ReferenceContentHasher {
+    override fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read > 0) digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+}
+
 data class ReferenceStoreState(
     val active: ReferenceVersion? = null,
     val previous: ReferenceVersion? = null,
     val pending: ReferenceVersion? = null,
     val highestActivatedSequence: Long = 0,
+    val activeSeal: ReferenceFileSeal? = null,
+    val previousSeal: ReferenceFileSeal? = null,
+    val pendingSeal: ReferenceFileSeal? = null,
 ) {
     init {
         require(highestActivatedSequence >= 0) { "invalid reference activation sequence" }
@@ -46,6 +80,9 @@ data class ReferenceStoreState(
         require(previous == null || previous.releaseSequence <= highestActivatedSequence) {
             "previous reference sequence exceeds activation high-water mark"
         }
+        require(active != null || activeSeal == null) { "active seal requires active reference" }
+        require(previous != null || previousSeal == null) { "previous seal requires previous reference" }
+        require(pending != null || pendingSeal == null) { "pending seal requires pending reference" }
     }
 }
 
@@ -95,6 +132,8 @@ class ReferenceStore(
     private val root: File,
     private val stateStorage: ReferenceStateStorage,
     private val databaseVerifier: ReferenceDatabaseVerifier,
+    private val fileSealProvider: ReferenceFileSealProvider? = null,
+    private val contentHasher: ReferenceContentHasher = Sha256ReferenceContentHasher,
 ) {
     init {
         check(root.exists() || root.mkdirs()) { "cannot create reference data directory" }
@@ -115,28 +154,34 @@ class ReferenceStore(
         state = activation.state
         recoveryReason = recoveryReason ?: activation.recoveryReason
 
-        // An established LKG was runtime-verified before installation, so normal
-        // startup only rechecks immutable content identity. Schema compatibility is
-        // still checked before exposing it to the current embedded Python runtime.
-        fun startupCompatible(version: ReferenceVersion): Boolean =
-            version.schemaVersion == expectedSchemaVersion && isContentVerified(version)
-
-        val selected = when {
-            state.active != null && startupCompatible(state.active) -> state.active
-            state.previous != null && startupCompatible(state.previous) -> {
-                recoveryReason = recoveryReason ?: "active reference invalid; using previous LKG"
-                state.previous
-            }
-            else -> null
+        val activeVerification = state.active
+            ?.takeIf { it.schemaVersion == expectedSchemaVersion }
+            ?.let { verifyForStartup(it, state.activeSeal) }
+        val previousVerification = if (activeVerification?.valid == true) {
+            null
+        } else {
+            state.previous
+                ?.takeIf { it.schemaVersion == expectedSchemaVersion }
+                ?.let { verifyForStartup(it, state.previousSeal) }
         }
-        if (selected == null) {
-            return null
+        val selected = when {
+            activeVerification?.valid == true -> state.active!!
+            previousVerification?.valid == true -> {
+                recoveryReason = recoveryReason ?: "active reference invalid; using previous LKG"
+                state.previous!!
+            }
+            else -> return null
         }
 
         val normalized = if (selected == state.active) {
-            state
+            state.copy(activeSeal = activeVerification?.seal)
         } else {
-            state.copy(active = selected, previous = null)
+            state.copy(
+                active = selected,
+                activeSeal = previousVerification?.seal,
+                previous = null,
+                previousSeal = null,
+            )
         }
         if (normalized != state) writeState(normalized)
         cleanupUnreferenced(normalized)
@@ -174,12 +219,14 @@ class ReferenceStore(
         }
         check(target.setReadOnly()) { "cannot make initial reference read-only" }
         check(isDatabaseVerified(target, version)) { "installed initial reference verification failed" }
+        val activeSeal = captureVerifiedSeal(target)
 
         val activated = ReferenceStoreState(
             active = version,
             previous = null,
             pending = null,
             highestActivatedSequence = maxOf(state.highestActivatedSequence, version.releaseSequence),
+            activeSeal = activeSeal,
         )
         writeState(activated)
         cleanupUnreferenced(activated)
@@ -219,8 +266,9 @@ class ReferenceStore(
         }
         check(target.setReadOnly()) { "cannot make reference candidate read-only" }
         check(isDatabaseVerified(target, version)) { "installed reference candidate verification failed" }
+        val pendingSeal = captureVerifiedSeal(target)
 
-        writeState(state.copy(pending = version))
+        writeState(state.copy(pending = version, pendingSeal = pendingSeal))
     }
 
     private data class PendingActivation(
@@ -235,7 +283,7 @@ class ReferenceStore(
         val pending = state.pending ?: return PendingActivation(state)
         if (pending.schemaVersion != expectedSchemaVersion || !isDatabaseVerified(pending)) {
             fileFor(pending).delete()
-            val cleared = state.copy(pending = null)
+            val cleared = state.copy(pending = null, pendingSeal = null)
             writeState(cleared)
             return PendingActivation(
                 cleared,
@@ -247,7 +295,7 @@ class ReferenceStore(
             (state.active?.releaseSequence ?: 0L) < state.highestActivatedSequence
         if (!canAdvance && !canRepair) {
             fileFor(pending).takeIf { pending != state.active && pending != state.previous }?.delete()
-            val cleared = state.copy(pending = null)
+            val cleared = state.copy(pending = null, pendingSeal = null)
             writeState(cleared)
             return PendingActivation(
                 cleared,
@@ -255,13 +303,37 @@ class ReferenceStore(
             )
         }
 
-        val validCurrent = state.active?.takeIf { it != pending && isContentVerified(it) }
-            ?: state.previous?.takeIf { it != pending && isContentVerified(it) }
+        val pendingFile = fileFor(pending)
+        check(pendingFile.setReadOnly()) { "cannot keep pending reference read-only" }
+        val activatedSeal = captureVerifiedSeal(pendingFile)
+        val activeVerification = state.active
+            ?.takeIf { it != pending }
+            ?.let { verifyForStartup(it, state.activeSeal) }
+        val previousVerification = if (activeVerification?.valid == true) {
+            null
+        } else {
+            state.previous
+                ?.takeIf { it != pending }
+                ?.let { verifyForStartup(it, state.previousSeal) }
+        }
+        val validCurrent = when {
+            activeVerification?.valid == true -> state.active
+            previousVerification?.valid == true -> state.previous
+            else -> null
+        }
+        val validCurrentSeal = when (validCurrent) {
+            state.active -> activeVerification?.seal
+            state.previous -> previousVerification?.seal
+            else -> null
+        }
         val activated = ReferenceStoreState(
             active = pending,
             previous = validCurrent,
             pending = null,
             highestActivatedSequence = maxOf(state.highestActivatedSequence, pending.releaseSequence),
+            activeSeal = activatedSeal,
+            previousSeal = validCurrentSeal,
+            pendingSeal = null,
         )
         writeState(activated)
         return PendingActivation(activated)
@@ -281,12 +353,45 @@ class ReferenceStore(
         }
     }
 
+    private data class StartupVerification(
+        val valid: Boolean,
+        val seal: ReferenceFileSeal? = null,
+    )
+
+    private fun verifyForStartup(
+        version: ReferenceVersion,
+        storedSeal: ReferenceFileSeal?,
+    ): StartupVerification {
+        val file = fileFor(version)
+        if (!file.isFile || file.length() != version.sizeBytes) return StartupVerification(false)
+        val provider = fileSealProvider
+        if (provider == null) {
+            return StartupVerification(isContentVerified(file, version))
+        }
+        val currentSeal = provider.capture(file) ?: return StartupVerification(false)
+        if (storedSeal != null && currentSeal == storedSeal && !currentSeal.writable) {
+            return StartupVerification(true, storedSeal)
+        }
+        if (!isDatabaseVerified(file, version)) return StartupVerification(false)
+        if (currentSeal.writable && !file.setReadOnly()) return StartupVerification(false)
+        val refreshed = provider.capture(file) ?: return StartupVerification(false)
+        if (refreshed.writable) return StartupVerification(false)
+        return StartupVerification(true, refreshed)
+    }
+
+    private fun captureVerifiedSeal(file: File): ReferenceFileSeal? {
+        val provider = fileSealProvider ?: return null
+        val seal = requireNotNull(provider.capture(file)) { "cannot capture verified reference file seal" }
+        check(!seal.writable) { "verified reference file must be read-only" }
+        return seal
+    }
+
     private fun isContentVerified(version: ReferenceVersion): Boolean =
         isContentVerified(fileFor(version), version)
 
     private fun isContentVerified(file: File, version: ReferenceVersion): Boolean {
         if (!file.isFile || file.length() != version.sizeBytes) return false
-        return sha256(file) == version.sha256
+        return contentHasher.sha256(file) == version.sha256
     }
 
     private fun isDatabaseVerified(version: ReferenceVersion): Boolean =
@@ -301,30 +406,21 @@ class ReferenceStore(
         stateStorage.write(encodeState(state))
     }
 
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                if (read > 0) digest.update(buffer, 0, read)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
-
     companion object {
-        private const val STATE_MAGIC = "MEDREFSTATE1"
+        private const val STATE_MAGIC_V1 = "MEDREFSTATE1"
+        private const val STATE_MAGIC_V2 = "MEDREFSTATE2"
 
         private fun encodeState(state: ReferenceStoreState): ByteArray {
             val bytes = ByteArrayOutputStream()
             DataOutputStream(bytes).use { output ->
-                output.writeUTF(STATE_MAGIC)
+                output.writeUTF(STATE_MAGIC_V2)
                 output.writeLong(state.highestActivatedSequence)
                 writeVersion(output, state.active)
+                writeSeal(output, state.activeSeal)
                 writeVersion(output, state.previous)
+                writeSeal(output, state.previousSeal)
                 writeVersion(output, state.pending)
+                writeSeal(output, state.pendingSeal)
             }
             return bytes.toByteArray()
         }
@@ -333,14 +429,35 @@ class ReferenceStore(
             if (bytes == null) return ReferenceStoreState()
             try {
                 DataInputStream(ByteArrayInputStream(bytes)).use { input ->
-                    require(input.readUTF() == STATE_MAGIC) { "unsupported reference state format" }
+                    val magic = input.readUTF()
+                    require(magic == STATE_MAGIC_V1 || magic == STATE_MAGIC_V2) {
+                        "unsupported reference state format"
+                    }
                     val highWater = input.readLong()
-                    val state = ReferenceStoreState(
-                        active = readVersion(input),
-                        previous = readVersion(input),
-                        pending = readVersion(input),
-                        highestActivatedSequence = highWater,
-                    )
+                    val state = if (magic == STATE_MAGIC_V1) {
+                        ReferenceStoreState(
+                            active = readVersion(input),
+                            previous = readVersion(input),
+                            pending = readVersion(input),
+                            highestActivatedSequence = highWater,
+                        )
+                    } else {
+                        val active = readVersion(input)
+                        val activeSeal = readSeal(input)
+                        val previous = readVersion(input)
+                        val previousSeal = readSeal(input)
+                        val pending = readVersion(input)
+                        val pendingSeal = readSeal(input)
+                        ReferenceStoreState(
+                            active = active,
+                            previous = previous,
+                            pending = pending,
+                            highestActivatedSequence = highWater,
+                            activeSeal = activeSeal,
+                            previousSeal = previousSeal,
+                            pendingSeal = pendingSeal,
+                        )
+                    }
                     require(input.read() == -1) { "trailing reference state data" }
                     return state
                 }
@@ -367,6 +484,27 @@ class ReferenceStore(
                 sizeBytes = input.readLong(),
                 schemaVersion = input.readUTF(),
                 releaseSequence = input.readLong(),
+            )
+        }
+
+        private fun writeSeal(output: DataOutputStream, seal: ReferenceFileSeal?) {
+            output.writeBoolean(seal != null)
+            if (seal == null) return
+            output.writeLong(seal.sizeBytes)
+            output.writeLong(seal.modifiedMarker)
+            output.writeLong(seal.changedMarker)
+            output.writeUTF(seal.identityKey)
+            output.writeBoolean(seal.writable)
+        }
+
+        private fun readSeal(input: DataInputStream): ReferenceFileSeal? {
+            if (!input.readBoolean()) return null
+            return ReferenceFileSeal(
+                sizeBytes = input.readLong(),
+                modifiedMarker = input.readLong(),
+                changedMarker = input.readLong(),
+                identityKey = input.readUTF(),
+                writable = input.readBoolean(),
             )
         }
     }
