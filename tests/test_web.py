@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from medicine_app.web import create_web_app
+from tests.canonical_fixture_support import add_product
 from tests.test_app_core import make_canonical_db
 
 
@@ -209,6 +211,29 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["permit_status"], "withdrawn")
         self.assertEqual(response.json()[0]["permit_status_name"], "취하")
+
+    def test_product_search_ocr_mode_is_available_on_development_web(self) -> None:
+        with sqlite3.connect(self.canonical_db) as con:
+            add_product(
+                con,
+                "WEB-OCR",
+                "타진서방정 10/5mg",
+                "Oxycodone/Naloxone",
+            )
+
+        manual = self.client.get(
+            "/api/products",
+            params={"q": "타진서방정 10/5mg0.5정"},
+        )
+        ocr = self.client.get(
+            "/api/products",
+            params={"q": "타진서방정 10/5mg0.5정", "mode": "ocr"},
+        )
+
+        self.assertEqual(manual.status_code, 200)
+        self.assertEqual(manual.json(), [])
+        self.assertEqual(ocr.status_code, 200)
+        self.assertEqual(ocr.json()[0]["product_ref"], "WEB-OCR")
 
     def test_inactive_product_cannot_enter_current_medication_regimen(self) -> None:
         person = self.client.post(

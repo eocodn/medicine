@@ -12,6 +12,7 @@ from unittest.mock import patch
 import medicine_app.cli as cli_module
 from medicine_app.cli import build_parser, main
 from medicine_app.core import IdempotencyConflict, MedicationApp
+from tests.canonical_fixture_support import add_product
 from tests.test_prescription_safety import make_canonical_db
 
 
@@ -182,6 +183,24 @@ class PrescriptionCliTest(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertEqual(medications[0]["course_progress"]["remaining_days"], 3)
+
+    def test_drug_search_cli_exposes_search_mode_and_match_explanation(self) -> None:
+        with sqlite3.connect(self.canonical_db) as con:
+            add_product(
+                con,
+                "CLI-OCR",
+                "씬지록신정25마이크로그램(레보티록신나트륨수화물)",
+                "Levothyroxine Sodium Hydrate",
+            )
+
+        status, results = self.run_cli(
+            "drug-search", "씬지록심 25", "--mode", "ocr", "--explain-matches"
+        )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(results[0]["product_ref"], "CLI-OCR")
+        self.assertEqual(results[0]["search_match"]["tier"], "ocr_fuzzy")
+        self.assertTrue(results[0]["search_match"]["fuzzy"])
 
 
     def test_generic_dose_log_command_is_not_exposed(self) -> None:

@@ -7,6 +7,13 @@ from typing import Iterator
 
 from .canonical_runtime import category_resolution_issues, linked_categories, product_flags
 from .dosage_forms import infer_administration_route
+from .product_search import (
+    ProductSearchMatch,
+    ProductSearchQuery,
+    fuzzy_candidate_fragments,
+    match_product_fields,
+    parse_product_search_query,
+)
 
 
 class ProductRepository:
@@ -102,34 +109,198 @@ class ProductRepository:
             "canonical_resolution_issues": {key: len(value) for key, value in sorted(issues.items())},
         }
 
-    def search(self, term: str, limit: int = 30, include_inactive: bool = False) -> list[dict]:
+    @staticmethod
+    def _legacy_search_rows(
+        con: sqlite3.Connection,
+        term: str,
+        limit: int,
+        include_inactive: bool,
+    ) -> list[sqlite3.Row]:
+        like = f"%{term}%"
+        prefix = f"{term}%"
+        status_sql = "" if include_inactive else "AND p.permit_status='active'"
+        return con.execute(
+            f"""SELECT p.*
+                FROM products p
+                WHERE (
+                    p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?
+                    OR p.item_seq LIKE ?
+                    OR EXISTS (
+                        SELECT 1 FROM product_identifiers i
+                        WHERE i.item_seq=p.item_seq AND i.system='EDI' AND i.value LIKE ?
+                    )
+                ) {status_sql}
+                ORDER BY CASE WHEN p.permit_status='active' THEN 0 ELSE 1 END,
+                         CASE WHEN p.product_name LIKE ? THEN 0 ELSE 1 END,
+                         p.product_name,p.item_seq
+                LIMIT ?""",
+            (like, like, like, prefix, prefix, prefix, limit),
+        ).fetchall()
+
+    @staticmethod
+    def _structured_candidate_rows(
+        con: sqlite3.Connection,
+        query: ProductSearchQuery,
+        include_inactive: bool,
+        *,
+        fragments: tuple[str, ...] = (),
+    ) -> list[sqlite3.Row]:
+        status_sql = "" if include_inactive else "AND p.permit_status='active'"
+        candidate_limit = 1000
+        anchors = fragments or tuple(sorted(query.text_tokens, key=len, reverse=True)[:2])
+        if not anchors:
+            return []
+        anchor_clauses: list[str] = []
+        params: list[object] = []
+        for anchor in anchors:
+            like = f"%{anchor}%"
+            anchor_clauses.append(
+                "(p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?)"
+            )
+            params.extend((like, like, like))
+        text_clause = " OR ".join(anchor_clauses)
+        number_clause = ""
+        if query.number_tokens:
+            number_clause = " AND " + " AND ".join(
+                "p.product_name LIKE ?" for _ in query.number_tokens
+            )
+            params.extend(f"%{number}%" for number in query.number_tokens)
+        params.append(candidate_limit)
+        return con.execute(
+            f"""SELECT p.*
+                FROM products p
+                WHERE (({text_clause}){number_clause}) {status_sql}
+                ORDER BY CASE WHEN p.permit_status='active' THEN 0 ELSE 1 END,
+                         p.product_name,p.item_seq
+                LIMIT ?""",
+            params,
+        ).fetchall()
+
+    @staticmethod
+    def _identifier_search_rows(
+        con: sqlite3.Connection,
+        term: str,
+        include_inactive: bool,
+    ) -> list[sqlite3.Row]:
+        prefix = f"{term}%"
+        status_sql = "" if include_inactive else "AND p.permit_status='active'"
+        return con.execute(
+            f"""SELECT p.*
+                FROM products p
+                WHERE (
+                    p.item_seq LIKE ?
+                    OR EXISTS (
+                        SELECT 1 FROM product_identifiers i
+                        WHERE i.item_seq=p.item_seq AND i.system='EDI' AND i.value LIKE ?
+                    )
+                ) {status_sql}
+                ORDER BY CASE WHEN p.permit_status='active' THEN 0 ELSE 1 END,
+                         p.product_name,p.item_seq
+                LIMIT 1000""",
+            (prefix, prefix),
+        ).fetchall()
+
+    @staticmethod
+    def _rank_structured_rows(
+        rows: list[sqlite3.Row],
+        query: ProductSearchQuery,
+    ) -> list[tuple[tuple[object, ...], sqlite3.Row, object]]:
+        ranked = []
+        for row in rows:
+            match = match_product_fields(
+                query,
+                product_name=row["product_name"],
+                ingredient_text=row["ingredient_text"],
+                manufacturer=row["manufacturer"],
+            )
+            if match is None:
+                continue
+            ranked.append((
+                (
+                    0 if row["permit_status"] == "active" else 1,
+                    *match.sort_key,
+                    str(row["product_name"]),
+                    str(row["item_seq"]),
+                ),
+                row,
+                match,
+            ))
+        ranked.sort(key=lambda item: item[0])
+        return ranked
+
+    def search(
+        self,
+        term: str,
+        limit: int = 30,
+        include_inactive: bool = False,
+        *,
+        mode: str = "manual",
+        explain: bool = False,
+    ) -> list[dict]:
         term = term.strip()
         if not term:
             return []
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
-        like = f"%{term}%"
-        prefix = f"{term}%"
-        status_sql = "" if include_inactive else "AND p.permit_status='active'"
+        query = parse_product_search_query(term, mode=mode)
         with self._canonical() as con:
-            rows = con.execute(
-                f"""SELECT p.*
-                    FROM products p
-                    WHERE (
-                        p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?
-                        OR p.item_seq LIKE ?
-                        OR EXISTS (
-                            SELECT 1 FROM product_identifiers i
-                            WHERE i.item_seq=p.item_seq AND i.system='EDI' AND i.value LIKE ?
-                        )
-                    ) {status_sql}
-                    ORDER BY CASE WHEN p.permit_status='active' THEN 0 ELSE 1 END,
-                             CASE WHEN p.product_name LIKE ? THEN 0 ELSE 1 END,
-                             p.product_name,p.item_seq
-                    LIMIT ?""",
-                (like, like, like, prefix, prefix, prefix, limit),
-            ).fetchall()
-            return [self._decorate_product(row, con) for row in rows]
+            if mode == "manual" and not query.structured:
+                rows = self._legacy_search_rows(con, term, limit, include_inactive)
+                return [self._decorate_product(row, con) for row in rows]
+            if not query.text_tokens:
+                rows = self._legacy_search_rows(con, term, limit, include_inactive)
+                return [self._decorate_product(row, con) for row in rows]
+            identifier_match = ProductSearchMatch(
+                field="identifier",
+                tier="identifier_prefix",
+                fuzzy=False,
+                sort_key=(-1, 0, 0, 0),
+            )
+            identifier_rows = (
+                self._identifier_search_rows(con, term, include_inactive)
+                if query.identifier_like
+                else []
+            )
+            ranked = [
+                (
+                    (
+                        0 if row["permit_status"] == "active" else 1,
+                        *identifier_match.sort_key,
+                        str(row["product_name"]),
+                        str(row["item_seq"]),
+                    ),
+                    row,
+                    identifier_match,
+                )
+                for row in identifier_rows
+            ]
+            rows = self._structured_candidate_rows(con, query, include_inactive)
+            ranked.extend(self._rank_structured_rows(rows, query))
+            ranked.sort(key=lambda item: item[0])
+            if not ranked and mode == "ocr":
+                fragments = fuzzy_candidate_fragments(query)
+                if fragments:
+                    rows = self._structured_candidate_rows(
+                        con,
+                        query,
+                        include_inactive,
+                        fragments=fragments,
+                    )
+                    ranked = self._rank_structured_rows(rows, query)
+            results = []
+            seen_item_seq: set[str] = set()
+            for _sort_key, row, match in ranked:
+                item_seq = str(row["item_seq"])
+                if item_seq in seen_item_seq:
+                    continue
+                seen_item_seq.add(item_seq)
+                decorated = self._decorate_product(row, con)
+                if explain:
+                    decorated["search_match"] = match.explanation()
+                results.append(decorated)
+                if len(results) >= limit:
+                    break
+            return results
 
     def get(self, product_ref: str) -> dict:
         product_ref = product_ref.strip()

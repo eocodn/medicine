@@ -53,6 +53,8 @@ test("OCR row selection only seeds canonical search and editable prescription dr
   assert.match(app, /medicine:ocr-select/);
   assert.match(app, /ocr-review-panel/);
   assert.match(app, /scrollIntoView/);
+  assert.match(app, /ocrSearchActive[\s\S]{0,220}mode=ocr/);
+  assert.match(app, /#drug-query[\s\S]{0,520}resetOcrTransientState\(\)[\s\S]{0,320}setTimeout\(runDrugSearch, 280\)/);
   assert.match(prescription, /applyOcrDraftToForm/);
   assert.match(prescription, /previewProduct\(productRef, ocrDraft/);
   assert.doesNotMatch(app, /medicine:ocr-select[\s\S]{0,800}confirmAddMedication\(/);

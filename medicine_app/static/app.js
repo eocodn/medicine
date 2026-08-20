@@ -406,7 +406,8 @@ async function runDrugSearch(successMessage = "") {
   const requestId = ++state.searchRequestId;
   status.textContent = "";
   try {
-    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`, {
+    const searchMode = state.ocrSearchActive ? "&mode=ocr" : "";
+    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30${searchMode}`, {
       coalesceKey: "product-search",
     });
     if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
