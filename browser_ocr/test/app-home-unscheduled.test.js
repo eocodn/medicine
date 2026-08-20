@@ -13,11 +13,16 @@ function appContext() {
   };
   const medications = { innerHTML: "", querySelectorAll() { return []; } };
   const history = { innerHTML: "", querySelectorAll() { return []; } };
+  const toast = {
+    textContent: "",
+    classList: { add() {}, remove() {} },
+  };
   const document = {
     querySelector(selector) {
       if (selector === "#home-content") return home;
       if (selector === "#medications-list") return medications;
       if (selector === "#dose-history") return history;
+      if (selector === "#toast") return toast;
       return null;
     },
     querySelectorAll() { return []; },
@@ -252,6 +257,195 @@ test("dose state intents keep the running write and coalesce queued changes to t
 
   assert.equal(vm.runInContext(`state.dashboard.daily_plan.doses[0].status`, context), "skipped");
   assert.equal(vm.runInContext(`state.dashboard.recent_logs[0].status`, context), "skipped");
+  assert.equal(vm.runInContext(`state.doseMutations.size`, context), 0);
+});
+
+test("ambiguous dose failure refreshes authoritative state before converging to a queued older state", async () => {
+  const { context } = appContext();
+  const requests = [];
+  context.window.MedicineLocalApi = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => requests.push({ path, options, resolve, reject }));
+    },
+  };
+  vm.runInContext(`
+    state.people = [{ id: "p1", name: "검토", sex: "male", age: 36 }];
+    state.currentPersonId = "p1";
+    state.dashboardDate = "2026-08-20";
+    state.dashboard = {
+      person: { id: "p1" },
+      medications: [],
+      recent_logs: [],
+      daily_plan: {
+        date: "2026-08-20",
+        doses: [{ id: "dose-1", status: "planned", completed_at: null, product_name: "약A" }],
+        prn_medications: [],
+        unscheduled_medications: [],
+        summary: { planned: 1, taken: 0, skipped: 0 },
+      },
+    };
+    completeDoseInstance("dose-1", "taken");
+    cancelDoseInstance("dose-1");
+  `, context);
+
+  assert.equal(requests.length, 1);
+  const ambiguous = new Error("response lost after commit");
+  ambiguous.status = 500;
+  requests[0].reject(ambiguous);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].path, "/api/people/p1/dashboard");
+  requests[1].resolve({
+    person: { id: "p1" },
+    medications: [],
+    recent_logs: [{ id: "log-taken", dose_instance_id: "dose-1", status: "taken" }],
+    daily_plan: {
+      date: "2026-08-20",
+      doses: [{ id: "dose-1", status: "taken", completed_at: "2026-08-20T08:05:00+09:00" }],
+      prn_medications: [],
+      unscheduled_medications: [],
+      summary: { planned: 0, taken: 1, skipped: 0 },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(requests.length, 3);
+  assert.equal(requests[2].path, "/api/dose-instances/dose-1/completion");
+  assert.equal(requests[2].options.method, "DELETE");
+  requests[2].resolve({
+    id: "dose-1",
+    status: "planned",
+    completed_at: null,
+    recent_logs: [],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(vm.runInContext(`state.dashboard.daily_plan.doses[0].status`, context), "planned");
+  assert.equal(vm.runInContext(`state.doseMutations.size`, context), 0);
+});
+
+test("dose intents stay queued while ambiguous failure reconciliation is in flight", async () => {
+  const { context } = appContext();
+  const requests = [];
+  context.window.MedicineLocalApi = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => requests.push({ path, options, resolve, reject }));
+    },
+  };
+  vm.runInContext(`
+    state.people = [{ id: "p1", name: "검토", sex: "male", age: 36 }];
+    state.currentPersonId = "p1";
+    state.dashboard = {
+      person: { id: "p1" },
+      medications: [],
+      recent_logs: [],
+      daily_plan: {
+        date: "2026-08-20",
+        doses: [{ id: "dose-1", status: "planned", completed_at: null }],
+        prn_medications: [],
+        unscheduled_medications: [],
+        summary: { planned: 1, taken: 0, skipped: 0 },
+      },
+    };
+    completeDoseInstance("dose-1", "taken");
+  `, context);
+
+  const ambiguous = new Error("response lost after commit");
+  ambiguous.status = 500;
+  requests[0].reject(ambiguous);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].path, "/api/people/p1/dashboard");
+
+  vm.runInContext(`completeDoseInstance("dose-1", "skipped")`, context);
+  assert.equal(requests.length, 2);
+
+  requests[1].resolve({
+    person: { id: "p1" },
+    medications: [],
+    recent_logs: [{ id: "log-taken", dose_instance_id: "dose-1", status: "taken" }],
+    daily_plan: {
+      date: "2026-08-20",
+      doses: [{ id: "dose-1", status: "taken", completed_at: "2026-08-20T08:05:00+09:00" }],
+      prn_medications: [],
+      unscheduled_medications: [],
+      summary: { planned: 0, taken: 1, skipped: 0 },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(requests.length, 3);
+  assert.equal(requests[2].path, "/api/dose-instances/dose-1");
+  assert.equal(JSON.parse(requests[2].options.body).status, "skipped");
+});
+
+test("persistent ambiguous dose failures stop after one authoritative compensation", async () => {
+  const { context } = appContext();
+  const requests = [];
+  context.window.MedicineLocalApi = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => requests.push({ path, options, resolve, reject }));
+    },
+  };
+  vm.runInContext(`
+    state.people = [{ id: "p1", name: "검토", sex: "male", age: 36 }];
+    state.currentPersonId = "p1";
+    state.dashboard = {
+      person: { id: "p1" },
+      medications: [],
+      recent_logs: [],
+      daily_plan: {
+        date: "2026-08-20",
+        doses: [{ id: "dose-1", status: "planned", completed_at: null }],
+        prn_medications: [],
+        unscheduled_medications: [],
+        summary: { planned: 1, taken: 0, skipped: 0 },
+      },
+    };
+    completeDoseInstance("dose-1", "taken");
+  `, context);
+
+  const firstFailure = new Error("first ambiguous failure");
+  firstFailure.status = 500;
+  requests[0].reject(firstFailure);
+  await new Promise((resolve) => setImmediate(resolve));
+  requests[1].resolve({
+    person: { id: "p1" },
+    medications: [],
+    recent_logs: [],
+    daily_plan: {
+      date: "2026-08-20",
+      doses: [{ id: "dose-1", status: "planned", completed_at: null }],
+      prn_medications: [],
+      unscheduled_medications: [],
+      summary: { planned: 1, taken: 0, skipped: 0 },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(requests.length, 3);
+  const secondFailure = new Error("second ambiguous failure");
+  secondFailure.status = 500;
+  requests[2].reject(secondFailure);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 4);
+  requests[3].resolve({
+    person: { id: "p1" },
+    medications: [],
+    recent_logs: [],
+    daily_plan: {
+      date: "2026-08-20",
+      doses: [{ id: "dose-1", status: "planned", completed_at: null }],
+      prn_medications: [],
+      unscheduled_medications: [],
+      summary: { planned: 1, taken: 0, skipped: 0 },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(requests.length, 4);
+  assert.equal(vm.runInContext(`state.dashboard.daily_plan.doses[0].status`, context), "planned");
   assert.equal(vm.runInContext(`state.doseMutations.size`, context), 0);
 });
 

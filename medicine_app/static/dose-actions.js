@@ -45,6 +45,7 @@ function queueDoseDesiredState(instanceId, desiredStatus, button = null) {
   if (!entry) {
     entry = {
       authoritativeStatus: currentDoseStatus(instanceId),
+      ambiguousCompensations: 0,
       personId: state.currentPersonId,
       running: false,
     };
@@ -79,21 +80,77 @@ async function drainDoseDesiredState(instanceId, entry) {
   } catch (error) {
     entry.running = false;
     if (state.doseMutations.get(instanceId) !== entry) return;
+    if (state.currentPersonId !== entry.personId) {
+      state.doseMutations.delete(instanceId);
+      return;
+    }
+    const status = Number(error?.status);
+    const commitMayHaveSucceeded = !Number.isFinite(status) || status >= 500;
+    if (commitMayHaveSucceeded) {
+      // Reconciliation is part of the same mutation boundary. Keep subsequent
+      // taps queued as desired-state changes until authoritative state is known.
+      entry.running = true;
+      try {
+        await loadDashboard();
+      } catch (refreshError) {
+        console.error("dashboard refresh after ambiguous dose mutation failure failed", refreshError);
+        entry.running = false;
+        state.doseMutations.delete(instanceId);
+        markDashboardStale();
+        renderAll();
+        toast(error.message);
+        return;
+      }
+      if (state.doseMutations.get(instanceId) !== entry) return;
+      if (state.currentPersonId !== entry.personId) {
+        state.doseMutations.delete(instanceId);
+        return;
+      }
+      entry.running = false;
+      const refreshedStatus = currentDoseStatus(instanceId);
+      if (!refreshedStatus) {
+        // A successful dashboard refresh is authoritative only for dose instances
+        // represented in its current plan or recent log window. If this instance
+        // is absent, do not guess whether the failed write committed.
+        state.doseMutations.delete(instanceId);
+        markDashboardStale();
+        renderAll();
+        toast(error.message);
+        return;
+      }
+      entry.authoritativeStatus = refreshedStatus;
+      if (entry.authoritativeStatus !== entry.desiredStatus) {
+        if (entry.ambiguousCompensations >= 1) {
+          clearPendingDoseIntent(instanceId);
+          state.doseMutations.delete(instanceId);
+          renderAll();
+          toast(error.message);
+          return;
+        }
+        entry.ambiguousCompensations += 1;
+        applyPendingDoseIntent(instanceId, entry.desiredStatus);
+        renderHome();
+        void drainDoseDesiredState(instanceId, entry);
+        return;
+      }
+      clearPendingDoseIntent(instanceId);
+      state.doseMutations.delete(instanceId);
+      renderAll();
+      return;
+    }
     if (entry.desiredStatus !== requestedStatus) {
       void drainDoseDesiredState(instanceId, entry);
       return;
     }
     state.doseMutations.delete(instanceId);
-    if (state.currentPersonId === entry.personId) {
-      try {
-        await loadDashboard();
-      } catch (refreshError) {
-        console.error("dashboard refresh after dose mutation failure failed", refreshError);
-        markDashboardStale();
-      }
-      renderAll();
-      toast(error.message);
+    try {
+      await loadDashboard();
+    } catch (refreshError) {
+      console.error("dashboard refresh after dose mutation failure failed", refreshError);
+      markDashboardStale();
     }
+    renderAll();
+    toast(error.message);
     return;
   }
 
