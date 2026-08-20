@@ -133,3 +133,59 @@ test("dashboard reconciliation clears a committed PRN request before the next in
 
   assert.notEqual(nextRequestId, committedRequestId);
 });
+
+test("PRN success from a prior profile never reconciles into the active profile", async () => {
+  const storage = new Map();
+  const context = prescriptionContext(storage);
+  let resolveRequest;
+  const reconciled = [];
+  let renders = 0;
+  const toasts = [];
+  context.reconcileDoseMutation = (value) => reconciled.push(value);
+  context.renderAll = () => { renders += 1; };
+  context.toast = (value) => toasts.push(value);
+  context.api = () => new Promise((resolve) => { resolveRequest = resolve; });
+  vm.runInContext(`state.currentPersonId = "A"`, context);
+
+  const pending = vm.runInContext(`recordPrnIntake("med-A")`, context);
+  assert.ok(storage.has("medicine.prnRequest.med-A"));
+  vm.runInContext(`state.currentPersonId = "B"`, context);
+  resolveRequest({
+    id: "dose-A",
+    person_id: "A",
+    status: "taken",
+    recent_logs: [{ id: "a-log", medication_id: "med-A" }],
+  });
+  await pending;
+
+  assert.equal(storage.has("medicine.prnRequest.med-A"), false);
+  assert.deepEqual(reconciled, []);
+  assert.equal(renders, 0);
+  assert.deepEqual(toasts, []);
+});
+
+test("PRN failure from a prior profile never toasts or mutates the active profile", async () => {
+  const storage = new Map();
+  const context = prescriptionContext(storage);
+  let rejectRequest;
+  const reconciled = [];
+  let renders = 0;
+  const toasts = [];
+  context.reconcileDoseMutation = (value) => reconciled.push(value);
+  context.renderAll = () => { renders += 1; };
+  context.toast = (value) => toasts.push(value);
+  context.api = () => new Promise((resolve, reject) => { rejectRequest = reject; });
+  vm.runInContext(`state.currentPersonId = "A"`, context);
+
+  const pending = vm.runInContext(`recordPrnIntake("med-A")`, context);
+  vm.runInContext(`state.currentPersonId = "B"`, context);
+  const rejected = new Error("daily maximum");
+  rejected.status = 400;
+  rejectRequest(rejected);
+  await pending;
+
+  assert.equal(storage.has("medicine.prnRequest.med-A"), false);
+  assert.deepEqual(reconciled, []);
+  assert.equal(renders, 0);
+  assert.deepEqual(toasts, []);
+});

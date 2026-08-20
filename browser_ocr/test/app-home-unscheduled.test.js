@@ -331,6 +331,56 @@ test("scheduled dose desired state survives WebView recreation", async () => {
   assert.equal(vm.runInContext(`state.dashboard.daily_plan.doses[0].status`, second.context), "skipped");
 });
 
+test("definitive scheduled dose failure clears durable intent after profile switch", async () => {
+  const storage = new Map();
+  const { context } = appContext(storage);
+  const requests = [];
+  context.window.MedicineLocalApi = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => requests.push({ path, options, resolve, reject }));
+    },
+  };
+  vm.runInContext(`
+    state.people = [
+      { id: "A", name: "A", sex: "male", age: 36 },
+      { id: "B", name: "B", sex: "male", age: 36 },
+    ];
+    state.currentPersonId = "A";
+    state.dashboard = {
+      person: { id: "A" },
+      medications: [],
+      recent_logs: [],
+      daily_plan: {
+        date: "2026-08-20",
+        doses: [{ id: "dose-A", status: "planned", completed_at: null }],
+        summary: { planned: 1, taken: 0, skipped: 0 },
+      },
+    };
+    completeDoseInstance("dose-A", "taken");
+  `, context);
+
+  assert.equal(requests.length, 1);
+  assert.ok(storage.has("medicine.doseIntents"));
+  vm.runInContext(`
+    state.currentPersonId = "B";
+    state.dashboard = {
+      person: { id: "B" },
+      medications: [],
+      recent_logs: [{ id: "b-log", status: "taken" }],
+      daily_plan: { date: "2026-08-20", doses: [], summary: { planned: 0, taken: 0, skipped: 0 } },
+    };
+  `, context);
+  const rejected = new Error("dose no longer exists");
+  rejected.status = 404;
+  requests[0].reject(rejected);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(storage.has("medicine.doseIntents"), false);
+  assert.equal(vm.runInContext(`state.currentPersonId`, context), "B");
+  assert.equal(vm.runInContext(`state.dashboard.recent_logs[0].id`, context), "b-log");
+  assert.equal(vm.runInContext(`state.doseMutations.size`, context), 0);
+});
+
 test("ambiguous dose failure refreshes authoritative state before converging to a queued older state", async () => {
   const { context } = appContext();
   const requests = [];

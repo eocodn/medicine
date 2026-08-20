@@ -4,6 +4,7 @@ function newPrnRequestId() {
 }
 
 async function recordPrnIntake(medicationId, button = null) {
+  const personId = state.currentPersonId;
   const originalText = button?.textContent || "";
   let requestId = pendingPrnRequestId(medicationId);
   if (!requestId) {
@@ -21,11 +22,13 @@ async function recordPrnIntake(medicationId, button = null) {
       body: JSON.stringify({ request_id: requestId }),
     });
     clearPrnRequestId(medicationId);
+    if (state.currentPersonId !== personId) return;
     reconcileDoseMutation(updated);
     renderAll();
     toast("필요시 복용을 기록했어요");
   } catch (error) {
     if (error?.status && error.status < 500) clearPrnRequestId(medicationId);
+    if (state.currentPersonId !== personId) return;
     if (button) {
       button.disabled = false;
       button.removeAttribute("aria-busy");
@@ -82,12 +85,15 @@ async function drainDoseDesiredState(instanceId, entry) {
   } catch (error) {
     entry.running = false;
     if (state.doseMutations.get(instanceId) !== entry) return;
+    const status = Number(error?.status);
+    const commitMayHaveSucceeded = !Number.isFinite(status) || status >= 500;
+    if (!commitMayHaveSucceeded && entry.desiredStatus === requestedStatus) {
+      clearScheduledDoseIntent(instanceId);
+    }
     if (state.currentPersonId !== entry.personId) {
       state.doseMutations.delete(instanceId);
       return;
     }
-    const status = Number(error?.status);
-    const commitMayHaveSucceeded = !Number.isFinite(status) || status >= 500;
     if (commitMayHaveSucceeded) {
       // Reconciliation is part of the same mutation boundary. Keep subsequent
       // taps queued as desired-state changes until authoritative state is known.

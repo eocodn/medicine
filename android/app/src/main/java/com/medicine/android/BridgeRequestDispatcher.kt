@@ -52,7 +52,17 @@ class BridgeRequestDispatcher(
         val abandoned = mutableListOf<BridgeRequest>()
         synchronized(lock) {
             closed = true
-            while (pending.isNotEmpty()) abandoned += pending.removeFirst()
+            val retained = ArrayDeque<BridgeRequest>()
+            while (pending.isNotEmpty()) {
+                val queued = pending.removeFirst()
+                // Once the WebView has handed a mutation to native code, Activity
+                // recreation must not erase that accepted state transition merely
+                // because it has not reached the executor yet. GET work is
+                // reconstructible from authoritative state and may be abandoned.
+                if (queued.method.equals("GET", ignoreCase = true)) abandoned += queued
+                else retained.addLast(queued)
+            }
+            pending.addAll(retained)
         }
         abandoned.forEach { responder(it.requestId, closedEnvelope()) }
     }
