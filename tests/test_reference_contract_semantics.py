@@ -179,6 +179,48 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         with sqlite3.connect(self.mobile) as con:
             self.assertEqual(logical_dataset_id(con), logical_dataset_id_oracle(con))
 
+    def test_fast_logical_dataset_identity_preserves_caller_transaction(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            original = con.execute(
+                "SELECT product_name FROM products WHERE item_seq='SEM-A'"
+            ).fetchone()[0]
+            con.execute(
+                "UPDATE products SET product_name=product_name || ' transaction' "
+                "WHERE item_seq='SEM-A'"
+            )
+            self.assertTrue(con.in_transaction)
+
+            logical_dataset_id(con)
+
+            self.assertTrue(con.in_transaction)
+            con.rollback()
+            restored = con.execute(
+                "SELECT product_name FROM products WHERE item_seq='SEM-A'"
+            ).fetchone()[0]
+            self.assertEqual(restored, original)
+
+    def test_fast_logical_dataset_identity_works_on_query_only_connection(self) -> None:
+        uri = f"file:{self.mobile.resolve()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as con:
+            con.execute("PRAGMA query_only=ON")
+            self.assertEqual(logical_dataset_id(con), logical_dataset_id_oracle(con))
+
+    def test_strict_server_verifier_threads_progress_to_frozen_oracle(self) -> None:
+        progress = mock.Mock()
+        with mock.patch(
+            "medicine_canonical.reference_contracts.v1.logical_dataset_id_oracle",
+            return_value=self.release["dataset_id"],
+        ) as oracle:
+            verify_reference_database(
+                self.mobile,
+                REFERENCE_CONTRACT_MAJOR,
+                self.release["dataset_id"],
+                progress=progress,
+            )
+
+        oracle.assert_called_once()
+        self.assertIs(oracle.call_args.kwargs["progress"], progress)
+
     def test_logical_dataset_identity_binds_product_link_to_runtime_semantics(self) -> None:
         review_remark = "항암제 투여로 인한 구역 및 구토의 방지에 쓰는 제품에 한함"
         reviewed = reviewed_mfds_remark("duration_caution", review_remark)

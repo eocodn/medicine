@@ -60,6 +60,18 @@ def _validate_release_sequence(release_sequence: int) -> None:
         raise ValueError("release_sequence must be a positive signed 64-bit integer")
 
 
+def _strict_verifier_with_progress(implementation, progress):
+    def verify(database, contract_major, dataset_id):
+        return implementation.verify(
+            database,
+            contract_major,
+            dataset_id,
+            progress=progress,
+        )
+
+    return verify
+
+
 
 def _prepare_contract_window(
     client,
@@ -323,6 +335,7 @@ def publish_contract_window_from_env(
     output_dir: str | Path,
     *,
     created_at: str | None = None,
+    progress=None,
 ) -> dict:
     bucket = os.environ.get("R2_BUCKET", "").strip()
     if not bucket:
@@ -338,7 +351,6 @@ def publish_contract_window_from_env(
     # Contract 1 has no predecessor.  When contract 2 is introduced the publish
     # workflow must supply both exporters through `publish_contract_window` so a
     # supported predecessor is never silently dropped.
-    implementation = implementation_for(major)
     return publish_contract_window(
         client_from_env(),
         bucket,
@@ -347,7 +359,7 @@ def publish_contract_window_from_env(
                 major,
                 target_db,
                 manifest_path,
-                verifier=implementation.verify,
+                verifier=_strict_verifier_with_progress(implementation_for(major), progress),
             )
         ],
         output_dir,
@@ -365,20 +377,22 @@ def publish_contract_directory_from_env(
     *,
     created_at: str | None = None,
     retire_previous_contract: bool = False,
+    progress=None,
 ) -> dict:
     bucket, majors, client, signer, effective_retirement, selected_majors, minimum_supported = (
         _publication_context_from_env(retire_previous_contract)
     )
     root = Path(contract_dir)
-    candidates = [
-        ContractReleaseCandidate(
-            major,
-            root / f"contract-{major}.sqlite",
-            root / f"contract-{major}.manifest.json",
-            verifier=implementation_for(major).verify,
+    candidates = []
+    for major in selected_majors:
+        candidates.append(
+            ContractReleaseCandidate(
+                major,
+                root / f"contract-{major}.sqlite",
+                root / f"contract-{major}.manifest.json",
+                verifier=_strict_verifier_with_progress(implementation_for(major), progress),
+            )
         )
-        for major in selected_majors
-    ]
     return publish_contract_window(
         client,
         bucket,

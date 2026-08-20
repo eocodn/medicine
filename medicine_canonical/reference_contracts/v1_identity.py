@@ -133,11 +133,6 @@ _LOGICAL_PROJECTIONS: tuple[tuple[str, str], ...] = (
 )
 
 
-_FAST_LABELS = frozenset({
-    "product_rules",
-    "product_criterion_links",
-    "runtime_product_rule_criteria",
-})
 _MATCH_METHOD_FROM_CODE = {
     0: "mfds_ingredient_code",
     1: "permit_composition",
@@ -272,74 +267,6 @@ def _fast_layout_is_valid(database: sqlite3.Connection) -> bool:
     return mismatch is None
 
 
-def _prepare_fast_ranks(database: sqlite3.Connection) -> None:
-    database.executescript(
-        """DROP TABLE IF EXISTS temp.reference_hash_product_full_rank;
-           DROP TABLE IF EXISTS temp.reference_hash_product_runtime_rank;
-           DROP TABLE IF EXISTS temp.reference_hash_criterion_rank;
-           DROP TABLE IF EXISTS temp.reference_hash_criterion_runtime_rank;
-           DROP TABLE IF EXISTS temp.reference_hash_semantic_rank;
-
-           CREATE TEMP TABLE reference_hash_product_full_rank(
-               product_rule_id INTEGER PRIMARY KEY,
-               sort_rank INTEGER NOT NULL
-           );
-           INSERT INTO reference_hash_product_full_rank(product_rule_id,sort_rank)
-           SELECT id,DENSE_RANK() OVER (ORDER BY
-               category_text_id,item_seq,ingredient_code_text_id,ingredient_name_text_id,
-               ingredient_name_en_text_id,paired_item_seq,paired_ingredient_code_text_id,
-               paired_ingredient_name_text_id,paired_ingredient_name_en_text_id,
-               effect_name_text_id,dosage_form_text_id,details_text_id,
-               notification_date_text_id,change_date_text_id)
-           FROM mobile_product_rules;
-
-           CREATE TEMP TABLE reference_hash_product_runtime_rank(
-               product_rule_id INTEGER PRIMARY KEY,
-               sort_rank INTEGER NOT NULL
-           );
-           INSERT INTO reference_hash_product_runtime_rank(product_rule_id,sort_rank)
-           SELECT id,DENSE_RANK() OVER (ORDER BY
-               category_text_id,item_seq,ingredient_name_text_id,paired_item_seq,
-               paired_ingredient_name_text_id,effect_name_text_id,dosage_form_text_id,
-               details_text_id)
-           FROM mobile_product_rules;
-
-           CREATE TEMP TABLE reference_hash_criterion_rank(
-               criterion_rule_id INTEGER PRIMARY KEY,
-               sort_rank INTEGER NOT NULL
-           );
-           INSERT INTO reference_hash_criterion_rank(criterion_rule_id,sort_rank)
-           SELECT id,DENSE_RANK() OVER (ORDER BY
-               category,sequence_text,ingredient_name,ingredient_name_ko,
-               paired_ingredient_name,rule_value,dosage_form,note,details)
-           FROM ingredient_rules;
-
-           CREATE TEMP TABLE reference_hash_criterion_runtime_rank(
-               criterion_rule_id INTEGER PRIMARY KEY,
-               sort_rank INTEGER NOT NULL
-           );
-           INSERT INTO reference_hash_criterion_runtime_rank(criterion_rule_id,sort_rank)
-           SELECT i.id,DENSE_RANK() OVER (ORDER BY
-               i.sequence_text,i.ingredient_name,i.ingredient_name_ko,
-               i.paired_ingredient_name,i.rule_value,i.dosage_form,i.note,i.details,
-               d.maximum_daily_amount,d.maximum_daily_unit,d.parse_status,d.parse_reason)
-           FROM ingredient_rules i
-           LEFT JOIN dose_criteria d ON d.criterion_rule_id=i.id;
-
-           CREATE TEMP TABLE reference_hash_semantic_rank(
-               criterion_rule_id INTEGER NOT NULL,
-               ordinal INTEGER NOT NULL,
-               sort_rank INTEGER NOT NULL,
-               PRIMARY KEY(criterion_rule_id,ordinal)
-           ) WITHOUT ROWID;
-           INSERT INTO reference_hash_semantic_rank(criterion_rule_id,ordinal,sort_rank)
-           SELECT criterion_rule_id,ordinal,DENSE_RANK() OVER (ORDER BY
-               ordinal,semantic_role,evaluation_mode,evaluator_kind,fallback_action,
-               qualifier_type,display_text,structured_payload_json)
-           FROM reference_criterion_semantics;"""
-    )
-
-
 def _text_dictionary(database: sqlite3.Connection) -> dict[int, str]:
     return {int(row[0]): str(row[1]) for row in database.execute("SELECT id,value FROM mobile_rule_texts")}
 
@@ -348,6 +275,11 @@ def _decode(texts: dict[int, str], value: int | None) -> str | None:
     return None if value is None else texts[int(value)]
 
 
+# Policy 8 inserts mobile_rule_texts in SQLite BINARY order, so each non-NULL
+# dictionary ID is already the exact sort rank of its decoded text.  Keep the
+# fast executor read-only: logical_dataset_id() is valid inside caller-owned
+# transactions and on PRAGMA query_only connections, so rank TEMP tables (and
+# especially executescript(), which commits pending work) are forbidden here.
 def _fast_product_rules(database: sqlite3.Connection, texts: dict[int, str]) -> Iterator[tuple]:
     rows = database.execute(
         """SELECT
@@ -357,8 +289,12 @@ def _fast_product_rules(database: sqlite3.Connection, texts: dict[int, str]) -> 
                r.effect_name_text_id,r.dosage_form_text_id,r.details_text_id,
                r.notification_date_text_id,r.change_date_text_id
            FROM mobile_product_rules r
-           JOIN reference_hash_product_full_rank h ON h.product_rule_id=r.id
-           ORDER BY h.sort_rank"""
+           ORDER BY
+               r.category_text_id,r.item_seq,r.ingredient_code_text_id,r.ingredient_name_text_id,
+               r.ingredient_name_en_text_id,r.paired_item_seq,r.paired_ingredient_code_text_id,
+               r.paired_ingredient_name_text_id,r.paired_ingredient_name_en_text_id,
+               r.effect_name_text_id,r.dosage_form_text_id,r.details_text_id,
+               r.notification_date_text_id,r.change_date_text_id"""
     )
     for row in rows:
         yield (
@@ -386,9 +322,14 @@ def _fast_product_criterion_links(
            FROM mobile_product_criterion_links l
            JOIN mobile_product_rules p ON p.id=l.product_rule_id
            JOIN ingredient_rules i ON i.id=l.criterion_rule_id
-           JOIN reference_hash_product_full_rank pr ON pr.product_rule_id=l.product_rule_id
-           JOIN reference_hash_criterion_rank cr ON cr.criterion_rule_id=l.criterion_rule_id
-           ORDER BY pr.sort_rank,cr.sort_rank,
+           ORDER BY
+               p.category_text_id,p.item_seq,p.ingredient_code_text_id,p.ingredient_name_text_id,
+               p.ingredient_name_en_text_id,p.paired_item_seq,p.paired_ingredient_code_text_id,
+               p.paired_ingredient_name_text_id,p.paired_ingredient_name_en_text_id,
+               p.effect_name_text_id,p.dosage_form_text_id,p.details_text_id,
+               p.notification_date_text_id,p.change_date_text_id,
+               i.category,i.sequence_text,i.ingredient_name,i.ingredient_name_ko,
+               i.paired_ingredient_name,i.rule_value,i.dosage_form,i.note,i.details,
                CASE l.match_method_code WHEN 2 THEN 0 WHEN 0 THEN 1 WHEN 3 THEN 2 WHEN 1 THEN 3 END,
                l.pair_orientation_code"""
     )
@@ -424,13 +365,17 @@ def _fast_runtime_product_rule_criteria(
            JOIN ingredient_rules i ON i.id=l.criterion_rule_id
            LEFT JOIN dose_criteria d ON d.criterion_rule_id=i.id
            LEFT JOIN reference_criterion_semantics s ON s.criterion_rule_id=i.id
-           JOIN reference_hash_product_runtime_rank pr ON pr.product_rule_id=l.product_rule_id
-           JOIN reference_hash_criterion_runtime_rank cr ON cr.criterion_rule_id=l.criterion_rule_id
-           LEFT JOIN reference_hash_semantic_rank sr
-             ON sr.criterion_rule_id=s.criterion_rule_id AND sr.ordinal=s.ordinal
-           ORDER BY pr.sort_rank,cr.sort_rank,
+           ORDER BY
+               p.category_text_id,p.item_seq,p.ingredient_name_text_id,p.paired_item_seq,
+               p.paired_ingredient_name_text_id,p.effect_name_text_id,p.dosage_form_text_id,
+               p.details_text_id,
+               i.sequence_text,i.ingredient_name,i.ingredient_name_ko,i.paired_ingredient_name,
+               i.rule_value,i.dosage_form,i.note,i.details,
+               d.maximum_daily_amount,d.maximum_daily_unit,d.parse_status,d.parse_reason,
                CASE l.match_method_code WHEN 2 THEN 0 WHEN 0 THEN 1 WHEN 3 THEN 2 WHEN 1 THEN 3 END,
-               l.pair_orientation_code,COALESCE(sr.sort_rank,0)"""
+               l.pair_orientation_code,
+               s.ordinal,s.semantic_role,s.evaluation_mode,s.evaluator_kind,s.fallback_action,
+               s.qualifier_type,s.display_text,s.structured_payload_json"""
     )
     for row in rows:
         yield (
@@ -450,8 +395,6 @@ def logical_dataset_id_fast(
     progress: Progress | None = None,
 ) -> str:
     _notify(progress, phase="logical_identity_fast_setup", status="started")
-    with _sqlite_heartbeat(database, progress, phase="logical_identity_fast_setup"):
-        _prepare_fast_ranks(database)
     texts = _text_dictionary(database)
     _notify(progress, phase="logical_identity_fast_setup", status="completed")
 

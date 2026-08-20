@@ -398,6 +398,8 @@ def verify_reference_database(
     database: str | Path,
     contract_major: int,
     dataset_id: str,
+    *,
+    progress=None,
 ) -> dict:
     """Frozen strict server-side verifier for an arbitrary C1 release candidate."""
     result = verify_built_reference_database(database, contract_major, dataset_id)
@@ -408,7 +410,7 @@ def verify_reference_database(
         # reusing the fast executor here would let one implementation defect
         # validate itself.  Normal build->publish avoids this expensive pass by
         # carrying an in-process byte-bound VerifiedContractArtifact instead.
-        actual_dataset_id = logical_dataset_id_oracle(con)
+        actual_dataset_id = logical_dataset_id_oracle(con, progress=progress)
         if actual_dataset_id != str(dataset_id).lower():
             raise ValueError("reference logical dataset identity does not match release")
     return result

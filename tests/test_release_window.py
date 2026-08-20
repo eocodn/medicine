@@ -476,9 +476,43 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
                 ])
         self.assertEqual(code, 0)
         self.assertTrue(publish.call_args.kwargs["retire_previous_contract"])
+        self.assertTrue(callable(publish.call_args.kwargs["progress"]))
 
         with self.assertRaisesRegex(ValueError, "requires --contract-dir"):
             canonical_main(["release-publish-r2", "--retire-previous-contract", "--json"])
+
+    def test_directory_publish_threads_progress_into_strict_verifier(self) -> None:
+        progress = mock.Mock()
+        verifier = mock.Mock(return_value={"status": "verified"})
+        with (
+            mock.patch.dict(os.environ, {"R2_BUCKET": self.bucket}),
+            mock.patch("medicine_canonical.release_window.supported_contract_majors", return_value=(1,)),
+            mock.patch(
+                "medicine_canonical.release_window.implementation_for",
+                return_value=SimpleNamespace(verify=verifier),
+            ),
+            mock.patch("medicine_canonical.release_window.client_from_env", return_value=self.client),
+            mock.patch("medicine_canonical.release_window.release_signer_from_env", return_value=self.signer),
+            mock.patch("medicine_canonical.release_window.release_sequence_from_env", return_value=202),
+            mock.patch(
+                "medicine_canonical.release_window.publish_contract_window",
+                return_value={"status": "published"},
+            ) as publish,
+        ):
+            publish_contract_directory_from_env(
+                self.root / "contracts",
+                self.root / "dist-progress",
+                progress=progress,
+            )
+
+        candidate = publish.call_args.args[2][0]
+        candidate.verifier(candidate.database, 1, "sha256:" + "1" * 64)
+        verifier.assert_called_once_with(
+            candidate.database,
+            1,
+            "sha256:" + "1" * 64,
+            progress=progress,
+        )
 
     def test_cli_integrated_reference_publish_keeps_verified_build_in_process(self) -> None:
         stdout = StringIO()

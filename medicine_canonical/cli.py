@@ -433,12 +433,17 @@ def main(argv=None) -> int:
                 args.output_dir,
                 created_at=args.created_at,
                 retire_previous_contract=args.retire_previous_contract,
+                progress=_reference_progress,
             )
         else:
             if args.retire_previous_contract:
                 raise ValueError("--retire-previous-contract requires --contract-dir")
             payload = publish_contract_window_from_env(
-                args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at
+                args.db,
+                args.mobile_manifest,
+                args.output_dir,
+                created_at=args.created_at,
+                progress=_reference_progress,
             )
     else:
         payload = verify_canonical_database(args.db)
