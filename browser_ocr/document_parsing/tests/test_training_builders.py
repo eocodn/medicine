@@ -29,6 +29,8 @@ def _runtime_profile() -> dict:
         "detector_edge": 640,
         "detector_threads": 1,
         "detector_asset_sha256": "4" * 64,
+        "paddleocr_source_sha256": "e" * 64,
+        "paddleocr_dictionary_sha256": "f" * 64,
         "parser": "must-not-enter-observation-profile",
         "implementation": {
             "full_document": "5" * 64,
@@ -181,6 +183,40 @@ class ParserTrainingBuildersTest(unittest.TestCase):
                     results_root=root / "results",
                     output_dir=root / "runtime",
                     dataset_id="runtime-unpinned",
+                    split="val",
+                )
+
+    def test_runtime_builder_rejects_mixed_ocr_producers(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            first = _truth_sample()
+            second = json.loads(json.dumps(first))
+            second["document_id"] = "synthetic-000002"
+            second["image_sha256"] = "b" * 64
+            truth = root / "truth.jsonl"
+            truth.write_text(
+                json.dumps(first, ensure_ascii=False) + "\n" + json.dumps(second, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            for sample, checkpoint in ((first, "b"), (second, "e")):
+                result_root = root / "results" / sample["document_id"]
+                result_root.mkdir(parents=True)
+                profile = _runtime_profile()
+                profile["image_sha256"] = sample["image_sha256"]
+                profile["recognizer_checkpoint_sha256"] = checkpoint * 64
+                result_root.joinpath("result.json").write_text(json.dumps({
+                    "status": "ok",
+                    "profile": profile,
+                    "image": {"sha256": sample["image_sha256"], "width": 1280, "height": 1600},
+                    "regions": [],
+                }), encoding="utf-8")
+
+            with self.assertRaisesRegex(ParserDatasetError, "mix different runtime OCR producers"):
+                build_runtime_dataset(
+                    truth_samples_path=truth,
+                    results_root=root / "results",
+                    output_dir=root / "runtime",
+                    dataset_id="runtime-mixed",
                     split="val",
                 )
 

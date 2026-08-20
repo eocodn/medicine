@@ -12,6 +12,8 @@ _SHA_FIELDS = {
     "recognizer_config_sha256",
     "detector_manifest_sha256",
     "detector_asset_sha256",
+    "paddleocr_source_sha256",
+    "paddleocr_dictionary_sha256",
 }
 _IMPLEMENTATION_SHA_FIELDS = {
     "full_document",
@@ -20,6 +22,17 @@ _IMPLEMENTATION_SHA_FIELDS = {
     "detector_runtime",
     "detector_benchmark",
 }
+_PROFILE_FIELDS = {
+    "schema_version",
+    *_SHA_FIELDS,
+    "recognizer_device",
+    "detector_model",
+    "detector_edge",
+    "detector_threads",
+    "implementation",
+}
+_RAW_PROFILE_FIELDS = {*_PROFILE_FIELDS, "parser"}
+_RAW_IMPLEMENTATION_FIELDS = {*_IMPLEMENTATION_SHA_FIELDS, "parser", "parser_contract"}
 
 
 def _require_sha256(value: object, label: str) -> str:
@@ -39,6 +52,9 @@ def runtime_observation_profile(raw: object, *, expected_image_sha256: str | Non
 
     if not isinstance(raw, Mapping):
         raise ParserDatasetError("runtime result profile must be an object")
+    unknown = sorted(set(raw) - _RAW_PROFILE_FIELDS)
+    if unknown:
+        raise ParserDatasetError(f"unsupported runtime OCR profile fields: {', '.join(map(str, unknown))}")
     profile = {str(key): value for key, value in raw.items() if key != "parser"}
     if profile.get("schema_version") != 2:
         raise ParserDatasetError("runtime OCR profile schema_version must be 2")
@@ -59,6 +75,12 @@ def runtime_observation_profile(raw: object, *, expected_image_sha256: str | Non
     implementation = profile.get("implementation")
     if not isinstance(implementation, Mapping):
         raise ParserDatasetError("runtime OCR profile implementation must be an object")
+    unknown_implementation = sorted(set(implementation) - _RAW_IMPLEMENTATION_FIELDS)
+    if unknown_implementation:
+        raise ParserDatasetError(
+            "unsupported runtime OCR implementation fields: "
+            + ", ".join(map(str, unknown_implementation))
+        )
     normalized_implementation = {
         str(key): value
         for key, value in implementation.items()

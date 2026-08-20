@@ -241,22 +241,28 @@ def _finalize_real(annotations_dir: str, dataset_id: str, output_dir: str) -> di
     if not isinstance(producer, dict):
         raise ParserDatasetError("annotation index OCR producer must be an object")
     entries = index.get("documents")
-    if not isinstance(entries, list) or not entries:
-        raise ParserDatasetError("annotation index documents must be a non-empty list")
+    if not isinstance(entries, list) or len(entries) != len(source.samples):
+        raise ParserDatasetError("annotation index document set must exactly match bound real source")
     documents: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {
             "document_id", "annotation", "immutable_sha256", "runtime_result", "runtime_result_sha256"
         }:
             raise ParserDatasetError("annotation index entry is invalid")
-        relative = Path(str(entry["annotation"] or ""))
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ParserDatasetError("annotation path must stay inside annotations directory")
-        annotation = _read_json(root / relative, "real annotation")
         document_id = str(entry["document_id"])
+        if document_id in seen_ids or document_id not in source_by_id:
+            raise ParserDatasetError("annotation index document set must exactly match bound real source")
+        seen_ids.add(document_id)
+        relative = Path(str(entry["annotation"] or ""))
+        if relative.is_absolute() or ".." in relative.parts or relative.as_posix() != f"{document_id}.json":
+            raise ParserDatasetError("annotation path must match its bound document id")
+        annotation = _read_json(root / relative, "real annotation")
         if str(annotation.get("document_id") or "") != document_id:
             raise ParserDatasetError("annotation document_id does not match index")
         runtime_result = Path(str(entry["runtime_result"] or ""))
+        if runtime_result.name != "result.json" or runtime_result.parent.name != document_id:
+            raise ParserDatasetError("runtime OCR result path must match its bound document id")
         if not runtime_result.is_file() or _sha256_file(runtime_result) != str(entry["runtime_result_sha256"] or ""):
             raise ParserDatasetError("runtime OCR result SHA-256 mismatch during finalization")
         source_sample = source_by_id.get(document_id)
@@ -273,6 +279,8 @@ def _finalize_real(annotations_dir: str, dataset_id: str, output_dir: str) -> di
             annotation,
             expected_immutable_sha256=expected_immutable_sha,
         ))
+    if seen_ids != set(source_by_id):
+        raise ParserDatasetError("annotation index document set must exactly match bound real source")
     manifest = write_parser_dataset(
         output_dir,
         dataset_id=dataset_id,

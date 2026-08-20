@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from .contract import DRAFT_FIELDS
-from .training_alignment import MODEL_ROLES
+from .draft_contract import normalize_parser_draft
+from .training_alignment import MODEL_ROLES, build_relation_labels
 
 
 SCHEMA_VERSION = 2
@@ -87,7 +87,16 @@ class ParserDataset:
 
 
 def _canonical_json(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ParserDatasetError(f"value is not strict JSON: {exc}") from exc
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -170,10 +179,11 @@ def _normalize_gold_rows(value: object, label: str) -> list[dict[str, Any]]:
         if not product_query or len(product_query) > 256:
             raise ParserDatasetError(f"{label}[{index}].product_query must contain 1-256 characters")
         draft = _require_mapping(data.get("draft"), f"{label}[{index}].draft")
-        unknown = sorted(set(draft) - DRAFT_FIELDS)
-        if unknown:
-            raise ParserDatasetError(f"unsupported draft fields in {label}[{index}]: {', '.join(unknown)}")
-        rows.append({"gold_row_id": row_id, "product_query": product_query, "draft": dict(draft)})
+        try:
+            normalized_draft = normalize_parser_draft(draft)
+        except ValueError as exc:
+            raise ParserDatasetError(f"invalid {label}[{index}].draft: {exc}") from exc
+        rows.append({"gold_row_id": row_id, "product_query": product_query, "draft": normalized_draft})
     return rows
 
 
@@ -284,6 +294,13 @@ def _normalize_document(value: object) -> dict[str, Any]:
     if source_kind == "real_deidentified" and observation_kind != "runtime_ocr":
         raise ParserDatasetError(f"{document_id} real_deidentified observations must use runtime_ocr")
     profile = _require_mapping(observation.get("profile"), f"{document_id}.observation.profile")
+    if observation_kind == "runtime_ocr":
+        from .observation_profile import runtime_observation_profile
+
+        normalized_profile = runtime_observation_profile(profile, expected_image_sha256=image_sha)
+        if dict(profile) != normalized_profile:
+            raise ParserDatasetError(f"{document_id}.observation.profile must use canonical runtime OCR fields")
+        profile = normalized_profile
     raw_nodes = observation.get("nodes")
     if not isinstance(raw_nodes, list):
         raise ParserDatasetError(f"{document_id}.observation.nodes must be a list")
@@ -329,6 +346,7 @@ def _normalize_document(value: object) -> dict[str, Any]:
         relation_keys.add(key)
         relations.append({"product_node_id": product_id, "field_node_id": field_id, "label": label})
 
+    gold_rows = _normalize_gold_rows(data.get("gold_rows"), f"{document_id}.gold_rows")
     gold_rows_reviewed = data.get("gold_rows_reviewed")
     if not isinstance(gold_rows_reviewed, bool):
         raise ParserDatasetError(f"{document_id}.gold_rows_reviewed must be boolean")
@@ -339,6 +357,17 @@ def _normalize_document(value: object) -> dict[str, Any]:
         raise ParserDatasetError(f"{document_id} complete annotation contains unlabeled nodes")
     if annotation_status == "complete" and gold_rows_reviewed is not True:
         raise ParserDatasetError(f"{document_id} complete annotation requires image gold review")
+    if annotation_status == "complete":
+        expected_relations = build_relation_labels(nodes)
+        relations.sort(key=lambda item: (item["product_node_id"], item["field_node_id"], item["label"]))
+        if relations != expected_relations:
+            raise ParserDatasetError(f"{document_id} complete annotation relation supervision is incomplete")
+        has_labeled_product = any(
+            node["label_status"] == "labeled" and node["semantic_role"] == "product"
+            for node in nodes
+        )
+        if has_labeled_product and not gold_rows:
+            raise ParserDatasetError(f"{document_id} labeled product evidence requires non-empty image gold")
 
     return {
         "document_id": document_id,
@@ -354,7 +383,7 @@ def _normalize_document(value: object) -> dict[str, Any]:
         "provenance": provenance,
         "observation": {"kind": observation_kind, "profile": dict(profile), "nodes": nodes},
         "relations": relations,
-        "gold_rows": _normalize_gold_rows(data.get("gold_rows"), f"{document_id}.gold_rows"),
+        "gold_rows": gold_rows,
         "gold_rows_reviewed": gold_rows_reviewed,
         "annotation_status": annotation_status,
     }

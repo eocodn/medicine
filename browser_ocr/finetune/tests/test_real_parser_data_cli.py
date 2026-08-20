@@ -13,7 +13,7 @@ from browser_ocr.finetune.real_parser_data_cli import _batch_profile, _full_docu
 
 
 class RealParserDataCliTest(unittest.TestCase):
-    def _model_inputs(self, root: Path) -> tuple[Path, Path]:
+    def _model_inputs(self, root: Path) -> tuple[Path, Path, Path]:
         checkpoint = root / "best.pdparams"
         checkpoint.write_bytes(b"recognizer-checkpoint")
         (root / "config.yml").write_text("Global: {}\n", encoding="utf-8")
@@ -27,7 +27,14 @@ class RealParserDataCliTest(unittest.TestCase):
         detector_manifest.write_text(json.dumps({
             "models": {"PP-OCRv5_mobile_det": {"sha256": "d" * 64}},
         }), encoding="utf-8")
-        return baseline, detector_manifest
+        paddle_root = root / "PaddleOCR"
+        (paddle_root / "tools").mkdir(parents=True)
+        (paddle_root / "ppocr" / "utils" / "dict").mkdir(parents=True)
+        (paddle_root / "ppocr" / "engine").mkdir(parents=True)
+        (paddle_root / "tools" / "infer_rec.py").write_text("# infer fixture\n", encoding="utf-8")
+        (paddle_root / "ppocr" / "engine" / "runner.py").write_text("# runner fixture\n", encoding="utf-8")
+        (paddle_root / "ppocr" / "utils" / "dict" / "ppocrv5_korean_dict.txt").write_text("가\n나\n", encoding="utf-8")
+        return baseline, detector_manifest, paddle_root
 
     def _source_manifest(self, root: Path) -> Path:
         root.mkdir(parents=True, exist_ok=True)
@@ -58,12 +65,13 @@ class RealParserDataCliTest(unittest.TestCase):
 
     def _completed_batch_fixture(self, root: Path) -> tuple[argparse.Namespace, Path]:
         source_manifest = self._source_manifest(root / "source")
-        baseline, detector_manifest = self._model_inputs(root)
+        baseline, detector_manifest, paddle_root = self._model_inputs(root)
         output = root / "out"
         args = build_parser().parse_args([
             "--source-manifest", str(source_manifest),
             "--baseline-result", str(baseline),
             "--detector-manifest", str(detector_manifest),
+            "--paddleocr-root", str(paddle_root),
             "--output-dir", str(output),
             "--recognizer-device", "cpu",
         ])
@@ -183,11 +191,12 @@ class RealParserDataCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             source_manifest = self._source_manifest(root / "source")
-            baseline, detector_manifest = self._model_inputs(root)
+            baseline, detector_manifest, paddle_root = self._model_inputs(root)
             args = build_parser().parse_args([
                 "--source-manifest", str(source_manifest),
                 "--baseline-result", str(baseline),
                 "--detector-manifest", str(detector_manifest),
+                "--paddleocr-root", str(paddle_root),
                 "--output-dir", str(root / "out"),
                 "--recognizer-device", "cpu",
             ])
@@ -205,16 +214,21 @@ class RealParserDataCliTest(unittest.TestCase):
             second = _batch_profile(args, source)
             self.assertNotEqual(second["ocr_producer"], producer)
 
+            (paddle_root / "ppocr" / "engine" / "runner.py").write_text("# changed runtime source\n", encoding="utf-8")
+            third = _batch_profile(args, source)
+            self.assertNotEqual(third["ocr_producer"], second["ocr_producer"])
+
     def test_running_batch_adopts_matching_uncheckpointed_annotation_after_crash(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             source_manifest = self._source_manifest(root / "source")
-            baseline, detector_manifest = self._model_inputs(root)
+            baseline, detector_manifest, paddle_root = self._model_inputs(root)
             output = root / "out"
             args = build_parser().parse_args([
                 "--source-manifest", str(source_manifest),
                 "--baseline-result", str(baseline),
                 "--detector-manifest", str(detector_manifest),
+                "--paddleocr-root", str(paddle_root),
                 "--output-dir", str(output),
                 "--recognizer-device", "cpu",
             ])

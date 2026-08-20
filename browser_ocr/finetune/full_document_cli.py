@@ -111,6 +111,30 @@ def _detector_profile(manifest_path: Path, model_name: str) -> dict[str, object]
     }
 
 
+def _paddleocr_profile(root: Path) -> dict[str, str]:
+    infer_script = root / "tools" / "infer_rec.py"
+    tools_root = root / "tools"
+    package_root = root / "ppocr"
+    dictionary = package_root / "utils" / "dict" / "ppocrv5_korean_dict.txt"
+    if not infer_script.is_file() or not tools_root.is_dir() or not package_root.is_dir():
+        raise DatasetError(f"PaddleOCR inference source is incomplete: {root}")
+    if not dictionary.is_file():
+        raise DatasetError(f"PaddleOCR Korean dictionary is missing: {dictionary}")
+    source_files = sorted({*tools_root.rglob("*.py"), *package_root.rglob("*.py")})
+    digest = hashlib.sha256()
+    for path in source_files:
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        content = path.read_bytes()
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return {
+        "source_sha256": digest.hexdigest(),
+        "dictionary_sha256": _sha256_file(dictionary),
+    }
+
+
 def build_ocr_producer_profile(
     args: argparse.Namespace,
     recognizer: dict[str, object] | None = None,
@@ -123,6 +147,7 @@ def build_ocr_producer_profile(
     if args.detector_threads <= 0:
         raise DatasetError("detector threads must be positive")
     implementation = _implementation_profile()
+    paddleocr = _paddleocr_profile(Path(args.paddleocr_root).resolve())
     return {
         "schema_version": 2,
         "baseline_result_sha256": _sha256_file(selected["result_path"]),
@@ -134,6 +159,8 @@ def build_ocr_producer_profile(
         "detector_edge": args.detector_edge,
         "detector_threads": args.detector_threads,
         "detector_asset_sha256": detector["asset_sha256"],
+        "paddleocr_source_sha256": paddleocr["source_sha256"],
+        "paddleocr_dictionary_sha256": paddleocr["dictionary_sha256"],
         "implementation": {
             key: value
             for key, value in implementation.items()

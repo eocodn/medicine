@@ -17,6 +17,31 @@ def _poly(x: float, y: float, w: float = 80, h: float = 24) -> list[list[float]]
     return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
 
 
+def _runtime_profile() -> dict:
+    return {
+        "schema_version": 2,
+        "image_sha256": "a" * 64,
+        "baseline_result_sha256": "1" * 64,
+        "recognizer_checkpoint_sha256": "2" * 64,
+        "recognizer_config_sha256": "3" * 64,
+        "recognizer_device": "cpu",
+        "detector_manifest_sha256": "4" * 64,
+        "detector_model": "PP-OCRv5_mobile_det",
+        "detector_edge": 640,
+        "detector_threads": 1,
+        "detector_asset_sha256": "5" * 64,
+        "paddleocr_source_sha256": "6" * 64,
+        "paddleocr_dictionary_sha256": "7" * 64,
+        "implementation": {
+            "full_document": "8" * 64,
+            "full_document_cli": "9" * 64,
+            "crop_refinement": "b" * 64,
+            "detector_runtime": "c" * 64,
+            "detector_benchmark": "d" * 64,
+        },
+    }
+
+
 def _doc(*, source_kind: str = "synthetic", split: str = "train") -> dict:
     document = {
         "document_id": "doc-001",
@@ -114,6 +139,25 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
             with self.assertRaisesRegex(ParserDatasetError, "runtime_ocr"):
                 write_parser_dataset(Path(raw), dataset_id="bad-real-observation", documents=[document])
 
+    def test_runtime_observation_requires_canonical_pinned_profile(self) -> None:
+        document = _doc(source_kind="real_deidentified", split="val")
+        document["observation"]["kind"] = "runtime_ocr"
+        document["observation"]["profile"] = {}
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "runtime OCR profile"):
+                write_parser_dataset(Path(raw), dataset_id="bad-runtime-profile", documents=[document])
+
+        document["observation"]["profile"] = {**_runtime_profile(), "patient_name": "홍길동"}
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "unsupported runtime OCR profile fields"):
+                write_parser_dataset(Path(raw), dataset_id="bad-runtime-extra", documents=[document])
+
+        document["observation"]["profile"] = _runtime_profile()
+        document["observation"]["profile"]["implementation"]["patient_id"] = "secret"
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "unsupported runtime OCR implementation fields"):
+                write_parser_dataset(Path(raw), dataset_id="bad-runtime-implementation-extra", documents=[document])
+
     def test_ambiguous_nodes_must_not_carry_role_or_group_labels(self) -> None:
         document = _doc()
         node = document["observation"]["nodes"][0]
@@ -181,6 +225,37 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
                     dataset_id="bad-relation-different",
                     documents=[different_with_same_group],
                 )
+
+    def test_complete_document_requires_full_relation_supervision(self) -> None:
+        document = _doc()
+        document["relations"] = []
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "relation supervision"):
+                write_parser_dataset(Path(raw), dataset_id="missing-relations", documents=[document])
+
+    def test_gold_draft_values_are_strict_json_domain_values(self) -> None:
+        document = _doc()
+        document["gold_rows"][0]["draft"]["dose_amount"] = float("nan")
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "dose_amount"):
+                write_parser_dataset(Path(raw), dataset_id="nan-gold", documents=[document])
+
+        invalid_values = {
+            "dose_amount": "not-a-number",
+            "frequency_per_day": 1.5,
+            "prescription_days": 0,
+            "schedule_times": "08:00",
+            "meal_relation": "sometimes",
+            "administration_route": "teleport",
+            "as_needed": "yes",
+            "start_date": "2026-99-99",
+        }
+        for field, value in invalid_values.items():
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as raw:
+                document = _doc()
+                document["gold_rows"][0]["draft"] = {field: value}
+                with self.assertRaisesRegex(ParserDatasetError, field):
+                    write_parser_dataset(Path(raw), dataset_id=f"bad-{field}", documents=[document])
 
     def test_completed_dataset_rejects_persisted_manifest_metadata_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

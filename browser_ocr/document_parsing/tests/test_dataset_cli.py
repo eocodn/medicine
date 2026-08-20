@@ -54,6 +54,8 @@ class ParserDatasetCliTest(unittest.TestCase):
             "detector_edge": 640,
             "detector_threads": 1,
             "detector_asset_sha256": "5" * 64,
+            "paddleocr_source_sha256": "a" * 64,
+            "paddleocr_dictionary_sha256": "b" * 64,
             "parser": "geometry_rule_v2",
             "implementation": {
                 "full_document": "6" * 64,
@@ -205,6 +207,100 @@ class ParserDatasetCliTest(unittest.TestCase):
             self.assertEqual(dataset.documents[0]["provenance"], {"source_id": "source-a", "license_id": "private-deidentified"})
             self.assertEqual(dataset.metadata["source_manifest_sha256"], hashlib.sha256(source_manifest.read_bytes()).hexdigest())
             self.assertEqual(dataset.metadata["source_samples_sha256"], hashlib.sha256((source_manifest.parent / "samples.jsonl").read_bytes()).hexdigest())
+
+    def test_finalize_real_rejects_reviewed_empty_gold_with_labeled_product(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source_manifest, results_root = self._real_source_and_result(root)
+            output = root / "annotations-out"
+            _prepare_real(str(source_manifest), str(results_root), str(output))
+            annotation_path = output / "annotations" / "rx-001.json"
+            annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+            annotation["observation"]["nodes"][0].update(
+                label_status="labeled",
+                semantic_role="product",
+                association_group="m1",
+            )
+            annotation["gold_rows_reviewed"] = True
+            annotation_path.write_text(json.dumps(annotation, ensure_ascii=False), encoding="utf-8")
+
+            with self.assertRaisesRegex(ParserDatasetError, "labeled product.*gold"):
+                _finalize_real(str(output / "annotations"), "real-final", str(root / "final"))
+
+    def test_finalize_real_requires_exact_bound_source_document_set(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source_manifest, results_root = self._real_source_and_result(root)
+            source_root = source_manifest.parent
+            second_image = source_root / "rx-002.jpg"
+            second_bytes = b"\xff\xd8\xffdeidentified-second"
+            second_image.write_bytes(second_bytes)
+            second_sha = hashlib.sha256(second_bytes).hexdigest()
+            with (source_root / "samples.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({
+                    "document_id": "rx-002",
+                    "image": "rx-002.jpg",
+                    "image_sha256": second_sha,
+                    "split": "test",
+                    "document_type": "prescription",
+                    "layout_family": "real_unknown",
+                    "privacy": {"contains_patient_data": False, "deidentified": True},
+                    "provenance": {"source_id": "source-a", "license_id": "private-deidentified"},
+                    "scenario_tags": ["prescription"],
+                    "risk_tags": ["real_photo"],
+                }) + "\n")
+            first_result = json.loads((results_root / "rx-001" / "result.json").read_text(encoding="utf-8"))
+            second_result = json.loads(json.dumps(first_result))
+            second_result["image"]["sha256"] = second_sha
+            second_result["profile"]["image_sha256"] = second_sha
+            second_dir = results_root / "rx-002"
+            second_dir.mkdir()
+            (second_dir / "result.json").write_text(json.dumps(second_result), encoding="utf-8")
+
+            output = root / "annotations-out"
+            _prepare_real(str(source_manifest), str(results_root), str(output))
+            for document_id in ("rx-001", "rx-002"):
+                annotation_path = output / "annotations" / f"{document_id}.json"
+                annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+                annotation["observation"]["nodes"][0].update(
+                    label_status="labeled",
+                    semantic_role="product",
+                    association_group=f"m-{document_id}",
+                )
+                annotation["gold_rows"] = [{"gold_row_id": f"m-{document_id}", "product_query": "가나다정", "draft": {}}]
+                annotation["gold_rows_reviewed"] = True
+                annotation_path.write_text(json.dumps(annotation, ensure_ascii=False), encoding="utf-8")
+            index_path = output / "annotations" / "index.json"
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            index["documents"] = index["documents"][:1]
+            index_path.write_text(json.dumps(index), encoding="utf-8")
+
+            with self.assertRaisesRegex(ParserDatasetError, "document set"):
+                _finalize_real(str(output / "annotations"), "real-final", str(root / "final"))
+
+    def test_finalize_real_rejects_invalid_human_gold_value_types(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source_manifest, results_root = self._real_source_and_result(root)
+            output = root / "annotations-out"
+            _prepare_real(str(source_manifest), str(results_root), str(output))
+            annotation_path = output / "annotations" / "rx-001.json"
+            annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+            annotation["observation"]["nodes"][0].update(
+                label_status="labeled",
+                semantic_role="product",
+                association_group="m1",
+            )
+            annotation["gold_rows"] = [{
+                "gold_row_id": "m1",
+                "product_query": "가나다정",
+                "draft": {"dose_amount": "not-a-number", "schedule_times": "08:00"},
+            }]
+            annotation["gold_rows_reviewed"] = True
+            annotation_path.write_text(json.dumps(annotation, ensure_ascii=False), encoding="utf-8")
+
+            with self.assertRaisesRegex(ParserDatasetError, "dose_amount|schedule_times"):
+                _finalize_real(str(output / "annotations"), "real-final", str(root / "final"))
 
     def test_prepare_real_rejects_mixed_runtime_ocr_producers(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

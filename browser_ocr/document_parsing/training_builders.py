@@ -6,7 +6,7 @@ import random
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .observation_profile import runtime_observation_profile
+from .observation_profile import runtime_observation_producer, runtime_observation_profile
 from .training_alignment import align_observation_nodes, build_relation_labels, normalize_semantic_role
 from .training_dataset import ParserDatasetError, write_parser_dataset
 
@@ -333,6 +333,7 @@ def build_runtime_dataset(
         raise ParserDatasetError("no parser truth samples matched the requested split")
     root = Path(results_root).resolve()
     documents: list[dict[str, Any]] = []
+    producer: dict[str, Any] | None = None
     for sample in selected:
         document_id = str(sample["document_id"])
         result_path = root / document_id / "result.json"
@@ -351,14 +352,23 @@ def build_runtime_dataset(
         if not isinstance(observed_regions, list):
             raise ParserDatasetError(f"runtime OCR result regions are missing: {document_id}")
         nodes = align_observation_nodes(_truth_regions(sample), observed_regions)
+        observation_profile = runtime_observation_profile(
+            result.get("profile"),
+            expected_image_sha256=str(sample["image_sha256"]),
+        )
+        current_producer = runtime_observation_producer(
+            observation_profile,
+            expected_image_sha256=str(sample["image_sha256"]),
+        )
+        if producer is None:
+            producer = current_producer
+        elif current_producer != producer:
+            raise ParserDatasetError("runtime parser dataset inputs mix different runtime OCR producers")
         documents.append(
             _base_document(
                 sample,
                 observation_kind="runtime_ocr",
-                observation_profile=runtime_observation_profile(
-                    result.get("profile"),
-                    expected_image_sha256=str(sample["image_sha256"]),
-                ),
+                observation_profile=observation_profile,
                 nodes=nodes,
             )
         )
@@ -367,10 +377,11 @@ def build_runtime_dataset(
         dataset_id=dataset_id,
         documents=documents,
         metadata={
-            "builder": "parser_runtime_builder_v1",
+            "builder": "parser_runtime_builder_v2",
             "truth_samples_sha256": _sha256_file(source),
             "observation_kind": "runtime_ocr",
             "split": split or "all",
+            "ocr_producer": producer,
         },
     )
 

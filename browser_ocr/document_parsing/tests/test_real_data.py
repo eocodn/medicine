@@ -34,6 +34,8 @@ def _runtime_profile(image_sha256: str) -> dict:
         "detector_edge": 640,
         "detector_threads": 1,
         "detector_asset_sha256": "5" * 64,
+        "paddleocr_source_sha256": "a" * 64,
+        "paddleocr_dictionary_sha256": "b" * 64,
         "parser": "geometry_rule_v2",
         "implementation": {
             "full_document": "6" * 64,
@@ -210,6 +212,31 @@ class RealParserDataTest(unittest.TestCase):
                 prepare_real_annotation(sample, {
                     "status": "ok",
                     "profile": {},
+                    "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                    "regions": [],
+                })
+
+    def test_prepare_rejects_unknown_runtime_profile_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = load_real_source_manifest(self._manifest(root))
+            sample = source.samples[0]
+            profile = _runtime_profile(sample["image_sha256"])
+            profile["patient_name"] = "홍길동"
+            with self.assertRaisesRegex(ParserDatasetError, "unsupported runtime OCR profile fields"):
+                prepare_real_annotation(sample, {
+                    "status": "ok",
+                    "profile": profile,
+                    "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                    "regions": [],
+                })
+
+            profile = _runtime_profile(sample["image_sha256"])
+            profile["implementation"]["patient_id"] = "secret"
+            with self.assertRaisesRegex(ParserDatasetError, "unsupported runtime OCR implementation fields"):
+                prepare_real_annotation(sample, {
+                    "status": "ok",
+                    "profile": profile,
                     "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
                     "regions": [],
                 })
