@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs, urlsplit
 
 from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, RevisionConflict
+from .mobile_request_policy import classify_mobile_request
 
 
 _PERSON_FIELDS = {"name", "birth_date", "sex", "pregnancy_status", "lactation_status", "notes"}
@@ -111,23 +112,15 @@ class MobileApi:
             raise ReferenceUnavailable(self.reference_unavailable_reason or "unavailable")
 
     def request_access(self, method: str, raw_path: str) -> str:
-        parsed = urlsplit(raw_path)
-        path = parsed.path
-        normalized_method = method.upper().strip()
-        if normalized_method == "GET" and path in {"/api/health", "/api/products"}:
-            return "reference"
-        if normalized_method == "GET" and path == "/api/people":
-            return "personal_read"
-        if normalized_method == "POST" and re.fullmatch(r"/api/people/[^/]+/medications/preview", path):
-            return "personal_read"
-        if normalized_method == "GET" and re.fullmatch(r"/api/medications/[^/]+/history", path):
-            return "personal_read"
-        return "personal_write"
+        return classify_mobile_request(method, raw_path).access
 
     def request(self, method: str, path: str, body_json: str | None = None) -> str:
         try:
             normalized_method = method.upper().strip()
-            if self.request_access(normalized_method, path) == "personal_read":
+            policy = classify_mobile_request(normalized_method, path)
+            if policy.requires_reference:
+                self._require_reference()
+            if policy.access == "personal_read":
                 with self.service.personal_read_only():
                     status, body = self._dispatch(normalized_method, path, body_json)
             else:
@@ -194,7 +187,6 @@ class MobileApi:
         if method == "DELETE" and match:
             return 200, service.delete_person(match.group(1))
         if method == "GET" and path == "/api/products":
-            self._require_reference()
             term = (query.get("q") or [""])[-1].strip()
             if not term:
                 raise ValueError("q is required")
@@ -224,7 +216,6 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/people/([^/]+)/medications/preview", path)
         if method == "POST" and match:
-            self._require_reference()
             payload = _validated_fields(_body_object(body_json), _PREVIEW_FIELDS)
             if not (payload.get("product_ref") or payload.get("product_code")):
                 raise ValueError("product_ref or product_code is required")
@@ -232,13 +223,11 @@ class MobileApi:
 
         match = re.fullmatch(r"/api/people/([^/]+)/medications", path)
         if method == "POST" and match:
-            self._require_reference()
             payload = _validated_fields(_body_object(body_json), _CREATE_FIELDS)
             return 201, service.add_medication(match.group(1), **payload)
 
         match = re.fullmatch(r"/api/medications/([^/]+)", path)
         if method == "PATCH" and match:
-            self._require_reference()
             payload = _validated_fields(_body_object(body_json), _UPDATE_FIELDS)
             if "expected_revision" not in payload:
                 raise ValueError("expected_revision is required")

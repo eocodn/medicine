@@ -9,7 +9,9 @@ data class BridgeRequest(
     val path: String,
     val body: String,
     val coalesceKey: String,
-)
+) {
+    val policy: BridgeRequestPolicy = BridgeRequestPolicy.classify(method, coalesceKey)
+}
 
 class BridgeRequestDispatcher(
     private val executor: Executor,
@@ -28,11 +30,12 @@ class BridgeRequestDispatcher(
             if (closed) {
                 superseded += request
             } else {
-                if (request.coalesceKey.isNotBlank()) {
+                val latestOnlyKey = request.policy.latestOnlyKey
+                if (latestOnlyKey != null) {
                     val retained = ArrayDeque<BridgeRequest>()
                     while (pending.isNotEmpty()) {
                         val queued = pending.removeFirst()
-                        if (queued.coalesceKey == request.coalesceKey) superseded += queued
+                        if (queued.policy.latestOnlyKey == latestOnlyKey) superseded += queued
                         else retained.addLast(queued)
                     }
                     pending.addAll(retained)
@@ -55,12 +58,8 @@ class BridgeRequestDispatcher(
             val retained = ArrayDeque<BridgeRequest>()
             while (pending.isNotEmpty()) {
                 val queued = pending.removeFirst()
-                // Once the WebView has handed a mutation to native code, Activity
-                // recreation must not erase that accepted state transition merely
-                // because it has not reached the executor yet. GET work is
-                // reconstructible from authoritative state and may be abandoned.
-                if (queued.method.equals("GET", ignoreCase = true)) abandoned += queued
-                else retained.addLast(queued)
+                if (queued.policy.mustCompleteAfterClose) retained.addLast(queued)
+                else abandoned += queued
             }
             pending.addAll(retained)
         }

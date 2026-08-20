@@ -22,13 +22,13 @@ async function recordPrnIntake(medicationId, button = null) {
       body: JSON.stringify({ request_id: requestId }),
     });
     clearPrnRequestId(medicationId);
-    if (state.currentPersonId !== personId) return;
+    if (!MutationInvariants.isActiveOrigin(state.currentPersonId, personId)) return;
     reconcileDoseMutation(updated);
     renderAll();
     toast("필요시 복용을 기록했어요");
   } catch (error) {
-    if (error?.status && error.status < 500) clearPrnRequestId(medicationId);
-    if (state.currentPersonId !== personId) return;
+    if (MutationInvariants.failureKind(error) === "definitive") clearPrnRequestId(medicationId);
+    if (!MutationInvariants.isActiveOrigin(state.currentPersonId, personId)) return;
     if (button) {
       button.disabled = false;
       button.removeAttribute("aria-busy");
@@ -85,12 +85,11 @@ async function drainDoseDesiredState(instanceId, entry) {
   } catch (error) {
     entry.running = false;
     if (state.doseMutations.get(instanceId) !== entry) return;
-    const status = Number(error?.status);
-    const commitMayHaveSucceeded = !Number.isFinite(status) || status >= 500;
+    const commitMayHaveSucceeded = MutationInvariants.failureKind(error) === "ambiguous";
     if (!commitMayHaveSucceeded && entry.desiredStatus === requestedStatus) {
       clearScheduledDoseIntent(instanceId);
     }
-    if (state.currentPersonId !== entry.personId) {
+    if (!MutationInvariants.isActiveOrigin(state.currentPersonId, entry.personId)) {
       state.doseMutations.delete(instanceId);
       return;
     }
@@ -110,7 +109,7 @@ async function drainDoseDesiredState(instanceId, entry) {
         return;
       }
       if (state.doseMutations.get(instanceId) !== entry) return;
-      if (state.currentPersonId !== entry.personId) {
+      if (!MutationInvariants.isActiveOrigin(state.currentPersonId, entry.personId)) {
         state.doseMutations.delete(instanceId);
         return;
       }
@@ -128,7 +127,7 @@ async function drainDoseDesiredState(instanceId, entry) {
       }
       entry.authoritativeStatus = refreshedStatus;
       if (entry.authoritativeStatus !== entry.desiredStatus) {
-        if (entry.ambiguousCompensations >= 1) {
+        if (!MutationInvariants.canCompensateAmbiguousDose(entry.ambiguousCompensations)) {
           clearScheduledDoseIntent(instanceId);
           clearPendingDoseIntent(instanceId);
           state.doseMutations.delete(instanceId);
@@ -167,9 +166,9 @@ async function drainDoseDesiredState(instanceId, entry) {
 
   entry.running = false;
   entry.authoritativeStatus = updated.status;
-  const converged = updated.deleted === true || entry.desiredStatus === updated.status;
+  const converged = MutationInvariants.doseConverged(updated, entry.desiredStatus);
   if (converged) clearScheduledDoseIntent(instanceId);
-  if (state.currentPersonId !== entry.personId) {
+  if (!MutationInvariants.isActiveOrigin(state.currentPersonId, entry.personId)) {
     state.doseMutations.delete(instanceId);
     return;
   }
@@ -196,7 +195,7 @@ function recoverPersistedDoseIntents(personId = state.currentPersonId) {
   const intents = persistedDoseIntents();
   for (const [instanceId, intent] of Object.entries(intents)) {
     if (intent?.personId !== personId) continue;
-    if (!["planned", "taken", "skipped"].includes(intent.desiredStatus)) {
+    if (!MutationInvariants.isDoseDesiredStatus(intent.desiredStatus)) {
       clearScheduledDoseIntent(instanceId);
       continue;
     }

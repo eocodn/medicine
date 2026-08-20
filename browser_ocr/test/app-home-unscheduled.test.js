@@ -60,6 +60,10 @@ function appContext(storage = new Map()) {
   vm.runInContext(stateSource, context);
   vm.runInContext(source, context);
   vm.runInContext(
+    fs.readFileSync(path.join(__dirname, "../../medicine_app/static/mutation-invariants.js"), "utf8"),
+    context,
+  );
+  vm.runInContext(
     fs.readFileSync(path.join(__dirname, "../../medicine_app/static/dose-actions.js"), "utf8"),
     context,
   );

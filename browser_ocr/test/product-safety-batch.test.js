@@ -76,6 +76,14 @@ test("PRN medication card exposes actual-intake recording", () => {
 });
 
 
+test("mutation invariant policy loads before dose action callers", () => {
+  const policyIndex = index.indexOf("/static/mutation-invariants.js");
+  const doseActionsIndex = index.indexOf("/static/dose-actions.js");
+  assert.ok(policyIndex >= 0);
+  assert.ok(doseActionsIndex > policyIndex);
+});
+
+
 test("recent instance-linked history can be corrected from the shared UI", () => {
   assert.match(app, /data-log-cancel/);
   assert.match(app, /cancelDoseInstance\(button\.dataset\.logCancel,\s*button\)/);

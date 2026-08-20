@@ -84,4 +84,36 @@ class BridgeRequestDispatcherTest {
         assertTrue(responses.getValue("search").contains("\"code\":\"bridge_closed\""))
         assertTrue(responses.getValue("write").contains("\"status\":200"))
     }
+
+    @Test
+    fun mutationsNeverCoalesceEvenIfCallerSuppliesTheSameKey() {
+        val executor = Executors.newSingleThreadExecutor()
+        val firstStarted = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val completed = CountDownLatch(3)
+        val processed = Collections.synchronizedList(mutableListOf<String>())
+        val dispatcher = BridgeRequestDispatcher(
+            executor = executor,
+            processor = { request ->
+                processed += request.requestId
+                if (request.requestId == "first-write") {
+                    firstStarted.countDown()
+                    releaseFirst.await(5, TimeUnit.SECONDS)
+                }
+                "{\"status\":200,\"body\":{}}"
+            },
+            responder = { _, _ -> completed.countDown() },
+        )
+
+        dispatcher.submit(BridgeRequest("first-write", "POST", "/api/dose-instances/a", "{}", "dose"))
+        assertTrue(firstStarted.await(5, TimeUnit.SECONDS))
+        dispatcher.submit(BridgeRequest("second-write", "POST", "/api/dose-instances/b", "{}", "dose"))
+        dispatcher.submit(BridgeRequest("third-write", "POST", "/api/dose-instances/c", "{}", "dose"))
+        releaseFirst.countDown()
+
+        assertTrue(completed.await(5, TimeUnit.SECONDS))
+        executor.shutdown()
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+        assertEquals(listOf("first-write", "second-write", "third-write"), processed.toList())
+    }
 }
