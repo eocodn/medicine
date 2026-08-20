@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -164,6 +165,10 @@ class ParserTrainingBuildersTest(unittest.TestCase):
             )
             document = load_parser_dataset(manifest).documents[0]
             self.assertEqual(document["observation"]["kind"], "runtime_ocr")
+            self.assertEqual(document["source_binding"], {
+                "kind": "synthetic_truth",
+                "truth_samples_sha256": hashlib.sha256(truth.read_bytes()).hexdigest(),
+            })
             self.assertEqual(document["observation"]["nodes"][0]["semantic_role"], "product")
             self.assertNotIn("parser", document["observation"]["profile"])
             self.assertNotIn("parser", document["observation"]["profile"]["implementation"])

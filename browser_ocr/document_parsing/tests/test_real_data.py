@@ -169,6 +169,7 @@ class RealParserDataTest(unittest.TestCase):
             self.assertEqual(draft["annotation_status"], "draft")
             self.assertFalse(draft["gold_rows_reviewed"])
             self.assertEqual(draft["provenance"], sample["provenance"])
+            self.assertEqual(draft["source_binding"], sample["source_binding"])
             self.assertTrue(all(node["label_status"] == "unlabeled" for node in draft["observation"]["nodes"]))
             self.assertNotIn("parser", draft["observation"]["profile"])
             self.assertNotIn("parser", draft["observation"]["profile"]["implementation"])

@@ -129,6 +129,9 @@ def validate_parser_metadata_for_documents(
                 raise ValueError("parser training builder document observation profile is missing")
             if profile.get("truth_samples_sha256") != metadata["truth_samples_sha256"]:
                 raise ValueError("parser dataset metadata truth_samples_sha256 disagrees with observation profile")
+            binding = document.get("source_binding")
+            if not isinstance(binding, Mapping) or binding.get("truth_samples_sha256") != metadata["truth_samples_sha256"]:
+                raise ValueError("parser dataset metadata truth_samples_sha256 disagrees with document source binding")
             if metadata["observation_kind"] == "synthetic_ocr" and profile.get("seed") != metadata["seed"]:
                 raise ValueError("parser dataset metadata seed disagrees with synthetic observation profile")
     elif builder == "parser_runtime_builder_v2":
@@ -142,6 +145,10 @@ def validate_parser_metadata_for_documents(
             raise ValueError("parser runtime builder metadata requires runtime_ocr observations")
         if {document.get("source_kind") for document in documents} != {"synthetic"}:
             raise ValueError("parser runtime builder metadata requires synthetic documents")
+        for document in documents:
+            binding = document.get("source_binding")
+            if not isinstance(binding, Mapping) or binding.get("truth_samples_sha256") != metadata["truth_samples_sha256"]:
+                raise ValueError("parser dataset metadata truth_samples_sha256 disagrees with document source binding")
     elif builder == "real_annotation_finalize_v1":
         required = {"source_dataset_id", "source_manifest_sha256", "source_samples_sha256"}
         missing = sorted(required - set(metadata))
@@ -153,6 +160,14 @@ def validate_parser_metadata_for_documents(
             raise ValueError("real annotation metadata requires real_deidentified documents")
         if actual_observations != {"runtime_ocr"}:
             raise ValueError("real annotation metadata requires runtime_ocr observations")
+        expected_binding = {
+            "kind": "real_source",
+            "source_dataset_id": metadata["source_dataset_id"],
+            "source_manifest_sha256": metadata["source_manifest_sha256"],
+            "source_samples_sha256": metadata["source_samples_sha256"],
+        }
+        if any(document.get("source_binding") != expected_binding for document in documents):
+            raise ValueError("real annotation metadata source identity disagrees with document source binding")
 
     producer = metadata.get("ocr_producer")
     if producer is not None:

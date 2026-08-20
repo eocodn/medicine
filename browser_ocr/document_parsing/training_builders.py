@@ -245,12 +245,14 @@ def _base_document(
     observation_kind: str,
     observation_profile: Mapping[str, Any],
     nodes: Sequence[Mapping[str, Any]],
+    truth_samples_sha256: str,
 ) -> dict[str, Any]:
     normalized_nodes = [dict(node) for node in nodes]
     return {
         "document_id": str(sample["document_id"]),
         "split": str(sample["split"]),
         "source_kind": "synthetic",
+        "source_binding": {"kind": "synthetic_truth", "truth_samples_sha256": truth_samples_sha256},
         "image_sha256": str(sample["image_sha256"]),
         "width": int(sample["width"]),
         "height": int(sample["height"]),
@@ -303,6 +305,7 @@ def build_synthetic_dataset(
                 observation_kind=observation_kind,
                 observation_profile=profile,
                 nodes=nodes,
+                truth_samples_sha256=source_sha,
             )
         )
     return write_parser_dataset(
@@ -332,6 +335,7 @@ def build_runtime_dataset(
     if not selected:
         raise ParserDatasetError("no parser truth samples matched the requested split")
     root = Path(results_root).resolve()
+    source_sha = _sha256_file(source)
     documents: list[dict[str, Any]] = []
     producer: dict[str, Any] | None = None
     for sample in selected:
@@ -370,6 +374,7 @@ def build_runtime_dataset(
                 observation_kind="runtime_ocr",
                 observation_profile=observation_profile,
                 nodes=nodes,
+                truth_samples_sha256=source_sha,
             )
         )
     return write_parser_dataset(
@@ -378,7 +383,7 @@ def build_runtime_dataset(
         documents=documents,
         metadata={
             "builder": "parser_runtime_builder_v2",
-            "truth_samples_sha256": _sha256_file(source),
+            "truth_samples_sha256": source_sha,
             "observation_kind": "runtime_ocr",
             "split": split or "all",
             "ocr_producer": producer,

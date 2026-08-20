@@ -125,6 +125,7 @@ class ParserDatasetCliTest(unittest.TestCase):
             "document_id": "doc",
             "split": "val",
             "source_kind": "synthetic",
+            "source_binding": {"kind": "synthetic_truth", "truth_samples_sha256": "9" * 64},
             "image_sha256": "a" * 64,
             "width": 100,
             "height": 100,
@@ -239,6 +240,9 @@ class ParserDatasetCliTest(unittest.TestCase):
             finalized = _finalize_real(str(output / "annotations"), "real-final", str(root / "final"))
             dataset = load_parser_dataset(finalized["manifest"])
             self.assertEqual(dataset.documents[0]["provenance"], {"source_id": "source-a", "license_id": "private-deidentified"})
+            self.assertEqual(dataset.documents[0]["source_binding"]["source_dataset_id"], dataset.metadata["source_dataset_id"])
+            self.assertEqual(dataset.documents[0]["source_binding"]["source_manifest_sha256"], dataset.metadata["source_manifest_sha256"])
+            self.assertEqual(dataset.documents[0]["source_binding"]["source_samples_sha256"], dataset.metadata["source_samples_sha256"])
             self.assertEqual(dataset.metadata["source_manifest_sha256"], hashlib.sha256(source_manifest.read_bytes()).hexdigest())
             self.assertEqual(dataset.metadata["source_samples_sha256"], hashlib.sha256((source_manifest.parent / "samples.jsonl").read_bytes()).hexdigest())
 

@@ -26,10 +26,11 @@ from .artifact_storage import (
 )
 from .dataset_metadata import normalize_parser_metadata
 from .draft_contract import normalize_parser_draft
+from .source_binding import normalize_source_binding
 from .training_alignment import MODEL_ROLES, build_relation_labels
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 TASK = "medication_document_parser"
 SOURCE_POLICY = "synthetic_train_real_holdout_v1"
 _ALLOWED_SPLITS = {"train", "val", "test"}
@@ -53,7 +54,7 @@ _MANIFEST_FIELDS = {
 }
 _DOCUMENT_FIELDS = {
     "document_id", "split", "source_kind", "image_sha256", "width", "height", "layout_family",
-    "scenario_tags", "risk_tags", "privacy", "provenance", "observation", "relations", "gold_rows",
+    "scenario_tags", "risk_tags", "privacy", "provenance", "source_binding", "observation", "relations", "gold_rows",
     "gold_rows_reviewed", "annotation_status",
 }
 _NODE_FIELDS = {
@@ -241,6 +242,10 @@ def _normalize_document(value: object) -> dict[str, Any]:
         raise ParserDatasetError(f"{document_id}.source_kind is unsupported")
     if source_kind == "real_deidentified" and split == "train":
         raise ParserDatasetError(f"{document_id} real_deidentified documents cannot use train split")
+    try:
+        source_binding = normalize_source_binding(data.get("source_binding"), source_kind=source_kind, label=f"{document_id}.source_binding")
+    except ValueError as exc:
+        raise ParserDatasetError(str(exc)) from exc
     image_sha = str(data.get("image_sha256") or "")
     if not _SHA256_RE.fullmatch(image_sha):
         raise ParserDatasetError(f"{document_id}.image_sha256 must be lowercase SHA-256")
@@ -373,6 +378,7 @@ def _normalize_document(value: object) -> dict[str, Any]:
         "document_id": document_id,
         "split": split,
         "source_kind": source_kind,
+        "source_binding": source_binding,
         "image_sha256": image_sha,
         "width": width,
         "height": height,
@@ -388,7 +394,6 @@ def _normalize_document(value: object) -> dict[str, Any]:
         "annotation_status": annotation_status,
     }
 
-
 def normalize_parser_documents(documents: Iterable[object]) -> list[dict[str, Any]]:
     normalized = [_normalize_document(document) for document in documents]
     ids = [document["document_id"] for document in normalized]
@@ -399,7 +404,6 @@ def normalize_parser_documents(documents: Iterable[object]) -> list[dict[str, An
     except ValueError as exc:
         raise ParserDatasetError(str(exc)) from exc
     return normalized
-
 
 @contextmanager
 def _parser_output_lock(root: Path):

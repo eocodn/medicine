@@ -89,6 +89,7 @@ def annotation_immutable_sha256(annotation: Mapping[str, Any]) -> str:
         "risk_tags": annotation.get("risk_tags"),
         "privacy": annotation.get("privacy"),
         "provenance": annotation.get("provenance"),
+        "source_binding": annotation.get("source_binding"),
         "observation": {
             "kind": observation.get("kind"),
             "profile": observation.get("profile"),
@@ -153,6 +154,12 @@ def load_real_source_manifest(manifest_path: str | Path) -> RealSourceDataset:
     if not samples_path.is_file():
         raise ParserDatasetError("real samples_file does not exist")
 
+    source_binding = {
+        "kind": "real_source",
+        "source_dataset_id": dataset_id,
+        "source_manifest_sha256": _sha256_file(path),
+        "source_samples_sha256": _sha256_file(samples_path),
+    }
     samples: list[dict[str, Any]] = []
     ids: set[str] = set()
     image_hashes: dict[str, str] = {}
@@ -220,6 +227,7 @@ def load_real_source_manifest(manifest_path: str | Path) -> RealSourceDataset:
             "scenario_tags": _require_tags(raw.get("scenario_tags"), f"{document_id}.scenario_tags"),
             "risk_tags": _require_tags(raw.get("risk_tags"), f"{document_id}.risk_tags"),
             "provenance": normalized_provenance,
+            "source_binding": dict(source_binding),
         })
     if not samples:
         raise ParserDatasetError("real source manifest has no samples")
@@ -295,6 +303,7 @@ def prepare_real_annotation(sample: Mapping[str, Any], runtime_result: Mapping[s
         "risk_tags": list(sample["risk_tags"]),
         "privacy": {"contains_patient_data": False, "deidentified": True},
         "provenance": dict(sample["provenance"]),
+        "source_binding": dict(sample["source_binding"]),
         "observation": {
             "kind": "runtime_ocr",
             "profile": runtime_observation_profile(

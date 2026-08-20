@@ -182,7 +182,7 @@ test("one document corpus materializes aligned detection recognition parsing and
     const parserValManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "val-synthetic-ocr", "manifest.json"), "utf8"));
     const parserOracleManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "oracle", "manifest.json"), "utf8"));
     assert.equal(parserTrainManifest.task, "medication_document_parser");
-    assert.equal(parserTrainManifest.schema_version, 2);
+    assert.equal(parserTrainManifest.schema_version, 3);
     assert.match(parserTrainManifest.metadata_sha256, /^[0-9a-f]{64}$/);
     assert.equal(parserTrainManifest.document_count, corpus.samples.filter((sample) => sample.split === "train").length);
     assert.equal(parserValManifest.document_count, corpus.samples.filter((sample) => sample.split === "val").length);

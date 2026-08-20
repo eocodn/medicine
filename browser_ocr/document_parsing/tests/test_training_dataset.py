@@ -50,6 +50,16 @@ def _doc(*, source_kind: str = "synthetic", split: str = "train") -> dict:
         "document_id": "doc-001",
         "split": split,
         "source_kind": source_kind,
+        "source_binding": (
+            {"kind": "synthetic_truth", "truth_samples_sha256": "9" * 64}
+            if source_kind == "synthetic"
+            else {
+                "kind": "real_source",
+                "source_dataset_id": "real-fixture",
+                "source_manifest_sha256": "c" * 64,
+                "source_samples_sha256": "d" * 64,
+            }
+        ),
         "image_sha256": "a" * 64,
         "width": 1280,
         "height": 1600,
