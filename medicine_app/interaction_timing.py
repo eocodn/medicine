@@ -170,7 +170,10 @@ def interaction_timing_applies(
     if overlap:
         return True
     kind = timing.get("kind")
-    if timing.get("status") == "not_evaluable" and kind == "post_course_restriction":
+    if timing.get("status") == "not_evaluable":
+        # Unknown/unresolved applicability must fail conservatively: absence of
+        # overlap is not enough to prove the DUR rule irrelevant when the timing
+        # semantics themselves are not understood by this runtime.
         return True
     if kind == "course_overlap":
         return False

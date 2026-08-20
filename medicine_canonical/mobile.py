@@ -4,17 +4,25 @@ import hashlib
 import json
 import os
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 from .inspection import verify_canonical_database
 
 
-MOBILE_DATA_POLICY_VERSION = "8"
+MOBILE_PHYSICAL_POLICY_VERSION = "8"
+# Compatibility alias for server-side callers while the old name is retired.
+# It is intentionally not part of dataset identity anymore.
+MOBILE_DATA_POLICY_VERSION = MOBILE_PHYSICAL_POLICY_VERSION
+REFERENCE_BUILD_META_DDL = """CREATE TABLE reference_build_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+)"""
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
 )
-RUNTIME_VIEWS = ("product_rule_criteria",)
+RUNTIME_VIEWS: tuple[str, ...] = ()
 COPIED_RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_flags", "ingredient_rules", "dose_criteria",
@@ -130,21 +138,20 @@ MOBILE_RULE_TEXT_COLUMNS = (
 )
 
 
-def _dataset_id(con: sqlite3.Connection) -> str:
-    digest = hashlib.sha256()
-    # The same official source snapshot can produce different runtime rows or a
-    # different physical release when transformation policy changes. Keep that
-    # generation in the release identity so R2 cannot mistake the new output for
-    # an idempotent rebuild of the previous mobile dataset.
-    digest.update(f"mobile-data-policy\0{MOBILE_DATA_POLICY_VERSION}\n".encode("utf-8"))
-    rows = con.execute(
-        "SELECT dataset_key,sha256,row_count FROM source_snapshots ORDER BY dataset_key"
-    ).fetchall()
-    if not rows:
-        raise ValueError("canonical source snapshots are empty")
-    for dataset_key, sha256, row_count in rows:
-        digest.update(f"{dataset_key}\0{str(sha256).lower()}\0{row_count}\n".encode("utf-8"))
-    return f"sha256:{digest.hexdigest()}"
+def _write_build_meta(
+    database: sqlite3.Connection,
+    *,
+    canonical_schema_version: str,
+    physical_policy_version: str,
+) -> None:
+    database.execute(REFERENCE_BUILD_META_DDL)
+    database.executemany(
+        "INSERT INTO reference_build_meta(key,value) VALUES(?,?)",
+        [
+            ("canonical_schema_version", canonical_schema_version),
+            ("physical_policy_version", physical_policy_version),
+        ],
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -235,11 +242,17 @@ def _populate_compact_product_rules(dst: sqlite3.Connection) -> None:
     dst.execute(MOBILE_PRODUCT_CRITERION_LINKS_VIEW_DDL)
 
 
-def build_mobile_database(
+def _build_mobile_database(
     canonical_db: str | Path,
     output_db: str | Path,
     *,
+    contract_major: int,
+    materialize_semantics: Callable[[sqlite3.Connection, sqlite3.Connection], int],
+    logical_dataset_id: Callable[[sqlite3.Connection], str],
+    write_contract_meta: Callable[[sqlite3.Connection, str], None],
+    product_rule_criteria_view_ddl: str,
     manifest_path: str | Path | None = None,
+    physical_policy_version: str = MOBILE_PHYSICAL_POLICY_VERSION,
 ) -> dict:
     source = Path(canonical_db)
     output = Path(output_db)
@@ -255,6 +268,11 @@ def build_mobile_database(
     temporary = output.with_name(output.name + ".tmp")
     temporary.unlink(missing_ok=True)
 
+    physical_policy_version = str(physical_policy_version).strip()
+    if not physical_policy_version:
+        raise ValueError("mobile physical policy version is required")
+
+    dataset_id: str | None = None
     src = sqlite3.connect(f"file:{source.resolve()}?mode=ro", uri=True)
     try:
         schema_version = src.execute(
@@ -263,10 +281,9 @@ def build_mobile_database(
         build_stage = src.execute(
             "SELECT value FROM canonical_meta WHERE key='build_stage'"
         ).fetchone()
-        if not schema_version or schema_version[0] != "10" or not build_stage or build_stage[0] != "complete":
-            raise ValueError("canonical runtime requires complete schema v10 database")
+        if not schema_version or not build_stage or build_stage[0] != "complete":
+            raise ValueError("reference exporter requires a complete canonical database")
         _assert_product_rule_source_identity_unique(src)
-        dataset_id = _dataset_id(src)
         objects = {
             (kind, name): sql
             for kind, name, sql in src.execute(
@@ -287,6 +304,7 @@ def build_mobile_database(
             for table in COPIED_RUNTIME_TABLES:
                 dst.execute(f'INSERT INTO "{table}" SELECT * FROM source_db."{table}"')
             _populate_compact_product_rules(dst)
+            materialize_semantics(src, dst)
             dst.commit()
             dst.execute("DETACH DATABASE source_db")
             source_indexes = {
@@ -311,6 +329,14 @@ def build_mobile_database(
                 if not ddl:
                     raise ValueError(f"canonical runtime view missing: {view}")
                 dst.execute(ddl)
+            dst.execute(product_rule_criteria_view_ddl)
+            dataset_id = logical_dataset_id(dst)
+            write_contract_meta(dst, dataset_id)
+            _write_build_meta(
+                dst,
+                canonical_schema_version=str(schema_version[0]),
+                physical_policy_version=physical_policy_version,
+            )
             dst.commit()
             # Bulk loading millions of WITHOUT ROWID links leaves measurable
             # page slack even in a freshly created database. Compact once on
@@ -334,14 +360,47 @@ def build_mobile_database(
     finally:
         src.close()
 
+    if dataset_id is None:
+        raise RuntimeError("reference contract dataset identity was not materialized")
     payload = {
+        "contract_major": contract_major,
         "dataset_id": dataset_id,
-        "schema_version": "10",
         "sha256": _sha256(output),
         "size_bytes": output.stat().st_size,
+        "canonical_schema_version": str(schema_version[0]),
+        "physical_policy_version": physical_policy_version,
     }
     manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"db_path": str(output), "manifest_path": str(manifest), **payload}
 
 
-__all__ = ["RUNTIME_INDEXES", "build_mobile_database"]
+def build_mobile_database(
+    canonical_db: str | Path,
+    output_db: str | Path,
+    *,
+    manifest_path: str | Path | None = None,
+    physical_policy_version: str = MOBILE_PHYSICAL_POLICY_VERSION,
+) -> dict:
+    """Build the current default contract through its versioned exporter."""
+    from .reference_contracts.v1 import export_reference_database
+
+    return export_reference_database(
+        canonical_db,
+        output_db,
+        manifest_path=manifest_path,
+        physical_policy_version=physical_policy_version,
+    )
+
+
+# Compatibility alias for callers which assert the current default contract.
+# Contract-specific behavior is owned by reference_contracts.v1, not here.
+from .reference_contracts.v1 import REFERENCE_CONTRACT_MAJOR  # noqa: E402
+
+
+__all__ = [
+    "MOBILE_PHYSICAL_POLICY_VERSION",
+    "REFERENCE_CONTRACT_MAJOR",
+    "RUNTIME_INDEXES",
+    "_build_mobile_database",
+    "build_mobile_database",
+]

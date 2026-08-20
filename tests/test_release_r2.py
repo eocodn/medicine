@@ -9,8 +9,12 @@ import unittest
 from pathlib import Path
 
 from medicine_canonical.release import prepare_release, sha256_file
-from medicine_canonical.release_r2 import publish_release as publish_release_to_r2
-from medicine_canonical.release_signing import ReleaseSigner, verify_signed_envelope
+from medicine_canonical.release_r2 import _read_latest, publish_release as publish_release_to_r2
+from medicine_canonical.release_signing import (
+    ReleaseSigner,
+    encode_signed_envelope,
+    verify_signed_envelope,
+)
 
 
 TEST_PRIVATE_KEY_PEM = b"""-----BEGIN EC PRIVATE KEY-----
@@ -218,6 +222,27 @@ class R2ReleasePublisherTest(unittest.TestCase):
         self.assertEqual(verified["release_sequence"], 41)
         self.assertEqual(verified["manifest"], legacy)
         self.assertEqual(self.client.put_order, ["reference/v1/latest.json"])
+
+    def test_signed_legacy_latest_rejects_unsupported_schema(self) -> None:
+        payload = json.dumps(
+            {"schema_version": 2, "dataset_id": "sha256:future-legacy-format"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        body = encode_signed_envelope(self.signer.sign_payload(payload, release_sequence=42))
+        self.client.objects[(self.bucket, "reference/v1/latest.json")] = {
+            "Body": body,
+            "Metadata": {"sha256": hashlib.sha256(body).hexdigest()},
+            "ContentType": "application/json",
+        }
+
+        with self.assertRaisesRegex(ValueError, "schema"):
+            _read_latest(
+                self.client,
+                self.bucket,
+                "reference/v1/latest.json",
+                trusted_public_keys={"test-2026": TEST_PUBLIC_KEY_PEM},
+            )
 
     def test_signed_release_requires_increasing_sequence_for_new_dataset(self) -> None:
         first_db, first_manifest = self.mobile("signed-one", b"A" * 500_000, "sha256:signed-one")

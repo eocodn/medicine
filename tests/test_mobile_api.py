@@ -84,6 +84,87 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(dashboard["person"]["id"], person["id"])
         self.assertEqual(dashboard["medications"], [])
 
+    def test_reference_retirement_blocks_safety_operations_but_keeps_local_history_available(self) -> None:
+        _, person = self.request("POST", "/api/people", {
+            "name": "업데이트필요",
+            "birth_date": "1990-01-01",
+            "sex": "male",
+            "pregnancy_status": "not_applicable",
+        })
+        medication = self.api.service.add_medication(
+            person["id"],
+            product_ref="MFDS-A",
+            dose_amount=1,
+            dose_unit="정",
+            frequency_per_day=1,
+            start_date="2026-08-10",
+            schedule_times=["08:00"],
+            long_term=True,
+        )
+
+        self.api.set_reference_available(False, "update_required")
+
+        status, health = self.request("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertFalse(health["reference_available"])
+        self.assertFalse(health["full_catalog"])
+        self.assertEqual(health["reference_status"], "update_required")
+
+        for method, path, body in (
+            ("GET", "/api/products?q=%EC%95%BDA", None),
+            ("POST", f"/api/people/{person['id']}/medications/preview", {"product_ref": "MFDS-A"}),
+            ("POST", f"/api/people/{person['id']}/medications", {"product_ref": "MFDS-A"}),
+            ("PATCH", f"/api/medications/{medication['id']}", {"expected_revision": medication["revision"]}),
+        ):
+            blocked_status, blocked = self.request(method, path, body)
+            self.assertEqual(blocked_status, 503)
+            self.assertEqual(blocked["reference_status"], "update_required")
+
+        status, dashboard = self.request(
+            "GET", f"/api/people/{person['id']}/dashboard?date=2026-08-10"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(dashboard["medications"][0]["id"], medication["id"])
+        self.assertNotIn("current_assessment", dashboard["medications"][0])
+
+        status, history = self.request("GET", f"/api/medications/{medication['id']}/history")
+        self.assertEqual(status, 200)
+        self.assertEqual(history[-1]["action"], "create")
+
+        status, stopped = self.request("DELETE", f"/api/medications/{medication['id']}")
+        self.assertEqual(status, 200)
+        self.assertFalse(stopped["active"])
+
+    def test_reference_unavailable_mode_starts_without_any_reference_database(self) -> None:
+        unavailable_personal = self.personal_db.with_name("unavailable-personal.sqlite")
+        api = MobileApi(None, unavailable_personal, reference_unavailable_reason="update_required")
+
+        created = json.loads(api.request(
+            "POST",
+            "/api/people",
+            json.dumps({
+                "name": "로컬기록",
+                "birth_date": "1990-01-01",
+                "sex": "male",
+                "pregnancy_status": "not_applicable",
+            }, ensure_ascii=False),
+        ))
+        self.assertEqual(created["status"], 201)
+        person_id = created["body"]["id"]
+
+        health = json.loads(api.request("GET", "/api/health", ""))
+        self.assertEqual(health["status"], 200)
+        self.assertFalse(health["body"]["reference_available"])
+        self.assertEqual(health["body"]["reference_status"], "update_required")
+
+        people = json.loads(api.request("GET", "/api/people", ""))
+        self.assertEqual(people["status"], 200)
+        self.assertEqual(people["body"][0]["id"], person_id)
+
+        products = json.loads(api.request("GET", "/api/products?q=test", ""))
+        self.assertEqual(products["status"], 503)
+        self.assertEqual(products["body"]["reference_status"], "update_required")
+
     def test_dose_completion_can_be_canceled_through_mobile_bridge(self) -> None:
         _, person = self.request("POST", "/api/people", {
             "name": "복용취소",

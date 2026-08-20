@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import sqlite3
 import uuid
@@ -13,6 +12,7 @@ from .persistence import ensure_personal_schema
 from .medication_policy import (
     dur_review_required, medication_update_values, require_active_permit, resolve_product,
 )
+from .personal_db_lock import schema_lock
 from .planning import (
     cancel_instance_completion,
     clock_sort_key,
@@ -60,29 +60,15 @@ class IdempotencyConflict(ValueError):
     pass
 
 
-@contextmanager
-def _schema_lock(db_path: Path) -> Iterator[None]:
-    # SQLite serializes DDL after a connection is established, but concurrent
-    # legacy migrations can still race while toggling WAL and adding columns.
-    # A retained per-database lock file provides a cross-process boundary.
-    lock_path = db_path.with_name(db_path.name + ".schema.lock")
-    with lock_path.open("a+") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-
-
 class MedicationApp:
-    def __init__(self, canonical_db: Path | str, personal_db: Path | str):
-        self.canonical_db = Path(canonical_db)
+    def __init__(self, canonical_db: Path | str | None, personal_db: Path | str):
+        self.canonical_db = Path(canonical_db) if canonical_db is not None else None
         self.personal_db = Path(personal_db)
-        if not self.canonical_db.exists():
+        if self.canonical_db is not None and not self.canonical_db.exists():
             raise FileNotFoundError(f"canonical database not found: {self.canonical_db}")
         self.personal_db.parent.mkdir(parents=True, exist_ok=True)
-        self.products = ProductRepository(self.canonical_db)
-        with _schema_lock(self.personal_db):
+        self.products = ProductRepository(self.canonical_db) if self.canonical_db is not None else None
+        with schema_lock(self.personal_db):
             with self._personal() as con:
                 ensure_personal_schema(con)
 
@@ -105,6 +91,8 @@ class MedicationApp:
 
     @contextmanager
     def _canonical(self) -> Iterator[sqlite3.Connection]:
+        if self.canonical_db is None:
+            raise FileNotFoundError("reference database is unavailable")
         uri = f"file:{self.canonical_db.resolve()}?mode=ro"
         con = sqlite3.connect(uri, uri=True, timeout=10)
         con.row_factory = sqlite3.Row
@@ -160,9 +148,13 @@ class MedicationApp:
         return person_dict(row)
 
     def search_products(self, term: str, limit: int = 30, include_inactive: bool = False) -> list[dict]:
+        if self.products is None:
+            raise FileNotFoundError("reference database is unavailable")
         return self.products.search(term, limit, include_inactive=include_inactive)
 
     def get_product(self, product_ref: str) -> dict:
+        if self.products is None:
+            raise FileNotFoundError("reference database is unavailable")
         return self.products.get(product_ref)
 
     @staticmethod
@@ -259,6 +251,8 @@ class MedicationApp:
     def _resolve_product(
         self, resolved_ref: str | None, manual_name: str | None, ingredient_name: str | None
     ) -> dict:
+        if self.products is None:
+            raise FileNotFoundError("reference database is unavailable")
         return resolve_product(self.products, resolved_ref, manual_name, ingredient_name)
 
 

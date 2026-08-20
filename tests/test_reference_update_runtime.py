@@ -8,9 +8,9 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from medicine_app.reference_update import MOBILE_DATA_POLICY_VERSION, verify_reference_database
+from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
 from medicine_canonical.cli import main as canonical_main
-from medicine_canonical.mobile import MOBILE_DATA_POLICY_VERSION as BUILDER_POLICY_VERSION, build_mobile_database
+from medicine_canonical.mobile import REFERENCE_CONTRACT_MAJOR as BUILDER_CONTRACT_MAJOR, build_mobile_database
 from tests.test_safety_coverage import make_canonical_db
 
 
@@ -30,34 +30,113 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
     def test_runtime_verifier_accepts_exact_mobile_release_identity(self) -> None:
         result = verify_reference_database(
             self.mobile,
-            expected_schema_version=self.release["schema_version"],
+            expected_contract_major=self.release["contract_major"],
             expected_dataset_id=self.release["dataset_id"],
         )
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["dataset_id"], self.release["dataset_id"])
-        self.assertEqual(result["schema_version"], "10")
+        self.assertEqual(result["contract_major"], 1)
 
     def test_runtime_verifier_rejects_dataset_identity_mismatch(self) -> None:
         with self.assertRaisesRegex(ValueError, "dataset identity"):
             verify_reference_database(
                 self.mobile,
-                expected_schema_version="10",
+                expected_contract_major=1,
                 expected_dataset_id="sha256:" + "0" * 64,
             )
 
-    def test_runtime_verifier_rejects_runtime_source_policy_tampering(self) -> None:
+    def test_runtime_verifier_does_not_bind_acceptance_to_source_snapshot_metadata(self) -> None:
         with sqlite3.connect(self.mobile) as con:
-            con.execute("DELETE FROM source_snapshots WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'")
+            con.execute(
+                "UPDATE source_snapshots SET sha256=? "
+                "WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'",
+                ("f" * 64,),
+            )
             con.commit()
-        with self.assertRaisesRegex(ValueError, "runtime policy"):
+        result = verify_reference_database(
+            self.mobile,
+            expected_contract_major=1,
+            expected_dataset_id=self.release["dataset_id"],
+        )
+        self.assertEqual(result["status"], "verified")
+
+    def test_runtime_verifier_requires_materialized_contract_semantics_table(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute("DROP TABLE reference_criterion_semantics")
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "reference contract schema"):
             verify_reference_database(
                 self.mobile,
-                expected_schema_version="10",
+                expected_contract_major=1,
                 expected_dataset_id=self.release["dataset_id"],
             )
 
-    def test_runtime_policy_version_is_shared_with_mobile_builder(self) -> None:
-        self.assertEqual(MOBILE_DATA_POLICY_VERSION, BUILDER_POLICY_VERSION)
+    def test_runtime_verifier_requires_semantic_expectation_table(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute("DROP TABLE reference_semantic_expectations")
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "reference contract schema"):
+            verify_reference_database(
+                self.mobile,
+                expected_contract_major=1,
+                expected_dataset_id=self.release["dataset_id"],
+            )
+
+    def test_runtime_verifier_rejects_missing_runtime_required_product_column(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute("ALTER TABLE products DROP COLUMN manufacturer")
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "products.*manufacturer"):
+            verify_reference_database(
+                self.mobile,
+                expected_contract_major=1,
+                expected_dataset_id=self.release["dataset_id"],
+            )
+
+    def test_runtime_verifier_ignores_non_runtime_source_snapshot_provenance_columns(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            con.execute("ALTER TABLE source_snapshots DROP COLUMN source_locator")
+            con.commit()
+
+        result = verify_reference_database(
+            self.mobile,
+            expected_contract_major=1,
+            expected_dataset_id=self.release["dataset_id"],
+        )
+        self.assertEqual(result["status"], "verified")
+
+    def test_runtime_verifier_rejects_malformed_known_semantic_payload(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            criterion_rule_id = con.execute(
+                "SELECT id FROM ingredient_rules ORDER BY id LIMIT 1"
+            ).fetchone()[0]
+            ordinal = con.execute(
+                """SELECT COALESCE(MAX(ordinal),-1)+1
+                   FROM reference_criterion_semantics WHERE criterion_rule_id=?""",
+                (criterion_rule_id,),
+            ).fetchone()[0]
+            con.execute(
+                """INSERT INTO reference_criterion_semantics(
+                       criterion_rule_id,ordinal,semantic_role,evaluation_mode,evaluator_kind,
+                       fallback_action,qualifier_type,display_text,structured_payload_json,source_remark
+                   ) VALUES(?,?,'applicability_condition','runtime_evaluable','minimum_separation',
+                            'review_required','timing','24시간 이내 병용금기','{}','24시간 이내 병용금기')""",
+                (criterion_rule_id, ordinal),
+            )
+            con.commit()
+
+        with self.assertRaisesRegex(ValueError, "minimum_separation.*payload"):
+            verify_reference_database(
+                self.mobile,
+                expected_contract_major=1,
+                expected_dataset_id=self.release["dataset_id"],
+            )
+
+    def test_runtime_contract_major_is_shared_with_mobile_builder(self) -> None:
+        self.assertEqual(REFERENCE_CONTRACT_MAJOR, BUILDER_CONTRACT_MAJOR)
 
     def test_headless_cli_verifies_mobile_runtime_database(self) -> None:
         output = StringIO()
@@ -65,7 +144,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
             code = canonical_main([
                 "mobile-verify-runtime",
                 "--db", str(self.mobile),
-                "--schema-version", "10",
+                "--contract-major", "1",
                 "--dataset-id", self.release["dataset_id"],
                 "--json",
             ])
@@ -73,6 +152,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertEqual(payload["status"], "verified")
         self.assertEqual(payload["dataset_id"], self.release["dataset_id"])
+        self.assertEqual(payload["contract_major"], 1)
 
 
 if __name__ == "__main__":

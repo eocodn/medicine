@@ -5,18 +5,8 @@ import re
 import sqlite3
 from typing import Any, Mapping
 
-from medicine_reference.mfds_sources import MFDS_SOURCE_FAMILIES, MFDS_SOURCE_KEYS
-
-
-# This manifest is deliberately shared with the builder, but lives in the
-# Android-packaged runtime-safe medicine_reference package.
-_RUNTIME_SOURCE_FAMILIES = MFDS_SOURCE_FAMILIES
-_RUNTIME_SOURCE_KEYS = MFDS_SOURCE_KEYS
-
-
-_CANONICAL_SCHEMA_VERSION = "10"
-_REQUIRED_FAMILIES = set(_RUNTIME_SOURCE_FAMILIES.values())
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_DATASET_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _DIRECT_ITEM_RULE_CATEGORIES = frozenset({
     "elderly_caution", "therapeutic_duplication_caution"
 })
@@ -37,6 +27,13 @@ def item_seq(product: Mapping[str, Any]) -> str | None:
     return text or None
 
 
+def _positive_source_row_count(value: object) -> bool:
+    try:
+        return int(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
     con.row_factory = sqlite3.Row
     meta = {str(row[0]): str(row[1]) for row in con.execute("SELECT key,value FROM canonical_meta")}
@@ -44,20 +41,11 @@ def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
         "SELECT dataset_key,source_family,sha256,row_count,fetched_at,effective_date FROM source_snapshots ORDER BY dataset_key"
     )]
     families = {str(row["source_family"]) for row in rows}
-    actual_keys = {str(row["dataset_key"]) for row in rows}
-    missing_sources = sorted(_RUNTIME_SOURCE_KEYS - actual_keys)
-    unexpected_sources = sorted(actual_keys - _RUNTIME_SOURCE_KEYS)
-    misclassified_sources = sorted(
-        str(row["dataset_key"])
-        for row in rows
-        if str(row["dataset_key"]) in _RUNTIME_SOURCE_FAMILIES
-        and _RUNTIME_SOURCE_FAMILIES[str(row["dataset_key"])] != str(row["source_family"])
-    )
     invalid = [
         str(row["dataset_key"])
         for row in rows
         if not _SHA256_RE.fullmatch(str(row.get("sha256") or "").lower())
-        or int(row.get("row_count") or 0) <= 0
+        or not _positive_source_row_count(row.get("row_count"))
     ]
     digest = hashlib.sha256()
     for row in rows:
@@ -66,25 +54,56 @@ def canonical_manifest(con: sqlite3.Connection) -> dict[str, Any]:
         )
     verified = (
         bool(rows)
-        and meta.get("schema_version") == _CANONICAL_SCHEMA_VERSION
+        and str(meta.get("schema_version") or "").isdigit()
         and meta.get("build_stage") == "complete"
-        and families == _REQUIRED_FAMILIES
-        and not missing_sources
-        and not unexpected_sources
-        and not misclassified_sources
         and not invalid
     )
+    provenance_dataset_id = f"sha256:{digest.hexdigest()}" if rows else None
+    try:
+        contract_meta = {
+            str(row[0]): str(row[1])
+            for row in con.execute("SELECT key,value FROM reference_contract_meta")
+        }
+    except sqlite3.DatabaseError:
+        contract_meta = None
+    if contract_meta is not None:
+        dataset_id = str(contract_meta.get("dataset_id") or "").lower()
+        contract_major_text = str(contract_meta.get("contract_major") or "")
+        contract_major = (
+            int(contract_major_text)
+            if contract_major_text.isdigit() and not contract_major_text.startswith("0")
+            else None
+        )
+        contract_verified = (
+            bool(contract_major and contract_major > 0)
+            and bool(_DATASET_ID_RE.fullmatch(dataset_id))
+        )
+        return {
+            "status": "verified" if contract_verified else "not_verified",
+            "dataset_id": dataset_id if contract_verified else None,
+            "contract_major": contract_major,
+            "schema_version": meta.get("schema_version"),
+            "built_at": meta.get("built_at"),
+            "source_count": len(rows),
+            "source_families": sorted(families),
+            "invalid_sources": invalid,
+            "missing_sources": [],
+            "unexpected_sources": [],
+            "misclassified_sources": [],
+            "provenance_status": "verified" if verified else "not_verified",
+            "provenance_dataset_id": provenance_dataset_id,
+        }
     return {
         "status": "verified" if verified else "not_verified",
-        "dataset_id": f"sha256:{digest.hexdigest()}" if rows else None,
+        "dataset_id": provenance_dataset_id,
         "schema_version": meta.get("schema_version"),
         "built_at": meta.get("built_at"),
         "source_count": len(rows),
         "source_families": sorted(families),
         "invalid_sources": invalid,
-        "missing_sources": missing_sources,
-        "unexpected_sources": unexpected_sources,
-        "misclassified_sources": misclassified_sources,
+        "missing_sources": [],
+        "unexpected_sources": [],
+        "misclassified_sources": [],
     }
 
 

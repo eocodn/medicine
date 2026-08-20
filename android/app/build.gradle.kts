@@ -230,8 +230,6 @@ chaquopy {
         srcDir(rootProject.file(".."))
         include("medicine_app/**/*.py")
         exclude("medicine_app/cli.py")
-        include("medicine_reference/**/*.py")
-        include("medicine_reference/data/mfds_remark_registry.tsv")
         include("medicine_canonical/__init__.py")
         include("medicine_canonical/release.py")
     }
@@ -243,6 +241,10 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.webkit:webkit:1.13.0")
     testImplementation("junit:junit:4.13.2")
+    // Android ships org.json at runtime; use the matching JVM implementation so
+    // contract-manifest parsing is exercised by local unit tests instead of the
+    // Android stub methods returning default values.
+    testImplementation("org.json:json:20160810")
 }
 
 dependencyLocking {

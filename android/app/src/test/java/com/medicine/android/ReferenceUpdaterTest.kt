@@ -27,6 +27,7 @@ class ReferenceUpdaterTest {
         private val release: VerifiedReferenceRelease,
         private val artifactBytes: ByteArray = "artifact".toByteArray(),
         private val failDownload: Boolean = false,
+        private val failDownloadKinds: Set<ReferenceArtifactKind> = emptySet(),
         private val fetchEntered: CountDownLatch? = null,
         private val downloadEntered: CountDownLatch? = null,
         private val continueDownload: CountDownLatch? = null,
@@ -50,12 +51,41 @@ class ReferenceUpdaterTest {
             }
             target.writeBytes(artifactBytes)
             progress(artifactBytes.size.toLong(), artifactBytes.size.toLong())
-            if (failDownload) error("network interrupted")
+            if (failDownload || artifact.kind in failDownloadKinds) error("network interrupted")
         }
     }
 
-    private class FakeRebuilder(private val targetBytes: ByteArray) : ReferenceArtifactRebuilder {
+    private class RetiredSource(
+        private val sequence: Long,
+        private val hash: String,
+    ) : ReferenceReleaseSource {
+        var downloads = 0
+
+        override fun fetchLatest(): VerifiedReferenceRelease {
+            throw ReferenceContractRetiredException(
+                releaseSequence = sequence,
+                rootHash = hash,
+                currentContractMajor = 2,
+                minimumSupportedContractMajor = 2,
+            )
+        }
+
+        override fun download(
+            artifact: ReferenceReleaseArtifact,
+            target: File,
+            progress: (Long, Long) -> Unit,
+        ) {
+            downloads += 1
+            error("retired contract must not download artifacts")
+        }
+    }
+
+    private class FakeRebuilder(
+        private val targetBytes: ByteArray,
+        private val failKinds: Set<ReferenceArtifactKind> = emptySet(),
+    ) : ReferenceArtifactRebuilder {
         var usedArtifact: ReferenceReleaseArtifact? = null
+        val usedArtifacts = mutableListOf<ReferenceReleaseArtifact>()
         override fun rebuild(
             current: InstalledReferenceVersion?,
             artifact: ReferenceReleaseArtifact,
@@ -63,6 +93,8 @@ class ReferenceUpdaterTest {
             output: File,
         ) {
             usedArtifact = artifact
+            usedArtifacts += artifact
+            if (artifact.kind in failKinds) error("rebuild failed")
             output.writeBytes(targetBytes)
         }
     }
@@ -72,11 +104,13 @@ class ReferenceUpdaterTest {
 
     private fun dataset(label: String): String = "sha256:" + sha(label.toByteArray())
 
+    private fun rootHash(sequence: Long): String = sha("root-$sequence".toByteArray())
+
     private fun version(bytes: ByteArray, sequence: Long, label: String) = ReferenceVersion(
         datasetId = dataset(label),
         sha256 = sha(bytes),
         sizeBytes = bytes.size.toLong(),
-        schemaVersion = "8",
+        contractMajor = 1,
         releaseSequence = sequence,
     )
 
@@ -88,14 +122,16 @@ class ReferenceUpdaterTest {
         includeMatchingPatch: Boolean,
     ): VerifiedReferenceRelease {
         val full = ReferenceReleaseArtifact(
-            key = "reference/v1/full/${sha(targetBytes)}.sqlite.gz",
+            contractMajor = 1,
+            key = "reference/v2/contracts/1/full/${sha(targetBytes)}.sqlite.gz",
             sha256 = sha("full-$label".toByteArray()),
             sizeBytes = 100,
             kind = ReferenceArtifactKind.FULL_GZIP,
         )
         val patches = if (includeMatchingPatch) listOf(
             ReferenceReleaseArtifact(
-                key = "reference/v1/patch/${current.sha256}-${sha(targetBytes)}.mpatch",
+                contractMajor = 1,
+                key = "reference/v2/contracts/1/patch/${current.sha256}-${sha(targetBytes)}.mpatch",
                 sha256 = sha("patch-$label".toByteArray()),
                 sizeBytes = 20,
                 kind = ReferenceArtifactKind.CHUNK_PATCH,
@@ -105,8 +141,9 @@ class ReferenceUpdaterTest {
         ) else emptyList()
         return VerifiedReferenceRelease(
             releaseSequence = sequence,
+            rootHash = rootHash(sequence),
             datasetId = dataset(label),
-            schemaVersion = "8",
+            contractMajor = 1,
             targetSha256 = sha(targetBytes),
             targetSizeBytes = targetBytes.size.toLong(),
             full = full,
@@ -145,6 +182,91 @@ class ReferenceUpdaterTest {
     }
 
     @Test
+    fun matchingPatchDownloadFailureFallsBackToSignedFull() {
+        val root = Files.createTempDirectory("reference-updater-patch-download-fallback").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val currentBytes = "current-patch-download".toByteArray()
+            val current = version(currentBytes, 1, "current-patch-download")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
+            val targetBytes = "target-patch-download".toByteArray()
+            val release = release(
+                targetBytes,
+                2,
+                "patch-download-fallback",
+                current,
+                includeMatchingPatch = true,
+            )
+            val source = FakeSource(
+                release,
+                failDownloadKinds = setOf(ReferenceArtifactKind.CHUNK_PATCH),
+            )
+            val rebuilder = FakeRebuilder(targetBytes)
+
+            val result = ReferenceUpdater(root, store, source, rebuilder).checkForUpdate(installed)
+
+            assertEquals(ReferenceUpdateStatus.STAGED, result.status)
+            assertEquals(
+                listOf(ReferenceArtifactKind.CHUNK_PATCH, ReferenceArtifactKind.FULL_GZIP),
+                source.downloads.map { it.kind },
+            )
+            assertEquals(listOf(ReferenceArtifactKind.FULL_GZIP), rebuilder.usedArtifacts.map { it.kind })
+            assertEquals(2, store.snapshot().pending!!.releaseSequence)
+            assertFalse(root.listFiles().orEmpty().any { it.name.startsWith(".artifact-") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun matchingPatchRebuildFailureFallsBackToSignedFull() {
+        val root = Files.createTempDirectory("reference-updater-patch-rebuild-fallback").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val currentBytes = "current-patch-rebuild".toByteArray()
+            val current = version(currentBytes, 1, "current-patch-rebuild")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
+            val targetBytes = "target-patch-rebuild".toByteArray()
+            val release = release(
+                targetBytes,
+                2,
+                "patch-rebuild-fallback",
+                current,
+                includeMatchingPatch = true,
+            )
+            val source = FakeSource(release)
+            val rebuilder = FakeRebuilder(
+                targetBytes,
+                failKinds = setOf(ReferenceArtifactKind.CHUNK_PATCH),
+            )
+
+            val result = ReferenceUpdater(root, store, source, rebuilder).checkForUpdate(installed)
+
+            assertEquals(ReferenceUpdateStatus.STAGED, result.status)
+            assertEquals(
+                listOf(ReferenceArtifactKind.CHUNK_PATCH, ReferenceArtifactKind.FULL_GZIP),
+                source.downloads.map { it.kind },
+            )
+            assertEquals(
+                listOf(ReferenceArtifactKind.CHUNK_PATCH, ReferenceArtifactKind.FULL_GZIP),
+                rebuilder.usedArtifacts.map { it.kind },
+            )
+            assertEquals(2, store.snapshot().pending!!.releaseSequence)
+            assertFalse(root.listFiles().orEmpty().any { it.name.startsWith(".candidate-") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun updaterFallsBackToFullWhenNoPatchMatchesCurrentBytes() {
         val root = Files.createTempDirectory("reference-updater-full").toFile()
         try {
@@ -172,6 +294,111 @@ class ReferenceUpdaterTest {
     }
 
     @Test
+    fun successfulUpdateReclaimsSupersededUpdaterTemporaries() {
+        val root = Files.createTempDirectory("reference-updater-temp-cleanup").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val currentBytes = "current-cleanup".toByteArray()
+            val current = version(currentBytes, 1, "current-cleanup")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
+            File(root, ".artifact-1-${sha("old-artifact".toByteArray())}.part").writeText("stale")
+            File(root, ".candidate-1-${sha("old-candidate".toByteArray())}.sqlite").writeText("stale")
+            val targetBytes = "target-cleanup".toByteArray()
+            val source = FakeSource(
+                release(targetBytes, 2, "cleanup", current, includeMatchingPatch = false),
+            )
+
+            val result = ReferenceUpdater(
+                root,
+                store,
+                source,
+                FakeRebuilder(targetBytes),
+            ).checkForUpdate(installed)
+
+            assertEquals(ReferenceUpdateStatus.STAGED, result.status)
+            assertFalse(root.listFiles().orEmpty().any { it.name.startsWith(".artifact-") })
+            assertFalse(root.listFiles().orEmpty().any { it.name.startsWith(".candidate-") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun signedContractRetirementReturnsUpdateRequiredBeforeAnyArtifactDownload() {
+        val root = Files.createTempDirectory("reference-updater-retired").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val currentBytes = "current-retired".toByteArray()
+            val current = version(currentBytes, 7, "current-retired")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current-retired.sqlite").apply { writeBytes(currentBytes) },
+            )
+            val signedRootHash = rootHash(8)
+            val source = RetiredSource(8, signedRootHash)
+
+            val result = ReferenceUpdater(
+                root,
+                store,
+                source,
+                FakeRebuilder("unused".toByteArray()),
+            ).checkForUpdate(installed)
+
+            assertEquals(ReferenceUpdateStatus.UPDATE_REQUIRED, result.status)
+            assertEquals(0, source.downloads)
+            assertEquals(current, store.snapshot().active)
+            assertEquals(8, store.snapshot().highestSeenRootSequence)
+            assertEquals(signedRootHash, store.snapshot().highestSeenRootHash)
+            assertEquals(1, store.snapshot().highestRetiredContractMajor)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun newerRootWithUnchangedContractTargetIsUpToDateWithoutDownloadOrRestage() {
+        val root = Files.createTempDirectory("reference-updater-root-only").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val currentBytes = "current-root-only".toByteArray()
+            val current = version(currentBytes, 7, "current-root-only")
+            val installed = store.installInitial(
+                current,
+                File(root, ".current-root-only.sqlite").apply { writeBytes(currentBytes) },
+            )
+            val release = release(
+                currentBytes,
+                sequence = 8,
+                label = "current-root-only",
+                current = current,
+                includeMatchingPatch = false,
+            )
+            val source = FakeSource(release)
+
+            val result = ReferenceUpdater(
+                root,
+                store,
+                source,
+                FakeRebuilder(currentBytes),
+            ).checkForUpdate(installed)
+
+            assertEquals(ReferenceUpdateStatus.UP_TO_DATE, result.status)
+            assertTrue(source.downloads.isEmpty())
+            assertEquals(current, store.snapshot().active)
+            assertNull(store.snapshot().pending)
+            assertEquals(8, store.snapshot().highestSeenRootSequence)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun updaterRejectsReleaseBelowActivatedHighWaterBeforeDownloading() {
         val root = Files.createTempDirectory("reference-updater-rollback").toFile()
         try {
@@ -187,7 +414,7 @@ class ReferenceUpdaterTest {
             val seven = version(sevenBytes, 7, "seven")
             store.stagePending(seven, File(root, ".seven.sqlite").apply { writeBytes(sevenBytes) })
             val installed = ReferenceStore(root, storage, FakeDatabaseVerifier())
-                .openForStartup("8")!!
+                .openForStartup(1)!!
             val oldBytes = "release-six".toByteArray()
             val oldRelease = release(oldBytes, 6, "six", installed.version, includeMatchingPatch = false)
             val source = FakeSource(oldRelease)
@@ -216,6 +443,12 @@ class ReferenceUpdaterTest {
                 File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
             )
             val targetBytes = "target-failure".toByteArray()
+            val staleArtifact = File(root, ".artifact-1-${sha("stale-artifact".toByteArray())}.part").apply {
+                writeText("stale")
+            }
+            val staleCandidate = File(root, ".candidate-1-${sha("stale-candidate".toByteArray())}.sqlite").apply {
+                writeText("stale")
+            }
             val source = FakeSource(
                 release(targetBytes, 3, "failure", current, includeMatchingPatch = false),
                 failDownload = true,
@@ -227,8 +460,15 @@ class ReferenceUpdaterTest {
             assertTrue(result.detail!!.contains("network interrupted"))
             assertEquals(current, store.snapshot().active)
             assertNull(store.snapshot().pending)
+            assertFalse(staleArtifact.exists())
+            assertFalse(staleCandidate.exists())
             assertFalse(root.listFiles().orEmpty().any { it.name.startsWith(".candidate-") })
-            assertTrue(root.listFiles().orEmpty().any { it.name.startsWith(".artifact-") && it.name.endsWith(".part") })
+            assertEquals(
+                1,
+                root.listFiles().orEmpty().count {
+                    it.name.startsWith(".artifact-") && it.name.endsWith(".part")
+                },
+            )
         } finally {
             root.deleteRecursively()
         }
@@ -299,13 +539,15 @@ class ReferenceUpdaterTest {
         val currentBytes = "current-contract".toByteArray()
         val current = version(currentBytes, 0, "current-contract")
         val wrongFull = ReferenceReleaseArtifact(
-            key = "reference/v1/full/${sha("other".toByteArray())}.sqlite.gz",
+            contractMajor = 1,
+            key = "reference/v2/contracts/1/full/${sha("other".toByteArray())}.sqlite.gz",
             sha256 = sha("full-contract".toByteArray()),
             sizeBytes = 10,
             kind = ReferenceArtifactKind.FULL_GZIP,
         )
         val wrongPatch = ReferenceReleaseArtifact(
-            key = "reference/v1/patch/${current.sha256}-${sha("other-target".toByteArray())}.mpatch",
+            contractMajor = 1,
+            key = "reference/v2/contracts/1/patch/${current.sha256}-${sha("other-target".toByteArray())}.mpatch",
             sha256 = sha("patch-contract".toByteArray()),
             sizeBytes = 5,
             kind = ReferenceArtifactKind.CHUNK_PATCH,
@@ -316,8 +558,9 @@ class ReferenceUpdaterTest {
         assertTrue(runCatching {
             VerifiedReferenceRelease(
                 releaseSequence = 1,
+                rootHash = rootHash(1),
                 datasetId = dataset("contract"),
-                schemaVersion = "8",
+                contractMajor = 1,
                 targetSha256 = targetSha,
                 targetSizeBytes = targetBytes.size.toLong(),
                 full = wrongFull,
@@ -325,12 +568,13 @@ class ReferenceUpdaterTest {
             )
         }.exceptionOrNull() is IllegalArgumentException)
 
-        val validFull = wrongFull.copy(key = "reference/v1/full/$targetSha.sqlite.gz")
+        val validFull = wrongFull.copy(key = "reference/v2/contracts/1/full/$targetSha.sqlite.gz")
         assertTrue(runCatching {
             VerifiedReferenceRelease(
                 releaseSequence = 1,
+                rootHash = rootHash(1),
                 datasetId = dataset("contract"),
-                schemaVersion = "8",
+                contractMajor = 1,
                 targetSha256 = targetSha,
                 targetSizeBytes = targetBytes.size.toLong(),
                 full = validFull,

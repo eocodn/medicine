@@ -16,10 +16,15 @@ from .build import (
 from .inspection import canonical_product_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .mobile import build_mobile_database
+from .reference_contracts.registry import build_supported_contract_window
 from medicine_app.reference_update import verify_reference_database
 from .release import apply_chunk_patch, prepare_release
-from .release_r2 import download_object_from_env, publish_release_from_env
+from .release_r2 import download_object_from_env
 from .release_r2_public import audit_public_bucket_from_env
+from .release_window import (
+    publish_contract_directory_from_env,
+    publish_contract_window_from_env,
+)
 from .release_signing import verify_signed_envelope
 from .source_layout import MfdsSourceLayout
 from .substance_build import (
@@ -117,12 +122,29 @@ def build_parser() -> argparse.ArgumentParser:
     mobile_build.add_argument("--manifest", type=Path)
     mobile_build.add_argument("--json", action="store_true")
 
+    reference_window_build = sub.add_parser(
+        "reference-window-build",
+        help="Build every currently supported Reference Contract database",
+    )
+    reference_window_build.add_argument("--db", type=Path, default=DEFAULT_DB)
+    reference_window_build.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data/db/reference-contracts"),
+    )
+    reference_window_build.add_argument(
+        "--allow-retired-previous-failure",
+        action="store_true",
+        help="Surface an unbuildable N-1 candidate for signed-retirement publication",
+    )
+    reference_window_build.add_argument("--json", action="store_true")
+
     mobile_verify_runtime = sub.add_parser(
         "mobile-verify-runtime",
         help="Verify a mobile reference DB against on-device runtime policy and release identity",
     )
     mobile_verify_runtime.add_argument("--db", type=Path, required=True)
-    mobile_verify_runtime.add_argument("--schema-version", required=True)
+    mobile_verify_runtime.add_argument("--contract-major", required=True)
     mobile_verify_runtime.add_argument("--dataset-id", required=True)
     mobile_verify_runtime.add_argument("--json", action="store_true")
 
@@ -213,8 +235,14 @@ def build_parser() -> argparse.ArgumentParser:
     release_publish = sub.add_parser("release-publish-r2", help="Prepare and atomically publish a mobile DB release to R2")
     release_publish.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
     release_publish.add_argument("--mobile-manifest", type=Path, default=Path("data/db/mobile.manifest.json"))
+    release_publish.add_argument("--contract-dir", type=Path)
     release_publish.add_argument("--output-dir", type=Path, default=Path("artifacts/reference-release"))
     release_publish.add_argument("--created-at")
+    release_publish.add_argument(
+        "--retire-previous-contract",
+        action="store_true",
+        help="Explicitly advance the signed minimum support bound to current N",
+    )
     release_publish.add_argument("--json", action="store_true")
     return parser
 
@@ -291,10 +319,16 @@ def main(argv=None) -> int:
         payload = build_mobile_database(
             args.db, args.output, manifest_path=args.manifest
         )
+    elif args.command == "reference-window-build":
+        payload = build_supported_contract_window(
+            args.db,
+            args.output_dir,
+            allow_previous_failure=args.allow_retired_previous_failure,
+        )
     elif args.command == "mobile-verify-runtime":
         payload = verify_reference_database(
             args.db,
-            expected_schema_version=args.schema_version,
+            expected_contract_major=args.contract_major,
             expected_dataset_id=args.dataset_id,
         )
     elif args.command == "substance-sync":
@@ -331,6 +365,8 @@ def main(argv=None) -> int:
             {args.key_id: args.public_key.read_bytes()},
             minimum_release_sequence=args.minimum_sequence,
         )
+        if verified["manifest"].get("schema_version") != 1:
+            raise ValueError("signed release payload schema is unsupported")
         payload = {
             "status": "verified",
             "key_id": verified["key_id"],
@@ -342,9 +378,19 @@ def main(argv=None) -> int:
     elif args.command == "r2-public-audit":
         payload = audit_public_bucket_from_env()
     elif args.command == "release-publish-r2":
-        payload = publish_release_from_env(
-            args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at
-        )
+        if args.contract_dir is not None:
+            payload = publish_contract_directory_from_env(
+                args.contract_dir,
+                args.output_dir,
+                created_at=args.created_at,
+                retire_previous_contract=args.retire_previous_contract,
+            )
+        else:
+            if args.retire_previous_contract:
+                raise ValueError("--retire-previous-contract requires --contract-dir")
+            payload = publish_contract_window_from_env(
+                args.db, args.mobile_manifest, args.output_dir, created_at=args.created_at
+            )
     else:
         payload = verify_canonical_database(args.db)
         _emit(payload, args.json)

@@ -4,7 +4,6 @@ import inspect
 from pathlib import Path
 import unittest
 
-from medicine_app.canonical_runtime import _RUNTIME_SOURCE_FAMILIES
 from medicine_canonical.build import assemble_canonical_database, build_canonical_database
 from medicine_canonical.cli import build_parser
 from medicine_canonical import mfds_ingredient
@@ -28,7 +27,6 @@ class MfdsOnlySourcePolicyTest(unittest.TestCase):
             },
         }
         self.assertEqual(EXPECTED_CANONICAL_SOURCE_FAMILIES, expected)
-        self.assertEqual(_RUNTIME_SOURCE_FAMILIES, expected)
         self.assertEqual(
             CORE_SOURCE_FAMILIES,
             frozenset(

@@ -68,10 +68,13 @@ def _read_latest(
         raise ValueError("remote latest manifest is invalid JSON") from exc
     if isinstance(payload, dict) and "envelope_version" in payload:
         verified = verify_signed_envelope(raw, trusted_public_keys)
+        manifest = verified["manifest"]
+        if manifest.get("schema_version") != 1:
+            raise ValueError("remote latest manifest schema is unsupported")
         return (
             raw,
             response.get("ETag"),
-            verified["manifest"],
+            manifest,
             verified["release_sequence"],
             True,
         )

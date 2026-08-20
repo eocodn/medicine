@@ -29,6 +29,14 @@ jobs:
           cache: npm
           cache-dependency-path: browser_ocr/package-lock.json
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install reference-root verifier dependency
+        run: python -m pip install --disable-pip-version-check --no-cache-dir 'cryptography==50.0.0'
+
       - name: Verify Gradle Wrapper
         shell: bash
         run: |

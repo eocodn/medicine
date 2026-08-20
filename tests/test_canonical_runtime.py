@@ -9,7 +9,6 @@ from pathlib import Path
 
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
 from medicine_canonical.source_policy import CANONICAL_SOURCE_POLICY, EXPECTED_CANONICAL_SOURCE_FAMILIES
-from medicine_app.canonical_runtime import _RUNTIME_SOURCE_FAMILIES
 from medicine_app.dur_status import DUR_CATEGORIES
 from tests.canonical_fixture_support import expected_source_snapshots
 from medicine_app.core import MedicationApp
@@ -145,16 +144,20 @@ class CanonicalRuntimeTest(unittest.TestCase):
         self.assertNotIn("product_ingredient_criterion_unresolved", names)
         self.assertNotIn("product_ingredient_criteria", names)
 
-    def test_runtime_source_policy_matches_release_policy(self) -> None:
-        self.assertEqual(_RUNTIME_SOURCE_FAMILIES, EXPECTED_CANONICAL_SOURCE_FAMILIES)
+    def test_exact_source_inventory_policy_stays_on_canonical_builder_side(self) -> None:
+        runtime_source = Path("medicine_app/canonical_runtime.py").read_text(encoding="utf-8")
+        self.assertTrue(EXPECTED_CANONICAL_SOURCE_FAMILIES)
+        self.assertNotIn("MFDS_SOURCE_FAMILIES", runtime_source)
+        self.assertNotIn("MFDS_SOURCE_KEYS", runtime_source)
 
-    def test_runtime_manifest_requires_exact_source_snapshot_set(self) -> None:
+    def test_runtime_manifest_does_not_enforce_exact_source_snapshot_set(self) -> None:
         from medicine_app.canonical_runtime import canonical_manifest
         with closing(sqlite3.connect(self.canonical)) as con:
             con.execute("DELETE FROM source_snapshots WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'")
             con.commit()
             manifest = canonical_manifest(con)
-        self.assertEqual(manifest["status"], "not_verified")
+        self.assertEqual(manifest["status"], "verified")
+        self.assertEqual(manifest["missing_sources"], [])
 
 
 
