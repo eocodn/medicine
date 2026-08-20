@@ -14,6 +14,7 @@ from browser_ocr.document_parsing.real_data import (
     annotation_immutable_sha256,
     load_real_source_manifest,
     prepare_real_annotation,
+    REAL_PARSER_LOCK_FILE,
 )
 from browser_ocr.document_parsing.observation_profile import runtime_observation_producer
 from browser_ocr.document_parsing.training_dataset import ParserDatasetError
@@ -185,7 +186,7 @@ def run_real_batch(args: argparse.Namespace) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     profile = _batch_profile(args, source)
     state_path = output / "state.json"
-    with _exclusive_lock(output / ".batch.lock"):
+    with _exclusive_lock(output / REAL_PARSER_LOCK_FILE):
         if state_path.is_file():
             try:
                 state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -218,7 +219,7 @@ def run_real_batch(args: argparse.Namespace) -> dict[str, Any]:
                 raise ParserDatasetError("real parser batch state has unsupported status")
         else:
             completed = 0
-            unexpected = [path.name for path in output.iterdir() if path.name != ".batch.lock"]
+            unexpected = [path.name for path in output.iterdir() if path.name != REAL_PARSER_LOCK_FILE]
             if unexpected:
                 raise ParserDatasetError("real parser batch output is non-empty without authoritative state")
             _atomic_json(state_path, {"schema_version": 1, "status": "running", "profile": profile, "completed": 0})

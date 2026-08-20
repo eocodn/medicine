@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import importlib.metadata as importlib_metadata
+import platform
 import json
 import os
 import shutil
@@ -97,7 +99,7 @@ def load_selected_recognizer(baseline_result_path: str | Path) -> dict[str, obje
     }
 
 
-def _detector_profile(manifest_path: Path, model_name: str) -> dict[str, object]:
+def _detector_profile(manifest_path: Path, model_root: Path, model_name: str) -> dict[str, object]:
     manifest = _read_json_object(manifest_path, "detector model manifest")
     model = manifest.get("models", {}).get(model_name)
     if not isinstance(model, dict):
@@ -105,10 +107,45 @@ def _detector_profile(manifest_path: Path, model_name: str) -> dict[str, object]
     asset_sha = model.get("sha256")
     if not isinstance(asset_sha, str) or len(asset_sha) != 64:
         raise DatasetError(f"detector model {model_name} is missing a pinned archive SHA-256")
+    archive_root = model.get("archive_root")
+    onnx_file = model.get("onnx_file")
+    config_file = model.get("config_file")
+    if not all(isinstance(value, str) and value for value in (archive_root, onnx_file, config_file)):
+        raise DatasetError(f"detector model {model_name} is missing extracted asset paths")
+    extracted = model_root / archive_root
+    onnx_path = extracted / onnx_file
+    config_path = extracted / config_file
+    if not onnx_path.is_file() or not config_path.is_file():
+        raise DatasetError(f"detector model {model_name} extracted assets are incomplete")
     return {
         "asset_sha256": asset_sha,
         "manifest_sha256": _sha256_file(manifest_path),
+        "onnx_sha256": _sha256_file(onnx_path),
+        "config_sha256": _sha256_file(config_path),
     }
+
+
+def _runtime_environment_sha256() -> str:
+    distributions = sorted({
+        (str(dist.metadata.get("Name") or "").lower(), str(dist.version))
+        for dist in importlib_metadata.distributions()
+        if dist.metadata.get("Name")
+    })
+    finetune_root = Path(__file__).resolve().parent
+    runtime_contract = {
+        name: _sha256_file(finetune_root / name)
+        for name in ("Dockerfile.train", "requirements-train.lock", "requirements-paddle-runtime.lock")
+    }
+    payload = {
+        "python": sys.version,
+        "python_implementation": platform.python_implementation(),
+        "machine": platform.machine(),
+        "system": platform.system(),
+        "distributions": distributions,
+        "runtime_contract": runtime_contract,
+    }
+    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _paddleocr_profile(root: Path) -> dict[str, str]:
@@ -141,7 +178,7 @@ def build_ocr_producer_profile(
 ) -> dict[str, object]:
     selected = recognizer or load_selected_recognizer(args.baseline_result)
     manifest_path = Path(args.detector_manifest).resolve()
-    detector = _detector_profile(manifest_path, args.detector_model)
+    detector = _detector_profile(manifest_path, Path(args.detector_root).resolve(), args.detector_model)
     if args.detector_edge <= 0:
         raise DatasetError("detector edge must be positive")
     if args.detector_threads <= 0:
@@ -159,6 +196,9 @@ def build_ocr_producer_profile(
         "detector_edge": args.detector_edge,
         "detector_threads": args.detector_threads,
         "detector_asset_sha256": detector["asset_sha256"],
+        "detector_onnx_sha256": detector["onnx_sha256"],
+        "detector_config_sha256": detector["config_sha256"],
+        "inference_runtime_sha256": _runtime_environment_sha256(),
         "paddleocr_source_sha256": paddleocr["source_sha256"],
         "paddleocr_dictionary_sha256": paddleocr["dictionary_sha256"],
         "implementation": {
@@ -286,6 +326,11 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
             if state.get("profile") != profile:
                 raise DatasetError("full-document output profile differs from the requested inputs/models")
             if state.get("status") == "completed":
+                expected_result_sha = state.get("result_sha256")
+                if not isinstance(expected_result_sha, str) or len(expected_result_sha) != 64:
+                    raise DatasetError("completed full-document state is missing result SHA-256")
+                if not result_path.is_file() or _sha256_file(result_path) != expected_result_sha:
+                    raise DatasetError("completed full-document result SHA-256 mismatch")
                 result = _read_json_object(result_path, "full-document result")
                 if result.get("profile") != profile or result.get("status") != "ok":
                     raise DatasetError("completed full-document state/result disagree")
@@ -317,6 +362,8 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
                 detector_edge=args.detector_edge,
                 threads=args.detector_threads,
             )
+            if detector.onnx_sha256 != profile["detector_onnx_sha256"] or detector.config_sha256 != profile["detector_config_sha256"]:
+                raise DatasetError("loaded detector assets changed after OCR producer profile resolution")
             predictions = sort_text_predictions(detector.predict(image))
             prediction_crops = refine_prediction_crops(image, predictions)
             predictions = [prediction for prediction, _ in prediction_crops]
@@ -408,7 +455,12 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
                 "text_lines": [region["text"] for region in regions],
             }
             _write_json_atomic(result_path, result)
-            _write_json_atomic(state_path, {"schema_version": 2, "status": "completed", "profile": profile})
+            _write_json_atomic(state_path, {
+                "schema_version": 2,
+                "status": "completed",
+                "profile": profile,
+                "result_sha256": _sha256_file(result_path),
+            })
             return result
         except Exception as exc:
             _write_json_atomic(

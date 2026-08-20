@@ -12,6 +12,9 @@ _SHA_FIELDS = {
     "recognizer_config_sha256",
     "detector_manifest_sha256",
     "detector_asset_sha256",
+    "detector_onnx_sha256",
+    "detector_config_sha256",
+    "inference_runtime_sha256",
     "paddleocr_source_sha256",
     "paddleocr_dictionary_sha256",
 }
@@ -33,6 +36,7 @@ _PROFILE_FIELDS = {
 }
 _RAW_PROFILE_FIELDS = {*_PROFILE_FIELDS, "parser"}
 _RAW_IMPLEMENTATION_FIELDS = {*_IMPLEMENTATION_SHA_FIELDS, "parser", "parser_contract"}
+_ALLOWED_DETECTOR_MODELS = {"PP-OCRv5_mobile_det", "PP-OCRv6_tiny_det", "PP-OCRv6_small_det"}
 
 
 def _require_sha256(value: object, label: str) -> str:
@@ -65,8 +69,8 @@ def runtime_observation_profile(raw: object, *, expected_image_sha256: str | Non
     if profile.get("recognizer_device") not in {"cpu", "gpu"}:
         raise ParserDatasetError("runtime OCR profile recognizer_device must be cpu or gpu")
     detector_model = str(profile.get("detector_model") or "").strip()
-    if not detector_model:
-        raise ParserDatasetError("runtime OCR profile detector_model is required")
+    if detector_model not in _ALLOWED_DETECTOR_MODELS:
+        raise ParserDatasetError("runtime OCR profile detector_model must be a supported detector id")
     profile["detector_model"] = detector_model
     for field in ("detector_edge", "detector_threads"):
         value = profile.get(field)

@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from browser_ocr.finetune.dataset import DatasetError
 from browser_ocr.finetune.full_document_cli import (
@@ -12,11 +13,12 @@ from browser_ocr.finetune.full_document_cli import (
     build_ocr_producer_profile,
     build_parser,
     load_selected_recognizer,
+    run_full_document,
 )
 
 
 class FullDocumentCliContractTest(unittest.TestCase):
-    def _producer_inputs(self, root: Path, *, source_marker: str = "v1") -> tuple[Path, Path, Path]:
+    def _producer_inputs(self, root: Path, *, source_marker: str = "v1") -> tuple[Path, Path, Path, Path]:
         model = root / "model"
         model.mkdir(parents=True)
         checkpoint = model / "best_accuracy.pdparams"
@@ -30,8 +32,18 @@ class FullDocumentCliContractTest(unittest.TestCase):
         }), encoding="utf-8")
         detector = root / "detector-models.json"
         detector.write_text(json.dumps({
-            "models": {"PP-OCRv5_mobile_det": {"sha256": "d" * 64}},
+            "models": {"PP-OCRv5_mobile_det": {
+                "sha256": "d" * 64,
+                "archive_root": "PP-OCRv5_mobile_det_onnx_infer",
+                "onnx_file": "inference.onnx",
+                "config_file": "inference.yml",
+            }},
         }), encoding="utf-8")
+        detector_root = root / "detector-cache"
+        extracted = detector_root / "PP-OCRv5_mobile_det_onnx_infer"
+        extracted.mkdir(parents=True)
+        (extracted / "inference.onnx").write_bytes(b"detector-onnx-v1")
+        (extracted / "inference.yml").write_text("PostProcess: {}\n", encoding="utf-8")
         paddle = root / "PaddleOCR"
         (paddle / "tools").mkdir(parents=True)
         (paddle / "ppocr" / "utils" / "dict").mkdir(parents=True)
@@ -39,7 +51,7 @@ class FullDocumentCliContractTest(unittest.TestCase):
         (paddle / "tools" / "infer_rec.py").write_text(f"# infer {source_marker}\n", encoding="utf-8")
         (paddle / "ppocr" / "engine" / "runner.py").write_text(f"# runner {source_marker}\n", encoding="utf-8")
         (paddle / "ppocr" / "utils" / "dict" / "ppocrv5_korean_dict.txt").write_text("가\n나\n", encoding="utf-8")
-        return baseline, detector, paddle
+        return baseline, detector, paddle, detector_root
 
     def test_output_profile_pins_pipeline_and_parser_implementation(self) -> None:
         profile = _implementation_profile()
@@ -96,12 +108,13 @@ class FullDocumentCliContractTest(unittest.TestCase):
     def test_ocr_producer_profile_binds_actual_paddleocr_source_content(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            baseline, detector, paddle = self._producer_inputs(root)
+            baseline, detector, paddle, detector_root = self._producer_inputs(root)
             args = build_parser().parse_args([
                 "--image", str(root / "unused.jpg"),
                 "--baseline-result", str(baseline),
                 "--output-dir", str(root / "out"),
                 "--detector-manifest", str(detector),
+                "--detector-root", str(detector_root),
                 "--paddleocr-root", str(paddle),
                 "--recognizer-device", "cpu",
             ])
@@ -112,6 +125,59 @@ class FullDocumentCliContractTest(unittest.TestCase):
             (paddle / "ppocr" / "engine" / "runner.py").write_text("# modified runtime\n", encoding="utf-8")
             second = build_ocr_producer_profile(args)
             self.assertNotEqual(second["paddleocr_source_sha256"], first["paddleocr_source_sha256"])
+
+            self.assertRegex(first["inference_runtime_sha256"], r"^[0-9a-f]{64}$")
+            self.assertEqual(first["detector_onnx_sha256"], hashlib.sha256(b"detector-onnx-v1").hexdigest())
+            onnx = detector_root / "PP-OCRv5_mobile_det_onnx_infer" / "inference.onnx"
+            onnx.write_bytes(b"detector-onnx-v2")
+            third = build_ocr_producer_profile(args)
+            self.assertNotEqual(third["detector_onnx_sha256"], first["detector_onnx_sha256"])
+
+    def test_ocr_producer_profile_changes_when_inference_runtime_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            baseline, detector, paddle, detector_root = self._producer_inputs(root)
+            args = build_parser().parse_args([
+                "--image", str(root / "unused.jpg"),
+                "--baseline-result", str(baseline),
+                "--output-dir", str(root / "out"),
+                "--detector-manifest", str(detector),
+                "--detector-root", str(detector_root),
+                "--paddleocr-root", str(paddle),
+                "--recognizer-device", "cpu",
+            ])
+            with patch("browser_ocr.finetune.full_document_cli._runtime_environment_sha256", return_value="a" * 64):
+                first = build_ocr_producer_profile(args)
+            with patch("browser_ocr.finetune.full_document_cli._runtime_environment_sha256", return_value="b" * 64):
+                second = build_ocr_producer_profile(args)
+            self.assertEqual(first["inference_runtime_sha256"], "a" * 64)
+            self.assertEqual(second["inference_runtime_sha256"], "b" * 64)
+            self.assertNotEqual(first, second)
+
+    def test_completed_full_document_rejects_mutated_result_content(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            image = root / "doc.jpg"
+            image.write_bytes(b"fixture-image")
+            output = root / "out"
+            output.mkdir()
+            profile = {"fixture": "profile"}
+            original = {"status": "ok", "profile": profile, "regions": [{"text": "ORIGINAL"}]}
+            result_path = output / "result.json"
+            result_path.write_text(json.dumps(original, sort_keys=True), encoding="utf-8")
+            digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+            (output / "state.json").write_text(json.dumps({
+                "schema_version": 2, "status": "completed", "profile": profile, "result_sha256": digest,
+            }), encoding="utf-8")
+            forged = {**original, "regions": [{"text": "FORGED OCR"}]}
+            result_path.write_text(json.dumps(forged, sort_keys=True), encoding="utf-8")
+            args = build_parser().parse_args([
+                "--image", str(image), "--baseline-result", str(root / "unused.json"), "--output-dir", str(output),
+            ])
+            with patch("browser_ocr.finetune.full_document_cli.load_selected_recognizer", return_value={}), \
+                 patch("browser_ocr.finetune.full_document_cli._profile", return_value=profile):
+                with self.assertRaisesRegex(DatasetError, "result.*SHA-256|completed.*result"):
+                    run_full_document(args)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from .real_data import (
     finalize_real_annotation,
     load_real_source_manifest,
     prepare_real_annotation,
+    REAL_PARSER_LOCK_FILE,
 )
 from .observation_profile import runtime_observation_producer
 from .training_builders import build_runtime_dataset, build_synthetic_dataset
@@ -119,7 +120,7 @@ def _prepare_real(source_manifest: str, results_root: str, output_dir: str) -> d
     source_manifest_sha = _sha256_file(source.manifest_path)
     source_samples_sha = _sha256_file(source.samples_path)
     index_path = annotations / "index.json"
-    with _exclusive_lock(output / ".prepare-real.lock"):
+    with _exclusive_lock(output / REAL_PARSER_LOCK_FILE):
         if index_path.is_file():
             index = _read_json(index_path, "annotation index")
             if index.get("schema_version") != 3:
@@ -220,7 +221,7 @@ def _prepare_real(source_manifest: str, results_root: str, output_dir: str) -> d
         return {"status": "ok", "documents": len(entries), "annotations_dir": str(annotations), "reused": False, "resumed": resumed}
 
 
-def _finalize_real(annotations_dir: str, dataset_id: str, output_dir: str) -> dict[str, Any]:
+def _finalize_real_unlocked(annotations_dir: str, dataset_id: str, output_dir: str) -> dict[str, Any]:
     root = Path(annotations_dir).resolve()
     index = _read_json(root / "index.json", "annotation index")
     if index.get("schema_version") != 3:
@@ -299,6 +300,12 @@ def _finalize_real(annotations_dir: str, dataset_id: str, output_dir: str) -> di
         "documents": len(dataset.documents),
         "fingerprint": dataset.fingerprint,
     }
+
+
+def _finalize_real(annotations_dir: str, dataset_id: str, output_dir: str) -> dict[str, Any]:
+    annotations = Path(annotations_dir).resolve()
+    with _exclusive_lock(annotations.parent / REAL_PARSER_LOCK_FILE):
+        return _finalize_real_unlocked(annotations_dir, dataset_id, output_dir)
 
 
 def main(argv: list[str] | None = None) -> int:

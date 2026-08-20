@@ -5,15 +5,16 @@ import hashlib
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from browser_ocr.document_parsing.real_data import annotation_immutable_sha256, load_real_source_manifest, prepare_real_annotation
+from browser_ocr.document_parsing.real_data import REAL_PARSER_LOCK_FILE, annotation_immutable_sha256, load_real_source_manifest, prepare_real_annotation
 from browser_ocr.finetune.real_parser_data_cli import _batch_profile, _full_document_args, build_parser, run_real_batch
 
 
 class RealParserDataCliTest(unittest.TestCase):
-    def _model_inputs(self, root: Path) -> tuple[Path, Path, Path]:
+    def _model_inputs(self, root: Path) -> tuple[Path, Path, Path, Path]:
         checkpoint = root / "best.pdparams"
         checkpoint.write_bytes(b"recognizer-checkpoint")
         (root / "config.yml").write_text("Global: {}\n", encoding="utf-8")
@@ -25,8 +26,18 @@ class RealParserDataCliTest(unittest.TestCase):
         }), encoding="utf-8")
         detector_manifest = root / "detector-models.json"
         detector_manifest.write_text(json.dumps({
-            "models": {"PP-OCRv5_mobile_det": {"sha256": "d" * 64}},
+            "models": {"PP-OCRv5_mobile_det": {
+                "sha256": "d" * 64,
+                "archive_root": "PP-OCRv5_mobile_det_onnx_infer",
+                "onnx_file": "inference.onnx",
+                "config_file": "inference.yml",
+            }},
         }), encoding="utf-8")
+        detector_root = root / "detector-cache"
+        extracted = detector_root / "PP-OCRv5_mobile_det_onnx_infer"
+        extracted.mkdir(parents=True)
+        (extracted / "inference.onnx").write_bytes(b"detector-onnx")
+        (extracted / "inference.yml").write_text("PostProcess: {}\n", encoding="utf-8")
         paddle_root = root / "PaddleOCR"
         (paddle_root / "tools").mkdir(parents=True)
         (paddle_root / "ppocr" / "utils" / "dict").mkdir(parents=True)
@@ -34,7 +45,7 @@ class RealParserDataCliTest(unittest.TestCase):
         (paddle_root / "tools" / "infer_rec.py").write_text("# infer fixture\n", encoding="utf-8")
         (paddle_root / "ppocr" / "engine" / "runner.py").write_text("# runner fixture\n", encoding="utf-8")
         (paddle_root / "ppocr" / "utils" / "dict" / "ppocrv5_korean_dict.txt").write_text("가\n나\n", encoding="utf-8")
-        return baseline, detector_manifest, paddle_root
+        return baseline, detector_manifest, paddle_root, detector_root
 
     def _source_manifest(self, root: Path) -> Path:
         root.mkdir(parents=True, exist_ok=True)
@@ -65,12 +76,13 @@ class RealParserDataCliTest(unittest.TestCase):
 
     def _completed_batch_fixture(self, root: Path) -> tuple[argparse.Namespace, Path]:
         source_manifest = self._source_manifest(root / "source")
-        baseline, detector_manifest, paddle_root = self._model_inputs(root)
+        baseline, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
         output = root / "out"
         args = build_parser().parse_args([
             "--source-manifest", str(source_manifest),
             "--baseline-result", str(baseline),
             "--detector-manifest", str(detector_manifest),
+            "--detector-root", str(detector_root),
             "--paddleocr-root", str(paddle_root),
             "--output-dir", str(output),
             "--recognizer-device", "cpu",
@@ -156,6 +168,34 @@ class RealParserDataCliTest(unittest.TestCase):
         self.assertEqual(args.detector_threads, 1)
         self.assertEqual(args.recognizer_device, "gpu")
 
+    def test_real_batch_uses_shared_real_parser_output_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source_manifest = self._source_manifest(root / "source")
+            baseline, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
+            output = root / "out"
+            args = build_parser().parse_args([
+                "--source-manifest", str(source_manifest),
+                "--baseline-result", str(baseline),
+                "--detector-manifest", str(detector_manifest),
+                "--detector-root", str(detector_root),
+                "--paddleocr-root", str(paddle_root),
+                "--output-dir", str(output),
+                "--recognizer-device", "cpu",
+            ])
+            captured: list[Path] = []
+
+            @contextmanager
+            def stop_after_lock(path: Path):
+                captured.append(path)
+                raise RuntimeError("captured lock")
+                yield
+
+            with patch("browser_ocr.finetune.real_parser_data_cli._exclusive_lock", stop_after_lock):
+                with self.assertRaisesRegex(RuntimeError, "captured lock"):
+                    run_real_batch(args)
+            self.assertEqual(captured, [output.resolve() / REAL_PARSER_LOCK_FILE])
+
     def test_each_real_photo_is_routed_through_full_document_cli_contract(self) -> None:
         args = build_parser().parse_args([
             "--source-manifest", "/real/manifest.json",
@@ -191,11 +231,12 @@ class RealParserDataCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             source_manifest = self._source_manifest(root / "source")
-            baseline, detector_manifest, paddle_root = self._model_inputs(root)
+            baseline, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
             args = build_parser().parse_args([
                 "--source-manifest", str(source_manifest),
                 "--baseline-result", str(baseline),
                 "--detector-manifest", str(detector_manifest),
+                "--detector-root", str(detector_root),
                 "--paddleocr-root", str(paddle_root),
                 "--output-dir", str(root / "out"),
                 "--recognizer-device", "cpu",
@@ -209,7 +250,12 @@ class RealParserDataCliTest(unittest.TestCase):
             self.assertIn("full_document", producer["implementation"])
 
             detector_manifest.write_text(json.dumps({
-                "models": {"PP-OCRv5_mobile_det": {"sha256": "e" * 64}},
+                "models": {"PP-OCRv5_mobile_det": {
+                    "sha256": "e" * 64,
+                    "archive_root": "PP-OCRv5_mobile_det_onnx_infer",
+                    "onnx_file": "inference.onnx",
+                    "config_file": "inference.yml",
+                }},
             }), encoding="utf-8")
             second = _batch_profile(args, source)
             self.assertNotEqual(second["ocr_producer"], producer)
@@ -222,12 +268,13 @@ class RealParserDataCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             source_manifest = self._source_manifest(root / "source")
-            baseline, detector_manifest, paddle_root = self._model_inputs(root)
+            baseline, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
             output = root / "out"
             args = build_parser().parse_args([
                 "--source-manifest", str(source_manifest),
                 "--baseline-result", str(baseline),
                 "--detector-manifest", str(detector_manifest),
+                "--detector-root", str(detector_root),
                 "--paddleocr-root", str(paddle_root),
                 "--output-dir", str(output),
                 "--recognizer-device", "cpu",

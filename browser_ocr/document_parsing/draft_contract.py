@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Mapping
 
 from .contract import DRAFT_FIELDS
@@ -124,6 +124,23 @@ def normalize_parser_draft(value: Mapping[str, Any]) -> dict[str, Any]:
             normalized[field] = _schedule_times(raw)
         elif field in {"start_date", "end_date"}:
             normalized[field] = _date(raw, field)
+
+    schedule = normalized.get("schedule_times")
+    frequency = normalized.get("frequency_per_day")
+    as_needed = normalized.get("as_needed")
+    if as_needed is True and (frequency is not None or schedule):
+        raise ValueError("PRN/as_needed medication cannot have a fixed daily frequency or schedule")
+    if schedule and frequency is not None and frequency != len(schedule):
+        raise ValueError("frequency_per_day must match the number of schedule_times")
+    start = normalized.get("start_date")
+    end = normalized.get("end_date")
+    days = normalized.get("prescription_days")
+    if start and end and end < start:
+        raise ValueError("end_date must be on or after start_date")
+    if start and end and days is not None:
+        expected = (date.fromisoformat(start) + timedelta(days=days - 1)).isoformat()
+        if end != expected:
+            raise ValueError("end_date conflicts with start_date and prescription_days")
     return normalized
 
 

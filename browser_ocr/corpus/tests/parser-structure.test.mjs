@@ -90,14 +90,23 @@ test("parser gold derives supported structured semantics from associated instruc
     ],
   });
   assert.equal(rows.length, 1);
-  assert.deepEqual(rows[0].draft.schedule_times, ["08:00"]);
+  assert.equal(rows[0].draft.schedule_times, undefined);
   assert.equal(rows[0].draft.meal_relation, "after_meal");
   assert.equal(rows[0].draft.as_needed, true);
   assert.equal(rows[0].draft.administration_route, "oral");
-  assert.deepEqual(rows[0].evidence.schedule_times, ["i"]);
+  assert.equal(rows[0].evidence.schedule_times, undefined);
   assert.deepEqual(rows[0].evidence.meal_relation, ["i"]);
   assert.deepEqual(rows[0].evidence.as_needed, ["i"]);
   assert.deepEqual(rows[0].evidence.administration_route, ["i"]);
+
+  const scheduledRows = parserTrainingRows({
+    regions: [
+      { region_id: "p2", text: "라마바정", semantic_role: "product", association_group: "m2" },
+      { region_id: "i2", text: "오전 8시 식후 경구 복용", semantic_role: "instruction", association_group: "m2" },
+    ],
+  });
+  assert.deepEqual(scheduledRows[0].draft.schedule_times, ["08:00"]);
+  assert.deepEqual(scheduledRows[0].evidence.schedule_times, ["i2"]);
 
   const legacyRows = expectedRows({
     regions: [

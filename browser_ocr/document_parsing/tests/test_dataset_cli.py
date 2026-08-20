@@ -4,11 +4,13 @@ import hashlib
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from browser_ocr.document_parsing.dataset_cli import _finalize_real, _prepare_real, build_parser, main
+from browser_ocr.document_parsing.real_data import REAL_PARSER_LOCK_FILE
 from browser_ocr.document_parsing.training_dataset import ParserDatasetError, load_parser_dataset, write_parser_dataset
 
 
@@ -54,6 +56,9 @@ class ParserDatasetCliTest(unittest.TestCase):
             "detector_edge": 640,
             "detector_threads": 1,
             "detector_asset_sha256": "5" * 64,
+            "detector_onnx_sha256": "e" * 64,
+            "detector_config_sha256": "f" * 64,
+            "inference_runtime_sha256": "0" * 64,
             "paddleocr_source_sha256": "a" * 64,
             "paddleocr_dictionary_sha256": "b" * 64,
             "parser": "geometry_rule_v2",
@@ -89,6 +94,31 @@ class ParserDatasetCliTest(unittest.TestCase):
             "--dataset-id", "fixture", "--observation-kind", "synthetic_ocr", "--split", "train",
         ])
         self.assertEqual(args.observation_kind, "synthetic_ocr")
+
+    def test_prepare_and_finalize_use_shared_real_parser_output_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source_manifest, results_root = self._real_source_and_result(root)
+            output = root / "prepared"
+            captured: list[Path] = []
+
+            @contextmanager
+            def stop_after_lock(path: Path):
+                captured.append(path)
+                raise RuntimeError("captured lock")
+                yield
+
+            with patch("browser_ocr.document_parsing.dataset_cli._exclusive_lock", stop_after_lock):
+                with self.assertRaisesRegex(RuntimeError, "captured lock"):
+                    _prepare_real(str(source_manifest), str(results_root), str(output))
+            self.assertEqual(captured[-1], output.resolve() / REAL_PARSER_LOCK_FILE)
+
+            annotations = output / "annotations"
+            annotations.mkdir(parents=True, exist_ok=True)
+            with patch("browser_ocr.document_parsing.dataset_cli._exclusive_lock", stop_after_lock):
+                with self.assertRaisesRegex(RuntimeError, "captured lock"):
+                    _finalize_real(str(annotations), "fixture", str(root / "final"))
+            self.assertEqual(captured[-1], output.resolve() / REAL_PARSER_LOCK_FILE)
 
     def test_validate_reports_machine_readable_summary(self) -> None:
         document = {
@@ -224,7 +254,7 @@ class ParserDatasetCliTest(unittest.TestCase):
             annotation["gold_rows_reviewed"] = True
             annotation_path.write_text(json.dumps(annotation, ensure_ascii=False), encoding="utf-8")
 
-            with self.assertRaisesRegex(ParserDatasetError, "labeled product.*gold"):
+            with self.assertRaisesRegex(ParserDatasetError, "medication groups.*image gold"):
                 _finalize_real(str(output / "annotations"), "real-final", str(root / "final"))
 
     def test_finalize_real_requires_exact_bound_source_document_set(self) -> None:

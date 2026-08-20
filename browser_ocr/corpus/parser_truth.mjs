@@ -60,12 +60,15 @@ function administrationRoute(value) {
 function regimenSemantics(region) {
   const text = String(region.text || "");
   const checkboxOptions = (text.match(/□/gu) || []).length;
+  const asNeeded = checkboxOptions <= 1 && /필요시|필요\s*시|\bPRN\b|as\s+needed/iu.test(text);
   return {
     region_id: region.region_id,
-    schedule_times: parsedTimes(text),
+    // Product draft semantics forbid PRN together with a fixed daily schedule.
+    // Keep the time text as OCR supervision, but do not make it contradictory image-level gold.
+    schedule_times: asNeeded ? [] : parsedTimes(text),
     meal_relation: checkboxOptions > 1 ? null : mealRelation(text),
     administration_route: administrationRoute(text),
-    as_needed: checkboxOptions <= 1 && /필요시|필요\s*시|\bPRN\b|as\s+needed/iu.test(text),
+    as_needed: asNeeded,
   };
 }
 

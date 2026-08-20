@@ -17,6 +17,7 @@ _ALLOWED_DOCUMENT_TYPES = {"prescription", "medication_bag"}
 _SHA256_LENGTH = 64
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,63}$")
+REAL_PARSER_LOCK_FILE = ".real-parser.lock"
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,7 @@ def load_real_source_manifest(manifest_path: str | Path) -> RealSourceDataset:
 
     samples: list[dict[str, Any]] = []
     ids: set[str] = set()
+    image_hashes: dict[str, str] = {}
     for line_number, line in enumerate(samples_path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
@@ -189,6 +191,12 @@ def load_real_source_manifest(manifest_path: str | Path) -> RealSourceDataset:
         expected_sha = str(raw.get("image_sha256") or "")
         if len(expected_sha) != _SHA256_LENGTH or _sha256_file(image_path) != expected_sha:
             raise ParserDatasetError(f"{document_id}.image SHA-256 mismatch")
+        previous_document = image_hashes.get(expected_sha)
+        if previous_document is not None:
+            raise ParserDatasetError(
+                f"real source contains duplicate image SHA-256 for {previous_document} and {document_id}"
+            )
+        image_hashes[expected_sha] = document_id
         provenance = raw.get("provenance")
         if not isinstance(provenance, dict) or set(provenance) != {"source_id", "license_id"}:
             raise ParserDatasetError(f"{document_id}.provenance requires exactly source_id and license_id")
@@ -326,4 +334,5 @@ __all__ = [
     "finalize_real_annotation",
     "load_real_source_manifest",
     "prepare_real_annotation",
+    "REAL_PARSER_LOCK_FILE",
 ]

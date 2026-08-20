@@ -30,6 +30,9 @@ def _runtime_profile() -> dict:
         "detector_edge": 640,
         "detector_threads": 1,
         "detector_asset_sha256": "5" * 64,
+        "detector_onnx_sha256": "e" * 64,
+        "detector_config_sha256": "f" * 64,
+        "inference_runtime_sha256": "0" * 64,
         "paddleocr_source_sha256": "6" * 64,
         "paddleocr_dictionary_sha256": "7" * 64,
         "implementation": {
@@ -153,6 +156,12 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
                 write_parser_dataset(Path(raw), dataset_id="bad-runtime-extra", documents=[document])
 
         document["observation"]["profile"] = _runtime_profile()
+        document["observation"]["profile"]["detector_model"] = "patient-john-ssn"
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "detector_model"):
+                write_parser_dataset(Path(raw), dataset_id="bad-runtime-model-id", documents=[document])
+
+        document["observation"]["profile"] = _runtime_profile()
         document["observation"]["profile"]["implementation"]["patient_id"] = "secret"
         with tempfile.TemporaryDirectory() as raw:
             with self.assertRaisesRegex(ParserDatasetError, "unsupported runtime OCR implementation fields"):
@@ -256,6 +265,36 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
                 document["gold_rows"][0]["draft"] = {field: value}
                 with self.assertRaisesRegex(ParserDatasetError, field):
                     write_parser_dataset(Path(raw), dataset_id=f"bad-{field}", documents=[document])
+
+    def test_complete_document_requires_gold_for_each_labeled_medication_group(self) -> None:
+        document = _doc()
+        document["gold_rows"][0]["gold_row_id"] = "different-group"
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "med-1.*image gold|missing from image gold"):
+                write_parser_dataset(Path(raw), dataset_id="missing-group-gold", documents=[document])
+
+        document = _doc()
+        document["observation"]["nodes"][0].update(semantic_role="other", association_group=None)
+        document["relations"] = []
+        document["gold_rows"] = []
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "med-1.*image gold|missing from image gold"):
+                write_parser_dataset(Path(raw), dataset_id="dose-group-empty-gold", documents=[document])
+
+    def test_gold_draft_rejects_cross_field_product_invariants(self) -> None:
+        invalid_drafts = [
+            {"as_needed": True, "frequency_per_day": 1},
+            {"as_needed": True, "schedule_times": ["08:00"]},
+            {"frequency_per_day": 2, "schedule_times": ["08:00"]},
+            {"start_date": "2026-08-01", "end_date": "2026-07-31"},
+            {"start_date": "2026-08-01", "end_date": "2026-08-05", "prescription_days": 3},
+        ]
+        for index, draft in enumerate(invalid_drafts):
+            with self.subTest(draft=draft), tempfile.TemporaryDirectory() as raw:
+                document = _doc()
+                document["gold_rows"][0]["draft"] = draft
+                with self.assertRaises(ParserDatasetError):
+                    write_parser_dataset(Path(raw), dataset_id=f"bad-cross-field-{index}", documents=[document])
 
     def test_completed_dataset_rejects_persisted_manifest_metadata_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

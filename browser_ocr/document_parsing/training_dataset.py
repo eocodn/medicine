@@ -362,12 +362,21 @@ def _normalize_document(value: object) -> dict[str, Any]:
         relations.sort(key=lambda item: (item["product_node_id"], item["field_node_id"], item["label"]))
         if relations != expected_relations:
             raise ParserDatasetError(f"{document_id} complete annotation relation supervision is incomplete")
-        has_labeled_product = any(
-            node["label_status"] == "labeled" and node["semantic_role"] == "product"
+        medication_roles = {"product", "product_label", "dose", "frequency", "duration", "instruction", "schedule"}
+        labeled_groups = {
+            str(node["association_group"])
             for node in nodes
-        )
-        if has_labeled_product and not gold_rows:
-            raise ParserDatasetError(f"{document_id} labeled product evidence requires non-empty image gold")
+            if node["label_status"] == "labeled"
+            and node["semantic_role"] in medication_roles
+            and node["association_group"] is not None
+            and node["association_group"] != "document"
+        }
+        gold_group_ids = {row["gold_row_id"] for row in gold_rows}
+        missing_gold_groups = sorted(labeled_groups - gold_group_ids)
+        if missing_gold_groups:
+            raise ParserDatasetError(
+                f"{document_id} labeled medication groups are missing from image gold: {', '.join(missing_gold_groups)}"
+            )
 
     return {
         "document_id": document_id,

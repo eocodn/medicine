@@ -34,6 +34,9 @@ def _runtime_profile(image_sha256: str) -> dict:
         "detector_edge": 640,
         "detector_threads": 1,
         "detector_asset_sha256": "5" * 64,
+        "detector_onnx_sha256": "e" * 64,
+        "detector_config_sha256": "f" * 64,
+        "inference_runtime_sha256": "0" * 64,
         "paddleocr_source_sha256": "a" * 64,
         "paddleocr_dictionary_sha256": "b" * 64,
         "parser": "geometry_rule_v2",
@@ -113,6 +116,28 @@ class RealParserDataTest(unittest.TestCase):
                 "samples_file": "samples.jsonl",
             }), encoding="utf-8")
             with self.assertRaisesRegex(ParserDatasetError, "pseudonymous document_id"):
+                load_real_source_manifest(manifest)
+
+    def test_real_source_rejects_duplicate_image_hash_across_holdout_splits(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            content = b"\xff\xd8\xffsame-deidentified-photo"
+            digest = hashlib.sha256(content).hexdigest()
+            for document_id in ("rx-001", "rx-002"):
+                (root / f"{document_id}.jpg").write_bytes(content)
+            rows = []
+            for document_id, split in (("rx-001", "val"), ("rx-002", "test")):
+                rows.append({
+                    "document_id": document_id, "image": f"{document_id}.jpg", "image_sha256": digest,
+                    "split": split, "document_type": "prescription", "layout_family": "real_unknown",
+                    "privacy": {"contains_patient_data": False, "deidentified": True},
+                    "provenance": {"source_id": "clinic-batch-a", "license_id": "private-deidentified"},
+                    "scenario_tags": ["prescription"], "risk_tags": ["real_photo"],
+                })
+            (root / "samples.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"schema_version": 1, "dataset_id": "duplicate-real", "source_kind": "real_deidentified", "patient_data_policy": "forbid", "samples_file": "samples.jsonl"}), encoding="utf-8")
+            with self.assertRaisesRegex(ParserDatasetError, "duplicate image SHA-256"):
                 load_real_source_manifest(manifest)
 
     def test_prepare_then_finalize_annotation(self) -> None:
