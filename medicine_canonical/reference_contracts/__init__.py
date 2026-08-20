@@ -1,0 +1,4 @@
+from .v1 import REFERENCE_CONTRACT_MAJOR
+
+
+__all__ = ["REFERENCE_CONTRACT_MAJOR"]

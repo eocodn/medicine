@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
-
-from medicine_reference.mfds_remark_registry import ReviewedMfdsRemark, reviewed_mfds_remark
 
 from .canonical_runtime import (
     has_unlinked_product_rule, item_seq, linked_product_rows, resolved_product_rows,
@@ -52,25 +51,127 @@ def _canonical_paired_ingredient(row: Mapping[str, Any]) -> str | None:
     return row.get("criterion_paired_ingredient_name") or row.get("paired_ingredient_name")
 
 
-def _mfds_remark(row: Mapping[str, Any]) -> ReviewedMfdsRemark | None:
+_SUPPORTED_RUNTIME_EVALUATORS = frozenset({"minimum_separation", "excluded_route"})
+
+
+def _semantic_requires_review(semantic: Mapping[str, Any]) -> bool:
+    mode = str(semantic.get("evaluation_mode") or "")
+    if mode == "review_required":
+        return True
+    if mode == "runtime_evaluable":
+        evaluator = str(semantic.get("evaluator_kind") or "")
+        return (
+            evaluator not in _SUPPORTED_RUNTIME_EVALUATORS
+            and semantic.get("fallback_action") == "review_required"
+        )
+    return False
+
+
+def _legacy_dev_semantics(row: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Keep canonical-DB development flows usable without shipping the registry.
+
+    Android contract databases always contain `reference_criterion_semantics` and
+    the runtime verifier requires that table.  The exact registry import lives
+    only behind this development-only canonical DB fallback and is excluded from
+    the APK package.
+    """
     dataset_key = str(row.get("criterion_source_dataset_key") or row.get("dataset_key") or "")
-    if not dataset_key.startswith("mfds_dur_ingredient:"):
-        return None
-    return reviewed_mfds_remark(row.get("category"), row.get("criterion_qualifier_note") or row.get("qualifier_note"))
+    remark = str(row.get("criterion_qualifier_note") or row.get("qualifier_note") or "").strip()
+    if not dataset_key.startswith("mfds_dur_ingredient:") or not remark:
+        return []
+    try:
+        from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
+        from medicine_canonical.reference_contracts.v1 import semantic_facts_for_reviewed_remark
+
+        reviewed = reviewed_mfds_remark(row.get("category"), remark)
+        facts = semantic_facts_for_reviewed_remark(reviewed) if reviewed is not None else ()
+        return [
+            {
+                "semantic_role": fact.semantic_role,
+                "evaluation_mode": fact.evaluation_mode,
+                "evaluator_kind": fact.evaluator_kind,
+                "fallback_action": fact.fallback_action,
+                "qualifier_type": fact.qualifier_type,
+                "display_text": fact.display_text,
+                "structured_payload": dict(fact.structured_payload),
+                "source_remark": fact.source_remark,
+            }
+            for fact in facts
+        ]
+    except ImportError:
+        # A contract DB must never take this path.  If a non-contract runtime DB
+        # somehow reaches an APK, fail conservatively at the finding level.
+        return [{
+            "semantic_role": "applicability_condition",
+            "evaluation_mode": "review_required",
+            "evaluator_kind": "opaque_condition",
+            "fallback_action": "review_required",
+            "qualifier_type": "source_note",
+            "display_text": remark,
+            "structured_payload": {},
+            "source_remark": remark,
+        }]
 
 
-def _mfds_qualifiers(row: Mapping[str, Any]) -> list[dict[str, object]]:
-    qualifier = _mfds_remark(row)
-    return [qualifier.payload()] if qualifier is not None else []
+def _mfds_semantics(
+    con: sqlite3.Connection,
+    row: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    criterion_rule_id = row.get("criterion_rule_id")
+    if criterion_rule_id is None:
+        return _legacy_dev_semantics(row)
+    try:
+        records = con.execute(
+            """SELECT semantic_role,evaluation_mode,evaluator_kind,fallback_action,
+                      qualifier_type,display_text,structured_payload_json,source_remark
+               FROM reference_criterion_semantics
+               WHERE criterion_rule_id=? ORDER BY ordinal""",
+            (criterion_rule_id,),
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return _legacy_dev_semantics(row)
+    result: list[dict[str, Any]] = []
+    for record in records:
+        payload = json.loads(record[6])
+        if not isinstance(payload, dict):
+            raise ValueError("invalid reference semantic structured payload")
+        result.append({
+            "semantic_role": record[0],
+            "evaluation_mode": record[1],
+            "evaluator_kind": record[2],
+            "fallback_action": record[3],
+            "qualifier_type": record[4],
+            "display_text": record[5],
+            "structured_payload": payload,
+            "source_remark": record[7],
+        })
+    return result
 
 
-def _mfds_criterion_note_requires_review(row: Mapping[str, Any]) -> bool:
-    qualifier = _mfds_remark(row)
-    if qualifier is None:
+def _mfds_qualifiers(con: sqlite3.Connection, row: Mapping[str, Any]) -> list[dict[str, object]]:
+    qualifiers: list[dict[str, object]] = []
+    for semantic in _mfds_semantics(con, row):
+        informational = semantic.get("semantic_role") == "informational"
+        qualifiers.append({
+            "type": semantic.get("qualifier_type"),
+            "text": semantic.get("display_text"),
+            "source_remark": semantic.get("source_remark"),
+            "mode": "informational" if informational else "condition",
+            "requires_review": _semantic_requires_review(semantic),
+        })
+    return qualifiers
+
+
+def _mfds_criterion_note_requires_review(
+    row: Mapping[str, Any],
+    con: sqlite3.Connection | None = None,
+) -> bool:
+    semantics = _mfds_semantics(con, row) if con is not None else _legacy_dev_semantics(row)
+    if not semantics:
         return False
     if row.get("match_method") == "mfds_unanimous_value":
         return True
-    return qualifier.requires_review
+    return any(_semantic_requires_review(semantic) for semantic in semantics)
 
 
 def _details_with_professional_review(details: Any) -> str:
@@ -92,19 +193,28 @@ def _pregnancy_rule_is_conditional(value: Any) -> bool:
 
 
 def _remark_interaction_timing(
-    row: Mapping[str, Any], details: Any,
+    row: Mapping[str, Any], details: Any, con: sqlite3.Connection | None = None,
 ) -> dict[str, Any]:
-    qualifier = _mfds_remark(row)
-    if qualifier is not None and qualifier.mode == "interaction_window":
-        hours = int(qualifier.value or "0")
+    semantics = _mfds_semantics(con, row) if con is not None else _legacy_dev_semantics(row)
+    timing = next(
+        (
+            semantic
+            for semantic in semantics
+            if semantic.get("evaluator_kind") == "minimum_separation"
+        ),
+        None,
+    )
+    if timing is not None:
+        payload = timing.get("structured_payload") or {}
+        hours = int(payload.get("hours") or 0)
         return {
             "status": "structured",
             "kind": "minimum_separation",
             "hours": hours,
             "amount": hours,
             "unit": "시간",
-            "direction": "symmetric",
-            "source_text": qualifier.remark,
+            "direction": payload.get("direction") or "symmetric",
+            "source_text": timing.get("source_remark"),
         }
     return parse_interaction_timing(
         details or "", _canonical_ingredient(row), _canonical_paired_ingredient(row)
@@ -159,9 +269,9 @@ def _combination_risks(
         for row in rows:
             candidate_side = "left" if row.get("item_seq") == target else "right"
             details = _canonical_details(row)
-            qualifiers = _mfds_qualifiers(row)
-            qualifier_review = _mfds_criterion_note_requires_review(row)
-            timing = _remark_interaction_timing(row, details)
+            qualifiers = _mfds_qualifiers(con, row)
+            qualifier_review = _mfds_criterion_note_requires_review(row, con)
+            timing = _remark_interaction_timing(row, details, con)
             if qualifier_review:
                 details = _details_with_professional_review(details)
             if not interaction_timing_applies(
@@ -256,7 +366,7 @@ def _person_specific_risks(
         qualifiers = _dedupe_qualifiers([
             qualifier
             for pregnancy_row in pregnancy_rows
-            for qualifier in _mfds_qualifiers(pregnancy_row)
+            for qualifier in _mfds_qualifiers(con, pregnancy_row)
         ])
         if qualifiers:
             finding["qualifiers"] = qualifiers
@@ -265,7 +375,7 @@ def _person_specific_risks(
         str(candidate["category"])
         for candidate in rows
         if candidate.get("match_method") == "mfds_unanimous_value"
-        and _mfds_remark(candidate) is not None
+        and bool(_mfds_semantics(con, candidate))
     }
     for row in rows:
         category = str(row["category"])
@@ -293,7 +403,7 @@ def _person_specific_risks(
                     "dataset_key": row.get("criterion_source_dataset_key"),
                     "source_row": row.get("criterion_source_row"),
                 }
-                qualifiers = _mfds_qualifiers(row)
+                qualifiers = _mfds_qualifiers(con, row)
                 if qualifiers:
                     finding["qualifiers"] = qualifiers
                 risks.append(finding)
@@ -317,10 +427,10 @@ def _person_specific_risks(
             "dataset_key": row.get("criterion_source_dataset_key"),
             "source_row": row.get("criterion_source_row"),
         }
-        qualifiers = _mfds_qualifiers(row)
+        qualifiers = _mfds_qualifiers(con, row)
         if qualifiers:
             finding["qualifiers"] = qualifiers
-        mfds_note_review = _mfds_criterion_note_requires_review(row) or (
+        mfds_note_review = _mfds_criterion_note_requires_review(row, con) or (
             row.get("match_method") == "mfds_unanimous_value"
             and category in unanimous_review_categories
         )
@@ -344,20 +454,29 @@ def _duplication_groups(
         value = row.get("criterion_rule_value") or row.get("effect_name")
         if not value:
             continue
-        qualifier = _mfds_remark(row)
-        requires_review = _mfds_criterion_note_requires_review(row)
-        if qualifier is not None and qualifier.mode == "form_exclusion":
+        semantics = _mfds_semantics(con, row)
+        qualifier = next(
+            (
+                semantic
+                for semantic in semantics
+                if semantic.get("evaluator_kind") == "excluded_route"
+            ),
+            None,
+        )
+        requires_review = _mfds_criterion_note_requires_review(row, con)
+        if qualifier is not None:
             route = infer_administration_route([
                 row.get("product_dosage_form") or product.get("dosage_form")
             ])
-            if route == qualifier.value:
+            excluded_route = (qualifier.get("structured_payload") or {}).get("route")
+            if route == excluded_route:
                 continue
             if route == "unknown":
                 requires_review = True
         group = str(value)
         entry = groups.setdefault(group, {"requires_review": False, "qualifiers": []})
         entry["requires_review"] = bool(entry["requires_review"] or requires_review)
-        entry["qualifiers"].extend(_mfds_qualifiers(row))
+        entry["qualifiers"].extend(_mfds_qualifiers(con, row))
     for entry in groups.values():
         entry["qualifiers"] = _dedupe_qualifiers(entry["qualifiers"])
     return groups
@@ -449,12 +568,12 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
         elif maximum_days is not None:
             distinct_days.add(maximum_days)
     duration_qualifiers = _dedupe_qualifiers([
-        qualifier for row in duration_rows for qualifier in _mfds_qualifiers(row)
+        qualifier for row in duration_rows for qualifier in _mfds_qualifiers(con, row)
     ])
     if duration_qualifiers:
         duration["qualifiers"] = duration_qualifiers
     duration_qualifier_review = any(
-        _mfds_criterion_note_requires_review(row) for row in duration_rows
+        _mfds_criterion_note_requires_review(row, con) for row in duration_rows
     )
     if not duration_rows:
         if target and has_unlinked_product_rule(con, target, "duration_caution"):
@@ -494,12 +613,12 @@ def evaluate_quantitative(con: sqlite3.Connection, product: Mapping[str, Any], d
     )
     frequency, frequency_reason = _frequency(draft)
     dose_qualifiers = _dedupe_qualifiers([
-        qualifier for row in dose_rows for qualifier in _mfds_qualifiers(row)
+        qualifier for row in dose_rows for qualifier in _mfds_qualifiers(con, row)
     ])
     if dose_qualifiers:
         dose["qualifiers"] = dose_qualifiers
     dose_qualifier_review = any(
-        _mfds_criterion_note_requires_review(row) for row in dose_rows
+        _mfds_criterion_note_requires_review(row, con) for row in dose_rows
     )
     if not dose_rows:
         if target and has_unlinked_product_rule(con, target, "dose_caution"):

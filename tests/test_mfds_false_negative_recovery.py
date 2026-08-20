@@ -4,9 +4,9 @@ from datetime import date
 
 from medicine_app.canonical_runtime import category_resolution_issues
 from medicine_app.canonical_safety import collect_qualitative_risks
-from medicine_app.reference_update import MOBILE_DATA_POLICY_VERSION as RUNTIME_MOBILE_POLICY
+from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR as RUNTIME_CONTRACT_MAJOR
 from medicine_canonical import linking
-from medicine_canonical.mobile import MOBILE_DATA_POLICY_VERSION as BUILDER_MOBILE_POLICY
+from medicine_canonical.mobile import REFERENCE_CONTRACT_MAJOR as BUILDER_CONTRACT_MAJOR
 from medicine_canonical.preprocessing import IdentityResolver
 from medicine_canonical.schema import SCHEMA_VERSION
 from tests.canonical_linking_test_support import CanonicalLinkingFixture
@@ -363,5 +363,5 @@ class MfdsFalseNegativeRecoveryTest(CanonicalLinkingFixture):
 
     def test_semantic_link_change_advances_persisted_generations(self) -> None:
         self.assertEqual(SCHEMA_VERSION, "10")
-        self.assertEqual(BUILDER_MOBILE_POLICY, "4")
-        self.assertEqual(RUNTIME_MOBILE_POLICY, "4")
+        self.assertEqual(BUILDER_CONTRACT_MAJOR, 1)
+        self.assertEqual(RUNTIME_CONTRACT_MAJOR, 1)

@@ -7,14 +7,24 @@ import sqlite3
 from pathlib import Path
 
 from .inspection import verify_canonical_database
+from .reference_contracts.v1 import (
+    REFERENCE_CONTRACT_MAJOR,
+    logical_dataset_id,
+    materialize_reference_semantics,
+    write_build_meta,
+    write_contract_meta,
+)
 
 
-MOBILE_DATA_POLICY_VERSION = "8"
+MOBILE_PHYSICAL_POLICY_VERSION = "8"
+# Compatibility alias for server-side callers while the old name is retired.
+# It is intentionally not part of dataset identity anymore.
+MOBILE_DATA_POLICY_VERSION = MOBILE_PHYSICAL_POLICY_VERSION
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
 )
-RUNTIME_VIEWS = ("product_rule_criteria",)
+RUNTIME_VIEWS: tuple[str, ...] = ()
 COPIED_RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
     "product_flags", "ingredient_rules", "dose_criteria",
@@ -123,28 +133,49 @@ LEFT JOIN mobile_rule_texts dosage_form ON dosage_form.id=r.dosage_form_text_id
 LEFT JOIN mobile_rule_texts details ON details.id=r.details_text_id
 LEFT JOIN mobile_rule_texts notification_date ON notification_date.id=r.notification_date_text_id
 LEFT JOIN mobile_rule_texts change_date ON change_date.id=r.change_date_text_id"""
+MOBILE_PRODUCT_RULE_CRITERIA_VIEW_DDL = """CREATE VIEW product_rule_criteria AS
+SELECT
+    i.id AS criterion_rule_id,
+    r.source_dataset_key AS product_source_dataset_key,
+    r.source_row AS product_source_row,
+    i.source_dataset_key AS criterion_source_dataset_key,
+    i.source_row AS criterion_source_row,
+    r.category,
+    r.item_seq,
+    r.ingredient_code,
+    r.ingredient_name,
+    r.ingredient_name_en,
+    r.paired_item_seq,
+    r.paired_ingredient_code,
+    r.paired_ingredient_name,
+    r.paired_ingredient_name_en,
+    r.effect_name,
+    r.dosage_form AS product_dosage_form,
+    r.details AS product_details,
+    i.sequence_text AS criterion_sequence_text,
+    i.ingredient_name AS criterion_ingredient_name,
+    i.ingredient_name_ko AS criterion_ingredient_name_ko,
+    i.paired_ingredient_name AS criterion_paired_ingredient_name,
+    i.rule_value AS criterion_rule_value,
+    i.dosage_form AS criterion_dosage_form,
+    i.note AS criterion_note,
+    i.qualifier_note AS criterion_qualifier_note,
+    i.details AS criterion_details,
+    d.maximum_daily_amount AS criterion_maximum_daily_amount,
+    d.maximum_daily_unit AS criterion_maximum_daily_unit,
+    d.parse_status AS criterion_dose_parse_status,
+    d.parse_reason AS criterion_dose_parse_reason,
+    l.match_method,
+    l.pair_orientation
+FROM product_criterion_links l
+JOIN product_rules r ON r.id = l.product_rule_id
+JOIN ingredient_rules i ON i.id = l.criterion_rule_id
+LEFT JOIN dose_criteria d ON d.criterion_rule_id = i.id"""
 MOBILE_RULE_TEXT_COLUMNS = (
     "category", "ingredient_code", "ingredient_name", "ingredient_name_en",
     "paired_ingredient_code", "paired_ingredient_name", "paired_ingredient_name_en",
     "effect_name", "dosage_form", "details", "notification_date", "change_date",
 )
-
-
-def _dataset_id(con: sqlite3.Connection) -> str:
-    digest = hashlib.sha256()
-    # The same official source snapshot can produce different runtime rows or a
-    # different physical release when transformation policy changes. Keep that
-    # generation in the release identity so R2 cannot mistake the new output for
-    # an idempotent rebuild of the previous mobile dataset.
-    digest.update(f"mobile-data-policy\0{MOBILE_DATA_POLICY_VERSION}\n".encode("utf-8"))
-    rows = con.execute(
-        "SELECT dataset_key,sha256,row_count FROM source_snapshots ORDER BY dataset_key"
-    ).fetchall()
-    if not rows:
-        raise ValueError("canonical source snapshots are empty")
-    for dataset_key, sha256, row_count in rows:
-        digest.update(f"{dataset_key}\0{str(sha256).lower()}\0{row_count}\n".encode("utf-8"))
-    return f"sha256:{digest.hexdigest()}"
 
 
 def _sha256(path: Path) -> str:
@@ -240,6 +271,7 @@ def build_mobile_database(
     output_db: str | Path,
     *,
     manifest_path: str | Path | None = None,
+    physical_policy_version: str = MOBILE_PHYSICAL_POLICY_VERSION,
 ) -> dict:
     source = Path(canonical_db)
     output = Path(output_db)
@@ -255,6 +287,11 @@ def build_mobile_database(
     temporary = output.with_name(output.name + ".tmp")
     temporary.unlink(missing_ok=True)
 
+    physical_policy_version = str(physical_policy_version).strip()
+    if not physical_policy_version:
+        raise ValueError("mobile physical policy version is required")
+
+    dataset_id: str | None = None
     src = sqlite3.connect(f"file:{source.resolve()}?mode=ro", uri=True)
     try:
         schema_version = src.execute(
@@ -263,10 +300,9 @@ def build_mobile_database(
         build_stage = src.execute(
             "SELECT value FROM canonical_meta WHERE key='build_stage'"
         ).fetchone()
-        if not schema_version or schema_version[0] != "10" or not build_stage or build_stage[0] != "complete":
-            raise ValueError("canonical runtime requires complete schema v10 database")
+        if not schema_version or not build_stage or build_stage[0] != "complete":
+            raise ValueError("reference exporter requires a complete canonical database")
         _assert_product_rule_source_identity_unique(src)
-        dataset_id = _dataset_id(src)
         objects = {
             (kind, name): sql
             for kind, name, sql in src.execute(
@@ -287,6 +323,7 @@ def build_mobile_database(
             for table in COPIED_RUNTIME_TABLES:
                 dst.execute(f'INSERT INTO "{table}" SELECT * FROM source_db."{table}"')
             _populate_compact_product_rules(dst)
+            materialize_reference_semantics(src, dst)
             dst.commit()
             dst.execute("DETACH DATABASE source_db")
             source_indexes = {
@@ -311,6 +348,14 @@ def build_mobile_database(
                 if not ddl:
                     raise ValueError(f"canonical runtime view missing: {view}")
                 dst.execute(ddl)
+            dst.execute(MOBILE_PRODUCT_RULE_CRITERIA_VIEW_DDL)
+            dataset_id = logical_dataset_id(dst)
+            write_contract_meta(dst, dataset_id)
+            write_build_meta(
+                dst,
+                canonical_schema_version=str(schema_version[0]),
+                physical_policy_version=physical_policy_version,
+            )
             dst.commit()
             # Bulk loading millions of WITHOUT ROWID links leaves measurable
             # page slack even in a freshly created database. Compact once on
@@ -334,14 +379,23 @@ def build_mobile_database(
     finally:
         src.close()
 
+    if dataset_id is None:
+        raise RuntimeError("reference contract dataset identity was not materialized")
     payload = {
+        "contract_major": REFERENCE_CONTRACT_MAJOR,
         "dataset_id": dataset_id,
-        "schema_version": "10",
         "sha256": _sha256(output),
         "size_bytes": output.stat().st_size,
+        "canonical_schema_version": str(schema_version[0]),
+        "physical_policy_version": physical_policy_version,
     }
     manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"db_path": str(output), "manifest_path": str(manifest), **payload}
 
 
-__all__ = ["RUNTIME_INDEXES", "build_mobile_database"]
+__all__ = [
+    "MOBILE_PHYSICAL_POLICY_VERSION",
+    "REFERENCE_CONTRACT_MAJOR",
+    "RUNTIME_INDEXES",
+    "build_mobile_database",
+]

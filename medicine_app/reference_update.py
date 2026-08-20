@@ -1,43 +1,34 @@
 from __future__ import annotations
 
-import hashlib
 import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from .canonical_runtime import canonical_manifest
 
-# This value participates in the published mobile dataset identity. Keep it in
-# lockstep with medicine_canonical.mobile.MOBILE_DATA_POLICY_VERSION; tests
-# intentionally fail if publisher and on-device runtime policy diverge.
-MOBILE_DATA_POLICY_VERSION = "8"
+REFERENCE_CONTRACT_MAJOR = 1
 _DATASET_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
-def _mobile_dataset_id(con: sqlite3.Connection) -> str:
-    rows = con.execute(
-        "SELECT dataset_key,sha256,row_count FROM source_snapshots ORDER BY dataset_key"
-    ).fetchall()
-    if not rows:
-        raise ValueError("reference runtime policy has no source snapshots")
-    digest = hashlib.sha256()
-    digest.update(f"mobile-data-policy\0{MOBILE_DATA_POLICY_VERSION}\n".encode("utf-8"))
-    for dataset_key, sha256, row_count in rows:
-        digest.update(f"{dataset_key}\0{str(sha256).lower()}\0{row_count}\n".encode("utf-8"))
-    return f"sha256:{digest.hexdigest()}"
+def _normalized_contract_major(value: object) -> int:
+    text = str(value).strip()
+    if not text.isdigit() or text.startswith("0"):
+        raise ValueError("invalid expected reference contract major")
+    major = int(text)
+    if major <= 0:
+        raise ValueError("invalid expected reference contract major")
+    return major
 
 
 def verify_reference_database(
     database: str | Path,
-    expected_schema_version: str,
+    expected_contract_major: int | str,
     expected_dataset_id: str,
 ) -> dict:
     path = Path(database)
     if not path.is_file():
         raise FileNotFoundError(f"reference database not found: {path}")
-    if not expected_schema_version or not str(expected_schema_version).isdigit():
-        raise ValueError("invalid expected reference schema version")
+    contract_major = _normalized_contract_major(expected_contract_major)
     expected_dataset_id = str(expected_dataset_id).lower()
     if not _DATASET_ID.fullmatch(expected_dataset_id):
         raise ValueError("invalid expected reference dataset identity")
@@ -52,22 +43,28 @@ def verify_reference_database(
         if foreign_keys:
             raise ValueError(f"reference SQLite foreign key check failed: {len(foreign_keys)} violations")
 
-        runtime = canonical_manifest(con)
-        if runtime.get("status") != "verified":
-            raise ValueError("reference runtime policy verification failed")
-        schema_version = str(runtime.get("schema_version") or "")
-        if schema_version != str(expected_schema_version):
-            raise ValueError("reference runtime schema version does not match release")
-        dataset_id = _mobile_dataset_id(con)
+        try:
+            meta = {
+                str(key): str(value)
+                for key, value in con.execute("SELECT key,value FROM reference_contract_meta")
+            }
+        except sqlite3.DatabaseError as exc:
+            raise ValueError("reference contract metadata is missing or invalid") from exc
+        actual_major = _normalized_contract_major(meta.get("contract_major", ""))
+        if actual_major != contract_major:
+            raise ValueError("reference contract major does not match release")
+        dataset_id = str(meta.get("dataset_id") or "").lower()
+        if not _DATASET_ID.fullmatch(dataset_id):
+            raise ValueError("reference contract dataset identity is invalid")
         if dataset_id != expected_dataset_id:
             raise ValueError("reference dataset identity does not match release")
 
     return {
         "status": "verified",
         "dataset_id": dataset_id,
-        "schema_version": schema_version,
+        "contract_major": actual_major,
         "size_bytes": path.stat().st_size,
     }
 
 
-__all__ = ["MOBILE_DATA_POLICY_VERSION", "verify_reference_database"]
+__all__ = ["REFERENCE_CONTRACT_MAJOR", "verify_reference_database"]

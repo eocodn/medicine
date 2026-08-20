@@ -122,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Verify a mobile reference DB against on-device runtime policy and release identity",
     )
     mobile_verify_runtime.add_argument("--db", type=Path, required=True)
-    mobile_verify_runtime.add_argument("--schema-version", required=True)
+    mobile_verify_runtime.add_argument("--contract-major", required=True)
     mobile_verify_runtime.add_argument("--dataset-id", required=True)
     mobile_verify_runtime.add_argument("--json", action="store_true")
 
@@ -294,7 +294,7 @@ def main(argv=None) -> int:
     elif args.command == "mobile-verify-runtime":
         payload = verify_reference_database(
             args.db,
-            expected_schema_version=args.schema_version,
+            expected_contract_major=args.contract_major,
             expected_dataset_id=args.dataset_id,
         )
     elif args.command == "substance-sync":

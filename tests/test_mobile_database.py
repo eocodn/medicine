@@ -5,7 +5,6 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from medicine_app.core import MedicationApp
 from medicine_app.dur_status import DUR_CATEGORIES
@@ -247,16 +246,39 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertEqual(mobile_rules, source_rules)
         self.assertEqual(mobile_links, source_links)
 
-    def test_dataset_id_changes_when_mobile_data_policy_changes(self) -> None:
+    def test_dataset_id_is_stable_across_physical_mobile_policy_changes(self) -> None:
         first = build_mobile_database(
             self.canonical_db, self.mobile_db, manifest_path=self.manifest
         )
         second_db = self.mobile_db.with_name("mobile-next-policy.sqlite")
         second_manifest = self.manifest.with_name("mobile-next-policy.manifest.json")
-        with mock.patch("medicine_canonical.mobile.MOBILE_DATA_POLICY_VERSION", "next-policy"):
-            second = build_mobile_database(
-                self.canonical_db, second_db, manifest_path=second_manifest
+        second = build_mobile_database(
+            self.canonical_db,
+            second_db,
+            manifest_path=second_manifest,
+            physical_policy_version="next-policy",
+        )
+
+        self.assertEqual(first["dataset_id"], second["dataset_id"])
+        self.assertEqual(first["contract_major"], 1)
+        self.assertEqual(second["contract_major"], 1)
+        self.assertNotEqual(first["sha256"], second["sha256"])
+
+    def test_dataset_id_changes_when_contract_visible_semantics_change(self) -> None:
+        first = build_mobile_database(
+            self.canonical_db, self.mobile_db, manifest_path=self.manifest
+        )
+        with sqlite3.connect(self.canonical_db) as con:
+            con.execute(
+                "UPDATE ingredient_rules SET details=COALESCE(details,'') || ' semantic-change' "
+                "WHERE id=(SELECT MIN(id) FROM ingredient_rules)"
             )
+            con.commit()
+        second_db = self.mobile_db.with_name("mobile-semantic-change.sqlite")
+        second_manifest = self.manifest.with_name("mobile-semantic-change.manifest.json")
+        second = build_mobile_database(
+            self.canonical_db, second_db, manifest_path=second_manifest
+        )
 
         self.assertNotEqual(first["dataset_id"], second["dataset_id"])
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from medicine_app import canonical_safety
 from medicine_reference.mfds_remark_registry import (
     ReviewedMfdsRemark,
     reviewed_mfds_remark,
@@ -68,13 +67,15 @@ class SharedMfdsRemarkRegistryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unreviewed MFDS REMARK"):
             reviewed_mfds_remark("dose_caution", "새로운 미검토 비고")
 
-    def test_app_runtime_uses_shared_registry_without_canonical_dependency(self) -> None:
-        self.assertIs(canonical_safety.ReviewedMfdsRemark, ReviewedMfdsRemark)
+    def test_app_runtime_does_not_import_review_registry_at_module_load(self) -> None:
         source = Path("medicine_app/canonical_safety.py").read_text(encoding="utf-8")
-        self.assertIn("from medicine_reference.mfds_remark_registry import", source)
-        self.assertNotIn("medicine_canonical.mfds_remark_registry", source)
+        self.assertNotIn(
+            "from medicine_reference.mfds_remark_registry import ReviewedMfdsRemark",
+            source,
+        )
+        self.assertIn("reference_criterion_semantics", source)
 
-    def test_registry_has_one_runtime_packaged_location(self) -> None:
+    def test_registry_has_one_server_review_location_and_is_not_android_packaged(self) -> None:
         self.assertFalse(Path("medicine_canonical/mfds_remark_registry.py").exists())
         self.assertFalse(Path("medicine_canonical/data/mfds_remark_registry.tsv").exists())
         self.assertTrue(Path("medicine_reference/mfds_remark_registry.py").is_file())
@@ -84,7 +85,8 @@ class SharedMfdsRemarkRegistryTest(unittest.TestCase):
         self.assertIn('medicine_reference = ["data/*.tsv"]', pyproject)
 
         gradle = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
-        self.assertIn('include("medicine_reference/data/mfds_remark_registry.tsv")', gradle)
+        self.assertNotIn('include("medicine_reference/**/*.py")', gradle)
+        self.assertNotIn('include("medicine_reference/data/mfds_remark_registry.tsv")', gradle)
         self.assertNotIn('include("medicine_canonical/mfds_remark_registry.py")', gradle)
         self.assertNotIn('include("medicine_canonical/data/mfds_remark_registry.tsv")', gradle)
 

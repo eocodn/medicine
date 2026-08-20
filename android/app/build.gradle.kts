@@ -230,8 +230,6 @@ chaquopy {
         srcDir(rootProject.file(".."))
         include("medicine_app/**/*.py")
         exclude("medicine_app/cli.py")
-        include("medicine_reference/**/*.py")
-        include("medicine_reference/data/mfds_remark_registry.tsv")
         include("medicine_canonical/__init__.py")
         include("medicine_canonical/release.py")
     }

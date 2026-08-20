@@ -8,9 +8,9 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from medicine_app.reference_update import MOBILE_DATA_POLICY_VERSION, verify_reference_database
+from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
 from medicine_canonical.cli import main as canonical_main
-from medicine_canonical.mobile import MOBILE_DATA_POLICY_VERSION as BUILDER_POLICY_VERSION, build_mobile_database
+from medicine_canonical.mobile import REFERENCE_CONTRACT_MAJOR as BUILDER_CONTRACT_MAJOR, build_mobile_database
 from tests.test_safety_coverage import make_canonical_db
 
 
@@ -30,34 +30,38 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
     def test_runtime_verifier_accepts_exact_mobile_release_identity(self) -> None:
         result = verify_reference_database(
             self.mobile,
-            expected_schema_version=self.release["schema_version"],
+            expected_contract_major=self.release["contract_major"],
             expected_dataset_id=self.release["dataset_id"],
         )
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["dataset_id"], self.release["dataset_id"])
-        self.assertEqual(result["schema_version"], "10")
+        self.assertEqual(result["contract_major"], 1)
 
     def test_runtime_verifier_rejects_dataset_identity_mismatch(self) -> None:
         with self.assertRaisesRegex(ValueError, "dataset identity"):
             verify_reference_database(
                 self.mobile,
-                expected_schema_version="10",
+                expected_contract_major=1,
                 expected_dataset_id="sha256:" + "0" * 64,
             )
 
-    def test_runtime_verifier_rejects_runtime_source_policy_tampering(self) -> None:
+    def test_runtime_verifier_does_not_bind_acceptance_to_source_snapshot_metadata(self) -> None:
         with sqlite3.connect(self.mobile) as con:
-            con.execute("DELETE FROM source_snapshots WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'")
-            con.commit()
-        with self.assertRaisesRegex(ValueError, "runtime policy"):
-            verify_reference_database(
-                self.mobile,
-                expected_schema_version="10",
-                expected_dataset_id=self.release["dataset_id"],
+            con.execute(
+                "UPDATE source_snapshots SET sha256=? "
+                "WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'",
+                ("f" * 64,),
             )
+            con.commit()
+        result = verify_reference_database(
+            self.mobile,
+            expected_contract_major=1,
+            expected_dataset_id=self.release["dataset_id"],
+        )
+        self.assertEqual(result["status"], "verified")
 
-    def test_runtime_policy_version_is_shared_with_mobile_builder(self) -> None:
-        self.assertEqual(MOBILE_DATA_POLICY_VERSION, BUILDER_POLICY_VERSION)
+    def test_runtime_contract_major_is_shared_with_mobile_builder(self) -> None:
+        self.assertEqual(REFERENCE_CONTRACT_MAJOR, BUILDER_CONTRACT_MAJOR)
 
     def test_headless_cli_verifies_mobile_runtime_database(self) -> None:
         output = StringIO()
@@ -65,7 +69,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
             code = canonical_main([
                 "mobile-verify-runtime",
                 "--db", str(self.mobile),
-                "--schema-version", "10",
+                "--contract-major", "1",
                 "--dataset-id", self.release["dataset_id"],
                 "--json",
             ])
@@ -73,6 +77,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertEqual(payload["status"], "verified")
         self.assertEqual(payload["dataset_id"], self.release["dataset_id"])
+        self.assertEqual(payload["contract_major"], 1)
 
 
 if __name__ == "__main__":
