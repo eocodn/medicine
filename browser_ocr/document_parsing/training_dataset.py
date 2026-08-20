@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from .artifact_invariants import normalized_polygon, normalized_provenance, require_unique_real_image_hashes
+from .artifact_invariants import normalized_polygon, normalized_provenance, validate_parser_document_set
+from .dataset_metadata import normalize_parser_metadata
 from .draft_contract import normalize_parser_draft
 from .training_alignment import MODEL_ROLES, build_relation_labels
 
@@ -41,22 +42,9 @@ _MANIFEST_FIELDS = {
     "metadata",
 }
 _DOCUMENT_FIELDS = {
-    "document_id",
-    "split",
-    "source_kind",
-    "image_sha256",
-    "width",
-    "height",
-    "layout_family",
-    "scenario_tags",
-    "risk_tags",
-    "privacy",
-    "provenance",
-    "observation",
-    "relations",
-    "gold_rows",
-    "gold_rows_reviewed",
-    "annotation_status",
+    "document_id", "split", "source_kind", "image_sha256", "width", "height", "layout_family",
+    "scenario_tags", "risk_tags", "privacy", "provenance", "observation", "relations", "gold_rows",
+    "gold_rows_reviewed", "annotation_status",
 }
 _NODE_FIELDS = {
     "node_id",
@@ -206,6 +194,8 @@ def _normalize_node(value: object, document_id: str, index: int, *, width: int, 
         group = None if group_raw is None else _require_id(group_raw, f"{document_id}/{node_id}.association_group")
         if role in {"product", "product_label", "dose", "frequency", "duration"} and group is None:
             raise ParserDatasetError(f"{document_id}/{node_id} medication role requires association_group")
+        if role in {"product", "product_label", "dose", "frequency", "duration"} and group == "document":
+            raise ParserDatasetError(f"{document_id}/{node_id} medication association_group cannot use reserved document group")
         if role == "other":
             group = None
     try:
@@ -392,7 +382,7 @@ def normalize_parser_documents(documents: Iterable[object]) -> list[dict[str, An
     if len(set(ids)) != len(ids):
         raise ParserDatasetError("document_id values must be unique")
     try:
-        require_unique_real_image_hashes(normalized)
+        validate_parser_document_set(normalized)
     except ValueError as exc:
         raise ParserDatasetError(str(exc)) from exc
     return normalized
@@ -446,7 +436,10 @@ def write_parser_dataset(
     samples_bytes = b"".join(_canonical_json(document) + b"\n" for document in normalized)
     samples_path = root / "samples.jsonl"
     samples_sha = _sha256_bytes(samples_bytes)
-    normalized_metadata = dict(metadata or {})
+    try:
+        normalized_metadata = normalize_parser_metadata(metadata or {})
+    except ValueError as exc:
+        raise ParserDatasetError(str(exc)) from exc
     metadata_sha = _sha256_bytes(_canonical_json(normalized_metadata))
     profile = {
         "schema_version": 1,
@@ -542,6 +535,12 @@ def load_parser_dataset(manifest_path: str | Path, *, allow_draft: bool = False)
     actual_metadata_sha = _sha256_bytes(_canonical_json(metadata))
     if actual_metadata_sha != expected_metadata_sha:
         raise ParserDatasetError("parser dataset metadata SHA-256 mismatch")
+    try:
+        normalized_metadata = normalize_parser_metadata(metadata)
+    except ValueError as exc:
+        raise ParserDatasetError(str(exc)) from exc
+    if dict(metadata) != normalized_metadata:
+        raise ParserDatasetError("parser dataset metadata must use canonical fields")
     documents: list[dict[str, Any]] = []
     for line_number, raw_line in enumerate(samples_path.read_text(encoding="utf-8").splitlines(), start=1):
         if not raw_line.strip():
@@ -554,6 +553,10 @@ def load_parser_dataset(manifest_path: str | Path, *, allow_draft: bool = False)
         raise ParserDatasetError("document_count does not match samples_file")
     if len({document["document_id"] for document in documents}) != len(documents):
         raise ParserDatasetError("document_id values must be unique")
+    try:
+        validate_parser_document_set(documents)
+    except ValueError as exc:
+        raise ParserDatasetError(str(exc)) from exc
     if not allow_draft and any(document["annotation_status"] != "complete" for document in documents):
         raise ParserDatasetError("parser dataset contains draft annotations")
     fingerprint = _sha256_bytes(
@@ -561,14 +564,14 @@ def load_parser_dataset(manifest_path: str | Path, *, allow_draft: bool = False)
             "schema_version": SCHEMA_VERSION,
             "dataset_id": dataset_id,
             "samples_sha256": actual_samples_sha,
-            "metadata": metadata,
+            "metadata": normalized_metadata,
         })
     )
     return ParserDataset(
         root=path.parent,
         manifest_path=path,
         dataset_id=dataset_id,
-        metadata=dict(metadata),
+        metadata=normalized_metadata,
         documents=tuple(documents),
         fingerprint=fingerprint,
     )

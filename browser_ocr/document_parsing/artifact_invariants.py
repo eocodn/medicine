@@ -72,6 +72,19 @@ def normalized_polygon(
     ))
     if twice_area <= 1e-6:
         raise ValueError(f"{label} must have non-zero area")
+    crosses = []
+    for index, point in enumerate(points):
+        following = points[(index + 1) % 4]
+        next_following = points[(index + 2) % 4]
+        cross = (
+            (following[0] - point[0]) * (next_following[1] - following[1])
+            - (following[1] - point[1]) * (next_following[0] - following[0])
+        )
+        if abs(cross) <= 1e-6:
+            raise ValueError(f"{label} must be an ordered convex quadrilateral")
+        crosses.append(cross)
+    if not (all(value > 0 for value in crosses) or all(value < 0 for value in crosses)):
+        raise ValueError(f"{label} must be an ordered convex quadrilateral")
     return points
 
 
@@ -90,10 +103,34 @@ def require_unique_real_image_hashes(documents: Sequence[Mapping[str, Any]]) -> 
         seen[image_sha256] = document_id
 
 
+def require_homogeneous_runtime_producers(documents: Sequence[Mapping[str, Any]]) -> None:
+    producer: dict[str, Any] | None = None
+    for document in documents:
+        observation = document.get("observation")
+        if not isinstance(observation, Mapping) or observation.get("kind") != "runtime_ocr":
+            continue
+        profile = observation.get("profile")
+        if not isinstance(profile, Mapping):
+            raise ValueError("runtime OCR observation profile must be an object")
+        current = dict(profile)
+        current.pop("image_sha256", None)
+        if producer is None:
+            producer = current
+        elif current != producer:
+            raise ValueError("parser dataset runtime OCR producer identity must be homogeneous")
+
+
+def validate_parser_document_set(documents: Sequence[Mapping[str, Any]]) -> None:
+    require_unique_real_image_hashes(documents)
+    require_homogeneous_runtime_producers(documents)
+
+
 __all__ = [
     "normalized_polygon",
     "normalized_provenance",
     "pseudonymous_token",
     "real_license_id",
+    "require_homogeneous_runtime_producers",
     "require_unique_real_image_hashes",
+    "validate_parser_document_set",
 ]

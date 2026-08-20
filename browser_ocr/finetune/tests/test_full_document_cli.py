@@ -14,6 +14,7 @@ from browser_ocr.finetune.dataset import DatasetError
 from browser_ocr.finetune.full_document_cli import (
     _gpu_runtime_identity,
     _implementation_profile,
+    _runtime_environment_sha256,
     build_ocr_producer_profile,
     build_parser,
     load_selected_recognizer,
@@ -157,6 +158,21 @@ class FullDocumentCliContractTest(unittest.TestCase):
             self.assertEqual(first["inference_runtime_sha256"], "a" * 64)
             self.assertEqual(second["inference_runtime_sha256"], "b" * 64)
             self.assertNotEqual(first, second)
+
+    def test_runtime_environment_hash_binds_native_runtime_identity(self) -> None:
+        with patch(
+            "browser_ocr.finetune.full_document_cli._native_runtime_identity",
+            return_value={"packages": ["libgomp1=1"], "libraries": {"libgomp.so.1": "a" * 64}},
+            create=True,
+        ):
+            first = _runtime_environment_sha256("cpu")
+        with patch(
+            "browser_ocr.finetune.full_document_cli._native_runtime_identity",
+            return_value={"packages": ["libgomp1=1"], "libraries": {"libgomp.so.1": "b" * 64}},
+            create=True,
+        ):
+            second = _runtime_environment_sha256("cpu")
+        self.assertNotEqual(first, second)
 
     def test_ocr_producer_profile_binds_dictionary_selected_by_recognizer_config(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

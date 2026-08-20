@@ -17,10 +17,10 @@ def _poly(x: float, y: float, w: float = 80, h: float = 24) -> list[list[float]]
     return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
 
 
-def _runtime_profile() -> dict:
+def _runtime_profile(image_sha256: str = "a" * 64) -> dict:
     return {
         "schema_version": 2,
-        "image_sha256": "a" * 64,
+        "image_sha256": image_sha256,
         "baseline_result_sha256": "1" * 64,
         "recognizer_checkpoint_sha256": "2" * 64,
         "recognizer_config_sha256": "3" * 64,
@@ -107,6 +107,19 @@ def _doc(*, source_kind: str = "synthetic", split: str = "train") -> dict:
     return document
 
 
+def _rewrite_samples(manifest_path: Path, documents: list[dict]) -> None:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    samples_path = manifest_path.parent / manifest["samples_file"]
+    payload = "".join(
+        json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        for document in documents
+    ).encode("utf-8")
+    samples_path.write_bytes(payload)
+    manifest["samples_sha256"] = hashlib.sha256(payload).hexdigest()
+    manifest["document_count"] = len(documents)
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 class ParserTrainingDatasetContractTest(unittest.TestCase):
     def test_round_trips_strict_document_dataset(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -115,7 +128,7 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
                 root,
                 dataset_id="parser-fixture-v1",
                 documents=[_doc()],
-                metadata={"source": "unit-test"},
+                metadata={"seed": 1},
             )
             dataset = load_parser_dataset(manifest)
             self.assertEqual(dataset.dataset_id, "parser-fixture-v1")
@@ -140,6 +153,28 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             with self.assertRaisesRegex(ParserDatasetError, "duplicate real.*image SHA-256|image SHA-256.*unique"):
                 write_parser_dataset(Path(raw), dataset_id="duplicate-real-image", documents=[first, second])
+
+    def test_loader_rejects_duplicate_real_image_hashes_in_repacked_artifact(self) -> None:
+        first = _doc(source_kind="real_deidentified", split="val")
+        first["observation"]["kind"] = "runtime_ocr"
+        first["observation"]["profile"] = _runtime_profile()
+        second = _doc(source_kind="real_deidentified", split="test")
+        second["document_id"] = "doc-002"
+        second["image_sha256"] = "b" * 64
+        second["observation"]["kind"] = "runtime_ocr"
+        second["observation"]["profile"] = _runtime_profile("b" * 64)
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest_path = write_parser_dataset(root, dataset_id="repacked-real-image", documents=[first, second])
+            dataset = load_parser_dataset(manifest_path)
+            forged = [dict(document) for document in dataset.documents]
+            forged[1]["image_sha256"] = first["image_sha256"]
+            forged[1]["observation"] = dict(forged[1]["observation"])
+            forged[1]["observation"]["profile"] = dict(forged[1]["observation"]["profile"])
+            forged[1]["observation"]["profile"]["image_sha256"] = first["image_sha256"]
+            _rewrite_samples(manifest_path, forged)
+            with self.assertRaisesRegex(ParserDatasetError, "duplicate real.*image SHA-256|image SHA-256.*unique"):
+                load_parser_dataset(manifest_path)
 
     def test_real_requires_explicit_privacy_and_runtime_observation(self) -> None:
         document = _doc(source_kind="real_deidentified", split="val")
@@ -192,13 +227,83 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
         invalid_polygons = [
             [[-10, 10], [80, 10], [80, 30], [-10, 30]],
             [[10, 10], [10, 10], [10, 10], [10, 10]],
+            [[10, 10], [100, 100], [10, 100], [80, 10]],
         ]
         for index, polygon in enumerate(invalid_polygons):
             with self.subTest(polygon=polygon), tempfile.TemporaryDirectory() as raw:
                 document = _doc()
                 document["observation"]["nodes"][0]["polygon"] = polygon
-                with self.assertRaisesRegex(ParserDatasetError, "polygon.*image|polygon.*area|polygon.*degenerate"):
+                with self.assertRaisesRegex(ParserDatasetError, "polygon.*image|polygon.*area|polygon.*degenerate|polygon.*convex"):
                     write_parser_dataset(Path(raw), dataset_id=f"bad-polygon-{index}", documents=[document])
+
+    def test_medication_roles_cannot_use_reserved_document_group(self) -> None:
+        document = _doc()
+        for node in document["observation"]["nodes"]:
+            node["association_group"] = "document"
+        document["gold_rows"] = []
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "document.*association_group|association_group.*document"):
+                write_parser_dataset(Path(raw), dataset_id="reserved-medication-group", documents=[document])
+
+    def test_manifest_metadata_rejects_arbitrary_patient_identifying_fields_on_write_and_load(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with self.assertRaisesRegex(ParserDatasetError, "metadata"):
+                write_parser_dataset(
+                    root / "write",
+                    dataset_id="identifying-metadata-write",
+                    documents=[_doc()],
+                    metadata={"patient_name": "홍길동", "note": "주민번호 900101"},
+                )
+            with self.assertRaisesRegex(ParserDatasetError, "metadata.*builder|builder.*unsupported"):
+                write_parser_dataset(
+                    root / "builder-write",
+                    dataset_id="identifying-builder-write",
+                    documents=[_doc()],
+                    metadata={"builder": "patient-hong-gildong-rrn"},
+                )
+
+            manifest_path = write_parser_dataset(
+                root / "load",
+                dataset_id="identifying-metadata-load",
+                documents=[_doc()],
+                metadata={"seed": 1},
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["metadata"] = {"patient_name": "홍길동", "note": "주민번호 900101"}
+            encoded = json.dumps(
+                manifest["metadata"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            manifest["metadata_sha256"] = hashlib.sha256(encoded).hexdigest()
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ParserDatasetError, "metadata"):
+                load_parser_dataset(manifest_path)
+
+    def test_runtime_artifact_rejects_mixed_producers_on_write_and_load(self) -> None:
+        first = _doc(split="val")
+        first["observation"]["kind"] = "runtime_ocr"
+        first["observation"]["profile"] = _runtime_profile()
+        second = _doc(split="val")
+        second["document_id"] = "doc-002"
+        second["observation"]["kind"] = "runtime_ocr"
+        second["observation"]["profile"] = _runtime_profile()
+        second["observation"]["profile"]["recognizer_checkpoint_sha256"] = "f" * 64
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ParserDatasetError, "runtime OCR producer|mix.*producer"):
+                write_parser_dataset(Path(raw), dataset_id="mixed-runtime-writer", documents=[first, second])
+
+        second["observation"]["profile"] = _runtime_profile()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest_path = write_parser_dataset(root, dataset_id="mixed-runtime-loader", documents=[first, second])
+            dataset = load_parser_dataset(manifest_path)
+            forged = [dict(document) for document in dataset.documents]
+            forged[1]["observation"] = dict(forged[1]["observation"])
+            forged[1]["observation"]["profile"] = dict(forged[1]["observation"]["profile"])
+            forged[1]["observation"]["profile"]["recognizer_checkpoint_sha256"] = "f" * 64
+            _rewrite_samples(manifest_path, forged)
+            with self.assertRaisesRegex(ParserDatasetError, "runtime OCR producer|mix.*producer"):
+                load_parser_dataset(manifest_path)
 
     def test_ambiguous_nodes_must_not_carry_role_or_group_labels(self) -> None:
         document = _doc()
@@ -336,17 +441,17 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
                 root,
                 dataset_id="metadata-bound",
                 documents=[_doc()],
-                metadata={"seed": 1, "builder": "fixture"},
+                metadata={"seed": 1, "builder": "parser_training_builder_v1"},
             )
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["metadata"] = {"seed": 999, "builder": "forged"}
+            manifest["metadata"] = {"seed": 999, "builder": "parser_training_builder_v1"}
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaisesRegex(ParserDatasetError, "metadata"):
                 write_parser_dataset(
                     root,
                     dataset_id="metadata-bound",
                     documents=[_doc()],
-                    metadata={"seed": 1, "builder": "fixture"},
+                    metadata={"seed": 1, "builder": "parser_training_builder_v1"},
                 )
 
 
