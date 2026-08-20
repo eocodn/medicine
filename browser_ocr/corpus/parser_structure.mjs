@@ -180,7 +180,11 @@ export function parserStructureVariantForSample(index, split) {
   const pools = { train: TRAIN_VARIANTS, val: VAL_VARIANTS, test: TEST_VARIANTS };
   const pool = pools[split];
   if (!pool) throw new Error(`unsupported parser structure split: ${split}`);
-  if (split === "train") return pool[index % pool.length];
+  // Keep the original one-per-layout smoke harness structurally intact. Parser
+  // stress recipes begin after that fixture band, while larger corpora still
+  // cycle through every training recipe deterministically.
+  if (split === "train" && index < 6) return "complete";
+  if (split === "train") return pool[(index - 6) % pool.length];
   const cycle = Math.floor(index / 10);
   return pool[cycle % pool.length];
 }

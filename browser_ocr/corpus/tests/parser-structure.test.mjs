@@ -28,15 +28,19 @@ test("parser structure recipes are split-specific and train covers its recipe po
   assert.equal([...train].some((value) => val.has(value) || heldout.has(value)), false);
   assert.equal([...val].some((value) => heldout.has(value)), false);
   assert.deepEqual(
-    new Set(Array.from({ length: PARSER_STRUCTURE_VARIANTS.train.length }, (_, index) => parserStructureVariantForSample(index, "train"))),
+    new Set(Array.from(
+      { length: PARSER_STRUCTURE_VARIANTS.train.length },
+      (_, offset) => parserStructureVariantForSample(offset + 6, "train"),
+    )),
     train,
   );
+  assert.ok(Array.from({ length: 6 }, (_, index) => parserStructureVariantForSample(index, "train")).every((value) => value === "complete"));
 });
 
 test("product-only and numeric recipes alter document truth rather than parser postprocessing", () => {
   const productRandom = rng(41);
-  const productBase = buildLayout(4, productRandom, { products: products() });
-  const productOnly = applyParserStructureVariant(productBase, { index: 4, split: "train", random: productRandom });
+  const productBase = buildLayout(10, productRandom, { products: products() });
+  const productOnly = applyParserStructureVariant(productBase, { index: 10, split: "train", random: productRandom });
   assert.equal(productOnly.parser_structure_variant, "product_only");
   const groups = [...new Set(productOnly.regions.filter((region) => region.semantic_role === "product").map((region) => region.association_group))];
   assert.ok(groups.some((group) => {
@@ -45,8 +49,8 @@ test("product-only and numeric recipes alter document truth rather than parser p
   }));
 
   const numericRandom = rng(43);
-  const numericBase = buildLayout(7, numericRandom, { products: products() });
-  const numeric = applyParserStructureVariant(numericBase, { index: 7, split: "train", random: numericRandom });
+  const numericBase = buildLayout(13, numericRandom, { products: products() });
+  const numeric = applyParserStructureVariant(numericBase, { index: 13, split: "train", random: numericRandom });
   assert.equal(numeric.parser_structure_variant, "numeric_cells");
   assert.ok(numeric.regions.filter((region) => ["dose", "frequency", "duration"].includes(region.semantic_role)).every((region) => /^\d+(?:\.\d+)?$/.test(region.text)));
 });
