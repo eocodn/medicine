@@ -30,13 +30,17 @@ The drug partition seed is intentionally independent from the document-generatio
 
 The root `drug_name_policy` binds the corpus to the canonical database SHA-256, MFDS source-snapshot SHA-256, assignment seed, selected checkpoint SHA-256, historical source dataset fingerprint, historical train-split SHA-256, historical vocabulary/family hashes, pool counts, and per-pool content hashes. Product typography is fitted to the declared layout slot so longer canonical names remain readable without colliding with adjacent regimen columns.
 
+## Parser structure holdout
+
+Generator v5 revision 6 adds parser-specific structural recipes before rendering. Training documents cover complete and partial medication rows, product-only rows, missing/partial headers, numeric cells, regimen-shaped distractors, and association-spacing stress. Validation/test use disjoint held-out recipe names, including short generic headers, fraction doses, no-header combinations, and header-only negatives. The selected `parser_structure_variant` is stored on every document and the generator fingerprint binds the structure-recipe revision. This changes the source document itself rather than post-processing parser labels, so detector/recognizer/runtime-parser experiments see the same rendered structure.
+
 ## Materialized views
 
 `materialize` writes four views under one output root:
 
 - `detection/`: full-page references plus region polygons, with train/val/test JSONL files and PaddleOCR detection-training labels under `detection/paddle/`.
 - `recognition/`: perspective-normalized crops cut from the already-degraded full-page raster using GT region polygons. It includes the existing fine-tune dataset manifest plus a ready-to-use PaddleOCR `train.txt`, `val.txt`, and `test.txt` export.
-- `parsing/`: OCR nodes with semantic roles and association groups, positive `same_medication` edges, expected structured rows, and parser-compatible oracle manifests for all/train/val/test.
+- `parsing/`: authoritative document truth plus oracle manifests and strict learned-parser datasets. Materialization emits oracle and deterministic synthetic-OCR train/val/test manifests whose observed boxes may be dropped, split, merged, jittered or corrupted before geometry-based labeling. Relations include `same_medication` positives and cross-medication hard negatives.
 - `e2e/`: full-page images plus expected structured rows and critical region ids, preserving the same document split. The existing `browser_ocr.finetune.full_document_evaluation` evaluator can score detector→recognizer→parser result directories against the same canonical manifest.
 
 Recognition crops deliberately come from the final degraded raster rather than from pristine source text. Motion blur, JPEG compression, perspective, glare, printer degradation, and other document-level effects therefore reach recognizer training/evaluation exactly as they appear in the E2E image.

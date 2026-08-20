@@ -85,3 +85,65 @@ docker compose run --rm ocr-document-parse \
 
 The command returns both the generated prediction envelope and the benchmark
 evaluation so later baselines can be compared under exactly the same contract.
+## Learned-parser dataset contract
+
+Learned parser training does not consume the legacy rule-parser corpus directly. The canonical training contract separates the **observed OCR graph** from authoritative labels and image-level medication gold:
+
+- `observation.kind`: `oracle`, deterministic `synthetic_ocr`, or actual `runtime_ocr`;
+- each observed node carries text, confidence, polygon, and zero or more matched truth-region ids;
+- `label_status=labeled` carries a role/group target, while split/merge observations spanning incompatible truth roles/groups are `ambiguous` and are masked from supervised role/relation loss;
+- unmatched detector boxes are explicit `other` negatives;
+- relations contain both `same_medication` positives and `different_medication` hard negatives for dose, frequency, duration, and instruction nodes;
+- `gold_rows` are image-level truth and do not depend on which regions OCR happened to observe.
+
+The strict manifest binds `samples.jsonl` by SHA-256. Synthetic data may be used for train/validation/test; `real_deidentified` data is holdout-only and is rejected from `train`.
+
+Unified corpus materialization creates these parser datasets automatically:
+
+- `parsing/datasets/oracle/`
+- `parsing/datasets/train-synthetic-ocr/`
+- `parsing/datasets/val-synthetic-ocr/`
+- `parsing/datasets/test-synthetic-ocr/`
+
+The deterministic synthetic-OCR producer perturbs OCR observations (drop/split/merge/jitter/text/confidence/order/noise) and then labels them through the same geometry alignment used for runtime OCR. It does not copy truth labels onto corrupted boxes blindly.
+
+Use the dataset Agent Control service directly when needed:
+
+```sh
+docker compose run --rm ocr-parser-data validate \
+  --manifest /workspace/path/to/parser-dataset/manifest.json --json
+
+docker compose run --rm ocr-parser-data build-runtime \
+  --truth-samples /workspace/path/to/views/parsing/samples.jsonl \
+  --results-root /workspace/path/to/full-document-results \
+  --output-dir /workspace/path/to/parser-runtime-val \
+  --dataset-id parser-runtime-val --split val --json
+```
+
+## Real de-identified prescription photos
+
+Private prescription photos stay outside Git. Ingestion accepts only an external `real_deidentified` source manifest whose documents are already de-identified, use pseudonymous lowercase ids, use the document id as the image filename stem, and declare `contains_patient_data=false`. Only `val` and `test` are accepted.
+
+The GPU `ocr-parser-real` service sends every photo through the exact selected full-document detector/crop/recognizer path and writes immutable runtime OCR results plus annotation drafts. Parser identity is deliberately stripped from the observation profile: changing the parser does not invalidate OCR observations produced by unchanged detector/recognizer inputs.
+
+```sh
+docker compose run --rm \
+  -v /absolute/deidentified-corpus:/real:ro \
+  ocr-parser-real \
+  --source-manifest /real/manifest.json \
+  --baseline-result /workspace/path/to/baseline-result.json \
+  --output-dir /workspace/browser_ocr/finetune/work/parser-real-holdout \
+  --json
+```
+
+Human annotation assigns node roles/groups and image-level `gold_rows`. Finalization fails while any OCR node remains unlabeled:
+
+```sh
+docker compose run --rm ocr-parser-data finalize-real \
+  --annotations-dir /workspace/browser_ocr/finetune/work/parser-real-holdout/annotations \
+  --dataset-id parser-real-holdout-v1 \
+  --output-dir /workspace/browser_ocr/finetune/work/parser-real-final \
+  --json
+```
+
+A missed medication can therefore remain present in `gold_rows` even when OCR produced no corresponding node. This keeps parser-only evaluation distinct from detector/recognizer end-to-end recall.

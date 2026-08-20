@@ -58,6 +58,13 @@ test("one document corpus materializes aligned detection recognition parsing and
     assert.ok(corpus.samples.every((sample) => sample.drug_name_split === sample.split));
     assert.ok(corpus.samples.every((sample) => sample.drug_name_exposure === (sample.split === "train" ? "seen" : "unseen")));
     assert.ok(corpus.samples.every((sample) => ["prescription", "medication_bag"].includes(sample.document_type)));
+    assert.ok(corpus.samples.every((sample) => typeof sample.parser_structure_variant === "string" && sample.parser_structure_variant.length > 0));
+    assert.ok(corpus.samples.every((sample) => sample.scenario_tags.includes(`parser_structure_${sample.parser_structure_variant}`)));
+    const trainStructureVariants = new Set(corpus.samples.filter((sample) => sample.split === "train").map((sample) => sample.parser_structure_variant));
+    const valStructureVariants = new Set(corpus.samples.filter((sample) => sample.split === "val").map((sample) => sample.parser_structure_variant));
+    const testStructureVariants = new Set(corpus.samples.filter((sample) => sample.split === "test").map((sample) => sample.parser_structure_variant));
+    assert.equal([...trainStructureVariants].some((value) => valStructureVariants.has(value) || testStructureVariants.has(value)), false);
+    assert.equal([...valStructureVariants].some((value) => testStructureVariants.has(value)), false);
 
     const productOwners = new Map();
     const familyOwners = new Map();
@@ -155,12 +162,27 @@ test("one document corpus materializes aligned detection recognition parsing and
     assert.deepEqual(labeledRow.evidence.product_query, ["b0-label", "b0-product"]);
     assert.equal(classic.nodes.find((node) => node.node_id === "b0-label").semantic_role, "product_label");
 
+    assert.ok(parsing.every((item) => item.image_sha256 && item.width > 0 && item.height > 0));
+    assert.ok(parsing.every((item) => Array.isArray(item.scenario_tags) && Array.isArray(item.risk_tags)));
+
+    const parserTrainManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "train-synthetic-ocr", "manifest.json"), "utf8"));
+    const parserValManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "val-synthetic-ocr", "manifest.json"), "utf8"));
+    const parserOracleManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "oracle", "manifest.json"), "utf8"));
+    assert.equal(parserTrainManifest.task, "medication_document_parser");
+    assert.equal(parserTrainManifest.document_count, corpus.samples.filter((sample) => sample.split === "train").length);
+    assert.equal(parserValManifest.document_count, corpus.samples.filter((sample) => sample.split === "val").length);
+    assert.equal(parserOracleManifest.document_count, corpus.samples.length);
+    const parserTrainDocuments = lines(await readFile(join(viewsRoot, "parsing", "datasets", "train-synthetic-ocr", "samples.jsonl"), "utf8"));
+    assert.ok(parserTrainDocuments.every((item) => item.split === "train" && item.source_kind === "synthetic"));
+    assert.ok(parserTrainDocuments.every((item) => item.observation.kind === "synthetic_ocr"));
+    assert.ok(parserTrainDocuments.every((item) => item.annotation_status === "complete"));
+
     const firstParsing = parsing.find((sample) => sample.positive_edges.length > 0);
     assert.ok(firstParsing);
     const byNode = new Map(firstParsing.nodes.map((node) => [node.node_id, node]));
     for (const edge of firstParsing.positive_edges) {
       assert.equal(byNode.get(edge.product_node_id).semantic_role, "product");
-      assert.ok(["dose", "frequency", "duration"].includes(byNode.get(edge.field_node_id).semantic_role));
+      assert.ok(["dose", "frequency", "duration", "instruction"].includes(byNode.get(edge.field_node_id).semantic_role));
       assert.equal(byNode.get(edge.product_node_id).association_group, byNode.get(edge.field_node_id).association_group);
     }
 

@@ -5,8 +5,9 @@ import { dirname, join, relative, resolve } from "node:path";
 
 import { validateUnifiedCorpus } from "./contract.mjs";
 import { RECOGNITION_EVAL_POLICY, recognitionOodTag } from "./evaluation_policy.mjs";
+import { buildOracleManifest, buildParsingItems, expectedRows } from "./parser_truth.mjs";
 
-const MATERIALIZER_VERSION = 7;
+const MATERIALIZER_VERSION = 8;
 const STAGES = ["detection", "recognition", "parsing", "e2e"];
 const STATE_FILE = ".materialize-state.json";
 const LOCK_FILE = ".materialize.lock";
@@ -34,11 +35,6 @@ function slug(value) {
   return normalized || "other";
 }
 
-function roleValue(text) {
-  const match = String(text).match(/\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : null;
-}
-
 function drugFamilyByAssociation(sample) {
   return new Map(sample.regions
     .filter((region) => region.semantic_role === "product" && region.drug_family)
@@ -49,83 +45,6 @@ function recognitionDrugFamily(sample, region, families) {
   const family = region.drug_family || families.get(region.association_group);
   if (family) return family;
   return `context-${sha256(sample.id).slice(0, 12)}`;
-}
-
-function expectedRows(sample) {
-  const groups = new Map();
-  for (const region of sample.regions) {
-    if (!["product", "product_label", "dose", "frequency", "duration"].includes(region.semantic_role)) continue;
-    if (region.association_group === "document") continue;
-    const group = groups.get(region.association_group) ?? { product_labels: [] };
-    if (region.semantic_role === "product_label") group.product_labels.push(region);
-    else group[region.semantic_role] = region;
-    groups.set(region.association_group, group);
-  }
-  const rows = [];
-  for (const group of groups.values()) {
-    if (!group.product) continue;
-    const draft = {};
-    const productEvidence = [...group.product_labels, group.product];
-    const evidence = { product_query: productEvidence.map((region) => region.region_id) };
-    if (group.dose) {
-      const amount = roleValue(group.dose.text);
-      if (amount !== null) {
-        draft.dose_amount = amount;
-        evidence.dose_amount = [group.dose.region_id];
-        if (/포\s*\(정\)/.test(group.dose.text)) {
-          draft.dosage_text = group.dose.text.replace(/\s+/g, "");
-          evidence.dosage_text = [group.dose.region_id];
-        } else {
-          const compact = group.dose.text.replace(/\s+/g, "").toLowerCase();
-          let unit = null;
-          if (compact.includes("캡슐") || compact.includes("capsule")) unit = "capsule";
-          else if (compact.includes("정") || compact.includes("tablet")) unit = "tablet";
-          else if (compact.includes("포")) unit = "packet";
-          else if (compact.includes("ml")) unit = "mL";
-          if (unit) {
-            draft.dose_unit = unit;
-            evidence.dose_unit = [group.dose.region_id];
-          }
-        }
-      }
-    }
-    if (group.frequency) {
-      const value = roleValue(group.frequency.text);
-      if (value !== null) {
-        draft.frequency_per_day = value;
-        evidence.frequency_per_day = [group.frequency.region_id];
-      }
-    }
-    if (group.duration) {
-      const value = roleValue(group.duration.text);
-      if (value !== null) {
-        draft.prescription_days = value;
-        evidence.prescription_days = [group.duration.region_id];
-      }
-    }
-    rows.push({
-      row_id: productEvidence[0].region_id,
-      product_query: group.product.text.trim(),
-      draft,
-      uncertainty_codes: [],
-      evidence,
-    });
-  }
-  return rows;
-}
-
-function positiveEdges(sample) {
-  const products = sample.regions.filter((region) => region.semantic_role === "product" && region.association_group !== "document");
-  const fields = sample.regions.filter((region) => ["dose", "frequency", "duration"].includes(region.semantic_role) && region.association_group !== "document");
-  const edges = [];
-  for (const product of products) {
-    for (const field of fields) {
-      if (product.association_group === field.association_group) {
-        edges.push({ product_node_id: product.region_id, field_node_id: field.region_id, relation: "same_medication" });
-      }
-    }
-  }
-  return edges;
 }
 
 function run(command, args, cwd, { streamStderr = false } = {}) {
@@ -206,6 +125,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       width: sample.width,
       height: sample.height,
       layout_family: sample.layout_family,
+      parser_structure_variant: sample.parser_structure_variant,
       capture_profile: sample.capture_profile,
       augmentation_difficulty: sample.augmentation_difficulty,
       augmentation_components: sample.capture.augmentation_components,
@@ -373,44 +293,9 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
     await atomicJson(statePath, { schema_version: 1, status: "running", profile, stage: "parsing" });
     const parsingDir = join(output, "parsing");
     await mkdir(parsingDir, { recursive: true });
-    const parsingItems = corpus.samples.map((sample) => ({
-      document_id: sample.id,
-      split: sample.split,
-      drug_name_split: sample.drug_name_split,
-      drug_name_exposure: sample.drug_name_exposure,
-      layout_family: sample.layout_family,
-      capture_profile: sample.capture_profile,
-      augmentation_difficulty: sample.augmentation_difficulty,
-      augmentation_components: sample.capture.augmentation_components,
-      nodes: sample.regions.map((region) => ({
-        node_id: region.region_id,
-        text: region.text,
-        confidence: 1.0,
-        polygon: region.polygon,
-        semantic_role: region.semantic_role,
-        association_group: region.association_group,
-        ...(region.drug_family ? {
-          drug_family: region.drug_family,
-          drug_name_split: region.drug_name_split,
-        } : {}),
-        region_class: region.region_class,
-        critical: region.critical,
-      })),
-      positive_edges: positiveEdges(sample),
-      expected_rows: expectedRows(sample),
-    }));
+    const parsingItems = buildParsingItems(corpus);
     await writeFile(join(parsingDir, "samples.jsonl"), jsonl(parsingItems));
-    const oracleManifest = {
-      schema_version: 2,
-      cases: corpus.samples.map((sample) => ({
-        case_id: sample.id,
-        source_kind: "synthetic",
-        scenario_tags: sample.scenario_tags,
-        risk_tags: sample.risk_tags,
-        boxes: sample.regions.map((region) => ({ box_id: region.region_id, text: region.text, confidence: 1.0, polygon: region.polygon })),
-        expected_rows: expectedRows(sample),
-      })),
-    };
+    const oracleManifest = buildOracleManifest(corpus);
     await atomicJson(join(parsingDir, "oracle-manifest.json"), oracleManifest);
     for (const name of ["train", "val", "test"]) {
       const selected = parsingItems.filter((item) => item.split === name);
@@ -424,7 +309,32 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       schema_version: 1, stage: "parsing", parent_corpus_id: corpus.corpus_id,
       samples_file: "samples.jsonl", oracle_manifest: "oracle-manifest.json",
       labels: ["semantic_role", "association_group", "same_medication"],
+      training_datasets: {
+        oracle: "datasets/oracle/manifest.json",
+        train_synthetic_ocr: "datasets/train-synthetic-ocr/manifest.json",
+        val_synthetic_ocr: "datasets/val-synthetic-ocr/manifest.json",
+        test_synthetic_ocr: "datasets/test-synthetic-ocr/manifest.json",
+      },
     });
+    const parserDatasetSpecs = [
+      { name: "oracle", observation: "oracle", split: null },
+      { name: "train-synthetic-ocr", observation: "synthetic_ocr", split: "train" },
+      { name: "val-synthetic-ocr", observation: "synthetic_ocr", split: "val" },
+      { name: "test-synthetic-ocr", observation: "synthetic_ocr", split: "test" },
+    ];
+    for (const spec of parserDatasetSpecs) {
+      const datasetArgs = [
+        "-m", "browser_ocr.document_parsing.dataset_cli", "build-synthetic",
+        "--truth-samples", join(parsingDir, "samples.jsonl"),
+        "--output-dir", join(parsingDir, "datasets", spec.name),
+        "--dataset-id", `parser-${corpus.generator.version}-${corpus.generator.seed}-${spec.name}`,
+        "--observation-kind", spec.observation,
+        "--seed", String(corpus.generator.seed),
+        "--json",
+      ];
+      if (spec.split) datasetArgs.push("--split", spec.split);
+      await run(python, datasetArgs, process.cwd(), { streamStderr: true });
+    }
     progress("parsing", parsingItems.length, parsingItems.length);
 
     await atomicJson(statePath, { schema_version: 1, status: "running", profile, stage: "e2e" });
@@ -437,6 +347,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       drug_name_exposure: sample.drug_name_exposure,
       image: sample.image,
       layout_family: sample.layout_family,
+      parser_structure_variant: sample.parser_structure_variant,
       capture_profile: sample.capture_profile,
       augmentation_difficulty: sample.augmentation_difficulty,
       augmentation_components: sample.capture.augmentation_components,
@@ -481,6 +392,12 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
         samples: parsingItems.length,
         oracle_manifest: "parsing/oracle-manifest.json",
         oracle_splits: { train: "parsing/oracle-train.json", val: "parsing/oracle-val.json", test: "parsing/oracle-test.json" },
+        training_datasets: {
+          oracle: "parsing/datasets/oracle/manifest.json",
+          train_synthetic_ocr: "parsing/datasets/train-synthetic-ocr/manifest.json",
+          val_synthetic_ocr: "parsing/datasets/val-synthetic-ocr/manifest.json",
+          test_synthetic_ocr: "parsing/datasets/test-synthetic-ocr/manifest.json",
+        },
       },
       detection: {
         split_files: { train: "detection/train.jsonl", val: "detection/val.jsonl", test: "detection/test.jsonl" },

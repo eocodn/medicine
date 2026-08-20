@@ -25,10 +25,11 @@ import {
 } from "../detection/synthetic_catalog.mjs";
 import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH, renderLayoutRegions } from "../detection/synthetic_layouts.mjs";
 import { rasterizerIdentity, renderRasterJpeg } from "../detection/synthetic_raster.mjs";
+import { PARSER_STRUCTURE_REVISION, applyParserStructureVariant } from "./parser_structure.mjs";
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 5;
-const GENERATOR_REVISION = 5;
+const GENERATOR_REVISION = 6;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -92,6 +93,7 @@ async function configurationFingerprint({ seed, count, drugNamePolicy }) {
       tasks: TASKS,
       split_policy: { id: SPLIT_POLICY_ID, ratios: SPLIT_RATIOS },
       drug_name_policy: drugNamePolicy,
+      parser_structure_revision: PARSER_STRUCTURE_REVISION,
       rasterizer_fingerprint: rasterizer.fingerprint,
     })),
   };
@@ -128,7 +130,8 @@ function buildSamplePlan(index, seed, drugAssignment) {
   const drugPool = drugAssignment.pools[split];
   if (!Array.isArray(drugPool) || drugPool.length === 0) throw new Error(`drug pool ${split} is empty`);
   const productMetadata = new Map(drugPool.map((product) => [normalizeDrugName(product.product_name), product]));
-  const layout = buildLayout(index, layoutRandom, { products: drugPool.map((product) => product.product_name) });
+  const baseLayout = buildLayout(index, layoutRandom, { products: drugPool.map((product) => product.product_name) });
+  const layout = applyParserStructureVariant(baseLayout, { index, split, random: layoutRandom });
   const captureIndex = Math.floor(index / LAYOUT_FAMILIES.length) % CAPTURE_PROFILES.length;
   const capture = captureForSample(index, captureIndex, captureRandom, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
   const appearance = appearanceForIndex(index);
@@ -170,6 +173,7 @@ function buildSamplePlan(index, seed, drugAssignment) {
       drug_name_exposure: drugExposure(split),
       document_type: documentType(layout.layout_family),
       layout_family: layout.layout_family,
+      parser_structure_variant: layout.parser_structure_variant,
       capture_profile: capture.profile,
       augmentation_difficulty: capture.difficulty,
       material_profile: appearance.material_profile,
