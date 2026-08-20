@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 
-function appContext() {
+function appContext(storage = new Map()) {
   const home = {
     innerHTML: "",
     querySelectorAll() { return []; },
@@ -31,7 +31,11 @@ function appContext() {
   const context = {
     document,
     window: { MedicineLocalApi: null, location: { search: "" } },
-    localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+    localStorage: {
+      getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+      setItem(key, value) { storage.set(key, String(value)); },
+      removeItem(key) { storage.delete(key); },
+    },
     profileMeta: () => "만 36세 · 남성",
     MedicineOcr: { getReview: () => null, cancel() {}, toggle() {}, init() {}, renderState() {} },
     bindPeopleEvents() {},
@@ -258,6 +262,73 @@ test("dose state intents keep the running write and coalesce queued changes to t
   assert.equal(vm.runInContext(`state.dashboard.daily_plan.doses[0].status`, context), "skipped");
   assert.equal(vm.runInContext(`state.dashboard.recent_logs[0].status`, context), "skipped");
   assert.equal(vm.runInContext(`state.doseMutations.size`, context), 0);
+});
+
+test("scheduled dose desired state survives WebView recreation", async () => {
+  const storage = new Map();
+  const first = appContext(storage);
+  const firstRequests = [];
+  first.context.window.MedicineLocalApi = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => firstRequests.push({ path, options, resolve, reject }));
+    },
+  };
+  vm.runInContext(`
+    state.people = [{ id: "p1", name: "검토", sex: "male", age: 36 }];
+    state.currentPersonId = "p1";
+    state.dashboard = {
+      medications: [],
+      recent_logs: [],
+      daily_plan: {
+        date: "2026-08-20",
+        doses: [{ id: "dose-1", status: "planned", completed_at: null }],
+        summary: { planned: 1, taken: 0, skipped: 0 },
+      },
+    };
+    completeDoseInstance("dose-1", "taken");
+    completeDoseInstance("dose-1", "skipped");
+  `, first.context);
+
+  assert.equal(firstRequests.length, 1);
+  assert.equal(JSON.parse(firstRequests[0].options.body).status, "taken");
+  const stored = JSON.parse(storage.get("medicine.doseIntents"));
+  assert.deepEqual(stored["dose-1"], { personId: "p1", desiredStatus: "skipped" });
+
+  const second = appContext(storage);
+  const recoveredRequests = [];
+  second.context.window.MedicineLocalApi = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => recoveredRequests.push({ path, options, resolve, reject }));
+    },
+  };
+  vm.runInContext(`
+    state.people = [{ id: "p1", name: "검토", sex: "male", age: 36 }];
+    state.currentPersonId = "p1";
+    state.dashboard = {
+      medications: [],
+      recent_logs: [{ id: "log-taken", dose_instance_id: "dose-1", status: "taken" }],
+      daily_plan: {
+        date: "2026-08-20",
+        doses: [{ id: "dose-1", status: "taken", completed_at: "2026-08-20T08:05:00+09:00" }],
+        summary: { planned: 0, taken: 1, skipped: 0 },
+      },
+    };
+    recoverPersistedDoseIntents("p1");
+  `, second.context);
+
+  assert.equal(recoveredRequests.length, 1);
+  assert.equal(recoveredRequests[0].path, "/api/dose-instances/dose-1");
+  assert.equal(JSON.parse(recoveredRequests[0].options.body).status, "skipped");
+  recoveredRequests[0].resolve({
+    id: "dose-1",
+    status: "skipped",
+    completed_at: "2026-08-20T08:06:00+09:00",
+    recent_logs: [{ id: "log-skipped", dose_instance_id: "dose-1", status: "skipped" }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(storage.has("medicine.doseIntents"), false);
+  assert.equal(vm.runInContext(`state.dashboard.daily_plan.doses[0].status`, second.context), "skipped");
 });
 
 test("ambiguous dose failure refreshes authoritative state before converging to a queued older state", async () => {

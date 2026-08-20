@@ -52,6 +52,7 @@ function queueDoseDesiredState(instanceId, desiredStatus, button = null) {
     state.doseMutations.set(instanceId, entry);
   }
   entry.desiredStatus = desiredStatus;
+  rememberScheduledDoseIntent(instanceId, desiredStatus);
   if (applyPendingDoseIntent(instanceId, desiredStatus)) renderHome();
   if (!entry.running) void drainDoseDesiredState(instanceId, entry);
 }
@@ -59,6 +60,7 @@ function queueDoseDesiredState(instanceId, desiredStatus, button = null) {
 async function drainDoseDesiredState(instanceId, entry) {
   if (state.doseMutations.get(instanceId) !== entry || entry.running) return;
   if (entry.authoritativeStatus === entry.desiredStatus) {
+    clearScheduledDoseIntent(instanceId);
     clearPendingDoseIntent(instanceId);
     state.doseMutations.delete(instanceId);
     renderAll();
@@ -121,6 +123,7 @@ async function drainDoseDesiredState(instanceId, entry) {
       entry.authoritativeStatus = refreshedStatus;
       if (entry.authoritativeStatus !== entry.desiredStatus) {
         if (entry.ambiguousCompensations >= 1) {
+          clearScheduledDoseIntent(instanceId);
           clearPendingDoseIntent(instanceId);
           state.doseMutations.delete(instanceId);
           renderAll();
@@ -133,6 +136,7 @@ async function drainDoseDesiredState(instanceId, entry) {
         void drainDoseDesiredState(instanceId, entry);
         return;
       }
+      clearScheduledDoseIntent(instanceId);
       clearPendingDoseIntent(instanceId);
       state.doseMutations.delete(instanceId);
       renderAll();
@@ -142,6 +146,7 @@ async function drainDoseDesiredState(instanceId, entry) {
       void drainDoseDesiredState(instanceId, entry);
       return;
     }
+    clearScheduledDoseIntent(instanceId);
     state.doseMutations.delete(instanceId);
     try {
       await loadDashboard();
@@ -156,6 +161,8 @@ async function drainDoseDesiredState(instanceId, entry) {
 
   entry.running = false;
   entry.authoritativeStatus = updated.status;
+  const converged = updated.deleted === true || entry.desiredStatus === updated.status;
+  if (converged) clearScheduledDoseIntent(instanceId);
   if (state.currentPersonId !== entry.personId) {
     state.doseMutations.delete(instanceId);
     return;
@@ -176,6 +183,25 @@ async function drainDoseDesiredState(instanceId, entry) {
   clearPendingDoseIntent(instanceId);
   state.doseMutations.delete(instanceId);
   renderAll();
+}
+
+function recoverPersistedDoseIntents(personId = state.currentPersonId) {
+  if (!personId || state.currentPersonId !== personId) return;
+  const intents = persistedDoseIntents();
+  for (const [instanceId, intent] of Object.entries(intents)) {
+    if (intent?.personId !== personId) continue;
+    if (!["planned", "taken", "skipped"].includes(intent.desiredStatus)) {
+      clearScheduledDoseIntent(instanceId);
+      continue;
+    }
+    const dose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
+    if (!dose) continue;
+    if (dose.status === intent.desiredStatus) {
+      clearScheduledDoseIntent(instanceId);
+      continue;
+    }
+    queueDoseDesiredState(instanceId, intent.desiredStatus);
+  }
 }
 
 function completeDoseInstance(instanceId, status, button = null) {

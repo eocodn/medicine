@@ -23,6 +23,46 @@ const state = {
   dashboardLoads: new Map(),
 };
 
+const DOSE_INTENTS_STORAGE_KEY = "medicine.doseIntents";
+
+function persistedDoseIntents() {
+  const raw = localStorage.getItem(DOSE_INTENTS_STORAGE_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid dose intents");
+    return parsed;
+  } catch (_) {
+    localStorage.removeItem(DOSE_INTENTS_STORAGE_KEY);
+    return {};
+  }
+}
+
+function writePersistedDoseIntents(intents) {
+  if (Object.keys(intents).length) {
+    localStorage.setItem(DOSE_INTENTS_STORAGE_KEY, JSON.stringify(intents));
+  } else {
+    localStorage.removeItem(DOSE_INTENTS_STORAGE_KEY);
+  }
+}
+
+function rememberScheduledDoseIntent(instanceId, desiredStatus) {
+  const scheduled = (state.dashboard?.daily_plan?.doses || []).some((item) => item.id === instanceId);
+  if (!scheduled || !state.currentPersonId) return false;
+  const intents = persistedDoseIntents();
+  intents[instanceId] = { personId: state.currentPersonId, desiredStatus };
+  writePersistedDoseIntents(intents);
+  return true;
+}
+
+function clearScheduledDoseIntent(instanceId) {
+  const intents = persistedDoseIntents();
+  if (!Object.hasOwn(intents, instanceId)) return false;
+  delete intents[instanceId];
+  writePersistedDoseIntents(intents);
+  return true;
+}
+
 function prnRequestStorageKey(medicationId) {
   return `medicine.prnRequest.${medicationId}`;
 }

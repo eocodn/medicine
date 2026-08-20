@@ -160,6 +160,7 @@ async function loadPeople() {
   if (state.currentPersonId) {
     localStorage.setItem("medicine.currentPersonId", state.currentPersonId);
     await loadDashboard();
+    recoverPersistedDoseIntents(state.currentPersonId);
   } else {
     localStorage.removeItem("medicine.currentPersonId");
     state.dashboard = null;
