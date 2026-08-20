@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .reference_contracts.registry import VerifiedContractArtifact
 from .release import (
     DEFAULT_CHUNK_SIZE,
     PATCH_FORMAT,
@@ -110,6 +111,50 @@ def load_candidate(candidate: ContractReleaseCandidate) -> CandidateMetadata:
     if manifest.get("size_bytes") != target_size_bytes:
         raise ValueError("reference contract manifest size does not match database")
     candidate.verifier(candidate.database, candidate.contract_major, dataset_id)
+    return CandidateMetadata(
+        candidate=candidate,
+        dataset_id=dataset_id,
+        target_sha256=target_sha256,
+        target_size_bytes=target_size_bytes,
+    )
+
+
+def load_verified_artifact(artifact: VerifiedContractArtifact) -> CandidateMetadata:
+    """Rebind one trusted build result to its exact final bytes.
+
+    The artifact object never crosses an untrusted serialization boundary: it
+    is created by the exporter and consumed by the publisher in the same
+    process.  Recomputing SHA/size here detects any mutation after verification
+    without repeating the million-row logical identity pass.
+    """
+    candidate = ContractReleaseCandidate(
+        artifact.contract_major,
+        artifact.database,
+        artifact.manifest,
+        verifier=lambda _database, _major, _dataset_id: None,
+    )
+    if not candidate.database.is_file() or not candidate.manifest.is_file():
+        raise FileNotFoundError("verified contract artifact is missing")
+    try:
+        manifest = json.loads(candidate.manifest.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("verified contract manifest is invalid JSON") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("verified contract manifest must be an object")
+    target_sha256 = sha256_file(candidate.database)
+    target_size_bytes = candidate.database.stat().st_size
+    if (
+        artifact.dataset_id != manifest.get("dataset_id")
+        or artifact.sha256 != manifest.get("sha256")
+        or artifact.size_bytes != manifest.get("size_bytes")
+        or artifact.contract_major != manifest.get("contract_major")
+        or artifact.sha256 != target_sha256
+        or artifact.size_bytes != target_size_bytes
+    ):
+        raise ValueError("verified contract artifact changed after contract verification")
+    dataset_id = str(artifact.dataset_id).lower()
+    if not _DATASET_ID.fullmatch(dataset_id):
+        raise ValueError("verified contract dataset identity is invalid")
     return CandidateMetadata(
         candidate=candidate,
         dataset_id=dataset_id,

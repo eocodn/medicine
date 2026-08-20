@@ -17,6 +17,7 @@ from medicine_canonical.reference_contracts.v1 import (
     REFERENCE_CONTRACT_MAJOR,
     export_reference_database,
     logical_dataset_id,
+    logical_dataset_id_oracle,
     semantic_facts_for_reviewed_remark,
     verify_reference_database,
 )
@@ -154,6 +155,30 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
                 self.release["dataset_id"],
             )
 
+    def test_strict_server_verifier_uses_frozen_oracle_not_fast_executor(self) -> None:
+        with (
+            mock.patch(
+                "medicine_canonical.reference_contracts.v1.logical_dataset_id_oracle",
+                return_value=self.release["dataset_id"],
+            ) as oracle,
+            mock.patch(
+                "medicine_canonical.reference_contracts.v1.logical_dataset_id",
+                side_effect=AssertionError("strict verifier must not trust optimized identity"),
+            ),
+        ):
+            verified = verify_reference_database(
+                self.mobile,
+                REFERENCE_CONTRACT_MAJOR,
+                self.release["dataset_id"],
+            )
+
+        self.assertEqual(verified["status"], "verified")
+        oracle.assert_called_once()
+
+    def test_fast_logical_dataset_identity_matches_frozen_oracle(self) -> None:
+        with sqlite3.connect(self.mobile) as con:
+            self.assertEqual(logical_dataset_id(con), logical_dataset_id_oracle(con))
+
     def test_logical_dataset_identity_binds_product_link_to_runtime_semantics(self) -> None:
         review_remark = "항암제 투여로 인한 구역 및 구토의 방지에 쓰는 제품에 한함"
         reviewed = reviewed_mfds_remark("duration_caution", review_remark)
@@ -247,6 +272,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
             self.assertFalse(_mfds_criterion_note_requires_review(runtime_before, con))
 
             before_dataset_id = logical_dataset_id(con)
+            self.assertEqual(before_dataset_id, logical_dataset_id_oracle(con))
             con.execute(
                 "UPDATE reference_contract_meta SET value=? WHERE key='dataset_id'",
                 (before_dataset_id,),
@@ -274,6 +300,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
             ).fetchone())
             self.assertTrue(_mfds_criterion_note_requires_review(runtime_after, con))
             after_dataset_id = logical_dataset_id(con)
+            self.assertEqual(after_dataset_id, logical_dataset_id_oracle(con))
             con.execute(
                 "UPDATE reference_contract_meta SET value=? WHERE key='dataset_id'",
                 (after_dataset_id,),
@@ -341,6 +368,49 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.assertEqual([entry["contract_major"] for entry in result["contracts"]], [1])
         self.assertTrue(Path(result["contracts"][0]["database"]).is_file())
         self.assertTrue(Path(result["contracts"][0]["manifest"]).is_file())
+
+    def test_supported_contract_window_does_not_repeat_strict_identity_verification(self) -> None:
+        output = self.mobile.parent / "single-identity-pass-window"
+        database = output / "contract-1.sqlite"
+        manifest = output / "contract-1.manifest.json"
+
+        def export(_canonical, target, *, manifest_path, **_kwargs):
+            Path(target).parent.mkdir(parents=True, exist_ok=True)
+            data = b"verified-contract"
+            Path(target).write_bytes(data)
+            payload = {
+                "contract_major": 1,
+                "dataset_id": "sha256:" + "1" * 64,
+                "sha256": __import__("hashlib").sha256(data).hexdigest(),
+                "size_bytes": len(data),
+            }
+            Path(manifest_path).write_text(json.dumps(payload), encoding="utf-8")
+            return payload
+
+        strict = mock.Mock(side_effect=AssertionError("strict verifier repeated logical identity"))
+        built = mock.Mock(return_value={"status": "verified"})
+        implementation = ReferenceContractImplementation(
+            1,
+            export,
+            strict,
+            verify_built=built,
+        )
+        with (
+            mock.patch(
+                "medicine_canonical.reference_contracts.registry.supported_contract_majors",
+                return_value=(1,),
+            ),
+            mock.patch(
+                "medicine_canonical.reference_contracts.registry.implementation_for",
+                return_value=implementation,
+            ),
+        ):
+            result = build_supported_contract_window(self.canonical, output)
+
+        self.assertEqual(result["contracts"][0]["database"], str(database))
+        self.assertEqual(result["contracts"][0]["manifest"], str(manifest))
+        built.assert_called_once_with(database, 1, "sha256:" + "1" * 64)
+        strict.assert_not_called()
 
     def test_publication_build_can_surface_unbuildable_previous_contract_without_hiding_it(self) -> None:
         output = self.mobile.parent / "retired-build-window"

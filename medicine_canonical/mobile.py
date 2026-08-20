@@ -4,10 +4,20 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 from .inspection import verify_canonical_database
+
+
+def _build_progress(progress, phase: str, status: str, started: float | None = None, **extra) -> None:
+    if progress is None:
+        return
+    payload = {"phase": phase, "status": status, **extra}
+    if started is not None and status == "completed":
+        payload["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    progress(payload)
 
 
 MOBILE_PHYSICAL_POLICY_VERSION = "8"
@@ -253,16 +263,20 @@ def _build_mobile_database(
     product_rule_criteria_view_ddl: str,
     manifest_path: str | Path | None = None,
     physical_policy_version: str = MOBILE_PHYSICAL_POLICY_VERSION,
+    progress=None,
 ) -> dict:
     source = Path(canonical_db)
     output = Path(output_db)
     manifest = Path(manifest_path) if manifest_path else output.with_name("mobile.manifest.json")
     if not source.is_file():
         raise FileNotFoundError(f"canonical database not found: {source}")
+    phase_started = time.monotonic()
+    _build_progress(progress, "canonical_verify", "started")
     verification = verify_canonical_database(source)
     if verification["status"] != "verified":
         details = "; ".join(verification["errors"]) or "unknown verification failure"
         raise ValueError(f"canonical verification failed: {details}")
+    _build_progress(progress, "canonical_verify", "completed", phase_started)
     output.parent.mkdir(parents=True, exist_ok=True)
     manifest.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")
@@ -293,6 +307,8 @@ def _build_mobile_database(
 
         dst = sqlite3.connect(temporary)
         try:
+            phase_started = time.monotonic()
+            _build_progress(progress, "runtime_table_copy", "started")
             dst.execute("PRAGMA foreign_keys=OFF")
             for table in COPIED_RUNTIME_TABLES:
                 ddl = objects.get(("table", table))
@@ -303,8 +319,23 @@ def _build_mobile_database(
             dst.execute(f"ATTACH DATABASE '{escaped}' AS source_db")
             for table in COPIED_RUNTIME_TABLES:
                 dst.execute(f'INSERT INTO "{table}" SELECT * FROM source_db."{table}"')
+            _build_progress(progress, "runtime_table_copy", "completed", phase_started)
+
+            phase_started = time.monotonic()
+            _build_progress(progress, "compact_product_rules", "started")
             _populate_compact_product_rules(dst)
-            materialize_semantics(src, dst)
+            _build_progress(progress, "compact_product_rules", "completed", phase_started)
+
+            phase_started = time.monotonic()
+            _build_progress(progress, "semantic_materialization", "started")
+            semantic_rows = materialize_semantics(src, dst)
+            _build_progress(
+                progress,
+                "semantic_materialization",
+                "completed",
+                phase_started,
+                rows=semantic_rows,
+            )
             dst.commit()
             dst.execute("DETACH DATABASE source_db")
             source_indexes = {
@@ -330,7 +361,10 @@ def _build_mobile_database(
                     raise ValueError(f"canonical runtime view missing: {view}")
                 dst.execute(ddl)
             dst.execute(product_rule_criteria_view_ddl)
+            phase_started = time.monotonic()
+            _build_progress(progress, "logical_identity", "started")
             dataset_id = logical_dataset_id(dst)
+            _build_progress(progress, "logical_identity", "completed", phase_started)
             write_contract_meta(dst, dataset_id)
             _write_build_meta(
                 dst,
@@ -341,6 +375,8 @@ def _build_mobile_database(
             # Bulk loading millions of WITHOUT ROWID links leaves measurable
             # page slack even in a freshly created database. Compact once on
             # the build host so the installed artifact does not carry it.
+            phase_started = time.monotonic()
+            _build_progress(progress, "sqlite_finalize", "started")
             dst.execute("VACUUM")
             dst.execute("PRAGMA foreign_keys=ON")
             if dst.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
@@ -351,6 +387,7 @@ def _build_mobile_database(
             dst.execute("ANALYZE")
             dst.execute("PRAGMA optimize")
             dst.commit()
+            _build_progress(progress, "sqlite_finalize", "completed", phase_started)
         finally:
             dst.close()
         os.replace(temporary, output)
