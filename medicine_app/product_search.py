@@ -48,7 +48,7 @@ class ProductSearchQuery:
             and (
                 self.number_tokens
                 or self.unit_tokens
-                or (len(self.text_tokens) > 1 and bool(re.search(r"\s", self.original)))
+                or len(self.text_tokens) > 1
             )
         )
 
@@ -203,15 +203,13 @@ def _match_text_field(
     *,
     field: str,
     field_rank: int,
-    product_numbers: tuple[str, ...],
-    product_units: tuple[str, ...],
 ) -> ProductSearchMatch | None:
-    compact, _numbers, _units = _field_text(value)
+    compact, field_numbers, field_units = _field_text(value)
     if not compact or not query.text_tokens:
         return None
-    if not _ordered_subsequence(query.number_tokens, product_numbers):
+    if not _ordered_subsequence(query.number_tokens, field_numbers):
         return None
-    if not _ordered_subsequence(query.unit_tokens, product_units):
+    if not _ordered_subsequence(query.unit_tokens, field_units):
         return None
     matched, fuzzy_count = _ordered_text_match(
         query.text_tokens,
@@ -244,31 +242,24 @@ def match_product_fields(
     ingredient_text: object = None,
     manufacturer: object = None,
 ) -> ProductSearchMatch | None:
-    _product_compact, product_numbers, product_units = _field_text(product_name)
     matches = [
         _match_text_field(
             query,
             product_name,
             field="product_name",
             field_rank=0,
-            product_numbers=product_numbers,
-            product_units=product_units,
         ),
         _match_text_field(
             query,
             ingredient_text,
             field="ingredient_text",
             field_rank=1,
-            product_numbers=product_numbers,
-            product_units=product_units,
         ),
         _match_text_field(
             query,
             manufacturer,
             field="manufacturer",
             field_rank=2,
-            product_numbers=product_numbers,
-            product_units=product_units,
         ),
     ]
     found = [match for match in matches if match is not None]
@@ -283,8 +274,11 @@ def fuzzy_candidate_fragments(query: ProductSearchQuery) -> tuple[str, ...]:
     for token in sorted(query.text_tokens, key=len, reverse=True):
         if len(token) < 4:
             continue
-        width = min(3, len(token) - 1)
-        starts = (0, max(0, (len(token) - width) // 2), len(token) - width)
+        # Prefix/suffix fragments are deliberately non-overlapping. With a
+        # single-character substitution, at least one fragment therefore
+        # remains exact and can retrieve the row for the bounded fuzzy matcher.
+        width = min(3, len(token) // 2)
+        starts = (0, len(token) - width)
         for start in starts:
             fragment = token[start:start + width]
             if fragment and fragment not in fragments:

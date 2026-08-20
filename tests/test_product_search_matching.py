@@ -108,6 +108,18 @@ class ProductSearchIntegrationTest(unittest.TestCase):
                 "알프람정0.25밀리그램(알프라졸람)",
                 "Alprazolam",
             )
+            add_product(
+                con,
+                "DIGEST-500",
+                "베스타제정",
+                "Biodiastase 500/Cellulase AP3/Lipase AP6",
+            )
+            add_product(
+                con,
+                "HARTMANN",
+                "하트만용액",
+                "Calcium Chloride Hydrate/Potassium Chloride/Sodium Chloride/Sodium Lactate Solution 50%",
+            )
         self.app = MedicationApp(self.canonical_db, self.personal_db)
 
     def tearDown(self) -> None:
@@ -131,6 +143,60 @@ class ProductSearchIntegrationTest(unittest.TestCase):
 
         self.assertEqual([row["product_ref"] for row in results], ["SYN-25"])
 
+    def test_structured_search_preserves_numeric_ingredient_matches(self) -> None:
+        self.assert_first("Biodiastase 500", "DIGEST-500")
+
+        results = self.app.search_products("Sodium Lactate Solution 50%", limit=10)
+        self.assertIn("HARTMANN", [row["product_ref"] for row in results])
+
+    def test_punctuation_separated_text_uses_normalized_matching(self) -> None:
+        self.assert_first("하트만-용액", "HARTMANN")
+
+    def test_structured_candidate_generation_does_not_truncate_valid_brand_form_query(self) -> None:
+        with sqlite3.connect(self.canonical_db) as con:
+            source_key = con.execute(
+                "SELECT source_dataset_key FROM products ORDER BY item_seq LIMIT 1"
+            ).fetchone()[0]
+            start_row = con.execute("SELECT MAX(source_row) FROM products").fetchone()[0] + 1
+            products = [
+                (
+                    f"DISTRACTOR-{index:04d}",
+                    start_row + index,
+                    f"가짜{index:04d}정10밀리그램",
+                    "제약",
+                    "Distractor",
+                    "정제",
+                    "2020-01-01",
+                    None,
+                    "정상",
+                    "active",
+                    source_key,
+                )
+                for index in range(1100)
+            ]
+            con.executemany(
+                """INSERT INTO products(
+                       item_seq,source_row,product_name,manufacturer,ingredient_text,dosage_form,
+                       permit_date,cancel_date,cancel_name,permit_status,source_dataset_key
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                products,
+            )
+            con.executemany(
+                "INSERT INTO product_identifiers(item_seq,system,value,source_dataset_key) VALUES(?,?,?,?)",
+                [
+                    (item_seq, "MFDS_ITEM_SEQ", item_seq, source_key)
+                    for item_seq, *_rest in products
+                ],
+            )
+            add_product(
+                con,
+                "LIPITOR-10",
+                "리피토정10밀리그램(아토르바스타틴칼슘삼수화물)",
+                "Atorvastatin Calcium Trihydrate",
+            )
+
+        self.assert_first("리피토 정 10", "LIPITOR-10")
+
     def test_structured_identifier_queries_preserve_item_seq_and_edi_search(self) -> None:
         self.assert_first("SYN-25", "SYN-25")
         self.assert_first("EDI-SYN-25", "SYN-25")
@@ -140,6 +206,7 @@ class ProductSearchIntegrationTest(unittest.TestCase):
         self.assert_first("타진서방정 10/5mg0.5정", "TAJIN-10-5", mode="ocr")
         self.assertEqual(self.app.search_products("씬지록심 25", limit=10), [])
         self.assert_first("씬지록심 25", "SYN-25", mode="ocr")
+        self.assert_first("씬즈록신 25", "SYN-25", mode="ocr")
 
         result = self.app.search_products("씬지록심 25", limit=10, mode="ocr")[0]
         self.assertEqual(result["product_mapping_method"], "item_seq_exact")

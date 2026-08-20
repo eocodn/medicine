@@ -146,33 +146,39 @@ class ProductRepository:
         fragments: tuple[str, ...] = (),
     ) -> list[sqlite3.Row]:
         status_sql = "" if include_inactive else "AND p.permit_status='active'"
-        candidate_limit = 1000
-        anchors = fragments or tuple(sorted(query.text_tokens, key=len, reverse=True)[:2])
-        if not anchors:
+        text_tokens = fragments or query.text_tokens
+        if not text_tokens:
             return []
-        anchor_clauses: list[str] = []
+        text_clauses: list[str] = []
         params: list[object] = []
-        for anchor in anchors:
-            like = f"%{anchor}%"
-            anchor_clauses.append(
+        # Deterministic tokens narrow with AND. Do not cap this intermediate
+        # result: a fixed pre-ranking cap can discard the eventual best match.
+        # OCR fragments are alternatives because one fragment may contain the
+        # recognition error while another remains exact.
+        for token in text_tokens:
+            like = f"%{token}%"
+            text_clauses.append(
                 "(p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?)"
             )
             params.extend((like, like, like))
-        text_clause = " OR ".join(anchor_clauses)
-        number_clause = ""
+        text_joiner = " OR " if fragments else " AND "
+        text_clause = text_joiner.join(text_clauses)
+        number_clauses: list[str] = []
         if query.number_tokens:
-            number_clause = " AND " + " AND ".join(
-                "p.product_name LIKE ?" for _ in query.number_tokens
-            )
-            params.extend(f"%{number}%" for number in query.number_tokens)
-        params.append(candidate_limit)
+            for number in query.number_tokens:
+                like = f"%{number}%"
+                number_clauses.append(
+                    "(p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?)"
+                )
+                params.extend((like, like, like))
+        number_clause = ""
+        if number_clauses:
+            number_clause = " AND " + " AND ".join(number_clauses)
         return con.execute(
             f"""SELECT p.*
                 FROM products p
                 WHERE (({text_clause}){number_clause}) {status_sql}
-                ORDER BY CASE WHEN p.permit_status='active' THEN 0 ELSE 1 END,
-                         p.product_name,p.item_seq
-                LIMIT ?""",
+                """,
             params,
         ).fetchall()
 
