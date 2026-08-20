@@ -191,6 +191,51 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             [{"key": previous_full, "error": "FakeNotFound"}],
         )
 
+    def test_transient_historical_full_read_failure_aborts_without_deleting_history(self) -> None:
+        first = self.candidate(1, "timeout-base", b"A" * 500_000, "sha256:" + "1" * 64)
+        self.publish([first], current=1, minimum=1, sequence=100, suffix="timeout-base")
+        previous_root = self.verified_root()["manifest"]
+        previous_full = previous_root["contracts"]["1"]["full"]["key"]
+        second = self.candidate(1, "timeout-next", b"B" * 500_000, "sha256:" + "2" * 64)
+        original_get = self.client.get_object
+        failed = False
+
+        def timeout_old_full(**kwargs):
+            nonlocal failed
+            if kwargs["Key"] == previous_full and not failed:
+                failed = True
+                raise TimeoutError("simulated transient historical read timeout")
+            return original_get(**kwargs)
+
+        self.client.get_object = timeout_old_full
+        try:
+            with self.assertRaisesRegex(TimeoutError, "transient historical read timeout"):
+                self.publish([second], current=1, minimum=1, sequence=101, suffix="timeout-next")
+        finally:
+            self.client.get_object = original_get
+
+        self.assertEqual(self.verified_root()["release_sequence"], 100)
+        self.assertIn((self.bucket, previous_full), self.client.objects)
+        self.assertEqual(self.client.delete_order, [])
+
+    def test_corrupt_historical_full_is_skipped_as_conclusively_unusable(self) -> None:
+        first = self.candidate(1, "corrupt-base", b"A" * 500_000, "sha256:" + "1" * 64)
+        self.publish([first], current=1, minimum=1, sequence=100, suffix="corrupt-base")
+        previous_root = self.verified_root()["manifest"]
+        previous_full = previous_root["contracts"]["1"]["full"]["key"]
+        self.client.objects[(self.bucket, previous_full)]["Body"] = b"corrupt historical full"
+        second = self.candidate(1, "corrupt-next", b"B" * 500_000, "sha256:" + "2" * 64)
+
+        result = self.publish([second], current=1, minimum=1, sequence=101, suffix="corrupt-next")
+
+        self.assertEqual(result["status"], "published")
+        self.assertEqual(self.verified_root()["release_sequence"], 101)
+        self.assertEqual(self.verified_root()["manifest"]["contracts"]["1"]["history"], [])
+        self.assertEqual(
+            result["skipped_patch_bases"]["1"],
+            [{"key": previous_full, "error": "HistoricalBaseIntegrityError"}],
+        )
+
     def test_immutable_upload_failure_does_not_advance_signed_root(self) -> None:
         first = self.candidate(1, "upload-base", b"A" * 500_000, "sha256:" + "1" * 64)
         self.publish([first], current=1, minimum=1, sequence=100, suffix="upload-base")

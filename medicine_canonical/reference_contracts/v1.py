@@ -379,6 +379,38 @@ _LOGICAL_PROJECTIONS: tuple[tuple[str, str], ...] = (
                   i.paired_ingredient_name,i.rule_value,i.dosage_form,i.note,i.details,
                   l.match_method,l.pair_orientation""",
     ),
+    # Independent criterion/semantic multisets are insufficient: two logically
+    # duplicate criteria can carry different runtime semantics. Hash the joined
+    # runtime relation so product applicability is bound to those facts. Keep
+    # physical row IDs and exact source REMARK text out of logical identity.
+    (
+        "runtime_product_rule_criteria",
+        """SELECT
+                  p.category,p.item_seq,p.ingredient_name,p.paired_item_seq,
+                  p.paired_ingredient_name,p.effect_name,p.product_dosage_form,p.product_details,
+                  p.criterion_sequence_text,p.criterion_ingredient_name,p.criterion_ingredient_name_ko,
+                  p.criterion_paired_ingredient_name,p.criterion_rule_value,p.criterion_dosage_form,
+                  p.criterion_note,p.criterion_details,
+                  p.criterion_maximum_daily_amount,p.criterion_maximum_daily_unit,
+                  p.criterion_dose_parse_status,p.criterion_dose_parse_reason,
+                  p.match_method,p.pair_orientation,
+                  s.ordinal,s.semantic_role,s.evaluation_mode,s.evaluator_kind,s.fallback_action,
+                  s.qualifier_type,s.display_text,s.structured_payload_json
+           FROM product_rule_criteria p
+           LEFT JOIN reference_criterion_semantics s
+             ON s.criterion_rule_id=p.criterion_rule_id
+           ORDER BY
+                  p.category,p.item_seq,p.ingredient_name,p.paired_item_seq,
+                  p.paired_ingredient_name,p.effect_name,p.product_dosage_form,p.product_details,
+                  p.criterion_sequence_text,p.criterion_ingredient_name,p.criterion_ingredient_name_ko,
+                  p.criterion_paired_ingredient_name,p.criterion_rule_value,p.criterion_dosage_form,
+                  p.criterion_note,p.criterion_details,
+                  p.criterion_maximum_daily_amount,p.criterion_maximum_daily_unit,
+                  p.criterion_dose_parse_status,p.criterion_dose_parse_reason,
+                  p.match_method,p.pair_orientation,
+                  s.ordinal,s.semantic_role,s.evaluation_mode,s.evaluator_kind,s.fallback_action,
+                  s.qualifier_type,s.display_text,s.structured_payload_json""",
+    ),
     (
         "criterion_semantics",
         """SELECT

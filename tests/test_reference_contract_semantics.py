@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from medicine_app.canonical_runtime import canonical_manifest
+from medicine_app.reference_semantics import _mfds_criterion_note_requires_review
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.mobile import build_mobile_database
 from medicine_canonical.reference_contracts.v1 import (
@@ -152,6 +153,142 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
                 REFERENCE_CONTRACT_MAJOR,
                 self.release["dataset_id"],
             )
+
+    def test_logical_dataset_identity_binds_product_link_to_runtime_semantics(self) -> None:
+        review_remark = "항암제 투여로 인한 구역 및 구토의 방지에 쓰는 제품에 한함"
+        reviewed = reviewed_mfds_remark("duration_caution", review_remark)
+        self.assertIsNotNone(reviewed)
+        assert reviewed is not None
+        facts = semantic_facts_for_reviewed_remark(reviewed)
+        self.assertTrue(facts)
+
+        with sqlite3.connect(self.mobile) as con:
+            con.row_factory = sqlite3.Row
+            linked = con.execute(
+                """SELECT l.product_rule_id,l.criterion_rule_id,i.*
+                   FROM mobile_product_criterion_links l
+                   JOIN ingredient_rules i ON i.id=l.criterion_rule_id
+                   WHERE i.category='duration_caution'
+                     AND (i.qualifier_note IS NULL OR TRIM(i.qualifier_note)='')
+                   ORDER BY l.product_rule_id,l.criterion_rule_id LIMIT 1"""
+            ).fetchone()
+            self.assertIsNotNone(linked)
+            assert linked is not None
+            product_rule_id = int(linked["product_rule_id"])
+            original_criterion_id = int(linked["criterion_rule_id"])
+            duplicate_criterion_id = int(
+                con.execute("SELECT COALESCE(MAX(id),0)+1 FROM ingredient_rules").fetchone()[0]
+            )
+            duplicate_source_row = int(
+                con.execute("SELECT COALESCE(MAX(source_row),0)+1000 FROM ingredient_rules").fetchone()[0]
+            )
+            con.execute(
+                """INSERT INTO ingredient_rules(
+                       id,source_dataset_key,source_row,category,sequence_text,ingredient_name,
+                       ingredient_name_ko,paired_ingredient_name,rule_value,dosage_form,note,
+                       qualifier_note,details
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    duplicate_criterion_id,
+                    linked["source_dataset_key"],
+                    duplicate_source_row,
+                    linked["category"],
+                    linked["sequence_text"],
+                    linked["ingredient_name"],
+                    linked["ingredient_name_ko"],
+                    linked["paired_ingredient_name"],
+                    linked["rule_value"],
+                    linked["dosage_form"],
+                    linked["note"],
+                    review_remark,
+                    linked["details"],
+                ),
+            )
+            con.execute(
+                "INSERT INTO reference_semantic_expectations(criterion_rule_id,expected_fact_count) VALUES(?,?)",
+                (duplicate_criterion_id, len(facts)),
+            )
+            for ordinal, fact in enumerate(facts):
+                con.execute(
+                    """INSERT INTO reference_criterion_semantics(
+                           criterion_rule_id,ordinal,semantic_role,evaluation_mode,evaluator_kind,
+                           fallback_action,qualifier_type,display_text,structured_payload_json,source_remark
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        duplicate_criterion_id,
+                        ordinal,
+                        fact.semantic_role,
+                        fact.evaluation_mode,
+                        fact.evaluator_kind,
+                        fact.fallback_action,
+                        fact.qualifier_type,
+                        fact.display_text,
+                        json.dumps(
+                            fact.structured_payload,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        fact.source_remark,
+                    ),
+                )
+
+            product = con.execute(
+                "SELECT item_seq,category FROM product_rules WHERE id=?",
+                (product_rule_id,),
+            ).fetchone()
+            self.assertIsNotNone(product)
+            assert product is not None
+            runtime_before = dict(con.execute(
+                """SELECT * FROM product_rule_criteria
+                   WHERE item_seq=? AND category=? AND criterion_rule_id=?""",
+                (product["item_seq"], product["category"], original_criterion_id),
+            ).fetchone())
+            self.assertFalse(_mfds_criterion_note_requires_review(runtime_before, con))
+
+            before_dataset_id = logical_dataset_id(con)
+            con.execute(
+                "UPDATE reference_contract_meta SET value=? WHERE key='dataset_id'",
+                (before_dataset_id,),
+            )
+            con.commit()
+            self.assertEqual(
+                verify_reference_database(
+                    self.mobile,
+                    REFERENCE_CONTRACT_MAJOR,
+                    before_dataset_id,
+                )["status"],
+                "verified",
+            )
+
+            con.execute(
+                """UPDATE mobile_product_criterion_links
+                   SET criterion_rule_id=?
+                   WHERE product_rule_id=? AND criterion_rule_id=?""",
+                (duplicate_criterion_id, product_rule_id, original_criterion_id),
+            )
+            runtime_after = dict(con.execute(
+                """SELECT * FROM product_rule_criteria
+                   WHERE item_seq=? AND category=? AND criterion_rule_id=?""",
+                (product["item_seq"], product["category"], duplicate_criterion_id),
+            ).fetchone())
+            self.assertTrue(_mfds_criterion_note_requires_review(runtime_after, con))
+            after_dataset_id = logical_dataset_id(con)
+            con.execute(
+                "UPDATE reference_contract_meta SET value=? WHERE key='dataset_id'",
+                (after_dataset_id,),
+            )
+            con.commit()
+
+        self.assertNotEqual(before_dataset_id, after_dataset_id)
+        self.assertEqual(
+            verify_reference_database(
+                self.mobile,
+                REFERENCE_CONTRACT_MAJOR,
+                after_dataset_id,
+            )["status"],
+            "verified",
+        )
 
     def test_server_verified_contract_keeps_provenance_failure_diagnostic_only_at_runtime(self) -> None:
         with sqlite3.connect(self.mobile) as con:

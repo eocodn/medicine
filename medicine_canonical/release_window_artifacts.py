@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import gzip
 import json
 import re
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,7 +17,7 @@ from .release import (
     decompress_snapshot,
     sha256_file,
 )
-from .release_r2 import _download_to_file, _list_prefix_keys
+from .release_r2 import _download_to_file, _list_prefix_keys, _not_found
 
 
 RELEASE_PREFIX = "reference/v2"
@@ -67,6 +69,10 @@ class PreparedContract:
     full_path: Path | None
     patch_paths: dict[str, Path]
     skipped_bases: list[dict[str, str]] = field(default_factory=list)
+
+
+class HistoricalBaseIntegrityError(RuntimeError):
+    """A signed historical artifact was read authoritatively but failed integrity checks."""
 
 
 def contract_prefix(contract_major: int) -> str:
@@ -147,11 +153,14 @@ def download_base(
     archive = output_dir / "base.sqlite.gz"
     downloaded = _download_to_file(client, bucket, full["key"], archive)
     if downloaded["sha256"] != full["sha256"] or downloaded["size_bytes"] != full["size_bytes"]:
-        raise RuntimeError("remote contract full artifact does not match signed root")
+        raise HistoricalBaseIntegrityError("remote contract full artifact does not match signed root")
     database = output_dir / "base.sqlite"
-    decompressed = decompress_snapshot(archive, database)
+    try:
+        decompressed = decompress_snapshot(archive, database)
+    except (gzip.BadGzipFile, EOFError, zlib.error) as exc:
+        raise HistoricalBaseIntegrityError("remote contract full artifact is not valid gzip") from exc
     if decompressed["sha256"] != target["sha256"] or decompressed["size_bytes"] != target["size_bytes"]:
-        raise RuntimeError("remote contract full target does not match signed root")
+        raise HistoricalBaseIntegrityError("remote contract full target does not match signed root")
     return database, base["dataset_id"]
 
 
@@ -192,6 +201,10 @@ def prepare_contract(
             # optional direct patches. A missing or corrupt old base must never
             # prevent a verified self-contained new full from advancing the
             # authoritative root. Do not re-advertise an unusable base either.
+            # Unknown/transient external failures are not authoritative evidence
+            # that the base is unusable and must abort publication instead.
+            if not (_not_found(exc) or isinstance(exc, HistoricalBaseIntegrityError)):
+                raise
             skipped_bases.append({
                 "key": str(base.get("full", {}).get("key") or ""),
                 "error": type(exc).__name__,
