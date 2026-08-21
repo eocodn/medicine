@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 
 from .product_search_components import split_ingredient_components
+from .product_search_numeric import normalize_number
 
 
 _SEARCH_MODES = {"manual", "ocr"}
@@ -15,7 +15,7 @@ _UNIT_SENTINEL = {
     "ml": "__unit_ml__",
 }
 _TOKEN_RE = re.compile(
-    r"__unit_(mg|ug|ml)__|\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|[a-z]+|[가-힣]+",
+    r"__unit_(mg|ug|ml)__|\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+|[a-z]+|[가-힣]+",
     re.IGNORECASE,
 )
 _ASCII_UNIT_PATTERNS = (
@@ -96,17 +96,6 @@ class ProductSearchMatch:
         }
 
 
-def _normalize_number(value: str) -> str:
-    value = value.replace(",", "")
-    try:
-        number = Decimal(value)
-    except InvalidOperation:
-        return value
-    if number == number.to_integral_value():
-        return str(number.quantize(Decimal(1)))
-    return format(number.normalize(), "f")
-
-
 def _is_enclosed_numeric_marker(char: str) -> bool:
     normalized = unicodedata.normalize("NFKC", char)
     if not any(value.isdigit() for value in normalized) or any(
@@ -163,8 +152,8 @@ def _single_compatibility_token(value: str) -> str | None:
     token = match.group(0).casefold()
     if unit:
         return unit.casefold()
-    if token[0].isdigit():
-        return _normalize_number(token)
+    if token[0].isdigit() or (token.startswith(".") and token[1:].isdigit()):
+        return normalize_number(token)
     return token
 
 
@@ -312,8 +301,8 @@ def _scan_normalized_tokens(
                     atom_index -= 1
             semantic_unit_tokens.extend([canonical_unit] * (inherited + 1))
             previous_kind = "unit"
-        elif token[0].isdigit():
-            number = _normalize_number(token)
+        elif token[0].isdigit() or (token.startswith(".") and token[1:].isdigit()):
+            number = normalize_number(token)
             number_tokens.append(number)
             strength_atoms.append((number, None))
             number_spans.append(match.span())

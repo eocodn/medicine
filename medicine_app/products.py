@@ -219,10 +219,23 @@ class ProductRepository:
     def _number_candidate_patterns(
         number: str,
     ) -> tuple[tuple[str, str], ...]:
+        # Candidate SQL is allowed to broaden, never to reject a final match.
+        # Very long numeric tokens can exceed SQLite LIKE/GLOB pattern limits;
+        # omit that prefilter and let the authoritative matcher validate it.
+        if len(number) > 128:
+            return ()
         normalized_variants = [number]
         integer, dot, fraction = number.partition(".")
+        if integer == "0" and dot and fraction:
+            normalized_variants.append(f".{fraction}")
         if integer.isdigit() and len(integer) > 3:
-            grouped = f"{int(integer):,}"
+            first_group = len(integer) % 3 or 3
+            grouped = ",".join(
+                (integer[:first_group], *(
+                    integer[index:index + 3]
+                    for index in range(first_group, len(integer), 3)
+                ))
+            )
             if dot:
                 grouped = f"{grouped}.{fraction}"
             if grouped not in normalized_variants:
@@ -248,35 +261,40 @@ class ProductRepository:
         fragments: tuple[str, ...] = (),
     ) -> list[sqlite3.Row]:
         status_sql = "" if include_inactive else "AND p.permit_status='active'"
-        raw_text_tokens = tuple(dict.fromkeys(fragments or query.text_tokens))
-        if not raw_text_tokens:
+        if not query.text_tokens:
             return []
-        text_limit = 6 if fragments else _MAX_CANDIDATE_TEXT_TOKENS
-        token_pattern_candidates = [
-            (index, token, text_candidate_anchor_patterns(token))
-            for index, token in enumerate(raw_text_tokens)
-        ]
-        fragment_has_unbounded_anchor = bool(
-            fragments
-            and (
-                len(raw_text_tokens) > text_limit
-                or any(
-                    not patterns
-                    for _index, _token, patterns in token_pattern_candidates
+
+        def field_clause(
+            field: str,
+            text_tokens: tuple[str, ...],
+            *,
+            fragment_mode: bool,
+        ) -> tuple[str, list[object]]:
+            raw_text_tokens = tuple(dict.fromkeys(text_tokens))
+            text_limit = 6 if fragment_mode else _MAX_CANDIDATE_TEXT_TOKENS
+            token_pattern_candidates = [
+                (index, token, text_candidate_anchor_patterns(token))
+                for index, token in enumerate(raw_text_tokens)
+            ]
+            fragment_has_unbounded_anchor = bool(
+                fragment_mode
+                and (
+                    len(raw_text_tokens) > text_limit
+                    or any(
+                        not patterns
+                        for _index, _token, patterns in token_pattern_candidates
+                    )
                 )
             )
-        )
-        text_token_patterns = tuple(
-            (token, patterns)
-            for _index, token, patterns in sorted(
-                (candidate for candidate in token_pattern_candidates if candidate[2]),
-                key=lambda item: (-len(item[1]), item[0]),
-            )[:text_limit]
-        )
-        params: list[object] = []
-
-        def field_clause(field: str, *, fragment_mode: bool) -> str:
+            text_token_patterns = tuple(
+                (token, patterns)
+                for _index, token, patterns in sorted(
+                    (candidate for candidate in token_pattern_candidates if candidate[2]),
+                    key=lambda item: (-len(item[1]), item[0]),
+                )[:text_limit]
+            )
             clauses: list[str] = []
+            params: list[object] = []
             token_clauses: list[str] = []
             text_params: list[object] = []
             for _token, anchor_groups in text_token_patterns:
@@ -298,24 +316,36 @@ class ProductRepository:
                 for operator, pattern in ProductRepository._number_candidate_patterns(number):
                     variant_clauses.append(f"p.{field} {operator} ?")
                     params.append(pattern)
-                clauses.append("(" + " OR ".join(variant_clauses) + ")")
+                if variant_clauses:
+                    clauses.append("(" + " OR ".join(variant_clauses) + ")")
             if not clauses:
-                return "(1=1)"
-            return "(" + " AND ".join(clauses) + ")"
+                return "(1=1)", params
+            return "(" + " AND ".join(clauses) + ")", params
 
         # Final matching is field-local. Candidate SQL uses only bounded safe
         # anchors from that same field, so it can broaden retrieval but never
         # borrow a text qualifier from one field and a strength from another.
-        # OCR fragment fallback is product-name-only because fuzzy matching is
-        # product-name-only.
-        fields = ("product_name",) if fragments else (
-            "product_name",
-            "ingredient_text",
-            "manufacturer",
-        )
-        candidate_clause = " OR ".join(
-            field_clause(field, fragment_mode=bool(fragments)) for field in fields
-        )
+        # OCR fragments are an additional product-name-only candidate branch,
+        # not a fallback query, so exact and fuzzy candidates share one ranking.
+        candidate_parts: list[str] = []
+        params: list[object] = []
+        for field in ("product_name", "ingredient_text", "manufacturer"):
+            clause, clause_params = field_clause(
+                field,
+                query.text_tokens,
+                fragment_mode=False,
+            )
+            candidate_parts.append(clause)
+            params.extend(clause_params)
+        if fragments:
+            clause, clause_params = field_clause(
+                "product_name",
+                fragments,
+                fragment_mode=True,
+            )
+            candidate_parts.append(clause)
+            params.extend(clause_params)
+        candidate_clause = " OR ".join(candidate_parts)
         return con.execute(
             f"""SELECT p.*
                 FROM products p
@@ -426,8 +456,13 @@ class ProductRepository:
             ]
             rows = self._structured_candidate_rows(con, query, include_inactive)
             ranked.extend(self._rank_structured_rows(rows, query))
-            ranked.sort(key=lambda item: item[0])
-            if not ranked and query.mode == "ocr":
+            if (
+                query.mode == "ocr"
+                and not any(
+                    match.field == "product_name" and row["permit_status"] == "active"
+                    for _key, row, match in ranked
+                )
+            ):
                 fragments = fuzzy_candidate_fragments(query)
                 if fragments:
                     rows = self._structured_candidate_rows(
@@ -436,7 +471,8 @@ class ProductRepository:
                         include_inactive,
                         fragments=fragments,
                     )
-                    ranked = self._rank_structured_rows(rows, query)
+                    ranked.extend(self._rank_structured_rows(rows, query))
+            ranked.sort(key=lambda item: item[0])
             results = []
             seen_item_seq: set[str] = set()
             for _sort_key, row, match in ranked:
