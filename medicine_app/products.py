@@ -325,11 +325,17 @@ class ProductRepository:
         # Final matching is field-local. Candidate SQL uses only bounded safe
         # anchors from that same field, so it can broaden retrieval but never
         # borrow a text qualifier from one field and a strength from another.
-        # OCR fragments are an additional product-name-only candidate branch,
-        # not a fallback query, so exact and fuzzy candidates share one ranking.
+        # OCR fragments are a product-name candidate superset, so when present
+        # they replace the narrower deterministic product-name branch. Exact
+        # and fuzzy product-name candidates still share one final ranking.
         candidate_parts: list[str] = []
         params: list[object] = []
-        for field in ("product_name", "ingredient_text", "manufacturer"):
+        deterministic_fields = (
+            ("ingredient_text", "manufacturer")
+            if fragments
+            else ("product_name", "ingredient_text", "manufacturer")
+        )
+        for field in deterministic_fields:
             clause, clause_params = field_clause(
                 field,
                 query.text_tokens,
@@ -345,6 +351,8 @@ class ProductRepository:
             )
             candidate_parts.append(clause)
             params.extend(clause_params)
+        if not candidate_parts:
+            return []
         candidate_clause = " OR ".join(candidate_parts)
         return con.execute(
             f"""SELECT p.*
@@ -454,24 +462,14 @@ class ProductRepository:
                 )
                 for row in identifier_rows
             ]
-            rows = self._structured_candidate_rows(con, query, include_inactive)
+            fragments = fuzzy_candidate_fragments(query) if query.mode == "ocr" else ()
+            rows = self._structured_candidate_rows(
+                con,
+                query,
+                include_inactive,
+                fragments=fragments,
+            )
             ranked.extend(self._rank_structured_rows(rows, query))
-            if (
-                query.mode == "ocr"
-                and not any(
-                    match.field == "product_name" and row["permit_status"] == "active"
-                    for _key, row, match in ranked
-                )
-            ):
-                fragments = fuzzy_candidate_fragments(query)
-                if fragments:
-                    rows = self._structured_candidate_rows(
-                        con,
-                        query,
-                        include_inactive,
-                        fragments=fragments,
-                    )
-                    ranked.extend(self._rank_structured_rows(rows, query))
             ranked.sort(key=lambda item: item[0])
             results = []
             seen_item_seq: set[str] = set()

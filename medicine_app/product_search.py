@@ -27,9 +27,9 @@ _ASCII_UNIT_PATTERNS = (
     (re.compile(r"(?:(?<=\d)ml|(?<![a-z])ml(?![a-z]))", re.IGNORECASE), "ml"),
 )
 _KOREAN_UNIT_PATTERNS = (
-    (re.compile(r"마이크로(?:그램|그람)", re.IGNORECASE), "ug"),
-    (re.compile(r"밀리(?:그램|그람)", re.IGNORECASE), "mg"),
-    (re.compile(r"밀리리터", re.IGNORECASE), "ml"),
+    (re.compile(r"마이크로[ \t]*(?:그램|그람)", re.IGNORECASE), "ug"),
+    (re.compile(r"밀리[ \t]*(?:그램|그람)", re.IGNORECASE), "mg"),
+    (re.compile(r"밀리[ \t]*리터", re.IGNORECASE), "ml"),
 )
 _OCR_STRENGTH_UNIT_PATTERN = (
     r"(?:mcg|ug|μg|µg|mg|ml|㎍|㎎|㎖|"

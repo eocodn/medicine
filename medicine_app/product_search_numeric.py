@@ -23,8 +23,10 @@ _NON_DECIMAL_PRESENTATION_RANGES = (
     (0x2070, 0x209F),  # remaining superscript/subscript digits
 )
 _DIRECT_NUMERIC_PUNCTUATION = {
-    ".": "．",
-    ",": "，",
+    # Exhaustive one-codepoint Unicode 15.1 compatibility spellings whose
+    # NFKC form is the ASCII decimal/grouping punctuation used by the matcher.
+    ".": "․﹒．",
+    ",": "︐﹐，",
 }
 # These are exactly the Unicode 15.1 compatibility forms whose NFKC output
 # contains decimal digits but does not represent a medication-strength digit:

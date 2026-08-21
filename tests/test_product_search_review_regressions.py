@@ -73,6 +73,36 @@ class ProductSearchReviewRegressionTest(unittest.TestCase):
                 "Gabapentin 100mg Capsule",
                 "Gabapentin",
             )
+            add_product(
+                con,
+                "OCR-RESCUE-TARGET",
+                "yabc정5mg",
+                "Synthetic Ingredient",
+            )
+            add_product(
+                con,
+                "OCR-RESCUE-DISTRACTOR",
+                "xabxc정5mg",
+                "Synthetic Ingredient",
+            )
+            add_product(
+                con,
+                "KOREAN-MILLI",
+                "알로판400밀리그램정",
+                "Ibuprofen",
+            )
+            for product_ref, product_name in (
+                ("NUM-PUNCT-DOT-LEADER", "Alpha1․5mg정"),
+                ("NUM-PUNCT-SMALL-DOT", "Beta1﹒5mg정"),
+                ("NUM-PUNCT-VERTICAL-COMMA", "Gamma1︐000mg정"),
+                ("NUM-PUNCT-SMALL-COMMA", "Delta1﹐000mg정"),
+            ):
+                add_product(
+                    con,
+                    product_ref,
+                    product_name,
+                    "Synthetic Ingredient",
+                )
             for index, raw_digit in enumerate(SCRIPT_TWO_DIGITS):
                 add_product(
                     con,
@@ -118,6 +148,17 @@ class ProductSearchReviewRegressionTest(unittest.TestCase):
         )
         self.assertEqual(with_inactive[0]["product_ref"], "OCR-TARGET")
 
+    def test_ocr_fuzzy_fragment_rescue_competes_with_deterministic_fuzzy_products(self) -> None:
+        query = parse_product_search_query("xabc 5mg", mode="ocr")
+        self.assertIsNotNone(match_product_fields(query, product_name="yabc정5mg"))
+        self.assertIsNotNone(match_product_fields(query, product_name="xabxc정5mg"))
+
+        results = self.repo.search("xabc 5mg", limit=10, mode="ocr", explain=True)
+
+        self.assertEqual(results[0]["product_ref"], "OCR-RESCUE-TARGET")
+        self.assertEqual(results[0]["search_match"]["tier"], "ocr_fuzzy")
+        self.assertIn("OCR-RESCUE-DISTRACTOR", [row["product_ref"] for row in results])
+
     def test_mathematical_digits_keep_candidate_sql_a_superset_of_nfkc_matching(self) -> None:
         for index, raw_digit in enumerate(COMPAT_TWO_DIGITS):
             with self.subTest(raw_digit=raw_digit):
@@ -160,6 +201,60 @@ class ProductSearchReviewRegressionTest(unittest.TestCase):
         self.assertEqual(
             self.repo.search("Lead 0.25 mg", limit=10)[0]["product_ref"],
             "RAW-LEADING-DOT",
+        )
+
+    def test_nfkc_numeric_punctuation_keeps_candidate_sql_a_superset(self) -> None:
+        cases = (
+            ("Alpha 1.5 mg", "Alpha1․5mg정", "NUM-PUNCT-DOT-LEADER"),
+            ("Beta 1.5 mg", "Beta1﹒5mg정", "NUM-PUNCT-SMALL-DOT"),
+            ("Gamma 1000 mg", "Gamma1︐000mg정", "NUM-PUNCT-VERTICAL-COMMA"),
+            ("Delta 1000 mg", "Delta1﹐000mg정", "NUM-PUNCT-SMALL-COMMA"),
+        )
+        for query_text, raw_name, expected in cases:
+            with self.subTest(query=query_text):
+                query = parse_product_search_query(query_text)
+                self.assertIsNotNone(match_product_fields(query, product_name=raw_name))
+                results = self.repo.search(query_text, limit=10)
+                self.assertIn(expected, [row["product_ref"] for row in results])
+
+        patterns = {
+            ".": raw_numeric_compat_glob("1.5"),
+            ",": raw_numeric_compat_glob("1,000"),
+        }
+        with sqlite3.connect(":memory:") as con:
+            for codepoint in range(0x110000):
+                raw = chr(codepoint)
+                normalized = unicodedata.normalize("NFKC", raw)
+                if raw == normalized or normalized not in patterns:
+                    continue
+                candidate = f"1{raw}5" if normalized == "." else f"1{raw}000"
+                with self.subTest(codepoint=f"U+{codepoint:04X}"):
+                    self.assertEqual(
+                        con.execute(
+                            "SELECT ? GLOB ?", (candidate, patterns[normalized])
+                        ).fetchone()[0],
+                        1,
+                    )
+
+    def test_korean_strength_units_allow_one_internal_spacing_boundary(self) -> None:
+        micro = parse_product_search_query("씬지록신 25 마이크로 그램")
+        micro_variant = parse_product_search_query("씬지록신 25 마이크로 그람")
+        milli = parse_product_search_query("알로판 400 밀리 그램")
+
+        self.assertEqual(micro.unit_tokens, ("ug",))
+        self.assertEqual(micro_variant.unit_tokens, ("ug",))
+        self.assertEqual(milli.unit_tokens, ("mg",))
+        self.assertEqual(
+            self.repo.search("씬지록신 25 마이크로 그램", limit=10)[0]["product_ref"],
+            "OCR-TARGET",
+        )
+        self.assertEqual(
+            self.repo.search("씬지록신 25 마이크로 그람", limit=10)[0]["product_ref"],
+            "OCR-TARGET",
+        )
+        self.assertEqual(
+            self.repo.search("알로판 400 밀리 그램", limit=10)[0]["product_ref"],
+            "KOREAN-MILLI",
         )
 
     def test_very_long_integer_search_does_not_depend_on_decimal_context(self) -> None:
