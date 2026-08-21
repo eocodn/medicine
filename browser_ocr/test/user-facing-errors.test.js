@@ -131,13 +131,14 @@ test("transport failures become a generic user-facing request error", async () =
   );
 });
 
-test("changed error-handling assets use fresh cache keys", () => {
+test("changed shared assets use fresh cache keys", () => {
   const index = fs.readFileSync(path.join(staticDir, "index.html"), "utf8");
 
   assert.match(index, /native-api\.js\?v=20260820perf1/);
   assert.match(index, /prescription-dur\.js\?v=20260818dur1/);
-  assert.match(index, /prescription\.js\?v=20260820perf2/);
-  assert.match(index, /app-state\.js\?v=20260820perf4/);
-  assert.match(index, /app\.js\?v=20260820search2/);
+  assert.match(index, /prescription\.js\?v=20260821parser2/);
+  assert.match(index, /app-state\.js\?v=20260821parser2/);
+  assert.match(index, /app\.js\?v=20260821parser2/);
   assert.match(index, /dose-actions\.js\?v=20260820perf4/);
+  assert.match(index, /ocr-intake\.js\?v=20260821parser2/);
 });

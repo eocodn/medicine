@@ -112,6 +112,30 @@ test("parser query replacement clears stale clickable results before async searc
   );
 });
 
+test("completing the final parser row clears its search UI and state", () => {
+  const { context, query, status, results } = productSearchContext();
+  query.value = "타이레놀정";
+  status.textContent = "인식된 약 · 제품 후보를 선택해주세요.";
+  results.innerHTML = '<article data-product-select="123">타이레놀정</article>';
+  vm.runInContext(`
+    state.activeParserRow = { row_id: "row-1", product_query: "타이레놀정" };
+    state.pendingParserDraft = { dose_amount: 1 };
+    state.pendingParserPersonId = "person-1";
+    state.pendingParserUncertaintyCodes = ["LOW_CONFIDENCE_DOSE"];
+    state.pendingParserRows = [];
+    state.parserRowTotal = 1;
+    state.parserRowIndex = 1;
+  `, context);
+
+  assert.equal(vm.runInContext("completeParserRowAndContinue()", context), false);
+  assert.equal(query.value, "");
+  assert.equal(status.textContent, "");
+  assert.equal(results.innerHTML, "");
+  assert.equal(vm.runInContext("state.activeParserRow", context), null);
+  assert.equal(vm.runInContext("state.parserRowTotal", context), 0);
+  assert.equal(vm.runInContext("state.parserRowIndex", context), 0);
+});
+
 test("editing a query rejects an already in-flight search response", async () => {
   const { context, query, results } = productSearchContext();
   let resolveRequest;

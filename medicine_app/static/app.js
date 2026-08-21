@@ -113,15 +113,14 @@ async function startNextParserSearch() {
 
 function completeParserRowAndContinue() {
   if (!state.activeParserRow) return false;
+  if (!state.pendingParserRows.length) {
+    resetParserTransientState({ clearSearch: true });
+    return false;
+  }
   state.activeParserRow = null;
   state.pendingParserDraft = null;
   state.pendingParserPersonId = null;
   state.pendingParserUncertaintyCodes = [];
-  if (!state.pendingParserRows.length) {
-    state.parserRowTotal = 0;
-    state.parserRowIndex = 0;
-    return false;
-  }
   showScreen("search", { focus: true });
   void startNextParserSearch();
   return true;
@@ -526,6 +525,9 @@ function bindEvents() {
   });
   $("#drug-query").addEventListener("input", () => {
     invalidateProductSearch();
+    // Keep the parser draft while the user edits only the product query. OCR can
+    // misread the product name while the independently parsed regimen is still
+    // correct, so query correction must not silently discard dose/schedule data.
     $("#search-status").textContent = "";
     $("#drug-results").innerHTML = "";
     updateSearchMode();

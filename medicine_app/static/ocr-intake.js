@@ -12,44 +12,170 @@
     "dosage_text", "dose_unit", "meal_relation", "administration_route", "start_date", "end_date",
   ]);
   const NUMBER_DRAFT_FIELDS = new Set(["dose_amount", "frequency_per_day", "prescription_days"]);
+  const ROW_FIELDS = new Set(["row_id", "product_query", "draft", "uncertainty_codes"]);
+  const MEAL_RELATIONS = new Set(["unspecified", "before_meal", "after_meal", "with_meal", "empty_stomach", "regardless"]);
+  const ADMINISTRATION_ROUTES = new Set(["oral", "topical", "inhaled", "ophthalmic", "otic", "nasal", "injection", "other", "unknown"]);
+  const TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
   let activeWorker = null;
   let timeout = null;
   let supported = false;
 
-  function normalizeParserRows(value) {
-    if (!Array.isArray(value)) return [];
-    return value.slice(0, MAX_ROWS).flatMap((raw, index) => {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
-      const productQuery = String(raw.product_query || "").trim().slice(0, 256);
-      if (!productQuery) return [];
-      const draft = {};
-      if (raw.draft && typeof raw.draft === "object" && !Array.isArray(raw.draft)) {
-        for (const [key, item] of Object.entries(raw.draft)) {
-          if (key === "schedule_times") {
-            if (Array.isArray(item)) {
-              const times = item.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim()).slice(0, 24);
-              if (times.length) draft.schedule_times = times;
-            }
-          } else if (NUMBER_DRAFT_FIELDS.has(key)) {
-            const number = Number(item);
-            if (Number.isFinite(number) && number > 0) draft[key] = number;
-          } else if (key === "as_needed") {
-            if (item === true) draft.as_needed = true;
-          } else if (STRING_DRAFT_FIELDS.has(key) && typeof item === "string" && item.trim()) {
-            draft[key] = item.trim().slice(0, 256);
+  function parserIssue(issues, rowIndex, field, reason, action = "dropped") {
+    issues.push({ row_index: rowIndex + 1, field, reason, action });
+  }
+
+  function reportParserSanitization(issues) {
+    if (!issues.length) return;
+    // This UI boundary is intentionally tolerant: one malformed model field
+    // should not throw away the rest of a usable medication row. Never log raw
+    // medication values, but always surface what was discarded or rewritten so
+    // parser-contract regressions remain observable during development.
+    root.console?.warn?.("medicine parser output sanitized", {
+      event: "parser_output_sanitized",
+      issue_count: issues.length,
+      issues,
+    });
+  }
+
+  function isIsoDate(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split("-").map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return parsed.getUTCFullYear() === year
+      && parsed.getUTCMonth() === month - 1
+      && parsed.getUTCDate() === day;
+  }
+
+  function normalizeDraft(rawDraft, rowIndex, issues) {
+    if (!rawDraft || typeof rawDraft !== "object" || Array.isArray(rawDraft)) {
+      parserIssue(issues, rowIndex, "draft", rawDraft == null ? "missing" : "not_object");
+      return {};
+    }
+    const draft = {};
+    for (const [key, item] of Object.entries(rawDraft)) {
+      if (key === "schedule_times") {
+        if (item == null) continue;
+        if (!Array.isArray(item)) {
+          parserIssue(issues, rowIndex, key, "not_array");
+          continue;
+        }
+        const times = [];
+        let sanitized = item.length > 24;
+        for (const entry of item.slice(0, 24)) {
+          if (typeof entry !== "string" || !TIME_RE.test(entry) || times.includes(entry)) {
+            sanitized = true;
+            continue;
           }
+          times.push(entry);
+        }
+        if (sanitized) parserIssue(issues, rowIndex, key, "invalid_duplicate_or_excess_items");
+        if (times.length) draft.schedule_times = times;
+      } else if (NUMBER_DRAFT_FIELDS.has(key)) {
+        if (item == null) continue;
+        const valid = typeof item === "number" && Number.isFinite(item) && item > 0
+          && (key === "dose_amount" || (Number.isInteger(item) && item <= (key === "frequency_per_day" ? 24 : 3650)));
+        if (valid) draft[key] = item;
+        else parserIssue(issues, rowIndex, key, "invalid_number");
+      } else if (key === "as_needed") {
+        if (typeof item === "boolean") draft.as_needed = item;
+        else if (item != null) parserIssue(issues, rowIndex, key, "not_boolean");
+      } else if (STRING_DRAFT_FIELDS.has(key)) {
+        const text = typeof item === "string" ? item.trim() : "";
+        let valid = Boolean(text) && !/[\r\n\0]/.test(text);
+        if (key === "dose_unit") valid = valid && text.length <= 64;
+        else valid = valid && text.length <= 256;
+        if (key === "meal_relation") valid = valid && MEAL_RELATIONS.has(text);
+        if (key === "administration_route") valid = valid && ADMINISTRATION_ROUTES.has(text);
+        if (key === "start_date" || key === "end_date") valid = valid && isIsoDate(text);
+        if (valid) draft[key] = text;
+        else if (item != null) parserIssue(issues, rowIndex, key, "invalid_text");
+      } else {
+        parserIssue(issues, rowIndex, key, "unsupported_field");
+      }
+    }
+
+    if (draft.as_needed === true) {
+      for (const field of ["frequency_per_day", "schedule_times"]) {
+        if (Object.hasOwn(draft, field)) {
+          delete draft[field];
+          parserIssue(issues, rowIndex, field, "conflicts_with_as_needed");
         }
       }
-      const issues = Array.isArray(raw.uncertainty_codes)
-        ? [...new Set(raw.uncertainty_codes.filter((item) => typeof item === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(item)))].slice(0, 16)
-        : [];
-      return [{
-        row_id: /^[A-Za-z0-9_-]{1,64}$/.test(String(raw.row_id || "")) ? String(raw.row_id) : `parser-row-${index + 1}`,
-        product_query: productQuery,
-        draft,
-        uncertainty_codes: issues,
-      }];
+    } else if (draft.schedule_times && draft.frequency_per_day != null
+      && draft.schedule_times.length !== draft.frequency_per_day) {
+      delete draft.schedule_times;
+      parserIssue(issues, rowIndex, "schedule_times", "frequency_mismatch");
+    }
+
+    if (draft.start_date && draft.end_date) {
+      const start = new Date(`${draft.start_date}T00:00:00Z`);
+      const end = new Date(`${draft.end_date}T00:00:00Z`);
+      if (end < start) {
+        delete draft.end_date;
+        parserIssue(issues, rowIndex, "end_date", "before_start_date");
+      } else if (draft.prescription_days != null) {
+        const expected = new Date(start);
+        expected.setUTCDate(expected.getUTCDate() + draft.prescription_days - 1);
+        if (expected.toISOString().slice(0, 10) !== draft.end_date) {
+          delete draft.end_date;
+          parserIssue(issues, rowIndex, "end_date", "duration_mismatch");
+        }
+      }
+    }
+    return draft;
+  }
+
+  function normalizeParserRows(value) {
+    const diagnostics = [];
+    if (!Array.isArray(value)) {
+      if (value != null) parserIssue(diagnostics, 0, "rows", "not_array");
+      reportParserSanitization(diagnostics);
+      return [];
+    }
+    if (value.length > MAX_ROWS) parserIssue(diagnostics, MAX_ROWS, "rows", "row_limit_exceeded", "truncated");
+    const rows = value.slice(0, MAX_ROWS).flatMap((raw, index) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        parserIssue(diagnostics, index, "row", "not_object", "row_dropped");
+        return [];
+      }
+      for (const key of Object.keys(raw)) {
+        if (!ROW_FIELDS.has(key)) parserIssue(diagnostics, index, key, "unsupported_row_field");
+      }
+      if (typeof raw.product_query !== "string" || !raw.product_query.trim()) {
+        parserIssue(diagnostics, index, "product_query", "missing_or_not_string", "row_dropped");
+        return [];
+      }
+      let productQuery = raw.product_query.trim();
+      if (productQuery.length > 256) {
+        productQuery = productQuery.slice(0, 256);
+        parserIssue(diagnostics, index, "product_query", "too_long", "truncated");
+      }
+      let rowId = String(raw.row_id || "");
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(rowId)) {
+        rowId = `parser-row-${index + 1}`;
+        parserIssue(diagnostics, index, "row_id", "invalid_identifier", "rewritten");
+      }
+      const draft = normalizeDraft(raw.draft, index, diagnostics);
+      const issueCodes = [];
+      if (raw.uncertainty_codes == null) {
+        parserIssue(diagnostics, index, "uncertainty_codes", "missing");
+      } else if (!Array.isArray(raw.uncertainty_codes)) {
+        parserIssue(diagnostics, index, "uncertainty_codes", "not_array");
+      } else {
+        let sanitized = raw.uncertainty_codes.length > 16;
+        for (const item of raw.uncertainty_codes) {
+          if (typeof item !== "string" || !/^[A-Z][A-Z0-9_]{0,63}$/.test(item)) {
+            sanitized = true;
+            continue;
+          }
+          if (!issueCodes.includes(item) && issueCodes.length < 16) issueCodes.push(item);
+        }
+        if (sanitized) parserIssue(diagnostics, index, "uncertainty_codes", "invalid_or_excess_codes");
+      }
+      return [{ row_id: rowId, product_query: productQuery, draft, uncertainty_codes: issueCodes }];
     });
+    reportParserSanitization(diagnostics);
+    return rows;
   }
 
   function setStatus(message) {

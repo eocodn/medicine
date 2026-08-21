@@ -35,6 +35,48 @@ test("parser rows keep structured draft and uncertainty without a review form", 
   }]);
 });
 
+test("invalid parser fields are dropped and reported without aborting the row", () => {
+  const { normalizeParserRows } = require("../../medicine_app/static/ocr-intake.js");
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    assert.deepEqual(normalizeParserRows([{
+      row_id: "row-1",
+      product_query: "타이레놀정",
+      draft: {
+        dose_amount: 1,
+        frequency_per_day: 1.5,
+        schedule_times: ["08:00", "not-a-time", "08:00"],
+        meal_relation: "sometimes",
+        administration_route: "oral",
+      },
+      uncertainty_codes: ["LOW_CONFIDENCE_DOSE", "not-valid"],
+    }]), [{
+      row_id: "row-1",
+      product_query: "타이레놀정",
+      draft: {
+        dose_amount: 1,
+        schedule_times: ["08:00"],
+        administration_route: "oral",
+      },
+      uncertainty_codes: ["LOW_CONFIDENCE_DOSE"],
+    }]);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0][0], "medicine parser output sanitized");
+  const diagnostic = warnings[0][1];
+  assert.equal(diagnostic.event, "parser_output_sanitized");
+  assert.ok(diagnostic.issues.some((issue) => issue.field === "frequency_per_day"));
+  assert.ok(diagnostic.issues.some((issue) => issue.field === "schedule_times"));
+  assert.ok(diagnostic.issues.some((issue) => issue.field === "meal_relation"));
+  assert.ok(diagnostic.issues.some((issue) => issue.field === "uncertainty_codes"));
+  assert.ok(diagnostic.issues.every((issue) => !Object.hasOwn(issue, "value")));
+});
+
 test("parser result bypasses review and enters the generic product-search flow", () => {
   const intake = source("medicine_app/static/ocr-intake.js");
   const app = source("medicine_app/static/app.js");
@@ -46,6 +88,7 @@ test("parser result bypasses review and enters the generic product-search flow",
   assert.match(app, /medicine:parser-result/);
   assert.match(app, /product_query[\s\S]{0,900}runDrugSearch/);
   assert.match(index, /ocr-intake\.js/);
+  assert.match(index, /placeholder="제품명"/);
   assert.match(state, /pendingParserDraft/);
   assert.match(state, /pendingParserUncertaintyCodes/);
   assert.match(prescription, /pendingParserUncertaintyCodes/);
