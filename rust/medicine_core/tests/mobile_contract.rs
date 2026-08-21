@@ -146,7 +146,7 @@ fn health_reports_reference_and_catalog_state() {
 }
 
 #[test]
-fn migrated_health_people_and_dose_routes_are_owned_by_rust() {
+fn migrated_runtime_routes_are_owned_by_rust() {
     let engine = MedicineEngine::new(None, None, None);
     assert!(engine.handles_request("GET", "/api/health"));
     assert!(engine.handles_request("GET", "/api/people"));
@@ -154,6 +154,7 @@ fn migrated_health_people_and_dose_routes_are_owned_by_rust() {
     assert!(engine.handles_request("PATCH", "/api/people/example"));
     assert!(engine.handles_request("DELETE", "/api/people/example"));
     assert!(engine.handles_request("GET", "/api/people/example/daily-plan?date=2026-08-20"));
+    assert!(engine.handles_request("POST", "/api/medications/example/prn-intakes"));
     assert!(engine.handles_request("POST", "/api/dose-instances/example"));
     assert!(engine.handles_request("DELETE", "/api/dose-instances/example/completion"));
 }
