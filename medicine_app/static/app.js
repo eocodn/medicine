@@ -64,6 +64,12 @@ function toast(message) {
   node._timer = setTimeout(() => node.classList.add("hidden"), 2200);
 }
 
+function invalidateProductSearch() {
+  state.searchRequestId += 1;
+  clearTimeout(state.searchTimer);
+  state.searchTimer = null;
+}
+
 function resetOcrTransientState({ clearSearch = false } = {}) {
   const hadOcrSearch = state.ocrSearchActive;
   state.pendingOcrDraft = null;
@@ -71,7 +77,7 @@ function resetOcrTransientState({ clearSearch = false } = {}) {
   state.ocrSearchActive = false;
   window.MedicineOcrReview?.reset?.();
   if (!clearSearch || !hadOcrSearch) return;
-  state.searchRequestId += 1;
+  invalidateProductSearch();
   const query = $("#drug-query");
   const status = $("#search-status");
   const results = $("#drug-results");
@@ -401,15 +407,19 @@ async function runDrugSearch(successMessage = "") {
   const term = $("#drug-query").value.trim();
   const status = $("#search-status");
   const root = $("#drug-results");
+  const requestMode = state.ocrSearchActive ? "ocr" : "manual";
+  state.searchTimer = null;
   updateSearchMode();
   if (!term) { status.textContent = ""; root.innerHTML = ""; return false; }
   const requestId = ++state.searchRequestId;
   status.textContent = "";
   try {
-    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`, {
+    const searchMode = requestMode === "ocr" ? "&mode=ocr" : "";
+    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30${searchMode}`, {
       coalesceKey: "product-search",
     });
-    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
+    const currentMode = state.ocrSearchActive ? "ocr" : "manual";
+    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term || currentMode !== requestMode) return false;
     state.fullCatalog = true;
     status.textContent = successMessage;
     root.innerHTML = results.length ? results.map((item) => `
@@ -433,7 +443,8 @@ async function runDrugSearch(successMessage = "") {
     });
     return true;
   } catch (error) {
-    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
+    const currentMode = state.ocrSearchActive ? "ocr" : "manual";
+    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term || currentMode !== requestMode) return false;
     status.textContent = friendlyErrorMessage(error.message);
     root.innerHTML = "";
     return false;
@@ -476,11 +487,11 @@ function bindEvents() {
     query.dispatchEvent(new Event("input", { bubbles: true }));
   });
   $("#drug-query").addEventListener("input", () => {
+    invalidateProductSearch();
     resetOcrTransientState();
     $("#search-status").textContent = "";
     $("#drug-results").innerHTML = "";
     updateSearchMode();
-    clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(runDrugSearch, 280);
   });
   document.addEventListener("medicine:sheet-closed", (event) => {
@@ -489,12 +500,15 @@ function bindEvents() {
   window.addEventListener("medicine:ocr-select", async (event) => {
     const row = event.detail;
     if (!row || typeof row.product_query !== "string" || !row.product_query.trim()) return;
+    invalidateProductSearch();
     state.pendingOcrDraft = row.draft && typeof row.draft === "object" ? { ...row.draft } : {};
     state.pendingOcrPersonId = state.currentPersonId;
     state.ocrSearchActive = true;
     window.MedicineOcrReview?.reset?.();
     const query = row.product_query.trim();
     $("#drug-query").value = query;
+    $("#search-status").textContent = "";
+    $("#drug-results").innerHTML = "";
     updateSearchMode();
     $("#ocr-review-panel").classList.add("hidden");
     const found = await runDrugSearch(`“${query}” 제품 후보를 확인하고 맞는 품목을 선택해주세요.`);

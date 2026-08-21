@@ -159,6 +159,8 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("term")
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--include-inactive", action="store_true")
+    search.add_argument("--mode", choices=["manual", "ocr"], default="manual")
+    search.add_argument("--explain-matches", action="store_true")
     search.add_argument("--json", action="store_true")
 
     meds = sub.add_parser("meds")
@@ -287,7 +289,13 @@ def _dispatch(args, app: MedicationApp):
     elif args.command == "person-delete":
         payload = app.delete_person(args.person)
     elif args.command == "drug-search":
-        payload = app.search_products(args.term, args.limit, include_inactive=args.include_inactive)
+        payload = app.search_products(
+            args.term,
+            args.limit,
+            include_inactive=args.include_inactive,
+            mode=args.mode,
+            explain=args.explain_matches,
+        )
     elif args.command == "meds":
         payload = app.list_medications(args.person, as_of=args.date)
     elif args.command == "risk-preview":

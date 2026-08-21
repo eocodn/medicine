@@ -40,6 +40,41 @@ function classList(initial = []) {
   };
 }
 
+function productSearchContext() {
+  const query = { value: "씬지록신 25" };
+  const status = { textContent: "" };
+  const results = { innerHTML: "", querySelectorAll() { return []; } };
+  const hero = { classList: { toggle() {} } };
+  const document = {
+    querySelector(selector) {
+      return {
+        "#drug-query": query,
+        "#search-status": status,
+        "#drug-results": results,
+        ".search-hero": hero,
+      }[selector] || null;
+    },
+    querySelectorAll() { return []; },
+    addEventListener() {},
+  };
+  const context = {
+    document,
+    window: { MedicineLocalApi: null, MedicineOcrReview: { reset() {} } },
+    localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+    friendlyErrorMessage: (value) => String(value),
+    console,
+    Intl,
+    Date,
+    setTimeout,
+    clearTimeout,
+    fetch: async () => { throw new Error("unexpected fetch"); },
+  };
+  vm.createContext(context);
+  vm.runInContext(source("app-state.js"), context);
+  vm.runInContext(source("app.js"), context);
+  return { context, query, status, results };
+}
+
 test("zero-row OCR stays a failure state instead of opening an empty review", () => {
   const panel = { classList: classList(["hidden"]) };
   const list = { innerHTML: "stale", querySelectorAll() { return []; } };
@@ -163,4 +198,44 @@ test("editing a drug query immediately removes stale clickable search results", 
   const app = source("app.js");
 
   assert.match(app, /#drug-query[\s\S]{0,520}#search-status[\s\S]{0,180}textContent = ""[\s\S]{0,220}#drug-results[\s\S]{0,180}innerHTML = ""[\s\S]{0,260}setTimeout\(runDrugSearch, 280\)/);
+});
+
+test("editing a drug query invalidates any in-flight OCR search before debounce", () => {
+  const app = source("app.js");
+
+  assert.match(app, /function invalidateProductSearch\(\)[\s\S]{0,220}state\.searchRequestId \+= 1[\s\S]{0,220}clearTimeout\(state\.searchTimer\)/);
+  assert.match(app, /#drug-query[\s\S]{0,520}addEventListener\("input"[\s\S]{0,220}invalidateProductSearch\(\)[\s\S]{0,220}resetOcrTransientState\(\)[\s\S]{0,320}setTimeout\(runDrugSearch, 280\)/);
+});
+
+test("OCR query replacement clears stale clickable results before async search", () => {
+  const app = source("app.js");
+
+  assert.match(
+    app,
+    /medicine:ocr-select[\s\S]{0,760}#drug-query[\s\S]{0,180}value = query[\s\S]{0,260}#search-status[\s\S]{0,160}textContent = ""[\s\S]{0,220}#drug-results[\s\S]{0,160}innerHTML = ""[\s\S]{0,300}await runDrugSearch/,
+  );
+});
+
+test("trim-equivalent manual edit rejects an already in-flight OCR search response", async () => {
+  const { context, query, results } = productSearchContext();
+  let resolveRequest;
+  let requestPath = "";
+  context.window.MedicineLocalApi = {
+    request(path) {
+      requestPath = path;
+      return new Promise((resolve) => { resolveRequest = resolve; });
+    },
+  };
+
+  vm.runInContext("state.ocrSearchActive = true", context);
+  const pending = vm.runInContext("runDrugSearch()", context);
+  assert.match(requestPath, /mode=ocr/);
+
+  query.value = "씬지록신 25 ";
+  vm.runInContext("invalidateProductSearch(); resetOcrTransientState();", context);
+  resolveRequest([{ product_ref: "stale", product_name: "stale" }]);
+
+  assert.equal(await pending, false);
+  assert.equal(results.innerHTML, "");
+  assert.equal(vm.runInContext("state.ocrSearchActive", context), false);
 });

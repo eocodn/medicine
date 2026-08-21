@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from medicine_app.mobile_api import MobileApi
+from tests.canonical_fixture_support import add_product
 from tests.test_app_core import make_canonical_db
 
 
@@ -105,6 +106,41 @@ class MobileApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(dashboard["person"]["id"], person["id"])
         self.assertEqual(dashboard["medications"], [])
+
+    def test_product_search_accepts_explicit_ocr_mode_and_rejects_unknown_modes(self) -> None:
+        with sqlite3.connect(self.canonical_db) as con:
+            add_product(
+                con,
+                "OCR-SEARCH",
+                "타진서방정 10/5mg",
+                "Oxycodone/Naloxone",
+            )
+
+        manual_status, manual = self.request(
+            "GET",
+            "/api/products?q=%ED%83%80%EC%A7%84%EC%84%9C%EB%B0%A9%EC%A0%95%2010%2F5mg0.5%EC%A0%95&limit=10",
+        )
+        ocr_status, ocr = self.request(
+            "GET",
+            "/api/products?q=%ED%83%80%EC%A7%84%EC%84%9C%EB%B0%A9%EC%A0%95%2010%2F5mg0.5%EC%A0%95&limit=10&mode=ocr",
+        )
+        normalized_mode_status, normalized_mode = self.request(
+            "GET",
+            "/api/products?q=%ED%83%80%EC%A7%84%EC%84%9C%EB%B0%A9%EC%A0%95%2010%2F5mg0.5%EC%A0%95&limit=10&mode=OCR",
+        )
+        invalid_status, invalid = self.request(
+            "GET",
+            "/api/products?q=%ED%83%80%EC%A7%84&mode=guess",
+        )
+
+        self.assertEqual(manual_status, 200)
+        self.assertEqual(manual, [])
+        self.assertEqual(ocr_status, 200)
+        self.assertEqual(ocr[0]["product_ref"], "OCR-SEARCH")
+        self.assertEqual(normalized_mode_status, 200)
+        self.assertEqual(normalized_mode[0]["product_ref"], "OCR-SEARCH")
+        self.assertEqual(invalid_status, 400)
+        self.assertIn("search mode", invalid["detail"])
 
     def test_reference_retirement_blocks_safety_operations_but_keeps_local_state_available(self) -> None:
         _, person = self.request("POST", "/api/people", {

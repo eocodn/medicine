@@ -194,9 +194,10 @@ def create_web_app(
         q: str = Query(min_length=1),
         limit: int = Query(default=30, ge=1, le=100),
         include_inactive: bool = False,
+        mode: str = Query(default="manual"),
     ) -> list[dict]:
         try:
-            return service.search_products(q, limit, include_inactive=include_inactive)
+            return service.search_products(q, limit, include_inactive=include_inactive, mode=mode)
         except Exception as exc:
             raise _translate_error(exc) from exc
 
