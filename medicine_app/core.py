@@ -171,10 +171,10 @@ class MedicationApp:
             raise KeyError("person not found")
         return person_dict(row)
 
-    def search_products(self, term: str, limit: int = 30, include_inactive: bool = False, *, mode: str = "manual", explain: bool = False) -> list[dict]:
+    def search_products(self, term: str, limit: int = 30, include_inactive: bool = False, *, explain: bool = False) -> list[dict]:
         if self.products is None:
             raise FileNotFoundError("reference database is unavailable")
-        return self.products.search(term, limit, include_inactive=include_inactive, mode=mode, explain=explain)
+        return self.products.search(term, limit, include_inactive=include_inactive, explain=explain)
 
     def get_product(self, product_ref: str) -> dict:
         if self.products is None:

@@ -58,7 +58,7 @@ class FullDocumentCliContractTest(unittest.TestCase):
         (paddle / "ppocr" / "utils" / "dict" / "ppocrv5_korean_dict.txt").write_text("가\n나\n", encoding="utf-8")
         return baseline, detector, paddle, detector_root
 
-    def test_output_profile_pins_pipeline_and_parser_implementation(self) -> None:
+    def test_output_profile_pins_ocr_pipeline_implementation(self) -> None:
         profile = _implementation_profile()
         self.assertEqual(
             set(profile),
@@ -66,15 +66,13 @@ class FullDocumentCliContractTest(unittest.TestCase):
                 "full_document",
                 "full_document_cli",
                 "crop_refinement",
-                "parser",
-                "parser_contract",
                 "detector_runtime",
                 "detector_benchmark",
             },
         )
         self.assertTrue(all(len(value) == 64 for value in profile.values()))
 
-    def test_parser_defaults_to_selected_mobile_detector(self) -> None:
+    def test_full_document_ocr_defaults_to_selected_mobile_detector(self) -> None:
         args = build_parser().parse_args([
             "--image", "/data/doc.jpg",
             "--baseline-result", "/run/baseline-result.json",

@@ -61,13 +61,10 @@ class ParserDatasetCliTest(unittest.TestCase):
             "inference_runtime_sha256": "0" * 64,
             "paddleocr_source_sha256": "a" * 64,
             "paddleocr_dictionary_sha256": "b" * 64,
-            "parser": "geometry_rule_v2",
             "implementation": {
                 "full_document": "6" * 64,
                 "full_document_cli": "7" * 64,
                 "crop_refinement": "8" * 64,
-                "parser": "9" * 64,
-                "parser_contract": "a" * 64,
                 "detector_runtime": "b" * 64,
                 "detector_benchmark": "c" * 64,
             },

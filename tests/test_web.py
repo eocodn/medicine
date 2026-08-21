@@ -39,7 +39,7 @@ class WebApiTest(unittest.TestCase):
         self.assertIn('src="/static/prescription.js?v=', response.text)
         self.assertIn('src="/static/app.js?v=', response.text)
         self.assertIn('src="/static/dose-actions.js?v=20260820perf4"', response.text)
-        self.assertIn('src="/static/ocr-review.js?v=', response.text)
+        self.assertIn('src="/static/ocr-intake.js?v=', response.text)
         self.assertIn("약을 검색하세요", response.text)
         self.assertNotIn("로컬 우선", response.text)
         self.assertNotIn("personal.sqlite", response.text)

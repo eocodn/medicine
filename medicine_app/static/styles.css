@@ -555,19 +555,12 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   color: var(--warning);
 }
 
-/* On-device prescription OCR review. Raw image/text never leaves the browser worker. */
+/* On-device prescription OCR import. Raw image/text never leaves the browser worker. */
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 .ocr-import-card { margin-top: 14px; padding-top: 14px; border-top: 1px solid #d5e0d6; }
 .ocr-import-card .ocr-file-button { display: grid; place-items: center; cursor: pointer; }
 .ocr-import-card .ocr-file-button.is-disabled { opacity: .48; cursor: default; pointer-events: none; }
 #ocr-status { min-height: 18px; margin-top: 8px; }
-#ocr-review-panel { margin-top: 18px; }
-.ocr-row-card { display: grid; gap: 11px; }
-.ocr-row-card label { display: grid; gap: 6px; font-size: 12px; font-weight: 800; color: #536059; }
-.ocr-row-card input, .ocr-row-card select { width: 100%; min-height: 46px; border: 1px solid var(--line); border-radius: 13px; padding: 0 12px; background: #fbfcfb; color: var(--text); }
-.ocr-row-card .ocr-choice { display: flex; align-items: center; gap: 9px; min-height: 44px; }
-.ocr-row-card .ocr-choice input { width: auto; min-height: 0; }
-.ocr-row-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 
 @media (max-width: 380px) {
   .topbar { padding-left: 16px; padding-right: 12px; }

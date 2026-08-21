@@ -18,17 +18,10 @@ product query and every non-null structured field. The row id is the first
 product-evidence box id, so repeated identical product text remains representable
 as distinct document rows. Canonical product identity remains outside this layer.
 
-The first benchmark is intentionally model-free. The tracked
-`geometry_rule_v2` baseline deskews OCR polygons, groups them into lines,
-reconstructs split table headers and medication labels, parses table columns and
-repeated medication-bag blocks, and only propagates an explicitly labeled common
-regimen to a contiguous group whose scope is structurally proven. Unassociated
-regimen text stays unresolved rather than being copied to a nearby medication.
-
-This baseline is deliberately small. Passing the seed corpus is a harness sanity
-check, not evidence that rules generalize to unseen pharmacy layouts. Learned
-document/KIE models should only be considered after broader layout perturbation
-and held-out document experiments show a measured need.
+The runtime parser is intentionally not implemented here. The production direction
+is a learned document/KIE model trained and evaluated against the contracts in this
+package. OCR observations remain independent inputs so parser model changes do not
+change detector/recognizer provenance.
 
 ## Safety metrics
 
@@ -48,7 +41,7 @@ borrowing a plausible exact value from another medication.
 
 ## Unified full-document parser data
 
-The canonical OCR corpus can materialize parser/KIE data from the same documents used for detector and recognizer experiments. `views/parsing/samples.jsonl` exposes box text/geometry, semantic roles, association groups, and positive `same_medication` edges for learned models. `views/parsing/oracle-{train,val,test}.json` and `oracle-manifest.json` use the existing parser corpus contract for rule-based or oracle-box evaluation. Product labels such as `약명` are represented explicitly as `product_label` evidence instead of being reconstructed by text-specific fixture logic. This view is intentionally independent of whether the eventual parser is deterministic or learned.
+The canonical OCR corpus can materialize parser/KIE data from the same documents used for detector and recognizer experiments. `views/parsing/samples.jsonl` exposes box text/geometry, semantic roles, association groups, and positive `same_medication` edges for learned models. `views/parsing/oracle-{train,val,test}.json` and `oracle-manifest.json` use the parser corpus contract for oracle-box evaluation. Product labels such as `약명` are represented explicitly as `product_label` evidence instead of being reconstructed by text-specific fixture logic. This view is intentionally independent of whether the eventual parser is deterministic or learned.
 
 ## Agent Control CLI
 
@@ -74,27 +67,16 @@ docker compose run --rm ocr-document-parse \
 Prediction files use schema version 2 and contain one `case_id` plus `rows` per
 evaluated case. An empty `rows` list is valid fail-closed output.
 
-Run the tracked model-free baseline directly against the oracle OCR boxes:
-
-```sh
-docker compose run --rm ocr-document-parse \
-  run-baseline \
-  --corpus browser_ocr/document_parsing/corpus/manifest.json \
-  --json
-```
-
-The command returns both the generated prediction envelope and the benchmark
-evaluation so later baselines can be compared under exactly the same contract.
 ## Learned-parser dataset contract
 
-Learned parser training does not consume the legacy rule-parser corpus directly. The canonical training contract separates the **observed OCR graph** from authoritative labels and image-level medication gold:
+Learned parser training uses a canonical contract that separates the **observed OCR graph** from authoritative labels and image-level medication gold:
 
 - `observation.kind`: `oracle`, deterministic `synthetic_ocr`, or actual `runtime_ocr`;
 - each observed node carries text, confidence, an ordered convex four-point polygon bounded by the declared image dimensions, and zero or more matched truth-region ids;
 - `label_status=labeled` carries a role/group target, while split/merge observations spanning incompatible truth roles/groups are `ambiguous` and are masked from supervised role/relation loss;
 - unmatched detector boxes are explicit `other` negatives;
 - relations contain both `same_medication` positives and `different_medication` hard negatives for dose, frequency, duration, instruction, and medication-associated schedule nodes;
-- `gold_rows` are image-level truth and do not depend on which regions OCR happened to observe. Learned-parser synthetic rows additionally carry deterministic, evidence-backed schedule/meal/route/PRN semantics when the associated instruction text proves them; the legacy deterministic-parser oracle/E2E rows intentionally retain their narrower core contract.
+- `gold_rows` are image-level truth and do not depend on which regions OCR happened to observe. Synthetic rows carry deterministic, evidence-backed schedule/meal/route/PRN semantics when the associated instruction text proves them.
 - `gold_rows_reviewed` separates an explicitly reviewed empty image-level gold set from the default unfinished annotation state.
 - real documents preserve a pseudonymous lowercase-ASCII `source_id` plus the allowlisted de-identified-source `license_id` (`private-deidentified`) in the finalized parser sample; provenance fields are identifiers, not free-form text.
 
@@ -126,7 +108,7 @@ docker compose run --rm ocr-parser-data build-runtime \
 
 Private prescription photos stay outside Git. Ingestion accepts only an external `real_deidentified` source manifest whose documents are already de-identified, use pseudonymous lowercase ids, use the document id as the image filename stem, and declare `contains_patient_data=false`. Only `val` and `test` are accepted, and image SHA-256 values must be unique across the source manifest so the same photo cannot leak between validation and test under different pseudonyms.
 
-The GPU `ocr-parser-real` service sends every photo through the exact selected full-document detector/crop/recognizer path and writes runtime OCR results plus annotation drafts. Runtime observations use an exact metadata allowlist and require pinned detector/recognizer/config/implementation SHA-256 metadata plus hashes of the exact loaded detector ONNX/config bytes, the actual PaddleOCR inference Python source tree, the dictionary selected by the recognizer config, and a canonical fingerprint of the Python inference runtime environment. That runtime fingerprint includes installed Debian package versions and content hashes for the native shared-library set that backs the OCR stack, plus the actual native payload bytes installed by inference-critical Python wheels such as PaddlePaddle, ONNX Runtime, OpenCV, NumPy, and NVIDIA CUDA/cuDNN packages. Native file hashes are cached only while their size/mtime/ctime snapshot remains unchanged, so repeated documents avoid rehashing immutable binaries while binary replacement still changes producer identity. GPU profiles additionally bind the runtime-visible device selector plus Paddle-reported CUDA/cuDNN/device/capability identity and available NVIDIA driver identity. Model identifiers are bounded ASCII ids rather than free-form metadata. Arbitrary runtime-profile fields are rejected instead of being copied into de-identified artifacts. The detector runtime additionally verifies that extracted ONNX/config bytes match the pinned archive before inference. A batch checkpoint binds one normalized OCR producer identity, so an interrupted batch cannot resume with a different detector/recognizer/PaddleOCR/runtime environment and mix producers. The standalone `build-runtime` path and the strict parser artifact contract enforce the same one-producer-per-dataset invariant. Parser identity alone is deliberately stripped from the observation profile: changing the parser does not invalidate OCR observations produced by unchanged detector/recognizer inputs.
+The GPU `ocr-parser-real` service sends every photo through the exact selected full-document detector/crop/recognizer path and writes runtime OCR results plus annotation drafts. Runtime observations use an exact metadata allowlist and require pinned detector/recognizer/config/implementation SHA-256 metadata plus hashes of the exact loaded detector ONNX/config bytes, the actual PaddleOCR inference Python source tree, the dictionary selected by the recognizer config, and a canonical fingerprint of the Python inference runtime environment. That runtime fingerprint includes installed Debian package versions and content hashes for the native shared-library set that backs the OCR stack, plus the actual native payload bytes installed by inference-critical Python wheels such as PaddlePaddle, ONNX Runtime, OpenCV, NumPy, and NVIDIA CUDA/cuDNN packages. Native file hashes are cached only while their size/mtime/ctime snapshot remains unchanged, so repeated documents avoid rehashing immutable binaries while binary replacement still changes producer identity. GPU profiles additionally bind the runtime-visible device selector plus Paddle-reported CUDA/cuDNN/device/capability identity and available NVIDIA driver identity. Model identifiers are bounded ASCII ids rather than free-form metadata. Arbitrary runtime-profile fields are rejected instead of being copied into de-identified artifacts. The detector runtime additionally verifies that extracted ONNX/config bytes match the pinned archive before inference. A batch checkpoint binds one normalized OCR producer identity, so an interrupted batch cannot resume with a different detector/recognizer/PaddleOCR/runtime environment and mix producers. The standalone `build-runtime` path and the strict parser artifact contract enforce the same one-producer-per-dataset invariant.
 
 ```sh
 docker compose run --rm \

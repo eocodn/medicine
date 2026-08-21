@@ -94,11 +94,8 @@ class RealParserDataCliTest(unittest.TestCase):
         runtime_profile = {
             **producer,
             "image_sha256": sample["image_sha256"],
-            "parser": "geometry_rule_v2",
             "implementation": {
                 **producer["implementation"],
-                "parser": "9" * 64,
-                "parser_contract": "a" * 64,
             },
         }
         runtime_result = {
@@ -286,12 +283,6 @@ class RealParserDataCliTest(unittest.TestCase):
             runtime_profile = {
                 **producer,
                 "image_sha256": sample["image_sha256"],
-                "parser": "geometry_rule_v2",
-                "implementation": {
-                    **producer["implementation"],
-                    "parser": "9" * 64,
-                    "parser_contract": "a" * 64,
-                },
             }
             runtime_result = {
                 "status": "ok",

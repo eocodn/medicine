@@ -55,14 +55,10 @@
           <div class="ocr-import-card">
             <label class="secondary-button wide ocr-file-button" for="ocr-image-input">처방전 사진으로 불러오기</label>
             <input id="ocr-image-input" class="visually-hidden" type="file" accept="image/*" capture="environment">
-            <p class="muted small">사진은 서버로 전송되지 않고 이 기기에서만 인식해요. 인식 결과는 저장 전에 직접 수정하고 제품을 확인할 수 있어요.</p>
+            <p class="muted small">사진은 서버로 전송되지 않고 이 기기에서만 인식해요. 파서 결과는 바로 제품 검색에 사용되고, 복용정보는 저장 전 최종 화면에서 수정할 수 있어요.</p>
             <div id="ocr-status" class="muted small" role="status"></div>
           </div>
         </div>
-        <section id="ocr-review-panel" class="hidden">
-          <div class="section-heading"><div><p class="eyebrow">PHOTO REVIEW</p><h2>인식 결과 확인</h2></div></div>
-          <div id="ocr-review-list" class="stack"></div>
-        </section>
         <div id="search-status" class="muted small search-status"></div>
         <div id="drug-results" class="stack"></div>
       </section>
@@ -174,6 +170,6 @@
   <script src="/static/timeline.js?v=20260811b" defer></script>
   <script src="/static/app.js?v=20260820search2" defer></script>
   <script src="/static/dose-actions.js?v=20260820perf4" defer></script>
-  <script src="/static/ocr-review.js?v=20260817ux7" defer></script>
+  <script src="/static/ocr-intake.js?v=20260821parser1" defer></script>
 </body>
 </html>

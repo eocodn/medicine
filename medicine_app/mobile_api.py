@@ -201,10 +201,7 @@ class MobileApi:
             if not 1 <= limit <= 100:
                 raise ValueError("limit must be between 1 and 100")
             include_inactive = _bool_query(query, "include_inactive")
-            mode = (query.get("mode") or ["manual"])[-1]
-            return 200, service.search_products(
-                term, limit, include_inactive=include_inactive, mode=mode
-            )
+            return 200, service.search_products(term, limit, include_inactive=include_inactive)
 
         match = re.fullmatch(r"/api/people/([^/]+)/dashboard", path)
         if method == "GET" and match:

@@ -9,8 +9,6 @@ from .canonical_runtime import category_resolution_issues, linked_categories, pr
 from .dosage_forms import infer_administration_route
 
 
-_SEARCH_MODES = {"manual", "ocr"}
-
 
 class ProductSearchUnavailable(RuntimeError):
     """Raised while the product-search interface intentionally has no engine."""
@@ -110,7 +108,6 @@ class ProductRepository:
         limit: int = 30,
         include_inactive: bool = False,
         *,
-        mode: str = "manual",
         explain: bool = False,
     ) -> list[dict]:
         """Stable product-search boundary; the engine is intentionally absent."""
@@ -119,9 +116,6 @@ class ProductRepository:
             return []
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
-        normalized_mode = str(mode or "manual").strip().lower()
-        if normalized_mode not in _SEARCH_MODES:
-            raise ValueError("search mode must be manual or ocr")
         _ = include_inactive, explain
         raise ProductSearchUnavailable("product search engine is not implemented")
 
