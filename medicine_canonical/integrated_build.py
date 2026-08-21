@@ -12,6 +12,7 @@ from .build import populate_canonical_source_tables, sync_reference_sources
 from .dur_bridge import materialize_dur_ingredient_bridge
 from .inspection import canonical_stats, verify_canonical_database
 from .linking import materialize_product_criterion_links
+from .product_search_index import rebuild_product_search_index
 from .schema import SCHEMA, SCHEMA_VERSION
 from .source_policy import CANONICAL_SOURCE_POLICY
 from .mfds_ingredient import IngredientFetchPage
@@ -59,6 +60,7 @@ def assemble_integrated_databases(
             con.executescript(SCHEMA)
             con.execute("BEGIN")
             source_result = populate_canonical_source_tables(con, source_layout)
+            rebuild_product_search_index(con)
             _insert_source_stage_meta(con)
             con.commit()
 

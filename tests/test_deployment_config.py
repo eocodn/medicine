@@ -379,6 +379,8 @@ class DeploymentConfigTest(unittest.TestCase):
         gradle = Path("android/app/build.gradle.kts").read_text()
         verifier = Path("medicine_app/reference_contracts/v1.py").read_text()
         self.assertNotIn('include("medicine_reference/**/*.py")', gradle)
+        self.assertIn('include("medicine_reference/__init__.py")', gradle)
+        self.assertIn('include("medicine_reference/product_search_text.py")', gradle)
         self.assertNotIn("mfds_remark_registry.tsv", gradle)
         self.assertIn('"reference_criterion_semantics"', verifier)
         self.assertIn("_verify_schema(con)", verifier)

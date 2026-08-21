@@ -64,7 +64,7 @@ class ProductSearchCandidateSafetyTest(unittest.TestCase):
         ))
         self.assert_first("(주) 테스트팜", "COMPAT-HANGUL-SYMBOL")
 
-    def test_ocr_fragment_fallback_does_not_require_an_unrepresentable_fragment(self) -> None:
+    def test_ocr_similarity_recovers_compatibility_form_with_one_edit(self) -> None:
         query = parse_product_search_query("xiiabc 5mg", mode="ocr")
 
         self.assertIsNotNone(match_product_fields(query, product_name="Ⅻabx정5mg"))
@@ -72,7 +72,7 @@ class ProductSearchCandidateSafetyTest(unittest.TestCase):
         results = self.repo.search("xiiabc 5mg", limit=10, mode="ocr")
         self.assertEqual(results[0]["product_ref"], "OCR-COMPAT-FRAGMENT")
 
-    def test_many_structured_tokens_do_not_depend_on_sql_expression_depth(self) -> None:
+    def test_many_search_characters_do_not_depend_on_sql_expression_depth(self) -> None:
         def alpha_token(index: int) -> str:
             chars = []
             value = index

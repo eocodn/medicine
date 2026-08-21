@@ -286,6 +286,29 @@ def verify_canonical_database(db_path: str | Path) -> dict:
             ).fetchone()
             if not schema_version or schema_version[0] != SCHEMA_VERSION:
                 errors.append("schema version mismatch")
+            search_indexes = {
+                name: str(sql or "").lower()
+                for name, sql in con.execute(
+                    """SELECT name,sql FROM sqlite_master
+                       WHERE type='table' AND name IN ('product_search_fts','product_search_ocr_fts')"""
+                )
+            }
+            primary_index = search_indexes.get("product_search_fts", "")
+            ocr_index = search_indexes.get("product_search_ocr_fts", "")
+            if "fts5" not in primary_index or "trigram" not in primary_index:
+                errors.append("product search index missing or invalid")
+            if "fts5" not in ocr_index or "unicode61" not in ocr_index:
+                errors.append("OCR product search index missing or invalid")
+            if primary_index and ocr_index:
+                product_count = con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+                indexed_products = con.execute(
+                    "SELECT COUNT(DISTINCT item_seq) FROM product_search_fts"
+                ).fetchone()[0]
+                ocr_indexed_products = con.execute(
+                    "SELECT COUNT(DISTINCT item_seq) FROM product_search_ocr_fts"
+                ).fetchone()[0]
+                if indexed_products != product_count or ocr_indexed_products != product_count:
+                    errors.append("product search index coverage mismatch")
             stats = canonical_stats(path)
             if stats["products"] == 0:
                 errors.append("no products imported")

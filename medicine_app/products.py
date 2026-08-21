@@ -10,24 +10,15 @@ from .dosage_forms import infer_administration_route
 from .product_search import (
     ProductSearchMatch,
     ProductSearchQuery,
-    fuzzy_candidate_fragments,
+    fts_candidate_terms,
     match_product_fields,
+    ocr_candidate_bigrams,
     parse_product_search_query,
 )
-from .product_search_candidate_text import text_candidate_anchor_patterns
 
 
-# Candidate SQL is a bounded prefilter for supported medication/OCR syntax. It
-# is intentionally not a second Unicode normalization engine: unrepresentable
-# text broadens candidate retrieval and the normalized Python matcher remains
-# authoritative. Do not add rare compatibility glyph tables merely to prove
-# equivalence for spellings that are absent from the catalog/input paths.
-_MAX_CANDIDATE_TEXT_TOKENS = 3
-_MAX_CANDIDATE_NUMBERS = 3
-_FULLWIDTH_NUMERIC_TRANSLATION = str.maketrans(
-    "0123456789.,",
-    "０１２３４５６７８９．，",
-)
+_FTS_CANDIDATE_LIMIT_MANUAL = 240
+_FTS_CANDIDATE_LIMIT_OCR = 360
 
 
 class ProductRepository:
@@ -124,248 +115,6 @@ class ProductRepository:
         }
 
     @staticmethod
-    def _legacy_search_rows(
-        con: sqlite3.Connection,
-        term: str,
-        limit: int,
-        include_inactive: bool,
-    ) -> list[sqlite3.Row]:
-        like = f"%{term}%"
-        prefix = f"{term}%"
-        status_sql = "" if include_inactive else "AND p.permit_status='active'"
-        return con.execute(
-            f"""SELECT p.*
-                FROM products p
-                WHERE (
-                    p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?
-                    OR p.item_seq LIKE ?
-                    OR EXISTS (
-                        SELECT 1 FROM product_identifiers i
-                        WHERE i.item_seq=p.item_seq AND i.system='EDI' AND i.value LIKE ?
-                    )
-                ) {status_sql}
-                ORDER BY CASE WHEN p.permit_status='active' THEN 0 ELSE 1 END,
-                         CASE WHEN p.product_name LIKE ? THEN 0 ELSE 1 END,
-                         p.product_name,p.item_seq
-                LIMIT ?""",
-            (like, like, like, prefix, prefix, prefix, limit),
-        ).fetchall()
-
-    @staticmethod
-    def _legacy_match(
-        con: sqlite3.Connection,
-        row: sqlite3.Row,
-        term: str,
-    ) -> ProductSearchMatch:
-        needle = term.casefold()
-        for field, field_rank in (
-            ("product_name", 0),
-            ("ingredient_text", 1),
-            ("manufacturer", 2),
-        ):
-            value = str(row[field] or "")
-            compact = value.casefold()
-            position = compact.find(needle)
-            if position < 0:
-                continue
-            prefix = position == 0
-            return ProductSearchMatch(
-                field=field,
-                tier="legacy_prefix" if prefix else "legacy_substring",
-                fuzzy=False,
-                sort_key=(field_rank, 0, 0 if prefix else 1, max(0, len(compact) - len(needle))),
-            )
-        if str(row["item_seq"]).casefold().startswith(needle):
-            return ProductSearchMatch(
-                field="identifier",
-                tier="identifier_prefix",
-                fuzzy=False,
-                sort_key=(-1, 0, 0, 0),
-            )
-        edi_match = con.execute(
-            """SELECT 1 FROM product_identifiers
-               WHERE item_seq=? AND system='EDI' AND lower(value) LIKE lower(?) LIMIT 1""",
-            (row["item_seq"], f"{term}%"),
-        ).fetchone()
-        if edi_match is not None:
-            return ProductSearchMatch(
-                field="identifier",
-                tier="identifier_prefix",
-                fuzzy=False,
-                sort_key=(-1, 0, 0, 0),
-            )
-        return ProductSearchMatch(
-            field="legacy",
-            tier="legacy_like",
-            fuzzy=False,
-            sort_key=(3, 0, 1, 0),
-        )
-
-    def _legacy_results(
-        self,
-        con: sqlite3.Connection,
-        term: str,
-        limit: int,
-        include_inactive: bool,
-        *,
-        explain: bool,
-    ) -> list[dict]:
-        rows = self._legacy_search_rows(con, term, limit, include_inactive)
-        results = []
-        for row in rows:
-            decorated = self._decorate_product(row, con)
-            if explain:
-                decorated["search_match"] = self._legacy_match(con, row, term).explanation()
-            results.append(decorated)
-        return results
-
-    @staticmethod
-    def _number_candidate_patterns(
-        number: str,
-    ) -> tuple[tuple[str, str], ...]:
-        # Candidate SQL is allowed to broaden, never to reject a final match.
-        # Very long numeric tokens can exceed SQLite LIKE/GLOB pattern limits;
-        # omit that prefilter and let the authoritative matcher validate it.
-        if len(number) > 128:
-            return ()
-        normalized_variants = [number]
-        integer, dot, fraction = number.partition(".")
-        if integer == "0" and dot and fraction:
-            normalized_variants.append(f".{fraction}")
-        if integer.isdigit() and len(integer) > 3:
-            first_group = len(integer) % 3 or 3
-            grouped = ",".join(
-                (integer[:first_group], *(
-                    integer[index:index + 3]
-                    for index in range(first_group, len(integer), 3)
-                ))
-            )
-            if dot:
-                grouped = f"{grouped}.{fraction}"
-            if grouped not in normalized_variants:
-                normalized_variants.append(grouped)
-        patterns: list[tuple[str, str]] = []
-        for normalized in normalized_variants:
-            # ASCII is the medication/OCR numeric grammar. Fullwidth ASCII is a
-            # cheap, common presentation spelling worth retaining explicitly;
-            # other Unicode numeric alphabets are intentionally out of scope.
-            for raw in (normalized, normalized.translate(_FULLWIDTH_NUMERIC_TRANSLATION)):
-                candidate = ("LIKE", f"%{raw}%")
-                if candidate not in patterns:
-                    patterns.append(candidate)
-        return tuple(patterns)
-
-    @staticmethod
-    def _structured_candidate_rows(
-        con: sqlite3.Connection,
-        query: ProductSearchQuery,
-        include_inactive: bool,
-        *,
-        fragments: tuple[str, ...] = (),
-    ) -> list[sqlite3.Row]:
-        status_sql = "" if include_inactive else "AND p.permit_status='active'"
-        if not query.text_tokens:
-            return []
-
-        def field_clause(
-            field: str,
-            text_tokens: tuple[str, ...],
-            *,
-            fragment_mode: bool,
-        ) -> tuple[str, list[object]]:
-            raw_text_tokens = tuple(dict.fromkeys(text_tokens))
-            text_limit = 6 if fragment_mode else _MAX_CANDIDATE_TEXT_TOKENS
-            token_pattern_candidates = [
-                (index, token, text_candidate_anchor_patterns(token))
-                for index, token in enumerate(raw_text_tokens)
-            ]
-            fragment_has_unbounded_anchor = bool(
-                fragment_mode
-                and (
-                    len(raw_text_tokens) > text_limit
-                    or any(
-                        not patterns
-                        for _index, _token, patterns in token_pattern_candidates
-                    )
-                )
-            )
-            text_token_patterns = tuple(
-                (token, patterns)
-                for _index, token, patterns in sorted(
-                    (candidate for candidate in token_pattern_candidates if candidate[2]),
-                    key=lambda item: (-len(item[1]), item[0]),
-                )[:text_limit]
-            )
-            clauses: list[str] = []
-            params: list[object] = []
-            token_clauses: list[str] = []
-            text_params: list[object] = []
-            for _token, anchor_groups in text_token_patterns:
-                anchor_clauses: list[str] = []
-                for patterns in anchor_groups:
-                    variant_clauses = []
-                    for operator, pattern in patterns:
-                        variant_clauses.append(f"p.{field} {operator} ?")
-                        text_params.append(pattern)
-                    anchor_clauses.append("(" + " OR ".join(variant_clauses) + ")")
-                token_clauses.append("(" + " AND ".join(anchor_clauses) + ")")
-            if token_clauses and not (fragment_mode and fragment_has_unbounded_anchor):
-                text_joiner = " OR " if fragment_mode else " AND "
-                clauses.append("(" + text_joiner.join(token_clauses) + ")")
-                params.extend(text_params)
-            numbers = tuple(dict.fromkeys(query.number_tokens))
-            for number in numbers[:_MAX_CANDIDATE_NUMBERS]:
-                variant_clauses = []
-                for operator, pattern in ProductRepository._number_candidate_patterns(number):
-                    variant_clauses.append(f"p.{field} {operator} ?")
-                    params.append(pattern)
-                if variant_clauses:
-                    clauses.append("(" + " OR ".join(variant_clauses) + ")")
-            if not clauses:
-                return "(1=1)", params
-            return "(" + " AND ".join(clauses) + ")", params
-
-        # Final matching is field-local. Candidate SQL uses only bounded safe
-        # anchors from that same field, so it can broaden retrieval but never
-        # borrow a text qualifier from one field and a strength from another.
-        # OCR fragments are a product-name candidate superset, so when present
-        # they replace the narrower deterministic product-name branch. Exact
-        # and fuzzy product-name candidates still share one final ranking.
-        candidate_parts: list[str] = []
-        params: list[object] = []
-        deterministic_fields = (
-            ("ingredient_text", "manufacturer")
-            if fragments
-            else ("product_name", "ingredient_text", "manufacturer")
-        )
-        for field in deterministic_fields:
-            clause, clause_params = field_clause(
-                field,
-                query.text_tokens,
-                fragment_mode=False,
-            )
-            candidate_parts.append(clause)
-            params.extend(clause_params)
-        if fragments:
-            clause, clause_params = field_clause(
-                "product_name",
-                fragments,
-                fragment_mode=True,
-            )
-            candidate_parts.append(clause)
-            params.extend(clause_params)
-        if not candidate_parts:
-            return []
-        candidate_clause = " OR ".join(candidate_parts)
-        return con.execute(
-            f"""SELECT p.*
-                FROM products p
-                WHERE ({candidate_clause}) {status_sql}
-                """,
-            params,
-        ).fetchall()
-
-    @staticmethod
     def _identifier_search_rows(
         con: sqlite3.Connection,
         term: str,
@@ -374,7 +123,12 @@ class ProductRepository:
         prefix = f"{term}%"
         status_sql = "" if include_inactive else "AND p.permit_status='active'"
         return con.execute(
-            f"""SELECT p.*
+            f"""SELECT p.*,
+                       CASE WHEN lower(p.item_seq)=lower(?) OR EXISTS (
+                           SELECT 1 FROM product_identifiers exact_i
+                           WHERE exact_i.item_seq=p.item_seq AND exact_i.system='EDI'
+                             AND lower(exact_i.value)=lower(?)
+                       ) THEN 1 ELSE 0 END AS identifier_exact
                 FROM products p
                 WHERE (
                     p.item_seq LIKE ?
@@ -383,17 +137,102 @@ class ProductRepository:
                         WHERE i.item_seq=p.item_seq AND i.system='EDI' AND i.value LIKE ?
                     )
                 ) {status_sql}
-                ORDER BY CASE WHEN p.permit_status='active' THEN 0 ELSE 1 END,
+                ORDER BY identifier_exact DESC,
+                         CASE WHEN p.permit_status='active' THEN 0 ELSE 1 END,
                          p.product_name,p.item_seq
                 LIMIT 1000""",
-            (prefix, prefix),
+            (term, term, prefix, prefix),
         ).fetchall()
 
     @staticmethod
-    def _rank_structured_rows(
+    def _fts_candidate_rows(
+        con: sqlite3.Connection,
+        query: ProductSearchQuery,
+        include_inactive: bool,
+        *,
+        candidate_limit: int,
+    ) -> list[sqlite3.Row]:
+        status_sql = "" if include_inactive else "AND p.permit_status='active'"
+        terms = fts_candidate_terms(query)
+        if not terms:
+            # FTS5 trigram intentionally cannot index one- or two-character terms.
+            # A bounded raw substring candidate scan handles terms below that length;
+            # the same deterministic matcher remains authoritative.
+            like = f"%{query.original}%"
+            return con.execute(
+                f"""SELECT p.* FROM products p
+                    WHERE (p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?)
+                    {status_sql}
+                    LIMIT ?""",
+                (like, like, like, candidate_limit),
+            ).fetchall()
+
+        def fts_rows(table: str, match_query: str, limit: int) -> list[sqlite3.Row]:
+            return con.execute(
+                f"""SELECT item_seq, MIN(rank) AS best_rank
+                    FROM {table}
+                    WHERE {table} MATCH ?
+                    GROUP BY item_seq
+                    ORDER BY best_rank, item_seq
+                    LIMIT ?""",
+                (match_query, limit),
+            ).fetchall()
+
+        phrase_query = f'"{query.normalized}"'
+        if query.mode == "ocr":
+            # An exact phrase can occur in a lower-priority field while the
+            # intended product name contains an OCR edit. Reserve candidate
+            # capacity for the product-name bigram index even when an exact
+            # ingredient/manufacturer phrase already exists; final field-aware
+            # character ranking remains authoritative.
+            phrase_limit = max(1, candidate_limit // 3)
+            bigram_limit = max(1, candidate_limit - phrase_limit)
+            item_seq = [
+                str(row[0])
+                for row in fts_rows("product_search_fts", phrase_query, phrase_limit)
+            ]
+            bigrams = ocr_candidate_bigrams(query)
+            if bigrams:
+                bigram_query = " OR ".join(f'"{term}"' for term in bigrams)
+                item_seq.extend(
+                    str(row[0])
+                    for row in fts_rows("product_search_ocr_fts", bigram_query, bigram_limit)
+                )
+            if not item_seq:
+                trigram_query = " OR ".join(f'"{term}"' for term in terms)
+                item_seq.extend(
+                    str(row[0])
+                    for row in fts_rows("product_search_fts", trigram_query, candidate_limit)
+                )
+            item_seq = list(dict.fromkeys(item_seq))[:candidate_limit]
+        else:
+            # A contiguous normalized manual hit is strictly stronger than any
+            # insertion-only alternative, so avoid broad expansion when it exists.
+            item_seq = [
+                str(row[0])
+                for row in fts_rows("product_search_fts", phrase_query, candidate_limit)
+            ]
+            if not item_seq:
+                trigram_query = " OR ".join(f'"{term}"' for term in terms)
+                item_seq = [
+                    str(row[0])
+                    for row in fts_rows("product_search_fts", trigram_query, candidate_limit)
+                ]
+        if not item_seq:
+            return []
+        placeholders = ",".join("?" for _ in item_seq)
+        rows = con.execute(
+            f"SELECT p.* FROM products p WHERE p.item_seq IN ({placeholders}) {status_sql}",
+            item_seq,
+        ).fetchall()
+        by_id = {str(row["item_seq"]): row for row in rows}
+        return [by_id[value] for value in item_seq if value in by_id]
+
+    @staticmethod
+    def _rank_rows(
         rows: list[sqlite3.Row],
         query: ProductSearchQuery,
-    ) -> list[tuple[tuple[object, ...], sqlite3.Row, object]]:
+    ) -> list[tuple[tuple[object, ...], sqlite3.Row, ProductSearchMatch]]:
         ranked = []
         for row in rows:
             match = match_product_fields(
@@ -414,7 +253,6 @@ class ProductRepository:
                 row,
                 match,
             ))
-        ranked.sort(key=lambda item: item[0])
         return ranked
 
     def search(
@@ -432,28 +270,26 @@ class ProductRepository:
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
         query = parse_product_search_query(term, mode=mode)
+        if not query.normalized:
+            return []
+
         with self._canonical() as con:
-            if query.mode == "manual" and not query.structured:
-                return self._legacy_results(
-                    con, term, limit, include_inactive, explain=explain
-                )
-            if not query.text_tokens:
-                return self._legacy_results(
-                    con, term, limit, include_inactive, explain=explain
-                )
-            identifier_match = ProductSearchMatch(
-                field="identifier",
-                tier="identifier_prefix",
-                fuzzy=False,
-                sort_key=(-1, 0, 0, 0),
-            )
             identifier_rows = (
                 self._identifier_search_rows(con, term, include_inactive)
                 if query.identifier_like
                 else []
             )
-            ranked = [
-                (
+            ranked = []
+            for row in identifier_rows:
+                exact = bool(row["identifier_exact"])
+                identifier_match = ProductSearchMatch(
+                    field="identifier",
+                    tier="identifier_exact" if exact else "identifier_prefix",
+                    fuzzy=False,
+                    similarity=1.0,
+                    sort_key=(-1, 0 if exact else 1, 0, 0, 0),
+                )
+                ranked.append((
                     (
                         0 if row["permit_status"] == "active" else 1,
                         *identifier_match.sort_key,
@@ -462,18 +298,19 @@ class ProductRepository:
                     ),
                     row,
                     identifier_match,
-                )
-                for row in identifier_rows
-            ]
-            fragments = fuzzy_candidate_fragments(query) if query.mode == "ocr" else ()
-            rows = self._structured_candidate_rows(
-                con,
-                query,
-                include_inactive,
-                fragments=fragments,
+                ))
+            candidate_limit = (
+                _FTS_CANDIDATE_LIMIT_OCR if query.mode == "ocr"
+                else _FTS_CANDIDATE_LIMIT_MANUAL
             )
-            ranked.extend(self._rank_structured_rows(rows, query))
+            ranked.extend(self._rank_rows(
+                self._fts_candidate_rows(
+                    con, query, include_inactive, candidate_limit=candidate_limit
+                ),
+                query,
+            ))
             ranked.sort(key=lambda item: item[0])
+
             results = []
             seen_item_seq: set[str] = set()
             for _sort_key, row, match in ranked:

@@ -9,7 +9,7 @@ from contextlib import contextmanager
 
 
 # Contract-v1 identity is frozen.  The oracle SQL below is the specification;
-# the physical-policy-v8 executor may change execution strategy only when it
+# the physical-policy-v9 executor may change execution strategy only when it
 # emits the exact same ordered logical row transcript.
 REFERENCE_CONTRACT_MAJOR = 1
 Progress = Callable[[dict[str, object]], None]
@@ -256,7 +256,7 @@ def _fast_layout_is_valid(database: sqlite3.Connection) -> bool:
     }
     if names != required:
         return False
-    # Physical policy 8 assigns dictionary IDs in SQLite BINARY text order.
+    # Physical policies 8+ assign dictionary IDs in SQLite BINARY text order.
     # Verify that invariant once before using integer IDs as exact text sort keys.
     mismatch = database.execute(
         """SELECT 1 FROM (
@@ -275,7 +275,7 @@ def _decode(texts: dict[int, str], value: int | None) -> str | None:
     return None if value is None else texts[int(value)]
 
 
-# Policy 8 inserts mobile_rule_texts in SQLite BINARY order, so each non-NULL
+# Policies 8+ insert mobile_rule_texts in SQLite BINARY order, so each non-NULL
 # dictionary ID is already the exact sort rank of its decoded text.  Keep the
 # fast executor read-only: logical_dataset_id() is valid inside caller-owned
 # transactions and on PRAGMA query_only connections, so rank TEMP tables (and
@@ -426,7 +426,7 @@ def logical_dataset_id(
     progress: Progress | None = None,
 ) -> str:
     policy = physical_policy_version or _physical_policy(database)
-    if policy == "8" and _fast_layout_is_valid(database):
+    if policy in {"8", "9"} and _fast_layout_is_valid(database):
         return logical_dataset_id_fast(database, progress=progress)
     return logical_dataset_id_oracle(database, progress=progress)
 

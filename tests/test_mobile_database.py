@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -227,16 +228,31 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_build_rejects_duplicate_product_rule_source_identity(self) -> None:
         duplicate_source = self.canonical_db.with_name("canonical-duplicate-rule.sqlite")
-        with sqlite3.connect(self.canonical_db) as source:
-            dump = "\n".join(source.iterdump())
+        shutil.copy2(self.canonical_db, duplicate_source)
         unique_clause = ",\n    UNIQUE(source_dataset_key, source_row)\n)"
-        self.assertIn(unique_clause, dump)
-        # iterdump() orders tables by name, so ingredient_rules appears before
-        # product_rules. Remove this build-time identity constraint from the
-        # synthetic source tables so the fixture can represent corrupt input.
-        dump = dump.replace(unique_clause, "\n)")
         with sqlite3.connect(duplicate_source) as con:
-            con.executescript(dump)
+            create_sql = con.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='product_rules'"
+            ).fetchone()[0]
+            self.assertIn(unique_clause, create_sql)
+            replacement_sql = create_sql.replace(
+                "CREATE TABLE product_rules", "CREATE TABLE product_rules_corrupt"
+            ).replace(unique_clause, "\n)")
+            dependent_views = [
+                (name, sql)
+                for name, sql in con.execute(
+                    "SELECT name,sql FROM sqlite_master WHERE type='view' AND sql LIKE '%product_rules%'"
+                )
+            ]
+            con.execute("PRAGMA foreign_keys=OFF")
+            for name, _sql in dependent_views:
+                con.execute(f'DROP VIEW "{name}"')
+            con.execute(replacement_sql)
+            con.execute("INSERT INTO product_rules_corrupt SELECT * FROM product_rules")
+            con.execute("DROP TABLE product_rules")
+            con.execute("ALTER TABLE product_rules_corrupt RENAME TO product_rules")
+            for _name, view_sql in dependent_views:
+                con.execute(view_sql)
             columns = [
                 str(row[1])
                 for row in con.execute("PRAGMA table_info('product_rules')")

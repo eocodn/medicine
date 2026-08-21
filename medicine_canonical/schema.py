@@ -3,7 +3,7 @@ from __future__ import annotations
 from medicine_reference.mfds_sources import MFDS_SOURCE_FAMILY_SET
 
 
-SCHEMA_VERSION = "10"
+SCHEMA_VERSION = "11"
 CORE_SOURCE_FAMILIES = MFDS_SOURCE_FAMILY_SET
 
 SCHEMA = r"""
@@ -48,6 +48,22 @@ CREATE TABLE products (
 CREATE INDEX idx_products_name ON products(product_name);
 CREATE INDEX idx_products_ingredient ON products(ingredient_text);
 CREATE INDEX idx_products_status ON products(permit_status);
+
+-- Orthographic retrieval indexes for manual and OCR product search. They are
+-- materialized from normalized text after product import; Python ranking remains
+-- authoritative and these indexes only supply bounded candidates.
+CREATE VIRTUAL TABLE product_search_fts USING fts5(
+    item_seq UNINDEXED,
+    product_name,
+    ingredient_text,
+    manufacturer,
+    tokenize='trigram'
+);
+CREATE VIRTUAL TABLE product_search_ocr_fts USING fts5(
+    item_seq UNINDEXED,
+    product_name_bigrams,
+    tokenize='unicode61'
+);
 
 CREATE TABLE product_identifiers (
     item_seq TEXT NOT NULL REFERENCES products(item_seq),

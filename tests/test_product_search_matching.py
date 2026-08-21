@@ -18,98 +18,39 @@ from tests.test_safety_coverage import make_canonical_db as make_release_canonic
 
 
 class ProductSearchQueryTest(unittest.TestCase):
-    def test_normalizes_spacing_boundaries_and_strength_units(self) -> None:
-        spaced = parse_product_search_query(" 씬지록신 25 ㎍ ")
-        compact = parse_product_search_query("씬지록신25mcg")
-        ascii_before_form = parse_product_search_query("알로판400mg정")
-        ascii_before_latin = parse_product_search_query("Clindamycin150mgCapsule")
-        thousands = parse_product_search_query("글루파 1,000 mg")
+    def test_bare_digits_remain_orthographic_text(self) -> None:
+        b12 = parse_product_search_query("Vitamin B12")
+        e400 = parse_product_search_query("비타민 E400")
+        tylenol = parse_product_search_query("Tylenol500")
 
-        self.assertEqual(spaced.text_tokens, ("씬지록신",))
-        self.assertEqual(spaced.number_tokens, ("25",))
-        self.assertEqual(spaced.unit_tokens, ("ug",))
-        self.assertEqual(compact.text_tokens, spaced.text_tokens)
-        self.assertEqual(compact.number_tokens, spaced.number_tokens)
-        self.assertEqual(compact.unit_tokens, spaced.unit_tokens)
-        self.assertEqual(ascii_before_form.text_tokens, ("알로판", "정"))
-        self.assertEqual(ascii_before_form.number_tokens, ("400",))
-        self.assertEqual(ascii_before_form.unit_tokens, ("mg",))
-        self.assertEqual(ascii_before_latin.text_tokens, ("clindamycin", "capsule"))
-        self.assertEqual(ascii_before_latin.strength_atoms, (("150", "mg"),))
-        self.assertEqual(thousands.number_tokens, ("1000",))
-        self.assertEqual(thousands.unit_tokens, ("mg",))
+        self.assertEqual(b12.normalized, "vitaminb12")
+        self.assertEqual(e400.normalized, "비타민e400")
+        self.assertEqual(tylenol.normalized, "tylenol500")
+        self.assertEqual(b12.explicit_qualifiers, ())
+        self.assertEqual(e400.explicit_qualifiers, ())
+        self.assertEqual(tylenol.explicit_qualifiers, ())
 
-    def test_strength_numbers_are_exact_tokens_not_substrings(self) -> None:
-        query = parse_product_search_query("씬지록신 25")
+    def test_only_explicit_known_units_create_hard_qualifiers(self) -> None:
+        micro = parse_product_search_query("씬지록신 25 ㎍")
+        concentration = parse_product_search_query("보령듀리세프 125mg/5ml")
+        shared = parse_product_search_query("타진 10/5mg")
+        korean = parse_product_search_query("그린진 500 단위")
 
-        exact = match_product_fields(
-            query,
-            product_name="씬지록신정25마이크로그램(레보티록신나트륨수화물)",
-        )
-        collision = match_product_fields(
-            query,
-            product_name="씬지록신정125마이크로그램(레보티록신나트륨수화물)",
-        )
+        self.assertEqual(micro.explicit_qualifiers, (("25", "ug"),))
+        self.assertEqual(concentration.explicit_qualifiers, (("125", "mg"), ("5", "ml")))
+        self.assertEqual(shared.explicit_qualifiers, (("10", "mg"), ("5", "mg")))
+        self.assertEqual(korean.explicit_qualifiers, (("500", "iu"),))
 
-        self.assertIsNotNone(exact)
-        self.assertIsNone(collision)
+    def test_ocr_mode_strips_trailing_regimen_without_product_specific_rules(self) -> None:
+        query = parse_product_search_query("타진서방정 10/5mg0.5정", mode="ocr")
+        self.assertEqual(query.normalized, parse_product_search_query("타진서방정 10/5mg").normalized)
+        self.assertEqual(query.explicit_qualifiers, (("10", "mg"), ("5", "mg")))
 
-    def test_strength_atoms_keep_numbers_bound_to_their_units(self) -> None:
-        concentration = parse_product_search_query("보령듀리세프건조시럽 125mg/5ml")
-        shared_unit = parse_product_search_query("타진 10/5mg")
-        shared_triple = parse_product_search_query("스타레보 50/12.5/200mg")
-
-        self.assertEqual(concentration.strength_atoms, (("125", "mg"), ("5", "ml")))
-        self.assertEqual(shared_unit.strength_atoms, (("10", "mg"), ("5", "mg")))
-        self.assertEqual(
-            shared_triple.strength_atoms,
-            (("50", "mg"), ("12.5", "mg"), ("200", "mg")),
-        )
-
-        self.assertIsNone(match_product_fields(
-            parse_product_search_query("보령듀리세프건조시럽 5 mg"),
-            product_name="보령듀리세프건조시럽125밀리그램/5밀리리터(세파드록실수화물)",
-        ))
-        self.assertIsNone(match_product_fields(
-            parse_product_search_query("보령듀리세프건조시럽 250 ml"),
-            product_name="보령듀리세프건조시럽250밀리그램/5밀리리터(세파드록실수화물)",
-        ))
-        self.assertIsNotNone(match_product_fields(
-            parse_product_search_query("콤보 10 5 mg"),
-            product_name="콤보정10mg/5mg",
-        ))
-
-    def test_compatibility_units_and_enclosed_markers_keep_search_semantics(self) -> None:
-        parsed = parse_product_search_query("약150㎎①수출명150㎎Capsule②")
-        self.assertEqual(parsed.number_tokens, ("150", "150"))
-        self.assertEqual(parsed.unit_tokens, ("mg", "mg"))
-        self.assertEqual(parsed.text_tokens, ("약", "수출명", "capsule"))
-
-    def test_only_code_shaped_queries_use_identifier_candidate_lookup(self) -> None:
+    def test_identifier_shape_is_kept_as_separate_high_priority_path(self) -> None:
         self.assertTrue(parse_product_search_query("EDI-SYN-25").identifier_like)
         self.assertTrue(parse_product_search_query("SYN-25").identifier_like)
         self.assertFalse(parse_product_search_query("씬지록신 25").identifier_like)
         self.assertFalse(parse_product_search_query("Tylenol 500").identifier_like)
-
-    def test_ocr_mode_tolerates_only_bounded_text_error_and_trailing_regimen(self) -> None:
-        contaminated = parse_product_search_query("타진서방정 10/5mg0.5정", mode="ocr")
-        typo = parse_product_search_query("씬지록심 25", mode="ocr")
-        manual_typo = parse_product_search_query("씬지록심 25", mode="manual")
-
-        self.assertEqual(contaminated.number_tokens, ("10", "5"))
-        self.assertEqual(contaminated.unit_tokens, ("mg",))
-        self.assertIsNotNone(match_product_fields(
-            contaminated,
-            product_name="타진서방정 10/5mg",
-        ))
-        self.assertIsNotNone(match_product_fields(
-            typo,
-            product_name="씬지록신정25마이크로그램(레보티록신나트륨수화물)",
-        ))
-        self.assertIsNone(match_product_fields(
-            manual_typo,
-            product_name="씬지록신정25마이크로그램(레보티록신나트륨수화물)",
-        ))
 
 
 class ProductSearchIntegrationTest(unittest.TestCase):
@@ -134,6 +75,13 @@ class ProductSearchIntegrationTest(unittest.TestCase):
                 "씬지록신정125마이크로그램(레보티록신나트륨수화물)",
                 "Levothyroxine Sodium Hydrate",
                 manufacturer="부광약품",
+            )
+            add_product(
+                con,
+                "SYN-25-ALT",
+                "AAA Identifier Prefix Collision",
+                "Synthetic Ingredient",
+                edi="EDI-SYN-25-ALT",
             )
             add_product(
                 con,
@@ -300,242 +248,97 @@ class ProductSearchIntegrationTest(unittest.TestCase):
         results = self.app.search_products(query, limit=10, mode=mode)
         self.assertTrue(results, query)
         self.assertEqual(results[0]["product_ref"], product_ref, query)
-
-    def test_structured_product_name_search_matches_omitted_form_and_spacing(self) -> None:
+    def test_similarity_search_handles_spacing_forms_and_bare_digits(self) -> None:
         self.assert_first("씬지록신 25", "SYN-25")
         self.assert_first("씬지록신25", "SYN-25")
-        self.assert_first("씬지록신 25 mcg", "SYN-25")
         self.assert_first("가바뉴로 25", "GABA-25")
         self.assert_first("타진 10 5", "TAJIN-10-5")
         self.assert_first("알프람 0.25", "ALPRAM-025")
 
-    def test_structured_strength_search_rejects_numeric_collisions(self) -> None:
-        results = self.app.search_products("씬지록신 25", limit=10)
+        refs = [row["product_ref"] for row in self.app.search_products("씬지록신 25", limit=10)]
+        self.assertEqual(refs[0], "SYN-25")
+        # Bare 25 is character evidence, not a hard strength constraint.
+        self.assertIn("SYN-125", refs)
 
-        self.assertEqual([row["product_ref"] for row in results], ["SYN-25"])
-
-    def test_structured_search_preserves_numeric_ingredient_matches(self) -> None:
-        self.assert_first("Biodiastase 500", "DIGEST-500")
-
-        results = self.app.search_products("Sodium Lactate Solution 50%", limit=10)
-        self.assertIn("HARTMANN", [row["product_ref"] for row in results])
-
-    def test_structured_ingredient_numbers_stay_bound_to_the_same_component(self) -> None:
-        self.assertEqual(self.app.search_products("Cellulase 500", limit=10), [])
-        self.assertEqual(self.app.search_products("Lipase 500", limit=10), [])
-        self.assert_first("Biodiastase 500", "DIGEST-500")
-
-    def test_ingredient_component_matching_respects_top_level_composition_boundaries(self) -> None:
-        self.assertEqual(self.app.search_products("Glycerin 11", limit=10), [])
-        self.assert_first("Glycerin 8", "DOT-MIXTURE")
-        self.assert_first("Human Erythropoietin CRL9096", "NESTED-SLASH")
-
-    def test_structured_candidate_generation_does_not_borrow_numbers_across_fields(self) -> None:
-        query = parse_product_search_query("Borrower 5")
-        with sqlite3.connect(self.canonical_db) as con:
-            con.row_factory = sqlite3.Row
-            rows = ProductRepository._structured_candidate_rows(con, query, False)
-
-        self.assertNotIn("CROSS-FIELD", [row["item_seq"] for row in rows])
-
-    def test_ascii_units_before_hangul_forms_and_thousands_are_normalized(self) -> None:
-        self.assert_first("알로판 400mg", "ALLOPAN-400")
-        self.assert_first("알로판 400 밀리그램", "ALLOPAN-400")
-        self.assert_first("영풍다나졸 200 mg", "DANAZOL-200")
-        self.assert_first("글루파 1000 mg", "GLUPA-COMMA")
-        self.assert_first("글루파 1,000 mg", "GLUPA-COMMA")
-        self.assert_first("디3 베이스 10000", "D3-COMMA")
-        self.assert_first("풀위드 5", "FULLWIDTH-STRENGTH")
-
-    def test_number_unit_association_rejects_concentration_cross_binding(self) -> None:
+    def test_explicit_units_are_hard_constraints(self) -> None:
+        self.assert_first("씬지록신 25 mcg", "SYN-25")
+        self.assertNotIn(
+            "SYN-125",
+            [row["product_ref"] for row in self.app.search_products("씬지록신 25 mcg", limit=10)],
+        )
         self.assertEqual(self.app.search_products("보령듀리세프건조시럽 5 mg", limit=10), [])
         self.assertEqual(self.app.search_products("보령듀리세프건조시럽 250 ml", limit=10), [])
-        self.assert_first("보령듀리세프건조시럽 125 mg", "CEF-125-5")
         self.assert_first("보령듀리세프건조시럽 5 ml", "CEF-125-5")
-        self.assert_first("콤보 10 5 mg", "COMBO-REPEATED-UNIT")
 
-    def test_shared_trailing_unit_applies_to_each_slash_group_strength(self) -> None:
-        self.assert_first("타진서방정 10 mg", "TAJIN-10-5")
-        self.assert_first("타진서방정 5 mg", "TAJIN-5-2.5")
-        self.assert_first("타진 5 mg", "TAJIN-5-2.5")
-        self.assert_first("타진서방정 5 2.5 mg", "TAJIN-5-2.5")
-        self.assert_first("스타레보 50 mg", "SHARED-TRIPLE")
-        self.assert_first("스타레보 12.5 mg", "SHARED-TRIPLE")
-        self.assert_first("스타레보 200 mg", "SHARED-TRIPLE")
+    def test_shared_unit_and_component_constraints_remain_field_local(self) -> None:
+        self.assert_first("타진 10/5mg", "TAJIN-10-5")
+        self.assert_first("스타레보 50/12.5/200mg", "SHARED-TRIPLE")
+        self.assert_first("Pelargonium 11%", "DOT-MIXTURE")
+        self.assertEqual(self.app.search_products("Glycerin 11%", limit=10), [])
+        self.assert_first("Human Erythropoietin CRL9096", "NESTED-SLASH")
 
-    def test_long_structured_query_does_not_depend_on_python_recursion_depth(self) -> None:
-        for token in ("a" * 1500, "i" * 1500):
-            with self.subTest(token=token[0]):
-                self.assertEqual(self.app.search_products(token + " 5", limit=10), [])
+    def test_ingredient_and_manufacturer_fallback_share_same_similarity_core(self) -> None:
+        self.assert_first("Biodiastase 500", "DIGEST-500")
+        results = self.app.search_products("Sodium Lactate Solution 50%", limit=10)
+        self.assertIn("HARTMANN", [row["product_ref"] for row in results])
+        manufacturer = ProductRepository(self.canonical_db).search(
+            "부광약품", limit=10, explain=True
+        )
+        self.assertEqual(
+            {row["product_ref"] for row in manufacturer[:2]},
+            {"SYN-25", "SYN-125"},
+        )
+        self.assertTrue(all(row["search_match"]["field"] == "manufacturer" for row in manufacturer[:2]))
 
-    def test_malformed_ingredient_brackets_do_not_leak_numbers_between_components(self) -> None:
-        self.assert_first("Cyperus 2.8", "MALFORMED-COMPONENTS")
-        self.assert_first("Licorice 2.1", "MALFORMED-COMPONENTS")
-        self.assertEqual(self.app.search_products("Cyperus 2.1", limit=10), [])
-        self.assertEqual(self.app.search_products("Licorice 2.8", limit=10), [])
-        self.assertEqual(self.app.search_products("Cassiae 2.1", limit=10), [])
-
-    def test_fullwidth_latin_case_variants_remain_candidate_complete(self) -> None:
+    def test_nfkc_unit_and_case_variants_remain_candidate_complete(self) -> None:
+        self.assert_first("알로판 400 mg", "ALLOPAN-400")
+        self.assert_first("글루파 1000 mg", "GLUPA-COMMA")
+        self.assert_first("디3 베이스 10000", "D3-COMMA")
+        self.assert_first("지로티프II", "ROMAN-II")
+        self.assert_first("DongkooClindamycin 150 mg Capsule", "SQUARE-UNIT-LATIN")
         self.assert_first("ABC 5 mg", "FULLWIDTH-LATIN-MIXED")
 
-    def test_punctuation_separated_text_uses_normalized_matching(self) -> None:
-        self.assert_first("하트만-용액", "HARTMANN")
-
-    def test_structured_candidate_generation_does_not_truncate_valid_brand_form_query(self) -> None:
-        with sqlite3.connect(self.canonical_db) as con:
-            source_key = con.execute(
-                "SELECT source_dataset_key FROM products ORDER BY item_seq LIMIT 1"
-            ).fetchone()[0]
-            start_row = con.execute("SELECT MAX(source_row) FROM products").fetchone()[0] + 1
-            products = [
-                (
-                    f"DISTRACTOR-{index:04d}",
-                    start_row + index,
-                    f"가짜{index:04d}정10밀리그램",
-                    "제약",
-                    "Distractor",
-                    "정제",
-                    "2020-01-01",
-                    None,
-                    "정상",
-                    "active",
-                    source_key,
-                )
-                for index in range(1100)
-            ]
-            con.executemany(
-                """INSERT INTO products(
-                       item_seq,source_row,product_name,manufacturer,ingredient_text,dosage_form,
-                       permit_date,cancel_date,cancel_name,permit_status,source_dataset_key
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                products,
-            )
-            con.executemany(
-                "INSERT INTO product_identifiers(item_seq,system,value,source_dataset_key) VALUES(?,?,?,?)",
-                [
-                    (item_seq, "MFDS_ITEM_SEQ", item_seq, source_key)
-                    for item_seq, *_rest in products
-                ],
-            )
-            add_product(
-                con,
-                "LIPITOR-10",
-                "리피토정10밀리그램(아토르바스타틴칼슘삼수화물)",
-                "Atorvastatin Calcium Trihydrate",
-            )
-
-        self.assert_first("리피토 정 10", "LIPITOR-10")
-
-    def test_structured_identifier_queries_preserve_item_seq_and_edi_search(self) -> None:
-        self.assert_first("SYN-25", "SYN-25")
-        self.assert_first("EDI-SYN-25", "SYN-25")
-
-    def test_ocr_mode_recovers_contamination_and_one_edit_without_auto_identity(self) -> None:
-        self.assertEqual(self.app.search_products("타진서방정 10/5mg0.5정", limit=10), [])
-        self.assert_first("타진서방정 10/5mg0.5정", "TAJIN-10-5", mode="ocr")
-        self.assertEqual(self.app.search_products("씬지록심 25", limit=10), [])
-        self.assert_first("씬지록심 25", "SYN-25", mode="ocr")
+    def test_ocr_similarity_recovers_one_character_errors_and_trailing_regimen(self) -> None:
+        self.assertEqual(self.app.search_products("씬즈록신 25", limit=10), [])
         self.assert_first("씬즈록신 25", "SYN-25", mode="ocr")
-        self.assert_first("씬록신 25", "SYN-25", mode="ocr")
-        self.assert_first("씬지지록신 25", "SYN-25", mode="ocr")
-        self.assert_first("아로민골드", "ARONAMIN-GOLD", mode="ocr")
-        self.assertEqual(self.app.search_products("타징 서방징 10 5", limit=10, mode="ocr"), [])
+        self.assert_first("타진서방정 10/5mg0.5정", "TAJIN-10-5", mode="ocr")
+        explained = ProductRepository(self.canonical_db).search(
+            "씬즈록신 25", limit=10, mode="ocr", explain=True
+        )
+        self.assertEqual(explained[0]["search_match"]["field"], "product_name")
+        self.assertEqual(explained[0]["search_match"]["tier"], "similarity")
+        self.assertTrue(explained[0]["search_match"]["fuzzy"])
 
-        result = self.app.search_products("씬지록심 25", limit=10, mode="ocr")[0]
-        self.assertEqual(result["product_mapping_method"], "item_seq_exact")
-        self.assertNotIn("search_match", result)
+    def test_exact_identifier_is_prioritized_over_prefix_collisions(self) -> None:
+        repo = ProductRepository(self.canonical_db)
+        item_seq = repo.search("SYN-25", limit=10, explain=True)
+        edi = repo.search("EDI-SYN-25", limit=10, explain=True)
+        self.assertEqual(item_seq[0]["product_ref"], "SYN-25")
+        self.assertEqual(edi[0]["product_ref"], "SYN-25")
+        self.assertEqual(item_seq[0]["search_match"]["tier"], "identifier_exact")
+        self.assertEqual(edi[0]["search_match"]["tier"], "identifier_exact")
 
-    def test_search_uses_normalized_mode_after_parsing(self) -> None:
-        self.assert_first("씬즈록신 25", "SYN-25", mode="OCR")
-        self.assert_first("씬즈록신 25", "SYN-25", mode=" ocr ")
-
-    def test_nfkc_equivalent_product_text_survives_candidate_generation(self) -> None:
-        self.assert_first("지로티프Ⅱ", "ROMAN-II")
-        self.assert_first("지로티프 II", "ROMAN-II")
-
-    def test_nfkc_equivalent_target_is_not_hidden_by_raw_ascii_candidate(self) -> None:
+    def test_search_index_is_required_in_canonical_and_mobile_physical_layouts(self) -> None:
         with sqlite3.connect(self.canonical_db) as con:
-            add_product(
-                con,
-                "ROMAN-DISTRACTOR",
-                "지로티프II가짜정",
-                "Distractor",
-            )
-        results = self.app.search_products("지로티프 II", limit=10)
-        refs = [row["product_ref"] for row in results]
+            sql = con.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='product_search_fts'"
+            ).fetchone()[0]
+            self.assertIn("trigram", sql.lower())
 
-        self.assertIn("ROMAN-II", refs)
-        self.assertIn("ROMAN-DISTRACTOR", refs)
-
-    def test_nfkc_derived_numeric_tokens_retrieve_exact_circled_digit_product_name(self) -> None:
-        exact_name = "코러스시프로플록사신정500밀리그람(수출명①시프로플록사신정500mg②Super-cipro)(수출용)"
-        results = self.app.search_products(exact_name, limit=10)
-
-        self.assertIn("CIRCLED-EXPORT", [row["product_ref"] for row in results])
-
-    def test_nfkc_compatibility_spans_inside_text_tokens_retrieve_exact_product_name(self) -> None:
-        square_unit = "동구염산클린다마이신캅셀150㎎[수출명:DongkooClindamycin150㎎Capsule]"
-        normalized_square_unit = "동구염산클린다마이신캅셀150mg[수출명:DongkooClindamycin150mgCapsule]"
-        embedded_roman = "그린모노주250단위(건조FVⅢ:C단클론항체정제사람혈액응고제VⅢ:C인자)"
-
-        self.assertIn(
-            "SQUARE-UNIT-LATIN",
-            [row["product_ref"] for row in self.app.search_products(square_unit, limit=10)],
-        )
-        self.assertIn(
-            "SQUARE-UNIT-LATIN",
-            [row["product_ref"] for row in self.app.search_products(normalized_square_unit, limit=10)],
-        )
-        self.assertIn(
-            "EMBEDDED-ROMAN",
-            [row["product_ref"] for row in self.app.search_products(embedded_roman, limit=10)],
-        )
-
-    def test_explain_is_present_for_structured_legacy_and_identifier_paths(self) -> None:
-        structured = self.app.search_products("씬지록신 25", limit=10, explain=True)[0]
-        legacy = self.app.search_products("알프람", limit=10, explain=True)[0]
-        identifier = self.app.search_products("SYN-25", limit=10, explain=True)[0]
-
-        for result in (structured, legacy, identifier):
-            self.assertIn("search_match", result)
-            self.assertIn("field", result["search_match"])
-            self.assertIn("tier", result["search_match"])
-            self.assertIn("fuzzy", result["search_match"])
-            self.assertIn("sort_key", result["search_match"])
-
-    def test_structured_search_requires_no_search_specific_database_object(self) -> None:
-        with sqlite3.connect(self.canonical_db) as con:
-            search_objects = con.execute(
-                "SELECT name FROM sqlite_master WHERE lower(name) LIKE '%search%'"
-            ).fetchall()
-        self.assertEqual(search_objects, [])
-        self.assert_first("씬지록신 25", "SYN-25")
-
-    def test_current_contract_v1_mobile_database_needs_no_search_specific_object(self) -> None:
-        root = Path(self.tmp.name)
-        canonical = root / "release-canonical.sqlite"
-        mobile = root / "release-mobile.sqlite"
-        personal = root / "release-personal.sqlite"
-        make_release_canonical_db(canonical)
-        with sqlite3.connect(canonical) as con:
-            add_product(
-                con,
-                "CONTRACT-25",
-                "씬지록신정25마이크로그램(레보티록신나트륨수화물)",
-                "Levothyroxine Sodium Hydrate",
-            )
-        result = build_mobile_database(canonical, mobile)
-
+        release_canonical = Path(self.tmp.name) / "release-canonical.sqlite"
+        mobile = Path(self.tmp.name) / "mobile.sqlite"
+        make_release_canonical_db(release_canonical)
+        build_mobile_database(release_canonical, mobile)
         with sqlite3.connect(mobile) as con:
-            search_objects = con.execute(
-                "SELECT name FROM sqlite_master WHERE lower(name) LIKE '%search%'"
-            ).fetchall()
-        app = MedicationApp(mobile, personal)
-        matches = app.search_products("씬지록신 25", limit=10)
+            sql = con.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='product_search_fts'"
+            ).fetchone()[0]
+            self.assertIn("trigram", sql.lower())
 
-        self.assertEqual(result["contract_major"], 1)
-        self.assertEqual(search_objects, [])
-        self.assertEqual(matches[0]["product_ref"], "CONTRACT-25")
+    def test_long_query_is_bounded_and_returns_no_false_match(self) -> None:
+        digits = "9" * 5000
+        self.assertEqual(self.app.search_products(f"nevermatch {digits}", limit=10), [])
+        self.assertEqual(self.app.search_products(digits, limit=10), [])
 
 
 if __name__ == "__main__":

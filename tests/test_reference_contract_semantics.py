@@ -85,8 +85,8 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.assertEqual(REFERENCE_CONTRACT_MAJOR, 1)
         self.assertEqual(contract["contract_major"], "1")
         self.assertEqual(contract["dataset_id"], self.release["dataset_id"])
-        self.assertEqual(build["canonical_schema_version"], "10")
-        self.assertEqual(build["physical_policy_version"], "8")
+        self.assertEqual(build["canonical_schema_version"], "11")
+        self.assertEqual(build["physical_policy_version"], "9")
         self.assertNotIn("canonical_schema_version", contract)
         self.assertNotIn("physical_policy_version", contract)
 

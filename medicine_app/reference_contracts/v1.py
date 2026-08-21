@@ -10,6 +10,7 @@ from typing import Any
 
 
 REFERENCE_CONTRACT_MAJOR = 1
+_REQUIRED_PHYSICAL_POLICY_VERSION = "9"
 _DATASET_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SUPPORTED_EXCLUDED_ROUTES = frozenset({
     "oral", "injection", "ophthalmic", "otic", "nasal", "inhaled", "topical",
@@ -159,6 +160,49 @@ def _verify_schema(con: sqlite3.Connection) -> None:
             raise ValueError(f"reference contract schema object {name} is not queryable") from exc
 
 
+def _verify_product_search_index(con: sqlite3.Connection) -> None:
+    try:
+        build_meta = {
+            str(key): str(value)
+            for key, value in con.execute("SELECT key,value FROM reference_build_meta")
+        }
+    except sqlite3.DatabaseError as exc:
+        raise ValueError("reference physical build metadata is missing or invalid") from exc
+    if build_meta.get("physical_policy_version") != _REQUIRED_PHYSICAL_POLICY_VERSION:
+        raise ValueError("reference physical policy is unsupported by this runtime")
+    definitions = {
+        name: sql
+        for name, sql in con.execute(
+            """SELECT name,sql FROM sqlite_master
+               WHERE type='table' AND name IN ('product_search_fts','product_search_ocr_fts')"""
+        )
+    }
+    primary = str(definitions.get("product_search_fts") or "").lower()
+    ocr = str(definitions.get("product_search_ocr_fts") or "").lower()
+    if "fts5" not in primary or "trigram" not in primary:
+        raise ValueError("reference product search index is missing or invalid")
+    if "fts5" not in ocr or "unicode61" not in ocr:
+        raise ValueError("reference OCR product search index is missing or invalid")
+    try:
+        products = con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+        indexed = con.execute("SELECT COUNT(DISTINCT item_seq) FROM product_search_fts").fetchone()[0]
+        ocr_indexed = con.execute(
+            "SELECT COUNT(DISTINCT item_seq) FROM product_search_ocr_fts"
+        ).fetchone()[0]
+        con.execute(
+            "SELECT item_seq FROM product_search_fts WHERE product_search_fts MATCH ? LIMIT 1",
+            ('"abc"',),
+        ).fetchall()
+        con.execute(
+            "SELECT item_seq FROM product_search_ocr_fts WHERE product_search_ocr_fts MATCH ? LIMIT 1",
+            ('"ab"',),
+        ).fetchall()
+    except sqlite3.DatabaseError as exc:
+        raise ValueError("reference product search index is not queryable") from exc
+    if indexed != products or ocr_indexed != products:
+        raise ValueError("reference product search index coverage does not match products")
+
+
 def _verify_semantics(con: sqlite3.Connection) -> None:
     con.row_factory = sqlite3.Row
     expectations = {
@@ -223,6 +267,7 @@ def verify_reference_database(
             raise ValueError(f"reference SQLite foreign key check failed: {len(foreign_keys)} violations")
 
         _verify_schema(con)
+        _verify_product_search_index(con)
         _verify_semantics(con)
         try:
             meta = {

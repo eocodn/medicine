@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .inspection import verify_canonical_database
+from .product_search_index import rebuild_product_search_index
 
 
 def _build_progress(progress, phase: str, status: str, started: float | None = None, **extra) -> None:
@@ -20,7 +21,7 @@ def _build_progress(progress, phase: str, status: str, started: float | None = N
     progress(payload)
 
 
-MOBILE_PHYSICAL_POLICY_VERSION = "8"
+MOBILE_PHYSICAL_POLICY_VERSION = "9"
 # Compatibility alias for server-side callers while the old name is retired.
 # It is intentionally not part of dataset identity anymore.
 MOBILE_DATA_POLICY_VERSION = MOBILE_PHYSICAL_POLICY_VERSION
@@ -92,6 +93,22 @@ MOBILE_PRODUCT_CRITERION_LINKS_DDL = """CREATE TABLE mobile_product_criterion_li
     pair_orientation_code INTEGER CHECK(pair_orientation_code IN (0,1) OR pair_orientation_code IS NULL),
     PRIMARY KEY(product_rule_id, criterion_rule_id)
 ) WITHOUT ROWID"""
+MOBILE_PRODUCT_SEARCH_FTS_DDL = """CREATE VIRTUAL TABLE product_search_fts USING fts5(
+    item_seq UNINDEXED,
+    product_name,
+    ingredient_text,
+    manufacturer,
+    tokenize='trigram'
+)"""
+
+
+MOBILE_PRODUCT_SEARCH_OCR_FTS_DDL = """CREATE VIRTUAL TABLE product_search_ocr_fts USING fts5(
+    item_seq UNINDEXED,
+    product_name_bigrams,
+    tokenize='unicode61'
+)"""
+
+
 MOBILE_PRODUCT_CRITERION_LINKS_VIEW_DDL = """CREATE VIEW product_criterion_links AS
 SELECT
     product_rule_id,
@@ -319,6 +336,9 @@ def _build_mobile_database(
             dst.execute(f"ATTACH DATABASE '{escaped}' AS source_db")
             for table in COPIED_RUNTIME_TABLES:
                 dst.execute(f'INSERT INTO "{table}" SELECT * FROM source_db."{table}"')
+            dst.execute(MOBILE_PRODUCT_SEARCH_FTS_DDL)
+            dst.execute(MOBILE_PRODUCT_SEARCH_OCR_FTS_DDL)
+            rebuild_product_search_index(dst)
             _build_progress(progress, "runtime_table_copy", "completed", phase_started)
 
             phase_started = time.monotonic()

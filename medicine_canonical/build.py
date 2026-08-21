@@ -19,6 +19,7 @@ from .mfds_ingredient import (
     sync_mfds_ingredient_sources,
 )
 from .linking import materialize_product_criterion_links
+from .product_search_index import rebuild_product_search_index
 from .schema import SCHEMA, SCHEMA_VERSION
 from .source_layout import MfdsSourceLayout
 from .snapshot_io import insert_source_snapshot, load_snapshot_metadata
@@ -372,6 +373,7 @@ def assemble_canonical_database(
             con.executescript(SCHEMA)
             con.execute("BEGIN")
             source_result = populate_canonical_source_tables(con, source_layout)
+            rebuild_product_search_index(con)
             link_result = materialize_product_criterion_links(con)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
             con.executemany(

@@ -362,6 +362,6 @@ class MfdsFalseNegativeRecoveryTest(CanonicalLinkingFixture):
         )
 
     def test_semantic_link_change_advances_persisted_generations(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, "10")
+        self.assertEqual(SCHEMA_VERSION, "11")
         self.assertEqual(BUILDER_CONTRACT_MAJOR, 1)
         self.assertEqual(RUNTIME_CONTRACT_MAJOR, 1)

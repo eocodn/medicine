@@ -199,7 +199,7 @@ class PrescriptionCliTest(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertEqual(results[0]["product_ref"], "CLI-OCR")
-        self.assertEqual(results[0]["search_match"]["tier"], "ocr_fuzzy")
+        self.assertEqual(results[0]["search_match"]["tier"], "similarity")
         self.assertTrue(results[0]["search_match"]["fuzzy"])
         self.assertIn("sort_key", results[0]["search_match"])
 

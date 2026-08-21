@@ -232,6 +232,8 @@ chaquopy {
         exclude("medicine_app/cli.py")
         include("medicine_canonical/__init__.py")
         include("medicine_canonical/release.py")
+        include("medicine_reference/__init__.py")
+        include("medicine_reference/product_search_text.py")
     }
 }
 

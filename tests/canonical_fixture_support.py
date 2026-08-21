@@ -10,6 +10,7 @@ from medicine_reference.mfds_sources import (
 
 from medicine_canonical.dose_criteria import parse_daily_dose_threshold
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
+from medicine_reference.product_search_text import canonical_search_text, character_ngram_document
 from medicine_canonical.source_policy import CANONICAL_SOURCE_POLICY
 from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY
 
@@ -67,13 +68,25 @@ def add_product(
     edi: str | None = None,
 ) -> None:
     source_row = con.execute("SELECT COUNT(*)+1 FROM products").fetchone()[0]
-    con.execute(
+    product_cursor = con.execute(
         """INSERT INTO products(
                item_seq,source_row,product_name,manufacturer,ingredient_text,dosage_form,
                permit_date,cancel_date,cancel_name,permit_status,source_dataset_key
            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
         (item_seq, source_row, name, manufacturer, ingredient, dosage_form,
          permit_date, cancel_date, cancel_name, permit_status, PERMIT_SOURCE),
+    )
+    product_rowid = int(product_cursor.lastrowid)
+    con.execute(
+        """INSERT INTO product_search_fts(rowid,item_seq,product_name,ingredient_text,manufacturer)
+           VALUES(?,?,?,?,?)""",
+        (product_rowid, item_seq, canonical_search_text(name),
+         canonical_search_text(ingredient), canonical_search_text(manufacturer)),
+    )
+    con.execute(
+        """INSERT INTO product_search_ocr_fts(rowid,item_seq,product_name_bigrams)
+           VALUES(?,?,?)""",
+        (product_rowid, item_seq, character_ngram_document(name, 2)),
     )
     con.execute(
         "INSERT INTO product_identifiers(item_seq,system,value,source_dataset_key) VALUES(?,?,?,?)",

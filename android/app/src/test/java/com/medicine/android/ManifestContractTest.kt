@@ -83,6 +83,7 @@ class ManifestContractTest {
         assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("pub-539f06de795a469c85ab40570a8634a2.r2.dev"))
         assertTrue(build.contains("include(\"medicine_canonical/release.py\")"))
+        assertTrue(build.contains("include(\"medicine_reference/product_search_text.py\")"))
         assertTrue(updater.contains("ReferenceUpdateStatus.STAGED"))
         assertTrue(updater.contains(".artifact-"))
         assertTrue(bootstrapper.contains("ReferenceOperationCoordinator.exclusive"))
