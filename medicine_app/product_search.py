@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from .product_search_components import split_ingredient_components
-from .product_search_numeric import normalize_number
+from .product_search_numeric import normalize_number, strip_non_strength_numeric_compatibility
 
 
 _SEARCH_MODES = {"manual", "ocr"}
@@ -31,12 +31,15 @@ _KOREAN_UNIT_PATTERNS = (
     (re.compile(r"밀리(?:그램|그람)", re.IGNORECASE), "mg"),
     (re.compile(r"밀리리터", re.IGNORECASE), "ml"),
 )
-_OCR_TRAILING_REGIMEN_RE = re.compile(
-    r"(__unit_(?:mg|ug|ml)__)(?:\s*)(\d+(?:\.\d+)?)(?:\s*)(?:정|캡슐|포)\s*$",
-    re.IGNORECASE,
+_OCR_STRENGTH_UNIT_PATTERN = (
+    r"(?:mcg|ug|μg|µg|mg|ml|㎍|㎎|㎖|"
+    r"마이크로(?:그램|그람)|밀리(?:그램|그람)|밀리리터)"
 )
-_ENCLOSED_MARKER_CANDIDATE_RE = re.compile(
-    r"[\u2460-\u24ff\u2776-\u2792\u3251-\u325f\u32b1-\u32bf\U0001f100]"
+_OCR_DOSE_AMOUNT_PATTERN = r"(?:\d+\s*/\s*\d+|\d+(?:\.\d+)?|[¼½¾⅐-⅟↉])"
+_OCR_TRAILING_REGIMEN_RE = re.compile(
+    rf"(?P<unit>{_OCR_STRENGTH_UNIT_PATTERN})\s*{_OCR_DOSE_AMOUNT_PATTERN}"
+    rf"\s*(?:정|캡슐|포|tablets?|capsules?)\s*$",
+    re.IGNORECASE,
 )
 _COMPATIBILITY_RANGES = (
     (0x2070, 0x209F),  # superscripts/subscripts
@@ -96,34 +99,8 @@ class ProductSearchMatch:
         }
 
 
-def _is_enclosed_numeric_marker(char: str) -> bool:
-    normalized = unicodedata.normalize("NFKC", char)
-    if not any(value.isdigit() for value in normalized) or any(
-        value.isalpha() for value in normalized
-    ):
-        return False
-    name = unicodedata.name(char, "")
-    numeric_name = "DIGIT" in name or "NUMBER" in name
-    enumeration_shape = any(
-        marker in name
-        for marker in ("CIRCLED", "PARENTHESIZED", "FULL STOP")
-    )
-    return numeric_name and enumeration_shape
-
-
-def _replace_enclosed_numeric_marker(match: re.Match[str]) -> str:
-    char = match.group(0)
-    return " " if _is_enclosed_numeric_marker(char) else char
-
-
 def _canonical_text(value: object) -> str:
-    # The regex is a cheap prefilter over Unicode blocks that contain enclosed
-    # numeric forms. Expensive Unicode semantic checks run only for those rare
-    # characters, not for every character in every candidate row.
-    raw = _ENCLOSED_MARKER_CANDIDATE_RE.sub(
-        _replace_enclosed_numeric_marker,
-        str(value or ""),
-    )
+    raw = strip_non_strength_numeric_compatibility(str(value or ""))
     for symbol, unit_name in _RAW_UNIT_SYMBOLS.items():
         raw = raw.replace(symbol, f" {unit_name} ")
     text = unicodedata.normalize("NFKC", raw).casefold()
@@ -133,6 +110,10 @@ def _canonical_text(value: object) -> str:
     for pattern, unit in _KOREAN_UNIT_PATTERNS:
         text = pattern.sub(f" {_UNIT_SENTINEL[unit]} ", text)
     return text
+
+
+def _strip_ocr_trailing_regimen(value: str) -> str:
+    return _OCR_TRAILING_REGIMEN_RE.sub(lambda match: match.group("unit"), value)
 
 
 def _single_compatibility_token(value: str) -> str | None:
@@ -303,6 +284,9 @@ def _scan_normalized_tokens(
             previous_kind = "unit"
         elif token[0].isdigit() or (token.startswith(".") and token[1:].isdigit()):
             number = normalize_number(token)
+            if number is None:
+                previous_kind = None
+                continue
             number_tokens.append(number)
             strength_atoms.append((number, None))
             number_spans.append(match.span())
@@ -324,9 +308,8 @@ def parse_product_search_query(value: object, *, mode: str = "manual") -> Produc
     if mode not in _SEARCH_MODES:
         raise ValueError("search mode must be manual or ocr")
     original = str(value or "").strip()
-    normalized = _canonical_text(original)
-    if mode == "ocr":
-        normalized = _OCR_TRAILING_REGIMEN_RE.sub(r"\1", normalized)
+    search_text = _strip_ocr_trailing_regimen(original) if mode == "ocr" else original
+    normalized = _canonical_text(search_text)
     text_tokens, number_tokens, unit_tokens, strength_atoms, _semantic_units = (
         _scan_normalized_tokens(normalized)
     )
