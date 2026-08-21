@@ -14,8 +14,11 @@ _UNIT_SENTINEL = {
     "ug": "__unit_ug__",
     "ml": "__unit_ml__",
 }
+# Scope boundary: this parser models medication/OCR search syntax, not every
+# Unicode normalization equivalence. NFKC handles ordinary presentation forms;
+# unknown letters remain text qualifiers instead of being silently discarded.
 _TOKEN_RE = re.compile(
-    r"__unit_(mg|ug|ml)__|\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+|[a-z]+|[가-힣]+",
+    r"__unit_(mg|ug|ml)__|[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?|\.[0-9]+|[^\W\d_]+",
     re.IGNORECASE,
 )
 _ASCII_UNIT_PATTERNS = (
@@ -40,15 +43,6 @@ _OCR_TRAILING_REGIMEN_RE = re.compile(
     rf"(?P<unit>{_OCR_STRENGTH_UNIT_PATTERN})\s*{_OCR_DOSE_AMOUNT_PATTERN}"
     rf"\s*(?:정|캡슐|포|tablets?|capsules?)\s*$",
     re.IGNORECASE,
-)
-_COMPATIBILITY_RANGES = (
-    (0x2070, 0x209F),  # superscripts/subscripts
-    (0x2100, 0x214F),  # letterlike symbols
-    (0x2150, 0x218F),  # number forms / Roman numerals
-    (0x2460, 0x24FF),  # enclosed alphanumerics
-    (0x3200, 0x33FF),  # enclosed CJK / compatibility units
-    (0xFE30, 0xFE4F),  # CJK compatibility forms
-    (0xFF00, 0xFFEF),  # halfwidth/fullwidth forms
 )
 _RAW_UNIT_SYMBOLS = {
     "㎎": "밀리그램",
@@ -116,132 +110,6 @@ def _strip_ocr_trailing_regimen(value: str) -> str:
     return _OCR_TRAILING_REGIMEN_RE.sub(lambda match: match.group("unit"), value)
 
 
-def _single_compatibility_token(value: str) -> str | None:
-    """Return the one search token represented by a compatibility glyph.
-
-    Candidate SQL sees raw Contract-v1 text while the authoritative matcher
-    sees NFKC-normalized text. Building this bounded reverse map from Unicode
-    compatibility blocks lets candidate retrieval remain a superset of final
-    matching without adding a database-side normalized index.
-    """
-    normalized = _canonical_text(value)
-    matches = list(_TOKEN_RE.finditer(normalized))
-    if len(matches) != 1:
-        return None
-    match = matches[0]
-    unit = match.group(1)
-    token = match.group(0).casefold()
-    if unit:
-        return unit.casefold()
-    if token[0].isdigit() or (token.startswith(".") and token[1:].isdigit()):
-        return normalize_number(token)
-    return token
-
-
-def _build_compatibility_equivalents() -> dict[str, tuple[str, ...]]:
-    equivalents: dict[str, list[str]] = {}
-    for start, end in _COMPATIBILITY_RANGES:
-        for codepoint in range(start, end + 1):
-            raw = chr(codepoint)
-            token = _single_compatibility_token(raw)
-            if token is None or raw.casefold() == token:
-                continue
-            values = equivalents.setdefault(token, [])
-            if raw not in values:
-                values.append(raw)
-    return {token: tuple(values) for token, values in equivalents.items()}
-
-
-_COMPATIBILITY_EQUIVALENTS = _build_compatibility_equivalents()
-_FULLWIDTH_BY_ASCII = {
-    chr(codepoint): chr(codepoint + 0xFEE0)
-    for codepoint in range(0x21, 0x7F)
-}
-_EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST: dict[str, tuple[str, ...]] = {}
-for _key in _COMPATIBILITY_EQUIVALENTS:
-    if len(_key) < 2:
-        continue
-    _first = _key[0]
-    _EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST[_first] = tuple(sorted(
-        (*_EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST.get(_first, ()), _key),
-        key=len,
-        reverse=True,
-    ))
-
-
-def _embedded_compatibility_variants(token: str, *, limit: int = 24) -> tuple[str, ...]:
-    """Expand compatibility glyphs that can replace a span inside one token."""
-    variants: list[str] = []
-    if not any(char in _EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST for char in token):
-        return ()
-
-    # The traversal is intentionally iterative. Search input is not length-
-    # bounded, so a recursive walk would make otherwise harmless long tokens
-    # depend on Python's recursion limit. Push branches in reverse recursive
-    # order to preserve the previous deterministic variant ordering.
-    stack: list[tuple[int, str, bool]] = [(0, "", False)]
-    while stack and len(variants) < limit:
-        index, prefix, replaced = stack.pop()
-        if index >= len(token):
-            if replaced and prefix != token and prefix not in variants:
-                variants.append(prefix)
-            continue
-
-        stack.append((index + 1, prefix + token[index], replaced))
-        replacement_branches: list[tuple[int, str, bool]] = []
-        for key in _EMBEDDED_COMPATIBILITY_KEYS_BY_FIRST.get(token[index], ()):
-            if not token.startswith(key, index):
-                continue
-            for raw in _COMPATIBILITY_EQUIVALENTS[key]:
-                replacement_branches.append((index + len(key), prefix + raw, True))
-        stack.extend(reversed(replacement_branches))
-    return tuple(variants)
-
-
-def raw_candidate_variants(
-    token: str,
-    *,
-    include_fullwidth: bool = True,
-) -> tuple[str, ...]:
-    """Return bounded raw spellings that normalize to the same search token."""
-    token = str(token or "").casefold()
-    if not token:
-        return ()
-    variants = [token]
-    if include_fullwidth:
-        fullwidth = "".join(_FULLWIDTH_BY_ASCII.get(char, char) for char in token)
-        if fullwidth != token:
-            variants.append(fullwidth)
-    is_number = bool(re.fullmatch(r"\d+(?:\.\d+)?", token))
-    if not is_number:
-        for raw in _COMPATIBILITY_EQUIVALENTS.get(token, ()):
-            if raw not in variants:
-                variants.append(raw)
-        for raw in _embedded_compatibility_variants(token):
-            if raw not in variants:
-                variants.append(raw)
-    return tuple(variants)
-
-
-def raw_case_width_glob(token: str) -> str | None:
-    """Match any ASCII/fullwidth upper/lower spelling without variant explosion."""
-    token = str(token or "").casefold()
-    if not token or not token.isascii() or not token.isalnum():
-        return None
-    pieces: list[str] = []
-    for char in token:
-        if "a" <= char <= "z":
-            full_lower = _FULLWIDTH_BY_ASCII[char]
-            full_upper = _FULLWIDTH_BY_ASCII[char.upper()]
-            pieces.append(f"[{char}{char.upper()}{full_lower}{full_upper}]")
-            continue
-        if "0" <= char <= "9":
-            pieces.append(f"[{char}{_FULLWIDTH_BY_ASCII[char]}]")
-            continue
-        return None
-    return "*" + "".join(pieces) + "*"
-
-
 def _scan_normalized_tokens(
     normalized: str,
 ) -> tuple[
@@ -258,8 +126,11 @@ def _scan_normalized_tokens(
     semantic_unit_tokens: list[str] = []
     strength_atoms: list[tuple[str, str | None]] = []
     number_spans: list[tuple[int, int]] = []
+    matches = list(_TOKEN_RE.finditer(normalized))
     previous_kind: str | None = None
-    for match in _TOKEN_RE.finditer(normalized):
+    previous_match: re.Match[str] | None = None
+
+    for index, match in enumerate(matches):
         unit = match.group(1)
         token = match.group(0).casefold()
         if unit:
@@ -283,9 +154,37 @@ def _scan_normalized_tokens(
             semantic_unit_tokens.extend([canonical_unit] * (inherited + 1))
             previous_kind = "unit"
         elif token[0].isdigit() or (token.startswith(".") and token[1:].isdigit()):
+            next_match = matches[index + 1] if index + 1 < len(matches) else None
+            unit_follows = bool(
+                next_match
+                and next_match.group(1)
+                and not normalized[match.end():next_match.start()].strip()
+            )
+            # Short code-like prefixes (`B12`, `D3`, `CRL9096`) stay lexical
+            # unless an explicit dosage unit follows. Longer medication names
+            # such as `Tylenol500` keep the useful compact brand+strength
+            # behavior. This is intentionally a small semantic rule rather than
+            # a generic alphanumeric grammar.
+            adjacent_latin_name = bool(
+                previous_kind == "text"
+                and previous_match is not None
+                and previous_match.end() == match.start()
+                and text_tokens
+                and text_tokens[-1].isascii()
+                and text_tokens[-1].isalpha()
+                and len(text_tokens[-1]) <= 3
+                and not unit_follows
+            )
+            if adjacent_latin_name:
+                text_tokens[-1] += token
+                previous_kind = "text"
+                previous_match = match
+                continue
+
             number = normalize_number(token)
             if number is None:
                 previous_kind = None
+                previous_match = match
                 continue
             number_tokens.append(number)
             strength_atoms.append((number, None))
@@ -294,6 +193,7 @@ def _scan_normalized_tokens(
         else:
             text_tokens.append(token)
             previous_kind = "text"
+        previous_match = match
     return (
         tuple(text_tokens),
         tuple(number_tokens),
@@ -546,6 +446,4 @@ __all__ = [
     "fuzzy_candidate_fragments",
     "match_product_fields",
     "parse_product_search_query",
-    "raw_case_width_glob",
-    "raw_candidate_variants",
 ]

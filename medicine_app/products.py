@@ -13,17 +13,21 @@ from .product_search import (
     fuzzy_candidate_fragments,
     match_product_fields,
     parse_product_search_query,
-    raw_candidate_variants,
 )
 from .product_search_candidate_text import text_candidate_anchor_patterns
-from .product_search_numeric import raw_numeric_compat_glob
 
 
-# Candidate SQL is only a bounded superset prefilter. Final matching validates
-# every token/strength, so dropping excess predicates can broaden candidates
-# but cannot turn a valid match into a miss or overflow SQLite expression depth.
+# Candidate SQL is a bounded prefilter for supported medication/OCR syntax. It
+# is intentionally not a second Unicode normalization engine: unrepresentable
+# text broadens candidate retrieval and the normalized Python matcher remains
+# authoritative. Do not add rare compatibility glyph tables merely to prove
+# equivalence for spellings that are absent from the catalog/input paths.
 _MAX_CANDIDATE_TEXT_TOKENS = 3
 _MAX_CANDIDATE_NUMBERS = 3
+_FULLWIDTH_NUMERIC_TRANSLATION = str.maketrans(
+    "0123456789.,",
+    "０１２３４５６７８９．，",
+)
 
 
 class ProductRepository:
@@ -242,14 +246,13 @@ class ProductRepository:
                 normalized_variants.append(grouped)
         patterns: list[tuple[str, str]] = []
         for normalized in normalized_variants:
-            for raw in raw_candidate_variants(normalized, include_fullwidth=True):
+            # ASCII is the medication/OCR numeric grammar. Fullwidth ASCII is a
+            # cheap, common presentation spelling worth retaining explicitly;
+            # other Unicode numeric alphabets are intentionally out of scope.
+            for raw in (normalized, normalized.translate(_FULLWIDTH_NUMERIC_TRANSLATION)):
                 candidate = ("LIKE", f"%{raw}%")
                 if candidate not in patterns:
                     patterns.append(candidate)
-            compatibility = raw_numeric_compat_glob(normalized)
-            candidate = ("GLOB", compatibility) if compatibility else None
-            if candidate and candidate not in patterns:
-                patterns.append(candidate)
         return tuple(patterns)
 
     @staticmethod
