@@ -2,6 +2,8 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
+use crate::people;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccessClass {
     Reference,
@@ -36,15 +38,21 @@ impl RequestPolicy {
 
 pub struct MedicineEngine {
     canonical_db: Option<PathBuf>,
+    personal_db: Option<PathBuf>,
     reference_available: bool,
     reference_status: Option<String>,
 }
 
 impl MedicineEngine {
-    pub fn new(canonical_db: Option<&Path>, reference_unavailable_reason: Option<&str>) -> Self {
+    pub fn new(
+        canonical_db: Option<&Path>,
+        personal_db: Option<&Path>,
+        reference_unavailable_reason: Option<&str>,
+    ) -> Self {
         let reference_available = canonical_db.is_some();
         Self {
             canonical_db: canonical_db.map(Path::to_path_buf),
+            personal_db: personal_db.map(Path::to_path_buf),
             reference_available,
             reference_status: if reference_available {
                 None
@@ -80,12 +88,20 @@ impl MedicineEngine {
     }
 
     pub fn handles_request(&self, method: &str, raw_path: &str) -> bool {
-        normalized_method(method) == "GET" && request_path(raw_path) == "/api/health"
+        let path = request_path(raw_path);
+        (normalized_method(method) == "GET" && path == "/api/health")
+            || people::handles_request(method, path)
     }
 
-    pub fn request(&self, method: &str, raw_path: &str, _body_json: &str) -> String {
-        if self.handles_request(method, raw_path) {
+    pub fn request(&self, method: &str, raw_path: &str, body_json: &str) -> String {
+        let path = request_path(raw_path);
+        if normalized_method(method) == "GET" && path == "/api/health" {
             return self.health_response();
+        }
+        if let Some((status, body)) =
+            people::handle_request(self.personal_db.as_deref(), method, path, body_json)
+        {
+            return json!({"status": status, "body": body}).to_string();
         }
         json!({"status": 404, "body": {"detail": "route not found"}}).to_string()
     }

@@ -330,10 +330,13 @@ class DeploymentConfigTest(unittest.TestCase):
     def test_android_package_excludes_agent_control_cli_but_repo_cli_remains(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
+        rust_build = Path("scripts/build_android_rust.sh").read_text()
 
         self.assertIn('include("medicine_app/**/*.py")', gradle)
         self.assertIn('exclude("medicine_app/cli.py")', gradle)
         self.assertTrue(Path("medicine_app/cli.py").is_file())
+        self.assertTrue(Path("rust/medicine_core/src/bin/medicine_core.rs").is_file())
+        self.assertIn("--lib", rust_build)
         app_service = compose.split("\n  app:\n", 1)[1].split("\n  web:\n", 1)[0]
         self.assertIn('entrypoint: ["python", "-m", "medicine_app.cli"]', app_service)
 

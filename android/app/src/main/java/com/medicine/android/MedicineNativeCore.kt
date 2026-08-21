@@ -4,11 +4,13 @@ import java.io.File
 
 class MedicineNativeCore(
     referenceDatabase: File?,
+    personalDatabase: File,
     referenceUnavailableReason: String? = null,
 ) : AutoCloseable {
     private val lock = Any()
     private var handle: Long = nativeCreate(
         referenceDatabase?.absolutePath,
+        personalDatabase.absolutePath,
         referenceUnavailableReason,
     ).also { created -> check(created != 0L) { "native medicine engine initialization failed" } }
 
@@ -40,6 +42,7 @@ class MedicineNativeCore(
 
     private external fun nativeCreate(
         canonicalDb: String?,
+        personalDb: String,
         referenceUnavailableReason: String?,
     ): Long
 

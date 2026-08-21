@@ -61,12 +61,18 @@ pub extern "system" fn Java_com_medicine_android_MedicineNativeCore_nativeCreate
     mut env: JNIEnv<'_>,
     _this: JObject<'_>,
     canonical_db: JString<'_>,
+    personal_db: JString<'_>,
     reference_unavailable_reason: JString<'_>,
 ) -> jlong {
     match catch_unwind(AssertUnwindSafe(|| {
         let canonical_db = optional_string(&mut env, canonical_db)?;
+        let personal_db = optional_string(&mut env, personal_db)?;
         let reason = optional_string(&mut env, reference_unavailable_reason)?;
-        let engine = MedicineEngine::new(canonical_db.as_deref().map(Path::new), reason.as_deref());
+        let engine = MedicineEngine::new(
+            canonical_db.as_deref().map(Path::new),
+            personal_db.as_deref().map(Path::new),
+            reason.as_deref(),
+        );
         Ok::<_, String>(Box::into_raw(Box::new(Mutex::new(engine))) as jlong)
     })) {
         Ok(Ok(handle)) => handle,

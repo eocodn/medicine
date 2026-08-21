@@ -28,5 +28,6 @@ export AR_aarch64_linux_android="${ar}"
 cargo build \
     --manifest-path "${workspace}/rust/medicine_core/Cargo.toml" \
     --locked \
+    --lib \
     --release \
     --target "${target}"

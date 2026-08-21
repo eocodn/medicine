@@ -24,7 +24,7 @@ class MedicineBridge(
     private var closed = false
 
     init {
-        val createdNativeCore = MedicineNativeCore(referenceDatabase)
+        val createdNativeCore = MedicineNativeCore(referenceDatabase, personalDatabase)
         try {
             pythonApi = PersonalDatabaseOperationCoordinator.exclusive {
                 vault.openForUse()

@@ -43,6 +43,7 @@ class ManifestContractTest {
         assertTrue(manifest.contains("@xml/file_paths"))
         assertTrue(nativeCore.isFile)
         assertTrue(bridge.contains("MedicineNativeCore"))
+        assertTrue(bridge.contains("MedicineNativeCore(referenceDatabase, personalDatabase)"))
         assertTrue(bridge.contains("nativeCore.requestAccess"))
         assertTrue(bridge.contains("nativeCore.handlesRequest"))
         assertTrue(bridge.contains("nativeCore.request"))
