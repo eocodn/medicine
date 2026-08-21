@@ -153,6 +153,7 @@ fn migrated_health_people_and_dose_routes_are_owned_by_rust() {
     assert!(engine.handles_request("POST", "/api/people"));
     assert!(engine.handles_request("PATCH", "/api/people/example"));
     assert!(engine.handles_request("DELETE", "/api/people/example"));
+    assert!(engine.handles_request("GET", "/api/people/example/daily-plan?date=2026-08-20"));
     assert!(engine.handles_request("POST", "/api/dose-instances/example"));
     assert!(engine.handles_request("DELETE", "/api/dose-instances/example/completion"));
 }

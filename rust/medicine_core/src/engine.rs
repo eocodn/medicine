@@ -2,7 +2,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-use crate::{doses, people};
+use crate::{doses, people, planning};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccessClass {
@@ -91,6 +91,7 @@ impl MedicineEngine {
         let path = request_path(raw_path);
         (normalized_method(method) == "GET" && path == "/api/health")
             || people::handles_request(method, path)
+            || planning::handles_request(method, path)
             || doses::handles_request(method, path)
     }
 
@@ -101,6 +102,11 @@ impl MedicineEngine {
         }
         if let Some((status, body)) =
             people::handle_request(self.personal_db.as_deref(), method, path, body_json)
+        {
+            return json!({"status": status, "body": body}).to_string();
+        }
+        if let Some((status, body)) =
+            planning::handle_request(self.personal_db.as_deref(), method, raw_path, path)
         {
             return json!({"status": status, "body": body}).to_string();
         }
