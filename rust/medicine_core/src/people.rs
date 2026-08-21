@@ -1,10 +1,11 @@
 use chrono::{Datelike, FixedOffset, NaiveDate, Utc};
-use rusqlite::{params, Connection, OpenFlags, Row, TransactionBehavior};
+use rusqlite::{params, Connection, Row, TransactionBehavior};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::time::Duration;
 use uuid::Uuid;
+
+use crate::personal_db::{self, Access, OpenError};
 
 const PERSON_FIELDS: [&str; 6] = [
     "name",
@@ -267,22 +268,18 @@ fn delete_person(personal_db: Option<&Path>, person_id: &str) -> Result<(u16, Va
 }
 
 fn open_personal(personal_db: Option<&Path>, read_only: bool) -> Result<Connection, PeopleError> {
-    let path = personal_db.ok_or(PeopleError::Unavailable)?;
-    let flags = if read_only {
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX
-    } else {
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX
-    };
-    let con = Connection::open_with_flags(path, flags).map_err(|_| PeopleError::Internal)?;
-    con.busy_timeout(Duration::from_secs(5))
-        .map_err(|_| PeopleError::Internal)?;
-    con.pragma_update(None, "foreign_keys", "ON")
-        .map_err(|_| PeopleError::Internal)?;
-    if read_only {
-        con.pragma_update(None, "query_only", "ON")
-            .map_err(|_| PeopleError::Internal)?;
-    }
-    Ok(con)
+    personal_db::open(
+        personal_db,
+        if read_only {
+            Access::ReadOnly
+        } else {
+            Access::ReadWrite
+        },
+    )
+    .map_err(|error| match error {
+        OpenError::Unavailable => PeopleError::Unavailable,
+        OpenError::Sql => PeopleError::Internal,
+    })
 }
 
 fn validated_payload(body_json: &str) -> Result<Map<String, Value>, PeopleError> {

@@ -146,14 +146,15 @@ fn health_reports_reference_and_catalog_state() {
 }
 
 #[test]
-fn health_and_people_are_owned_by_rust_after_people_slice() {
+fn migrated_health_people_and_dose_routes_are_owned_by_rust() {
     let engine = MedicineEngine::new(None, None, None);
     assert!(engine.handles_request("GET", "/api/health"));
     assert!(engine.handles_request("GET", "/api/people"));
     assert!(engine.handles_request("POST", "/api/people"));
     assert!(engine.handles_request("PATCH", "/api/people/example"));
     assert!(engine.handles_request("DELETE", "/api/people/example"));
-    assert!(!engine.handles_request("POST", "/api/dose-instances/example"));
+    assert!(engine.handles_request("POST", "/api/dose-instances/example"));
+    assert!(engine.handles_request("DELETE", "/api/dose-instances/example/completion"));
 }
 
 #[test]
