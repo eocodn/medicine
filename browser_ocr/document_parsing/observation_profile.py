@@ -34,8 +34,8 @@ _PROFILE_FIELDS = {
     "detector_threads",
     "implementation",
 }
-_RAW_PROFILE_FIELDS = {*_PROFILE_FIELDS, "parser"}
-_RAW_IMPLEMENTATION_FIELDS = {*_IMPLEMENTATION_SHA_FIELDS, "parser", "parser_contract"}
+_RAW_PROFILE_FIELDS = _PROFILE_FIELDS
+_RAW_IMPLEMENTATION_FIELDS = _IMPLEMENTATION_SHA_FIELDS
 _ALLOWED_DETECTOR_MODELS = {"PP-OCRv5_mobile_det", "PP-OCRv6_tiny_det", "PP-OCRv6_small_det"}
 _ORACLE_FIELDS = {"producer", "truth_samples_sha256"}
 _SYNTHETIC_FIELDS = {"producer", "revision", "seed", "truth_samples_sha256"}
@@ -49,19 +49,14 @@ def _require_sha256(value: object, label: str) -> str:
 
 
 def runtime_observation_profile(raw: object, *, expected_image_sha256: str | None = None) -> dict[str, Any]:
-    """Keep only detector/recognizer/orchestration identity for parser observations.
-
-    A full-document result also pins the currently selected parser. Parser datasets
-    must not inherit that identity: changing the parser must not invalidate an OCR
-    observation produced by the same detector, cropper and recognizer.
-    """
+    """Validate detector/recognizer/orchestration identity for parser observations."""
 
     if not isinstance(raw, Mapping):
         raise ParserDatasetError("runtime result profile must be an object")
     unknown = sorted(set(raw) - _RAW_PROFILE_FIELDS)
     if unknown:
         raise ParserDatasetError(f"unsupported runtime OCR profile fields: {', '.join(map(str, unknown))}")
-    profile = {str(key): value for key, value in raw.items() if key != "parser"}
+    profile = {str(key): value for key, value in raw.items()}
     if profile.get("schema_version") != 2:
         raise ParserDatasetError("runtime OCR profile schema_version must be 2")
     for field in _SHA_FIELDS:
@@ -87,11 +82,7 @@ def runtime_observation_profile(raw: object, *, expected_image_sha256: str | Non
             "unsupported runtime OCR implementation fields: "
             + ", ".join(map(str, unknown_implementation))
         )
-    normalized_implementation = {
-        str(key): value
-        for key, value in implementation.items()
-        if key not in {"parser", "parser_contract"}
-    }
+    normalized_implementation = {str(key): value for key, value in implementation.items()}
     for field in _IMPLEMENTATION_SHA_FIELDS:
         normalized_implementation[field] = _require_sha256(normalized_implementation.get(field), f"implementation.{field}")
     profile["implementation"] = normalized_implementation

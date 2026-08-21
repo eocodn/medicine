@@ -283,7 +283,7 @@ function committedMutationContext() {
       removeEventListener() {},
       dispatchEvent() {},
     },
-    window: { addEventListener() {}, location: { search: "" }, MedicineLocalApi: null, MedicineOcrReview: null },
+    window: { addEventListener() {}, location: { search: "" }, MedicineLocalApi: null, MedicineOcrIntake: null },
     console: { ...console, error() {} },
     URLSearchParams,
     Intl,

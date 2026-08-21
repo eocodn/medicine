@@ -26,21 +26,20 @@ class ManualOnlyIntakeTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_shared_ui_exposes_local_ocr_review_without_changing_product_identity_flow(self) -> None:
+    def test_shared_ui_routes_parser_output_directly_to_product_search(self) -> None:
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
         self.assertIn("약을 검색하세요", page.text)
         self.assertNotIn("ocr-scan-button", page.text)
         self.assertIn("ocr-image-input", page.text)
-        self.assertNotIn("ocr-review-sheet", page.text)
         self.assertNotIn("browser-ocr", page.text.lower())
         self.assertNotIn("/static/ocr.js", page.text)
-        self.assertIn("/static/ocr-review.js", page.text)
+        self.assertIn("/static/ocr-intake.js", page.text)
         self.assertIn("사진은 서버로 전송되지 않고 이 기기에서만 인식", page.text)
 
         app = self.client.get("/static/app.js")
         self.assertEqual(app.status_code, 200)
-        self.assertIn("medicine:ocr-select", app.text)
+        self.assertIn("medicine:parser-result", app.text)
         self.assertIn("runDrugSearch", app.text)
         self.assertNotIn("ocr-preview", app.text)
         self.assertNotIn("ocr_review_token", app.text)
@@ -54,10 +53,11 @@ class ManualOnlyIntakeTest(unittest.TestCase):
             self.personal_db.with_name("ocr-personal.sqlite"),
             ocr_assets_dir=self.ocr_assets,
         ))
-        review = self.client.get("/static/ocr-review.js")
-        self.assertEqual(review.status_code, 200)
-        self.assertIn('new Worker("/ocr-assets/direct/ocr-worker.js")', review.text)
-        self.assertNotIn("/api/ocr", review.text)
+        intake = self.client.get("/static/ocr-intake.js")
+        self.assertEqual(intake.status_code, 200)
+        self.assertIn('new Worker("/ocr-assets/direct/ocr-worker.js")', intake.text)
+        self.assertIn("medicine:parser-result", intake.text)
+        self.assertNotIn("/api/ocr", intake.text)
         self.assertEqual(client.get("/ocr-assets/runtime-manifest.json").status_code, 200)
         self.assertEqual(client.get("/ocr-assets/direct/ocr-worker.js").status_code, 200)
         for path in ["/static/ocr.js", "/static/browser-ocr.js", "/static/browser-ocr-parser.js"]:

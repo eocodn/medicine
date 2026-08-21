@@ -35,13 +35,10 @@ def _runtime_profile() -> dict:
         "inference_runtime_sha256": "0" * 64,
         "paddleocr_source_sha256": "e" * 64,
         "paddleocr_dictionary_sha256": "f" * 64,
-        "parser": "must-not-enter-observation-profile",
         "implementation": {
             "full_document": "5" * 64,
             "full_document_cli": "6" * 64,
             "crop_refinement": "d" * 64,
-            "parser": "c" * 64,
-            "parser_contract": "7" * 64,
             "detector_runtime": "8" * 64,
             "detector_benchmark": "9" * 64,
         },
@@ -170,8 +167,6 @@ class ParserTrainingBuildersTest(unittest.TestCase):
                 "truth_samples_sha256": hashlib.sha256(truth.read_bytes()).hexdigest(),
             })
             self.assertEqual(document["observation"]["nodes"][0]["semantic_role"], "product")
-            self.assertNotIn("parser", document["observation"]["profile"])
-            self.assertNotIn("parser", document["observation"]["profile"]["implementation"])
 
     def test_runtime_builder_rejects_unpinned_ocr_profile(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

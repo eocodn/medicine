@@ -185,7 +185,7 @@ class PrescriptionCliTest(unittest.TestCase):
 
     def test_drug_search_cli_keeps_interface_but_reports_engine_unavailable(self) -> None:
         status, payload = self.run_cli(
-            "drug-search", "씬지록신 25", "--mode", "ocr", "--explain-matches"
+            "drug-search", "씬지록신 25", "--explain-matches"
         )
 
         self.assertEqual(status, 3)

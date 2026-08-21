@@ -1,10 +1,11 @@
 """Dormant integration contract for future structured medication-intake providers.
 
-The product currently exposes no provider-backed ingestion route or UI. A future
-OCR implementation may live behind this boundary, but it may only hand the product
-structured medication rows. Raw images, OCR text, filesystem paths, and other source
-artifacts never cross the product boundary, and the provider does not establish
-canonical product identity: product_query is reviewed/resolved by the product later.
+The product currently exposes no provider-backed ingestion route. A future learned
+parser may live behind this boundary, but it may only hand the product structured
+medication rows. Raw images, OCR text, filesystem paths, and other source artifacts
+never cross the product boundary, and the provider does not establish canonical
+product identity: product_query is resolved by product search and corrected, together
+with the draft, only in the final medication editor.
 """
 
 from __future__ import annotations

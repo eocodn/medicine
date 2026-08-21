@@ -70,13 +70,17 @@ function invalidateProductSearch() {
   state.searchTimer = null;
 }
 
-function resetOcrTransientState({ clearSearch = false } = {}) {
-  const hadOcrSearch = state.ocrSearchActive;
-  state.pendingOcrDraft = null;
-  state.pendingOcrPersonId = null;
-  state.ocrSearchActive = false;
-  window.MedicineOcrReview?.reset?.();
-  if (!clearSearch || !hadOcrSearch) return;
+function resetParserTransientState({ clearSearch = false } = {}) {
+  const hadParserSearch = Boolean(state.activeParserRow || state.pendingParserRows.length || state.pendingParserDraft);
+  state.pendingParserDraft = null;
+  state.pendingParserPersonId = null;
+  state.pendingParserUncertaintyCodes = [];
+  state.pendingParserRows = [];
+  state.activeParserRow = null;
+  state.parserRowTotal = 0;
+  state.parserRowIndex = 0;
+  window.MedicineOcrIntake?.reset?.();
+  if (!clearSearch || !hadParserSearch) return;
   invalidateProductSearch();
   const query = $("#drug-query");
   const status = $("#search-status");
@@ -85,6 +89,41 @@ function resetOcrTransientState({ clearSearch = false } = {}) {
   if (status) status.textContent = "";
   if (results) results.innerHTML = "";
   updateSearchMode();
+}
+
+async function startNextParserSearch() {
+  const row = state.pendingParserRows.shift();
+  if (!row) return false;
+  state.activeParserRow = row;
+  state.parserRowIndex += 1;
+  state.pendingParserDraft = row.draft && typeof row.draft === "object" ? { ...row.draft } : {};
+  state.pendingParserPersonId = state.currentPersonId;
+  state.pendingParserUncertaintyCodes = Array.isArray(row.uncertainty_codes) ? [...row.uncertainty_codes] : [];
+  invalidateProductSearch();
+  const query = row.product_query.trim();
+  $("#drug-query").value = query;
+  $("#search-status").textContent = "";
+  $("#drug-results").innerHTML = "";
+  updateSearchMode();
+  const position = state.parserRowTotal > 1 ? ` (${state.parserRowIndex}/${state.parserRowTotal})` : "";
+  const found = await runDrugSearch(`인식된 약${position} · “${query}” 제품 후보를 선택해주세요.`);
+  if (found) $("#drug-results").scrollIntoView({ behavior: "smooth", block: "start" });
+  return found;
+}
+
+function completeParserRowAndContinue() {
+  if (!state.activeParserRow) return false;
+  if (!state.pendingParserRows.length) {
+    resetParserTransientState({ clearSearch: true });
+    return false;
+  }
+  state.activeParserRow = null;
+  state.pendingParserDraft = null;
+  state.pendingParserPersonId = null;
+  state.pendingParserUncertaintyCodes = [];
+  showScreen("search", { focus: true });
+  void startNextParserSearch();
+  return true;
 }
 
 function focusSearchFromBox(event) {
@@ -96,7 +135,7 @@ function showScreen(name, { focus = false } = {}) {
   const previousScreenNode = $(".screen.active");
   const previousScreen = previousScreenNode?.dataset.screen || null;
   const focusWasInPrevious = Boolean(previousScreenNode?.contains?.(document.activeElement));
-  if (previousScreen === "search" && name !== "search") resetOcrTransientState({ clearSearch: true });
+  if (previousScreen === "search" && name !== "search") resetParserTransientState({ clearSearch: true });
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
   $$(".nav-item").forEach((node) => {
     const active = node.dataset.nav === name;
@@ -162,7 +201,7 @@ async function loadPeople() {
   if (!state.people.some((person) => person.id === state.currentPersonId)) {
     state.currentPersonId = state.people[0]?.id || null;
   }
-  if (previousPersonId && previousPersonId !== state.currentPersonId) resetOcrTransientState({ clearSearch: true });
+  if (previousPersonId && previousPersonId !== state.currentPersonId) resetParserTransientState({ clearSearch: true });
   if (state.currentPersonId) {
     localStorage.setItem("medicine.currentPersonId", state.currentPersonId);
     await loadDashboard();
@@ -407,19 +446,16 @@ async function runDrugSearch(successMessage = "") {
   const term = $("#drug-query").value.trim();
   const status = $("#search-status");
   const root = $("#drug-results");
-  const requestMode = state.ocrSearchActive ? "ocr" : "manual";
   state.searchTimer = null;
   updateSearchMode();
   if (!term) { status.textContent = ""; root.innerHTML = ""; return false; }
   const requestId = ++state.searchRequestId;
   status.textContent = "";
   try {
-    const searchMode = requestMode === "ocr" ? "&mode=ocr" : "";
-    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30${searchMode}`, {
+    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`, {
       coalesceKey: "product-search",
     });
-    const currentMode = state.ocrSearchActive ? "ocr" : "manual";
-    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term || currentMode !== requestMode) return false;
+    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
     state.fullCatalog = true;
     status.textContent = successMessage;
     root.innerHTML = results.length ? results.map((item) => `
@@ -432,7 +468,7 @@ async function runDrugSearch(successMessage = "") {
           </div>
           <span class="add-button" aria-hidden="true">추가</span>
         </div>
-      </article>`).join("") : `<div class="empty-state"><strong>검색 결과가 없어요</strong>다른 제품명이나 성분명으로 검색해보세요.</div>`;
+      </article>`).join("") : `<div class="empty-state"><strong>검색 결과가 없어요</strong>다른 제품명으로 검색해보세요.</div>`;
     $$('[data-product-select]', root).forEach((card) => {
       card.addEventListener("click", () => selectProductResult(card));
       card.addEventListener("keydown", (event) => {
@@ -443,8 +479,7 @@ async function runDrugSearch(successMessage = "") {
     });
     return true;
   } catch (error) {
-    const currentMode = state.ocrSearchActive ? "ocr" : "manual";
-    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term || currentMode !== requestMode) return false;
+    if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
     status.textContent = friendlyErrorMessage(error.message);
     root.innerHTML = "";
     return false;
@@ -452,15 +487,17 @@ async function runDrugSearch(successMessage = "") {
 }
 
 function selectProductResult(card) {
-  let ocrDraft = null;
-  if (state.pendingOcrDraft) {
-    if (state.pendingOcrPersonId !== state.currentPersonId) {
-      resetOcrTransientState({ clearSearch: true });
+  let parserDraft = null;
+  let uncertaintyCodes = [];
+  if (state.pendingParserDraft) {
+    if (state.pendingParserPersonId !== state.currentPersonId) {
+      resetParserTransientState({ clearSearch: true });
     } else {
-      ocrDraft = { ...state.pendingOcrDraft };
+      parserDraft = { ...state.pendingParserDraft };
+      uncertaintyCodes = [...state.pendingParserUncertaintyCodes];
     }
   }
-  previewProduct(card.dataset.productSelect, ocrDraft);
+  previewProduct(card.dataset.productSelect, parserDraft, uncertaintyCodes);
 }
 
 async function refreshForDateChange() {
@@ -488,7 +525,9 @@ function bindEvents() {
   });
   $("#drug-query").addEventListener("input", () => {
     invalidateProductSearch();
-    resetOcrTransientState();
+    // Keep the parser draft while the user edits only the product query. OCR can
+    // misread the product name while the independently parsed regimen is still
+    // correct, so query correction must not silently discard dose/schedule data.
     $("#search-status").textContent = "";
     $("#drug-results").innerHTML = "";
     updateSearchMode();
@@ -497,22 +536,18 @@ function bindEvents() {
   document.addEventListener("medicine:sheet-closed", (event) => {
     if (event.detail?.id === "stop-medication-sheet") state.pendingStopMedicationId = null;
   });
-  window.addEventListener("medicine:ocr-select", async (event) => {
-    const row = event.detail;
-    if (!row || typeof row.product_query !== "string" || !row.product_query.trim()) return;
-    invalidateProductSearch();
-    state.pendingOcrDraft = row.draft && typeof row.draft === "object" ? { ...row.draft } : {};
-    state.pendingOcrPersonId = state.currentPersonId;
-    state.ocrSearchActive = true;
-    window.MedicineOcrReview?.reset?.();
-    const query = row.product_query.trim();
-    $("#drug-query").value = query;
-    $("#search-status").textContent = "";
-    $("#drug-results").innerHTML = "";
-    updateSearchMode();
-    $("#ocr-review-panel").classList.add("hidden");
-    const found = await runDrugSearch(`“${query}” 제품 후보를 확인하고 맞는 품목을 선택해주세요.`);
-    if (found) $("#drug-results").scrollIntoView({ behavior: "smooth", block: "start" });
+  window.addEventListener("medicine:parser-result", (event) => {
+    const rows = Array.isArray(event.detail?.rows) ? event.detail.rows : [];
+    if (!rows.length) return;
+    resetParserTransientState({ clearSearch: true });
+    state.pendingParserRows = rows.map((row) => ({
+      ...row,
+      draft: row.draft && typeof row.draft === "object" ? { ...row.draft } : {},
+      uncertainty_codes: Array.isArray(row.uncertainty_codes) ? [...row.uncertainty_codes] : [],
+    }));
+    state.parserRowTotal = state.pendingParserRows.length;
+    showScreen("search", { focus: true });
+    void startNextParserSearch();
   });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });
   window.addEventListener("focus", refreshForDateChange);

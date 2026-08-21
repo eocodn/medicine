@@ -120,28 +120,6 @@ class CliTest(unittest.TestCase):
         self.assertEqual(result["missing_rows"], 1)
         self.assertTrue(result["safety_pass"])
 
-    def test_run_baseline_json_reports_predictions_and_metrics(self) -> None:
-        completed = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "browser_ocr.document_parsing.cli",
-                "run-baseline",
-                "--corpus",
-                "browser_ocr/document_parsing/corpus/manifest.json",
-                "--json",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        result = json.loads(completed.stdout)
-        self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["baseline"], "geometry_rule_v2")
-        self.assertEqual(len(result["predictions"]["predictions"]), 7)
-        self.assertTrue(result["evaluation"]["safety_pass"])
 
 
 if __name__ == "__main__":

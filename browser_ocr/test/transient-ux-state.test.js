@@ -12,34 +12,6 @@ function source(name) {
   return fs.readFileSync(path.join(staticRoot, name), "utf8");
 }
 
-function exposeOcrInternals(names, root) {
-  const original = source("ocr-review.js");
-  const exposed = original.replace(
-    /return \{ normalizeOcrRows(?:, reset)? \};/,
-    `return { normalizeOcrRows, reset, ${names.filter((name) => name !== "reset").join(", ")} };`,
-  );
-  const context = {
-    window: root,
-    globalThis: root,
-    module: { exports: {} },
-    console,
-    setTimeout,
-    clearTimeout,
-  };
-  vm.createContext(context);
-  vm.runInContext(exposed, context);
-  return context.module.exports;
-}
-
-function classList(initial = []) {
-  const values = new Set(initial);
-  return {
-    add(value) { values.add(value); },
-    remove(value) { values.delete(value); },
-    contains(value) { return values.has(value); },
-  };
-}
-
 function productSearchContext() {
   const query = { value: "씬지록신 25" };
   const status = { textContent: "" };
@@ -59,7 +31,7 @@ function productSearchContext() {
   };
   const context = {
     document,
-    window: { MedicineLocalApi: null, MedicineOcrReview: { reset() {} } },
+    window: { MedicineLocalApi: null, MedicineOcrIntake: { reset() {} } },
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
     friendlyErrorMessage: (value) => String(value),
     console,
@@ -75,111 +47,32 @@ function productSearchContext() {
   return { context, query, status, results };
 }
 
-test("zero-row OCR stays a failure state instead of opening an empty review", () => {
-  const panel = { classList: classList(["hidden"]) };
-  const list = { innerHTML: "stale", querySelectorAll() { return []; } };
-  const root = {
-    document: {
-      addEventListener() {},
-      querySelector(selector) {
-        if (selector === "#ocr-review-panel") return panel;
-        if (selector === "#ocr-review-list") return list;
-        return null;
-      },
-    },
-  };
-  const { renderRows } = exposeOcrInternals(["renderRows"], root);
-
-  renderRows([]);
-
-  assert.equal(panel.classList.contains("hidden"), true);
-  assert.equal(list.innerHTML, "");
-});
-
-test("OCR review preserves every supported regimen field through row confirmation", () => {
-  const root = {};
-  const { readRow } = exposeOcrInternals(["readRow"], root);
-  const values = {
-    product_query: "타진서방정",
-    dose_amount: "1",
-    dose_unit: "정",
-    frequency_per_day: "2",
-    prescription_days: "7",
-    schedule_times: "08:00, 20:00",
-    meal_relation: "after_meal",
-    administration_route: "oral",
-    as_needed: "",
-  };
-  const card = {
-    querySelector(selector) {
-      const match = selector.match(/data-ocr-field="([^"]+)"/);
-      if (!match) return null;
-      const field = match[1];
-      return field === "as_needed"
-        ? { checked: true, value: "" }
-        : { value: values[field] || "" };
-    },
-  };
-  const base = {
-    row_id: "row-1",
-    product_query: "타진서방정",
-    draft: {
-      schedule_times: ["07:00"],
-      meal_relation: "before_meal",
-      administration_route: "oral",
-      as_needed: true,
-    },
-    uncertainty_codes: [],
-  };
-
-  assert.deepEqual(JSON.parse(JSON.stringify(readRow(card, base))), {
-    ...base,
-    product_query: "타진서방정",
-    draft: {
-      dose_amount: 1,
-      dose_unit: "정",
-      frequency_per_day: 2,
-      prescription_days: 7,
-      schedule_times: ["08:00", "20:00"],
-      meal_relation: "after_meal",
-      administration_route: "oral",
-      as_needed: true,
-    },
-  });
-
-  const review = source("ocr-review.js");
-  for (const field of ["schedule_times", "meal_relation", "administration_route", "as_needed"]) {
-    assert.match(review, new RegExp(`data-ocr-field=\\"${field}\\"`));
-  }
-});
-
-test("leaving Search owns and clears the entire OCR transient session", () => {
+test("leaving Search clears the parser intake session", () => {
   const app = source("app.js");
-  const review = source("ocr-review.js");
+  const intake = source("ocr-intake.js");
 
-  assert.match(app, /function resetOcrTransientState/);
-  assert.match(app, /previousScreen === "search"[\s\S]{0,240}resetOcrTransientState/);
-  assert.match(app, /MedicineOcrReview\?\.reset\?\.\(\)/);
-  assert.match(review, /function reset\(/);
-  assert.match(review, /return \{ normalizeOcrRows, reset \};/);
+  assert.match(app, /function resetParserTransientState/);
+  assert.match(app, /previousScreen === "search"[\s\S]{0,260}resetParserTransientState/);
+  assert.match(app, /MedicineOcrIntake\?\.reset\?\.\(\)/);
+  assert.match(intake, /function reset\(/);
 });
 
-test("OCR-derived prescription drafts are bound to the active profile", () => {
+test("parser-derived drafts are bound to the active profile", () => {
   const app = source("app.js");
   const people = source("people.js");
 
-  assert.match(app, /pendingOcrPersonId/);
-  assert.match(app, /pendingOcrPersonId !== state\.currentPersonId/);
-  assert.match(people, /selectPerson[\s\S]{0,320}resetOcrTransientState/);
+  assert.match(app, /pendingParserPersonId/);
+  assert.match(app, /pendingParserPersonId !== state\.currentPersonId/);
+  assert.match(people, /selectPerson[\s\S]{0,340}resetParserTransientState/);
 });
 
 test("visible OCR import control mirrors disabled and busy state", () => {
-  const review = source("ocr-review.js");
+  const intake = source("ocr-intake.js");
   const styles = source("styles.css");
 
-  assert.match(review, /\.ocr-file-button/);
-  assert.match(review, /aria-disabled/);
-  assert.match(review, /is-disabled/);
+  assert.match(intake, /\.ocr-file-button/);
+  assert.match(intake, /aria-disabled/);
+  assert.match(intake, /is-disabled/);
   assert.match(styles, /\.ocr-file-button\.is-disabled/);
 });
 
@@ -200,23 +93,50 @@ test("editing a drug query immediately removes stale clickable search results", 
   assert.match(app, /#drug-query[\s\S]{0,520}#search-status[\s\S]{0,180}textContent = ""[\s\S]{0,220}#drug-results[\s\S]{0,180}innerHTML = ""[\s\S]{0,260}setTimeout\(runDrugSearch, 280\)/);
 });
 
-test("editing a drug query invalidates any in-flight OCR search before debounce", () => {
+test("editing a drug query invalidates any in-flight search before debounce", () => {
   const app = source("app.js");
 
   assert.match(app, /function invalidateProductSearch\(\)[\s\S]{0,220}state\.searchRequestId \+= 1[\s\S]{0,220}clearTimeout\(state\.searchTimer\)/);
-  assert.match(app, /#drug-query[\s\S]{0,520}addEventListener\("input"[\s\S]{0,220}invalidateProductSearch\(\)[\s\S]{0,220}resetOcrTransientState\(\)[\s\S]{0,320}setTimeout\(runDrugSearch, 280\)/);
+  assert.match(app, /#drug-query[\s\S]{0,520}addEventListener\("input"[\s\S]{0,220}invalidateProductSearch\(\)[\s\S]{0,420}setTimeout\(runDrugSearch, 280\)/);
 });
 
-test("OCR query replacement clears stale clickable results before async search", () => {
+test("parser query replacement clears stale clickable results before async search", () => {
   const app = source("app.js");
-
   assert.match(
     app,
-    /medicine:ocr-select[\s\S]{0,760}#drug-query[\s\S]{0,180}value = query[\s\S]{0,260}#search-status[\s\S]{0,160}textContent = ""[\s\S]{0,220}#drug-results[\s\S]{0,160}innerHTML = ""[\s\S]{0,300}await runDrugSearch/,
+    /medicine:parser-result[\s\S]{0,1200}startNextParserSearch/,
+  );
+  assert.match(
+    app,
+    /function startNextParserSearch[\s\S]{0,900}#drug-query[\s\S]{0,220}value = query[\s\S]{0,320}#drug-results[\s\S]{0,220}innerHTML = ""[\s\S]{0,420}runDrugSearch/,
   );
 });
 
-test("trim-equivalent manual edit rejects an already in-flight OCR search response", async () => {
+test("completing the final parser row clears its search UI and state", () => {
+  const { context, query, status, results } = productSearchContext();
+  query.value = "타이레놀정";
+  status.textContent = "인식된 약 · 제품 후보를 선택해주세요.";
+  results.innerHTML = '<article data-product-select="123">타이레놀정</article>';
+  vm.runInContext(`
+    state.activeParserRow = { row_id: "row-1", product_query: "타이레놀정" };
+    state.pendingParserDraft = { dose_amount: 1 };
+    state.pendingParserPersonId = "person-1";
+    state.pendingParserUncertaintyCodes = ["LOW_CONFIDENCE_DOSE"];
+    state.pendingParserRows = [];
+    state.parserRowTotal = 1;
+    state.parserRowIndex = 1;
+  `, context);
+
+  assert.equal(vm.runInContext("completeParserRowAndContinue()", context), false);
+  assert.equal(query.value, "");
+  assert.equal(status.textContent, "");
+  assert.equal(results.innerHTML, "");
+  assert.equal(vm.runInContext("state.activeParserRow", context), null);
+  assert.equal(vm.runInContext("state.parserRowTotal", context), 0);
+  assert.equal(vm.runInContext("state.parserRowIndex", context), 0);
+});
+
+test("editing a query rejects an already in-flight search response", async () => {
   const { context, query, results } = productSearchContext();
   let resolveRequest;
   let requestPath = "";
@@ -227,15 +147,13 @@ test("trim-equivalent manual edit rejects an already in-flight OCR search respon
     },
   };
 
-  vm.runInContext("state.ocrSearchActive = true", context);
   const pending = vm.runInContext("runDrugSearch()", context);
-  assert.match(requestPath, /mode=ocr/);
+  assert.doesNotMatch(requestPath, /mode=/);
 
   query.value = "씬지록신 25 ";
-  vm.runInContext("invalidateProductSearch(); resetOcrTransientState();", context);
+  vm.runInContext("invalidateProductSearch();", context);
   resolveRequest([{ product_ref: "stale", product_name: "stale" }]);
 
   assert.equal(await pending, false);
   assert.equal(results.innerHTML, "");
-  assert.equal(vm.runInContext("state.ocrSearchActive", context), false);
 });

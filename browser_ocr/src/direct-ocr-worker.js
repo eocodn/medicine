@@ -12,7 +12,6 @@ const {
   rgbaToChw,
   splitHorizontalInkRanges,
 } = require("./direct-ocr-core.js");
-const { parseDocumentItems } = require("./document-parser.js");
 
 const DETECTION_MODEL = "/ocr-assets/models/detection.onnx";
 const RECOGNITION_MODEL = "/ocr-assets/models/korean-recognition.onnx";
@@ -305,11 +304,10 @@ async function recognize(image, includeItems = false) {
   sourceCanvas.width = 1;
   sourceCanvas.height = 1;
   await dispose();
-  const parsed = parseDocumentItems(items);
+  progress(100);
   self.postMessage({
     type: "result",
-    rows: parsed.rows,
-    uncertainty_codes: parsed.uncertainty_codes,
+    parser_status: "unavailable",
     region_count: items.length,
     ...(includeItems ? { items } : {}),
   });

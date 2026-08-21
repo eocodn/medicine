@@ -304,15 +304,15 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 
 ## Android 빌드·실행과 OCR 연구 경계
 
-현재 제품 입력은 **수기 전용**입니다. 사용자는 식약처 허가 의약품을 검색해 제품을 선택하고,
-1회량·1일 횟수·복용 시간·식사 관계·투여 경로·처방 일수 등을 직접 확인해 입력합니다.
-제품 웹 UI, 웹/Android API, Android APK에는 OCR 스캔 진입점, OCR review/batch API, ONNX/WASM OCR
-런타임 또는 OCR 모델 자산을 포함하지 않습니다.
+제품 웹 UI와 Android APK에는 로컬 사진 인식 진입점과 승인된 on-device OCR detector/recognizer 런타임이 포함됩니다.
+이미지와 OCR 원문은 서버 API나 제품 도메인 경계를 통과하지 않습니다. 현재 rule-based document parser와 중간 OCR
+review UI는 없으며, learned parser runtime도 아직 연결되지 않았으므로 detector/recognizer가 구조화 약 행을 가장하지 않고
+parser unavailable 상태를 명시적으로 반환합니다.
 
-향후 파인튜닝된 OCR을 다시 연결할 때는 `medicine_app.intake`의 구조화 draft 계약을 경계로 사용합니다.
-이 계약은 하나 이상의 `product_query`와 정규화 가능한 medication draft, 명시적 uncertainty code만 허용합니다.
-canonical 제품 identity는 provider가 확정하지 않고 이후 제품 UI에서 사용자가 확인·선택합니다. 이미지 URI, 파일 경로,
-OCR 원문 같은 raw source artifact는 제품 경계를 통과시키지 않습니다. 현재 이 계약에 등록된 provider나 사용자-facing route는 없습니다.
+learned parser는 `medicine_app.intake`와 동일한 구조의 medication row를 출력합니다. 각 행은 `product_query`, 정규화 가능한
+medication draft, 명시적 uncertainty code만 가지며 canonical 제품 identity를 확정하지 않습니다. `product_query`는 별도 OCR
+검색 모드 없이 일반 제품 검색으로 바로 전달되고, 선택된 제품과 draft/uncertainty는 최종 복용정보 편집 화면에서 한 번만
+확인·수정한 뒤 저장합니다. 이미지 URI, 파일 경로, OCR 원문 같은 raw source artifact는 이 구조화 경계를 통과하지 않습니다.
 
 OCR 모델 연구·평가 코드는 제품과 독립된 `browser_ocr` 디렉터리에 유지합니다. 모델 원본 URL과 SHA-256은
 `model-manifest.json`에 고정되고, 합성 corpus는 실제 research Worker를 Chromium에서 실행해 문자 오류율,
@@ -322,7 +322,7 @@ OCR 모델 연구·평가 코드는 제품과 독립된 `browser_ocr` 디렉터�
 docker compose run --rm ocr-eval
 ```
 
-연구용 runtime export도 제품 Docker/Android 빌드와 분리되어 있습니다. 필요할 때만 별도로 생성할 수 있습니다.
+연구용 runtime export는 별도로 생성할 수 있고, Android/로컬 개발 웹 빌드는 승인된 on-device OCR runtime만 패키징합니다.
 
 ```bash
 docker build -f browser_ocr/Dockerfile --target runtime \

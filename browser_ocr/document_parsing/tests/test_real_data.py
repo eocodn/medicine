@@ -39,13 +39,10 @@ def _runtime_profile(image_sha256: str) -> dict:
         "inference_runtime_sha256": "0" * 64,
         "paddleocr_source_sha256": "a" * 64,
         "paddleocr_dictionary_sha256": "b" * 64,
-        "parser": "geometry_rule_v2",
         "implementation": {
             "full_document": "6" * 64,
             "full_document_cli": "7" * 64,
             "crop_refinement": "8" * 64,
-            "parser": "9" * 64,
-            "parser_contract": "a" * 64,
             "detector_runtime": "b" * 64,
             "detector_benchmark": "c" * 64,
         },
@@ -171,8 +168,6 @@ class RealParserDataTest(unittest.TestCase):
             self.assertEqual(draft["provenance"], sample["provenance"])
             self.assertEqual(draft["source_binding"], sample["source_binding"])
             self.assertTrue(all(node["label_status"] == "unlabeled" for node in draft["observation"]["nodes"]))
-            self.assertNotIn("parser", draft["observation"]["profile"])
-            self.assertNotIn("parser", draft["observation"]["profile"]["implementation"])
 
             draft["observation"]["nodes"][0].update(label_status="labeled", semantic_role="product", association_group="m1")
             draft["observation"]["nodes"][1].update(label_status="labeled", semantic_role="dose", association_group="m1")

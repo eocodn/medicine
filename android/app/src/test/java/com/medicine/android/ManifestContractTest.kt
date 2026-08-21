@@ -48,7 +48,7 @@ class ManifestContractTest {
         assertTrue(build.contains("MEDICINE_OCR_ASSETS_DIR"))
         assertTrue(activity.contains("/ocr-assets/"))
         assertTrue(index.contains("ocr-image-input"))
-        assertTrue(index.contains("ocr-review.js"))
+        assertTrue(index.contains("ocr-intake.js"))
     }
 
     @Test

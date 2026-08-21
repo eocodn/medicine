@@ -160,7 +160,6 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("term")
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--include-inactive", action="store_true")
-    search.add_argument("--mode", choices=["manual", "ocr"], default="manual")
     search.add_argument("--explain-matches", action="store_true")
     search.add_argument("--json", action="store_true")
 
@@ -294,7 +293,6 @@ def _dispatch(args, app: MedicationApp):
             args.term,
             args.limit,
             include_inactive=args.include_inactive,
-            mode=args.mode,
             explain=args.explain_matches,
         )
     elif args.command == "meds":

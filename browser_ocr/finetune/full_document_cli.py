@@ -15,15 +15,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from browser_ocr.document_parsing.baseline import BASELINE_ID
-
 from .crop_refinement import refine_prediction_crops
 from .dataset import DatasetError
 from .full_document import (
     build_document_regions,
-    parse_document_regions,
     parse_recognition_rows,
-    recognition_quality,
     sort_text_predictions,
 )
 from .native_runtime import native_runtime_identity as _native_runtime_identity
@@ -44,8 +40,6 @@ def _implementation_profile() -> dict[str, str]:
         "full_document": browser_root / "finetune" / "full_document.py",
         "full_document_cli": Path(__file__).resolve(),
         "crop_refinement": browser_root / "finetune" / "crop_refinement.py",
-        "parser": browser_root / "document_parsing" / "baseline.py",
-        "parser_contract": browser_root / "document_parsing" / "contract.py",
         "detector_runtime": browser_root / "detection" / "runtime.py",
         "detector_benchmark": browser_root / "detection" / "detector_benchmark.py",
     }
@@ -273,11 +267,7 @@ def build_ocr_producer_profile(
         "inference_runtime_sha256": _runtime_environment_sha256(args.recognizer_device),
         "paddleocr_source_sha256": paddleocr["source_sha256"],
         "paddleocr_dictionary_sha256": paddleocr["dictionary_sha256"],
-        "implementation": {
-            key: value
-            for key, value in implementation.items()
-            if key not in {"parser", "parser_contract"}
-        },
+        "implementation": implementation,
     }
 
 
@@ -339,16 +329,9 @@ def _run_logged(command: list[str], *, cwd: Path, log_path: Path) -> None:
 
 def _profile(args: argparse.Namespace, image: Path, recognizer: dict[str, object]) -> dict[str, object]:
     producer = build_ocr_producer_profile(args, recognizer)
-    implementation = _implementation_profile()
     return {
         **producer,
         "image_sha256": _sha256_file(image),
-        "parser": BASELINE_ID,
-        "implementation": {
-            **producer["implementation"],
-            "parser": implementation["parser"],
-            "parser_contract": implementation["parser_contract"],
-        },
     }
 
 
@@ -467,23 +450,6 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
                 regions = []
                 recognition_status = "skipped_no_detections"
 
-            quality = recognition_quality(regions)
-            parser_input_regions = sum(bool(str(region.get("text") or "").strip()) for region in regions)
-            parsing_started = time.perf_counter()
-            if not regions:
-                medications = []
-                parsing_status = "skipped_no_regions"
-            elif not quality["safe_for_structured_parsing"]:
-                # A document-level confidence collapse is not recoverable by
-                # geometry rules. Abstain rather than emitting exact medication
-                # values from a recognizer that is broadly signaling uncertainty.
-                medications = []
-                parsing_status = "abstained_low_ocr_quality"
-            else:
-                medications = parse_document_regions(regions)
-                parsing_status = "ok"
-            parsing_ms = (time.perf_counter() - parsing_started) * 1000.0
-
             height, width = image.shape[:2]
             result = {
                 "schema_version": 2,
@@ -512,18 +478,8 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
                         "latency_ms": round(recognition_ms, 3),
                         "device": args.recognizer_device,
                     },
-                    "parsing": {
-                        "status": parsing_status,
-                        "parser": BASELINE_ID,
-                        "input_regions": parser_input_regions,
-                        "skipped_empty_text_regions": len(regions) - parser_input_regions,
-                        "recognition_quality": quality,
-                        "rows": len(medications),
-                        "latency_ms": round(parsing_ms, 3),
-                    },
                 },
                 "regions": regions,
-                "medications": medications,
                 "text_lines": [region["text"] for region in regions],
             }
             _write_json_atomic(result_path, result)

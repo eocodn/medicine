@@ -66,8 +66,8 @@ function renderPeople() {
 }
 
 async function selectPerson(personId) {
-  if (personId !== state.currentPersonId && typeof resetOcrTransientState === "function") {
-    resetOcrTransientState({ clearSearch: true });
+  if (personId !== state.currentPersonId && typeof resetParserTransientState === "function") {
+    resetParserTransientState({ clearSearch: true });
   }
   state.currentPersonId = personId;
   localStorage.setItem("medicine.currentPersonId", personId);
