@@ -179,9 +179,11 @@ def _scan_normalized_tokens(
                 previous_text.isascii()
                 and previous_text.isalpha()
                 and len(previous_text) <= 3
+                and (len(previous_text) >= 2 or len(token) <= 2)
             )
             mixed_script_single_letter_code = bool(
-                len(previous_text) >= 2
+                len(token) <= 2
+                and len(previous_text) >= 2
                 and previous_text[-1].isascii()
                 and previous_text[-1].isalpha()
                 and not previous_text[-2].isascii()

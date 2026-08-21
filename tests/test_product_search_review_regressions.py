@@ -117,6 +117,12 @@ class ProductSearchReviewRegressionTest(unittest.TestCase):
             )
             add_product(
                 con,
+                "VITAMIN-E400",
+                "서흥비타민E400아이유연질캡슐",
+                "Tocopherol",
+            )
+            add_product(
+                con,
                 "GRAM-ASCII",
                 "셉타신주1g(세프메타졸나트륨)",
                 "Cefmetazole Sodium",
@@ -253,15 +259,26 @@ class ProductSearchReviewRegressionTest(unittest.TestCase):
     def test_mixed_script_code_like_name_matches_across_spacing_boundary(self) -> None:
         compact = parse_product_search_query("비타민D3")
         spaced = parse_product_search_query("비타민 D3")
+        compact_strength = parse_product_search_query("비타민E400")
         explicit_strength = parse_product_search_query("비타민E400IU")
 
         self.assertEqual(compact.number_tokens, ())
         self.assertEqual(spaced.number_tokens, ())
+        self.assertEqual(compact_strength.text_tokens, ("비타민e",))
+        self.assertEqual(compact_strength.number_tokens, ("400",))
         self.assertEqual(explicit_strength.text_tokens, ("비타민e",))
         self.assertEqual(explicit_strength.strength_atoms, (("400", "iu"),))
         self.assertEqual(
             self.repo.search("비타민 D3", limit=10)[0]["product_ref"],
             "VITAMIN-D3",
+        )
+        self.assertEqual(
+            self.repo.search("비타민E400", limit=10)[0]["product_ref"],
+            "VITAMIN-E400",
+        )
+        self.assertEqual(
+            self.repo.search("비타민 E400", limit=10)[0]["product_ref"],
+            "VITAMIN-E400",
         )
 
     def test_real_catalog_strength_unit_aliases_share_canonical_units(self) -> None:
