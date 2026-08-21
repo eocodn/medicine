@@ -207,6 +207,15 @@ test("editing a drug query invalidates any in-flight OCR search before debounce"
   assert.match(app, /#drug-query[\s\S]{0,520}addEventListener\("input"[\s\S]{0,220}invalidateProductSearch\(\)[\s\S]{0,220}resetOcrTransientState\(\)[\s\S]{0,320}setTimeout\(runDrugSearch, 280\)/);
 });
 
+test("OCR query replacement clears stale clickable results before async search", () => {
+  const app = source("app.js");
+
+  assert.match(
+    app,
+    /medicine:ocr-select[\s\S]{0,760}#drug-query[\s\S]{0,180}value = query[\s\S]{0,260}#search-status[\s\S]{0,160}textContent = ""[\s\S]{0,220}#drug-results[\s\S]{0,160}innerHTML = ""[\s\S]{0,300}await runDrugSearch/,
+  );
+});
+
 test("trim-equivalent manual edit rejects an already in-flight OCR search response", async () => {
   const { context, query, results } = productSearchContext();
   let resolveRequest;

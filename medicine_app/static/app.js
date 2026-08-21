@@ -507,6 +507,8 @@ function bindEvents() {
     window.MedicineOcrReview?.reset?.();
     const query = row.product_query.trim();
     $("#drug-query").value = query;
+    $("#search-status").textContent = "";
+    $("#drug-results").innerHTML = "";
     updateSearchMode();
     $("#ocr-review-panel").classList.add("hidden");
     const found = await runDrugSearch(`“${query}” 제품 후보를 확인하고 맞는 품목을 선택해주세요.`);
