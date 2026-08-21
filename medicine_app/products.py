@@ -17,8 +17,9 @@ from .product_search import (
 )
 
 
-_FTS_CANDIDATE_LIMIT_MANUAL = 240
-_FTS_CANDIDATE_LIMIT_OCR = 360
+_FUZZY_CANDIDATE_LIMIT_MANUAL = 240
+_FUZZY_CANDIDATE_LIMIT_OCR = 360
+_PRODUCT_FETCH_BATCH = 500
 
 
 class ProductRepository:
@@ -139,8 +140,7 @@ class ProductRepository:
                 ) {status_sql}
                 ORDER BY identifier_exact DESC,
                          CASE WHEN p.permit_status='active' THEN 0 ELSE 1 END,
-                         p.product_name,p.item_seq
-                LIMIT 1000""",
+                         p.product_name,p.item_seq""",
             (term, term, prefix, prefix),
         ).fetchall()
 
@@ -150,83 +150,99 @@ class ProductRepository:
         query: ProductSearchQuery,
         include_inactive: bool,
         *,
-        candidate_limit: int,
+        fuzzy_candidate_limit: int,
     ) -> list[sqlite3.Row]:
-        status_sql = "" if include_inactive else "AND p.permit_status='active'"
-        terms = fts_candidate_terms(query)
-        if not terms:
-            # FTS5 trigram intentionally cannot index one- or two-character terms.
-            # A bounded raw substring candidate scan handles terms below that length;
-            # the same deterministic matcher remains authoritative.
-            like = f"%{query.original}%"
-            return con.execute(
-                f"""SELECT p.* FROM products p
-                    WHERE (p.product_name LIKE ? OR p.ingredient_text LIKE ? OR p.manufacturer LIKE ?)
-                    {status_sql}
-                    LIMIT ?""",
-                (like, like, like, candidate_limit),
-            ).fetchall()
+        """Retrieve candidates without making semantic or field-priority decisions.
 
-        def fts_rows(table: str, match_query: str, limit: int) -> list[sqlite3.Row]:
-            return con.execute(
+        Complete normalized substring hits are always retained. Character-similarity
+        candidates are bounded per field, then all candidates are deduplicated and
+        passed to the single authoritative Python matcher/ranker.
+        """
+        def fts_ids(table: str, match_query: str, limit: int | None = None) -> list[str]:
+            limit_sql = "" if limit is None else " LIMIT ?"
+            params: tuple[object, ...] = (match_query,) if limit is None else (match_query, limit)
+            rows = con.execute(
                 f"""SELECT item_seq, MIN(rank) AS best_rank
                     FROM {table}
                     WHERE {table} MATCH ?
                     GROUP BY item_seq
-                    ORDER BY best_rank, item_seq
-                    LIMIT ?""",
-                (match_query, limit),
+                    ORDER BY best_rank, item_seq{limit_sql}""",
+                params,
             ).fetchall()
+            return [str(row[0]) for row in rows]
 
-        phrase_query = f'"{query.normalized}"'
-        if query.mode == "ocr":
-            # An exact phrase can occur in a lower-priority field while the
-            # intended product name contains an OCR edit. Reserve candidate
-            # capacity for the product-name bigram index even when an exact
-            # ingredient/manufacturer phrase already exists; final field-aware
-            # character ranking remains authoritative.
-            phrase_limit = max(1, candidate_limit // 3)
-            bigram_limit = max(1, candidate_limit - phrase_limit)
+        # Exact normalized substring candidates are complete. FTS5 trigram can
+        # answer length >= 3 directly; shorter queries scan the same canonical
+        # search representation rather than falling back to raw catalog text.
+        if len(query.normalized) >= 3:
+            item_seq = fts_ids("product_search_fts", f'"{query.normalized}"')
+        else:
+            like = f"%{query.normalized}%"
             item_seq = [
                 str(row[0])
-                for row in fts_rows("product_search_fts", phrase_query, phrase_limit)
+                for row in con.execute(
+                    """SELECT item_seq FROM product_search_fts
+                       WHERE product_name LIKE ? OR ingredient_text LIKE ? OR manufacturer LIKE ?
+                       ORDER BY item_seq""",
+                    (like, like, like),
+                ).fetchall()
             ]
+
+        # Similarity recall is field-independent: no hit in one field may stop
+        # another field from contributing candidates. The cap applies only to
+        # fuzzy recall, never to complete exact-substring candidates.
+        terms = fts_candidate_terms(query)
+        if terms:
+            term_query = " OR ".join(f'"{term}"' for term in terms)
+            for field in ("product_name", "ingredient_text", "manufacturer"):
+                item_seq.extend(
+                    fts_ids(
+                        "product_search_fts",
+                        f"{field} : ({term_query})",
+                        fuzzy_candidate_limit,
+                    )
+                )
+
+        if query.mode == "ocr":
             bigrams = ocr_candidate_bigrams(query)
             if bigrams:
                 bigram_query = " OR ".join(f'"{term}"' for term in bigrams)
                 item_seq.extend(
-                    str(row[0])
-                    for row in fts_rows("product_search_ocr_fts", bigram_query, bigram_limit)
+                    fts_ids("product_search_ocr_fts", bigram_query, fuzzy_candidate_limit)
                 )
-            if not item_seq:
-                trigram_query = " OR ".join(f'"{term}"' for term in terms)
-                item_seq.extend(
-                    str(row[0])
-                    for row in fts_rows("product_search_fts", trigram_query, candidate_limit)
-                )
-            item_seq = list(dict.fromkeys(item_seq))[:candidate_limit]
-        else:
-            # A contiguous normalized manual hit is strictly stronger than any
-            # insertion-only alternative, so avoid broad expansion when it exists.
-            item_seq = [
-                str(row[0])
-                for row in fts_rows("product_search_fts", phrase_query, candidate_limit)
-            ]
-            if not item_seq:
-                trigram_query = " OR ".join(f'"{term}"' for term in terms)
-                item_seq = [
-                    str(row[0])
-                    for row in fts_rows("product_search_fts", trigram_query, candidate_limit)
-                ]
+
+        item_seq = list(dict.fromkeys(item_seq))
         if not item_seq:
             return []
-        placeholders = ",".join("?" for _ in item_seq)
-        rows = con.execute(
-            f"SELECT p.* FROM products p WHERE p.item_seq IN ({placeholders}) {status_sql}",
-            item_seq,
-        ).fetchall()
-        by_id = {str(row["item_seq"]): row for row in rows}
+
+        status_sql = "" if include_inactive else "AND permit_status='active'"
+        by_id: dict[str, sqlite3.Row] = {}
+        for offset in range(0, len(item_seq), _PRODUCT_FETCH_BATCH):
+            batch = item_seq[offset:offset + _PRODUCT_FETCH_BATCH]
+            placeholders = ",".join("?" for _ in batch)
+            for row in con.execute(
+                f"SELECT * FROM products WHERE item_seq IN ({placeholders}) {status_sql}",
+                batch,
+            ).fetchall():
+                by_id[str(row["item_seq"])] = row
         return [by_id[value] for value in item_seq if value in by_id]
+
+    @staticmethod
+    def _search_sort_key(
+        row: sqlite3.Row,
+        match: ProductSearchMatch,
+    ) -> tuple[object, ...]:
+        status_rank = 0 if row["permit_status"] == "active" else 1
+        if match.field == "identifier":
+            exact_rank = 0 if match.tier == "identifier_exact" else 1
+            return (
+                0, exact_rank, status_rank,
+                str(row["product_name"]), str(row["item_seq"]),
+            )
+        return (
+            1, status_rank, *match.sort_key,
+            str(row["product_name"]), str(row["item_seq"]),
+        )
 
     @staticmethod
     def _rank_rows(
@@ -244,12 +260,7 @@ class ProductRepository:
             if match is None:
                 continue
             ranked.append((
-                (
-                    0 if row["permit_status"] == "active" else 1,
-                    *match.sort_key,
-                    str(row["product_name"]),
-                    str(row["item_seq"]),
-                ),
+                ProductRepository._search_sort_key(row, match),
                 row,
                 match,
             ))
@@ -290,22 +301,17 @@ class ProductRepository:
                     sort_key=(-1, 0 if exact else 1, 0, 0, 0),
                 )
                 ranked.append((
-                    (
-                        0 if row["permit_status"] == "active" else 1,
-                        *identifier_match.sort_key,
-                        str(row["product_name"]),
-                        str(row["item_seq"]),
-                    ),
+                    self._search_sort_key(row, identifier_match),
                     row,
                     identifier_match,
                 ))
-            candidate_limit = (
-                _FTS_CANDIDATE_LIMIT_OCR if query.mode == "ocr"
-                else _FTS_CANDIDATE_LIMIT_MANUAL
+            fuzzy_candidate_limit = (
+                _FUZZY_CANDIDATE_LIMIT_OCR if query.mode == "ocr"
+                else _FUZZY_CANDIDATE_LIMIT_MANUAL
             )
             ranked.extend(self._rank_rows(
                 self._fts_candidate_rows(
-                    con, query, include_inactive, candidate_limit=candidate_limit
+                    con, query, include_inactive, fuzzy_candidate_limit=fuzzy_candidate_limit
                 ),
                 query,
             ))

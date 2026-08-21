@@ -44,6 +44,7 @@ class ProductSearchQuery:
     original: str
     mode: str
     normalized: str
+    rank_text: str
     explicit_qualifiers: tuple[tuple[str, str], ...]
 
     @property
@@ -82,13 +83,10 @@ def _explicit_qualifiers(value: object) -> tuple[tuple[str, str], ...]:
     tokens = list(_QUALIFIER_TOKEN_RE.finditer(normalized))
     qualifiers: list[tuple[str, str]] = []
     numbers: list[tuple[str, int, int]] = []
-    previous_kind: str | None = None
-
     for index, token_match in enumerate(tokens):
         raw = token_match.group(0)
         unit = token_match.group(1)
         if raw == "/":
-            previous_kind = "slash"
             continue
         if unit:
             canonical_unit = unit.casefold()
@@ -107,16 +105,11 @@ def _explicit_qualifiers(value: object) -> tuple[tuple[str, str], ...]:
                         bound.append((current[0], canonical_unit))
                         number_index -= 1
                     qualifiers.extend(reversed(bound))
-            previous_kind = "unit"
             continue
         number = normalize_number(raw)
         if number is not None:
             numbers.append((number, token_match.start(), token_match.end()))
-            previous_kind = "number"
-        else:
-            previous_kind = None
-    # Preserve query order while removing duplicate evidence caused by repeated spellings.
-    return tuple(dict.fromkeys(qualifiers))
+    return tuple(qualifiers)
 
 
 def _strip_ocr_trailing_regimen(value: str) -> str:
@@ -129,11 +122,19 @@ def parse_product_search_query(value: object, *, mode: str = "manual") -> Produc
         raise ValueError("search mode must be manual or ocr")
     original = str(value or "").strip()
     search_text = _strip_ocr_trailing_regimen(original) if normalized_mode == "ocr" else original
+    explicit_qualifiers = _explicit_qualifiers(search_text)
+    normalized = canonical_search_text(search_text)
+    rank_text = (
+        _qualifier_free_search_text(search_text)
+        if explicit_qualifiers
+        else normalized
+    )
     return ProductSearchQuery(
         original=original,
         mode=normalized_mode,
-        normalized=canonical_search_text(search_text),
-        explicit_qualifiers=_explicit_qualifiers(search_text),
+        normalized=normalized,
+        rank_text=rank_text,
+        explicit_qualifiers=explicit_qualifiers,
     )
 
 
@@ -251,13 +252,20 @@ def _match_one_field(
     if not _ordered_qualifier_match(query.explicit_qualifiers, _explicit_qualifiers(value)):
         return None
 
+    normalized = query.rank_text
     if query.explicit_qualifiers:
-        normalized = _qualifier_free_search_text(query.original)
-        candidate = _qualifier_free_search_text(value)
-        if not normalized or not candidate:
-            return None
-    else:
-        normalized = query.normalized
+        qualifier_free_candidate = _qualifier_free_search_text(value)
+        if not normalized:
+            return ProductSearchMatch(
+                field=field,
+                tier="qualifier",
+                fuzzy=False,
+                similarity=1.0,
+                sort_key=(field_rank, 0, 0, 0, len(candidate)),
+            )
+        candidate = qualifier_free_candidate
+    if not candidate:
+        return None
     if candidate == normalized:
         tier_rank, tier, similarity, position = 0, "exact", 1.0, 0
     elif candidate.startswith(normalized):
