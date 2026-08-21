@@ -13,12 +13,15 @@ _UNIT_SENTINEL = {
     "mg": "__unit_mg__",
     "ug": "__unit_ug__",
     "ml": "__unit_ml__",
+    "g": "__unit_g__",
+    "iu": "__unit_iu__",
+    "pct": "__unit_pct__",
 }
 # Scope boundary: this parser models medication/OCR search syntax, not every
 # Unicode normalization equivalence. NFKC handles ordinary presentation forms;
 # unknown letters remain text qualifiers instead of being silently discarded.
 _TOKEN_RE = re.compile(
-    r"__unit_(mg|ug|ml)__|[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?|\.[0-9]+|[^\W\d_]+",
+    r"__unit_(mg|ug|ml|g|iu|pct)__|[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?|\.[0-9]+|[^\W\d_]+",
     re.IGNORECASE,
 )
 _ASCII_UNIT_PATTERNS = (
@@ -28,15 +31,21 @@ _ASCII_UNIT_PATTERNS = (
     (re.compile(r"(?:(?<=\d)(?:mcg|ug|μg)|(?<![a-z])(?:mcg|ug|μg)(?![a-z]))", re.IGNORECASE), "ug"),
     (re.compile(r"(?:(?<=\d)mg|(?<![a-z])mg(?![a-z]))", re.IGNORECASE), "mg"),
     (re.compile(r"(?:(?<=\d)ml|(?<![a-z])ml(?![a-z]))", re.IGNORECASE), "ml"),
+    (re.compile(r"(?:(?<=\d)g|(?<![a-z])g(?![a-z]))", re.IGNORECASE), "g"),
+    (re.compile(r"(?:(?<=\d)iu|(?<![a-z])iu(?![a-z]))", re.IGNORECASE), "iu"),
+    (re.compile(r"%"), "pct"),
 )
 _KOREAN_UNIT_PATTERNS = (
     (re.compile(r"마이크로[ \t]*(?:그램|그람)", re.IGNORECASE), "ug"),
     (re.compile(r"밀리[ \t]*(?:그램|그람)", re.IGNORECASE), "mg"),
     (re.compile(r"밀리[ \t]*리터", re.IGNORECASE), "ml"),
+    (re.compile(r"(?:(?<=\d)(?:그램|그람)|(?<![가-힣])(?:그램|그람)(?![가-힣]))"), "g"),
+    (re.compile(r"(?:(?<=\d)아이유|(?<![가-힣])아이유(?![가-힣]))"), "iu"),
+    (re.compile(r"(?:(?<=\d)단위|(?<![가-힣])단위(?![가-힣]))"), "iu"),
 )
 _OCR_STRENGTH_UNIT_PATTERN = (
-    r"(?:mcg|ug|μg|µg|mg|ml|㎍|㎎|㎖|"
-    r"마이크로(?:그램|그람)|밀리(?:그램|그람)|밀리리터)"
+    r"(?:mcg|ug|μg|µg|mg|ml|iu|g|%|㎍|㎎|㎖|"
+    r"마이크로(?:그램|그람)|밀리(?:그램|그람)|밀리리터|그램|그람|아이유|단위)"
 )
 _OCR_DOSE_AMOUNT_PATTERN = r"(?:\d+\s*/\s*\d+|\d+(?:\.\d+)?|[¼½¾⅐-⅟↉])"
 _OCR_TRAILING_REGIMEN_RE = re.compile(
@@ -165,14 +174,23 @@ def _scan_normalized_tokens(
             # such as `Tylenol500` keep the useful compact brand+strength
             # behavior. This is intentionally a small semantic rule rather than
             # a generic alphanumeric grammar.
+            previous_text = text_tokens[-1] if text_tokens else ""
+            short_ascii_code = bool(
+                previous_text.isascii()
+                and previous_text.isalpha()
+                and len(previous_text) <= 3
+            )
+            mixed_script_single_letter_code = bool(
+                len(previous_text) >= 2
+                and previous_text[-1].isascii()
+                and previous_text[-1].isalpha()
+                and not previous_text[-2].isascii()
+            )
             adjacent_latin_name = bool(
                 previous_kind == "text"
                 and previous_match is not None
                 and previous_match.end() == match.start()
-                and text_tokens
-                and text_tokens[-1].isascii()
-                and text_tokens[-1].isalpha()
-                and len(text_tokens[-1]) <= 3
+                and (short_ascii_code or mixed_script_single_letter_code)
                 and not unit_follows
             )
             if adjacent_latin_name:

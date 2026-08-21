@@ -109,6 +109,54 @@ class ProductSearchReviewRegressionTest(unittest.TestCase):
                 "Influenza Vaccine",
                 "Influenza B/California/12/2015",
             )
+            add_product(
+                con,
+                "VITAMIN-D3",
+                "비타민D3비오엔주(콜레칼시페롤)",
+                "Cholecalciferol",
+            )
+            add_product(
+                con,
+                "GRAM-ASCII",
+                "셉타신주1g(세프메타졸나트륨)",
+                "Cefmetazole Sodium",
+            )
+            add_product(
+                con,
+                "GRAM-KOREAN",
+                "대웅세포티암염산염주1그램",
+                "Cefotiam Hydrochloride",
+            )
+            add_product(
+                con,
+                "IU-ASCII",
+                "에스포젠프리필드주4000IU",
+                "Epoetin Alfa",
+            )
+            add_product(
+                con,
+                "IU-KOREAN",
+                "옥시톤주5아이유",
+                "Oxytocin",
+            )
+            add_product(
+                con,
+                "IU-UNIT-KOREAN",
+                "그린진에프주500단위",
+                "Coagulation Factor VIII",
+            )
+            add_product(
+                con,
+                "PERCENT-TARGET",
+                "푸카인0.5%주사",
+                "Bupivacaine Hydrochloride",
+            )
+            add_product(
+                con,
+                "PERCENT-MASS-DISTRACTOR",
+                "인데놀정10mg",
+                "Propranolol Hydrochloride",
+            )
         self.repo = ProductRepository(self.canonical_db)
 
     def tearDown(self) -> None:
@@ -201,6 +249,48 @@ class ProductSearchReviewRegressionTest(unittest.TestCase):
         results = self.repo.search("Vitamin B12", limit=10)
         self.assertEqual(results[0]["product_ref"], "VITAMIN-B12")
         self.assertNotIn("B12-DISTRACTOR", [row["product_ref"] for row in results])
+
+    def test_mixed_script_code_like_name_matches_across_spacing_boundary(self) -> None:
+        compact = parse_product_search_query("비타민D3")
+        spaced = parse_product_search_query("비타민 D3")
+        explicit_strength = parse_product_search_query("비타민E400IU")
+
+        self.assertEqual(compact.number_tokens, ())
+        self.assertEqual(spaced.number_tokens, ())
+        self.assertEqual(explicit_strength.text_tokens, ("비타민e",))
+        self.assertEqual(explicit_strength.strength_atoms, (("400", "iu"),))
+        self.assertEqual(
+            self.repo.search("비타민 D3", limit=10)[0]["product_ref"],
+            "VITAMIN-D3",
+        )
+
+    def test_real_catalog_strength_unit_aliases_share_canonical_units(self) -> None:
+        cases = (
+            ("셉타신 1그램", "GRAM-ASCII"),
+            ("대웅세포티암 1g", "GRAM-KOREAN"),
+            ("에스포젠 4000 단위", "IU-ASCII"),
+            ("옥시톤 5 IU", "IU-KOREAN"),
+            ("그린진 500 IU", "IU-UNIT-KOREAN"),
+        )
+        for query_text, expected in cases:
+            with self.subTest(query=query_text):
+                results = self.repo.search(query_text, limit=10)
+                self.assertTrue(results)
+                self.assertEqual(results[0]["product_ref"], expected)
+
+        self.assertEqual(parse_product_search_query("셉타신 1그램").unit_tokens, ("g",))
+        self.assertEqual(parse_product_search_query("옥시톤 5아이유").unit_tokens, ("iu",))
+        self.assertEqual(parse_product_search_query("그린진 500단위").unit_tokens, ("iu",))
+
+    def test_percent_is_an_explicit_strength_unit_not_a_unitless_number(self) -> None:
+        percent = parse_product_search_query("푸카인 0.5%")
+        self.assertEqual(percent.unit_tokens, ("pct",))
+        self.assertEqual(percent.strength_atoms, (("0.5", "pct"),))
+        self.assertEqual(
+            self.repo.search("푸카인 0.5%", limit=10)[0]["product_ref"],
+            "PERCENT-TARGET",
+        )
+        self.assertEqual(self.repo.search("인데놀 10%", limit=10), [])
 
     def test_long_latin_brand_with_adjacent_digits_still_means_strength(self) -> None:
         query = parse_product_search_query("Tylenol500")
