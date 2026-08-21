@@ -154,6 +154,9 @@ fn migrated_runtime_routes_are_owned_by_rust() {
     assert!(engine.handles_request("PATCH", "/api/people/example"));
     assert!(engine.handles_request("DELETE", "/api/people/example"));
     assert!(engine.handles_request("GET", "/api/people/example/daily-plan?date=2026-08-20"));
+    assert!(engine.handles_request("GET", "/api/medications/example/history"));
+    assert!(engine.handles_request("DELETE", "/api/medications/example?expected_revision=1"));
+    assert!(!engine.handles_request("PATCH", "/api/medications/example"));
     assert!(engine.handles_request("POST", "/api/medications/example/prn-intakes"));
     assert!(engine.handles_request("POST", "/api/dose-instances/example"));
     assert!(engine.handles_request("DELETE", "/api/dose-instances/example/completion"));
