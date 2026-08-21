@@ -305,8 +305,8 @@ class ProductSafetyBatchTest(unittest.TestCase):
                 self.person["id"], product_ref="OLD", start_date="2026-08-15", prescription_days=7
             )
 
-    def test_search_reports_partial_dur_coverage_without_overstatement(self) -> None:
-        result = self.app.search_products("부분DUR약")[0]
+    def test_product_lookup_reports_partial_dur_coverage_without_overstatement(self) -> None:
+        result = self.app.get_product("PARTIAL")
         self.assertTrue(result["dur_match"])
         self.assertEqual(result["dur_coverage_status"], "partial")
 

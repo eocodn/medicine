@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, RevisionConflict
+from .products import ProductSearchUnavailable
 
 
 DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")
@@ -109,6 +110,8 @@ class PrnIntakeCreate(BaseModel):
 def _translate_error(exc: Exception) -> HTTPException:
     if isinstance(exc, (RevisionConflict, IdempotencyConflict)):
         return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, ProductSearchUnavailable):
+        return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, FileNotFoundError):
         return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, KeyError):

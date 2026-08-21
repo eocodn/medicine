@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 
 from .core import ConfirmationRequired, MedicationApp
+from .products import ProductSearchUnavailable
 
 
 DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")
@@ -384,6 +385,9 @@ def main(argv=None) -> int:
         else:
             app = MedicationApp(args.canonical_db, args.personal_db)
             payload = _dispatch(args, app)
+    except ProductSearchUnavailable as exc:
+        emit({"detail": str(exc)}, getattr(args, "json", False))
+        return 3
     except ConfirmationRequired as exc:
         emit({
             "confirmation_required": True,

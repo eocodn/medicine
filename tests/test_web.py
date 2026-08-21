@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,7 +7,6 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from medicine_app.web import create_web_app
-from tests.canonical_fixture_support import add_product
 from tests.test_app_core import make_canonical_db
 
 
@@ -198,43 +196,6 @@ class WebApiTest(unittest.TestCase):
         self.assertNotIn("요청 실패 (", native_api.text)
         self.assertNotIn("요청 실패 (", script.text)
 
-    def test_product_search_can_include_inactive_permit_records(self) -> None:
-        default = self.client.get("/api/products", params={"q": "과거취하약"})
-        self.assertEqual(default.status_code, 200)
-        self.assertEqual(default.json(), [])
-
-        response = self.client.get(
-            "/api/products",
-            params={"q": "과거취하약", "include_inactive": "true"},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()[0]["permit_status"], "withdrawn")
-        self.assertEqual(response.json()[0]["permit_status_name"], "취하")
-
-    def test_product_search_ocr_mode_is_available_on_development_web(self) -> None:
-        with sqlite3.connect(self.canonical_db) as con:
-            add_product(
-                con,
-                "WEB-OCR",
-                "타진서방정 10/5mg",
-                "Oxycodone/Naloxone",
-            )
-
-        manual = self.client.get(
-            "/api/products",
-            params={"q": "타진서방정 10/5mg0.5정"},
-        )
-        ocr = self.client.get(
-            "/api/products",
-            params={"q": "타진서방정 10/5mg0.5정", "mode": "ocr"},
-        )
-
-        self.assertEqual(manual.status_code, 200)
-        self.assertEqual(manual.json(), [])
-        self.assertEqual(ocr.status_code, 200)
-        self.assertEqual(ocr.json()[0]["product_ref"], "WEB-OCR")
-
     def test_inactive_product_cannot_enter_current_medication_regimen(self) -> None:
         person = self.client.post(
             "/api/people",
@@ -266,7 +227,7 @@ class WebApiTest(unittest.TestCase):
         with self.assertRaisesRegex(FileNotFoundError, "canonical database not found"):
             create_web_app(missing, self.personal_db.with_name("other.sqlite"))
 
-    def test_person_search_preview_add_and_log_flow(self) -> None:
+    def test_person_preview_add_and_log_flow(self) -> None:
         person_response = self.client.post(
             "/api/people",
             json={
@@ -279,10 +240,6 @@ class WebApiTest(unittest.TestCase):
         )
         self.assertEqual(person_response.status_code, 201)
         person = person_response.json()
-
-        search = self.client.get("/api/products", params={"q": "약B"})
-        self.assertEqual(search.status_code, 200)
-        self.assertEqual(search.json()[0]["product_code"], "MFDS-B")
 
         current_warning = self.client.post(
             f"/api/people/{person['id']}/medications",
@@ -380,10 +337,6 @@ class WebApiTest(unittest.TestCase):
             "/api/people",
             json={"name": "일정", "birth_date": "1990-01-01", "sex": "female", "pregnancy_status": "not_pregnant", "lactation_status": "not_breastfeeding"},
         ).json()
-
-        search = self.client.get("/api/products", params={"q": "전체카탈로그약B"})
-        self.assertEqual(search.status_code, 200)
-        self.assertEqual(search.json()[0]["product_ref"], "MFDS-B")
 
         added = self.client.post(
             f"/api/people/{person['id']}/medications",

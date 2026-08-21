@@ -540,56 +540,26 @@ class MedicationAppTest(unittest.TestCase):
     def test_schedule_independent_dose_logging_is_not_exposed(self) -> None:
         self.assertFalse(hasattr(self.app, "record_dose"))
 
-    def test_product_search_returns_both_sides_of_combination_rows_without_duplicates(self) -> None:
-        results = self.app.search_products("약", limit=10)
-        by_code = {row["product_code"] for row in results}
-        self.assertTrue({"MFDS-A", "MFDS-B", "MFDS-C", "MFDS-D"}.issubset(by_code))
+    def test_canonical_product_lookup_returns_item_seq_identity(self) -> None:
+        product = self.app.get_product("MFDS-B")
+        self.assertEqual(product["product_ref"], "MFDS-B")
+        self.assertEqual(product["product_code"], "MFDS-B")
+        self.assertTrue(product["dur_match"])
+        self.assertEqual(product["catalog_source"], "canonical")
+        self.assertEqual(product["permit_status"], "active")
 
-    def test_product_search_stays_one_row_when_product_has_multiple_dur_categories(self) -> None:
-        from tests.canonical_fixture_support import add_linked_rule
-        con = sqlite3.connect(self.canonical_db)
-        add_linked_rule(
-            con, category="pregnancy_contraindication", item_seq="MFDS-A",
-            ingredient="drug-a", rule_value="2", details="임부금기",
-        )
-        con.commit()
-        con.close()
-        results = self.app.search_products("약A", limit=10)
-        self.assertEqual([row["product_ref"] for row in results].count("MFDS-A"), 1)
-
-    def test_canonical_search_returns_item_seq_identity(self) -> None:
-        results = self.app.search_products("전체카탈로그약B", limit=10)
-        self.assertEqual(results[0]["product_ref"], "MFDS-B")
-        self.assertEqual(results[0]["product_code"], "MFDS-B")
-        self.assertTrue(results[0]["dur_match"])
-        self.assertEqual(results[0]["catalog_source"], "canonical")
-        self.assertEqual(results[0]["permit_status"], "active")
-
-        unmatched = self.app.search_products("비급여전체약X", limit=10)[0]
+        unmatched = self.app.get_product("MFDS-X")
         self.assertEqual(unmatched["product_ref"], "MFDS-X")
         self.assertEqual(unmatched["product_code"], "MFDS-X")
         self.assertFalse(unmatched["dur_match"])
 
-    def test_product_search_excludes_inactive_by_default_and_can_include_it(self) -> None:
-        self.assertEqual(self.app.search_products("과거취하약", limit=10), [])
-
-        results = self.app.search_products("과거취하약", limit=10, include_inactive=True)
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["product_ref"], "MFDS-W")
-        self.assertEqual(results[0]["permit_status"], "withdrawn")
-        self.assertEqual(results[0]["permit_status_name"], "취하")
-        self.assertEqual(results[0]["cancel_date"], "2025-07-01")
-
-    def test_edi_is_searchable_but_not_accepted_as_safety_identity(self) -> None:
-        results = self.app.search_products("P-A", limit=10)
-        self.assertEqual(results[0]["product_ref"], "MFDS-A")
+    def test_edi_is_not_accepted_as_safety_identity(self) -> None:
         with self.assertRaises(KeyError):
             self.app.get_product("P-A")
 
-    def test_search_uses_canonical_reference_database_only(self) -> None:
+    def test_product_lookup_uses_canonical_reference_database_only(self) -> None:
         app = MedicationApp(self.canonical_db, self.personal_db.with_name("other-personal.sqlite"))
-        self.assertEqual(app.search_products("약A", limit=10)[0]["product_ref"], "MFDS-A")
+        self.assertEqual(app.get_product("MFDS-A")["product_ref"], "MFDS-A")
 
     def test_adds_structured_prescription_and_computes_end_date(self) -> None:
         person = self.app.create_person("A", "1990-01-01", "female", "not_pregnant", "not_breastfeeding")

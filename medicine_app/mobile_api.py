@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .core import ConfirmationRequired, IdempotencyConflict, MedicationApp, RevisionConflict
 from .mobile_request_policy import classify_mobile_request
+from .products import ProductSearchUnavailable
 
 
 _PERSON_FIELDS = {"name", "birth_date", "sex", "pregnancy_status", "lactation_status", "notes"}
@@ -139,6 +140,8 @@ class MobileApi:
                 "detail": "reference data unavailable; app update required",
                 "reference_status": exc.reason,
             }
+        except ProductSearchUnavailable as exc:
+            status, body = 503, {"detail": str(exc)}
         except FileNotFoundError as exc:
             status, body = 503, {"detail": str(exc)}
         except KeyError as exc:
