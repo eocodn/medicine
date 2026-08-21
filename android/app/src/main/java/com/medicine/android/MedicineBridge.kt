@@ -15,27 +15,37 @@ class MedicineBridge(
     private val vault: PersonalDatabaseVault,
 ) {
     private val apiLock = Any()
-    private val api: PyObject
+    private val nativeCore: MedicineNativeCore
+    private val pythonApi: PyObject
     private val requestExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     @Volatile private var responseHandler: ((String, String) -> Unit)? = null
     private val dispatcher: BridgeRequestDispatcher
+    private val closeLock = Any()
+    private var closed = false
 
     init {
-        api = PersonalDatabaseOperationCoordinator.exclusive {
-            vault.openForUse()
-            try {
-                Python.getInstance()
-                    .getModule("medicine_app.mobile_api")
-                    .callAttr(
-                        "create_bridge",
-                        referenceDatabase?.absolutePath,
-                        personalDatabase.absolutePath,
-                    )
-                    .also { created -> synchronized(apiLock) { created.callAttr("prepare_for_seal") } }
-            } finally {
-                vault.sealAfterUse()
+        val createdNativeCore = MedicineNativeCore(referenceDatabase)
+        try {
+            pythonApi = PersonalDatabaseOperationCoordinator.exclusive {
+                vault.openForUse()
+                try {
+                    Python.getInstance()
+                        .getModule("medicine_app.mobile_api")
+                        .callAttr(
+                            "create_bridge",
+                            referenceDatabase?.absolutePath,
+                            personalDatabase.absolutePath,
+                        )
+                        .also { created -> synchronized(apiLock) { created.callAttr("prepare_for_seal") } }
+                } finally {
+                    vault.sealAfterUse()
+                }
             }
+        } catch (error: Throwable) {
+            createdNativeCore.close()
+            throw error
         }
+        nativeCore = createdNativeCore
         dispatcher = BridgeRequestDispatcher(
             executor = requestExecutor,
             processor = ::processRequest,
@@ -48,7 +58,8 @@ class MedicineBridge(
     }
 
     fun setReferenceAvailable(available: Boolean, reason: String? = null) = synchronized(apiLock) {
-        api.callAttr("set_reference_available", available, reason)
+        pythonApi.callAttr("set_reference_available", available, reason)
+        nativeCore.setReferenceAvailable(available, reason)
     }
 
     @JavascriptInterface
@@ -71,17 +82,23 @@ class MedicineBridge(
     }
 
     fun close() {
-        responseHandler = null
-        dispatcher.close()
-        // Never interrupt an in-flight personal write: it must reach the vault
-        // reseal boundary even after the Activity stops accepting responses.
-        requestExecutor.shutdown()
+        synchronized(closeLock) {
+            if (closed) return
+            closed = true
+            responseHandler = null
+            dispatcher.close()
+            // Queue native teardown after the dispatch drain. This preserves the
+            // existing invariant that an in-flight personal write reaches the
+            // vault reseal boundary before native state is released.
+            requestExecutor.execute { synchronized(apiLock) { nativeCore.close() } }
+            requestExecutor.shutdown()
+        }
     }
 
     private fun processRequest(request: BridgeRequest): String {
         val access = try {
             synchronized(apiLock) {
-                api.callAttr("request_access", request.method, request.path).toString()
+                nativeCore.requestAccess(request.method, request.path)
             }
         } catch (error: Throwable) {
             Log.e(TAG, "Native API bridge access classification failed", error)
@@ -110,7 +127,7 @@ class MedicineBridge(
             try {
                 val discardedReadOnlySnapshot = readOnly && vault.finishReadOnlyUse(openOrigin)
                 if (!discardedReadOnlySnapshot) {
-                    synchronized(apiLock) { api.callAttr("prepare_for_seal") }
+                    synchronized(apiLock) { pythonApi.callAttr("prepare_for_seal") }
                     vault.sealAfterUse()
                 }
             } catch (error: Throwable) {
@@ -122,7 +139,11 @@ class MedicineBridge(
 
     private fun callApi(request: BridgeRequest): String = try {
         synchronized(apiLock) {
-            api.callAttr("request", request.method, request.path, request.body).toString()
+            if (nativeCore.handlesRequest(request.method, request.path)) {
+                nativeCore.request(request.method, request.path, request.body)
+            } else {
+                pythonApi.callAttr("request", request.method, request.path, request.body).toString()
+            }
         }
     } catch (error: Throwable) {
         Log.e(TAG, "Native API bridge request failed", error)

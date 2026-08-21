@@ -19,12 +19,16 @@ class ManifestContractTest {
     }
 
     @Test
-    fun androidShellUsesLocalAssetsAndPythonApiBridge() {
+    fun androidShellUsesLocalAssetsAndRustApiBridge() {
         val build = java.io.File("build.gradle.kts").readText()
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
+        val nativeCore = java.io.File("src/main/java/com/medicine/android/MedicineNativeCore.kt")
+        val proguard = java.io.File("proguard-rules.pro").readText()
         assertFalse(build.contains("mlkit", ignoreCase = true))
         assertTrue(build.contains("com.chaquo.python"))
         assertTrue(build.contains("androidx.webkit:webkit"))
+        assertTrue(build.contains("buildRustNative"))
         assertFalse(build.contains("medicineWebUrl"))
         assertFalse(activity.contains("MEDICINE_WEB_URL"))
         assertTrue(activity.contains("WebViewAssetLoader"))
@@ -37,6 +41,13 @@ class ManifestContractTest {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
         assertTrue(manifest.contains("androidx.core.content.FileProvider"))
         assertTrue(manifest.contains("@xml/file_paths"))
+        assertTrue(nativeCore.isFile)
+        assertTrue(bridge.contains("MedicineNativeCore"))
+        assertTrue(bridge.contains("nativeCore.requestAccess"))
+        assertTrue(bridge.contains("nativeCore.handlesRequest"))
+        assertTrue(bridge.contains("nativeCore.request"))
+        assertFalse(bridge.contains("api.callAttr(\"request_access\""))
+        assertTrue(proguard.contains("-keep class com.medicine.android.MedicineNativeCore"))
     }
 
     @Test

@@ -13,13 +13,20 @@ RUN npm ci --ignore-scripts --no-audit --no-fund \
 COPY browser_ocr/mobile ./mobile
 RUN node mobile/export_runtime.mjs /downloads /out
 
+FROM rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS rust-toolchain
+
+RUN rustup target add aarch64-linux-android
+
 FROM gradle:9.4.1-jdk17@sha256:549ab76a04fc532f37945d689207a3fb2642350b1235901eb652c93dae218dd0
 
 ENV ANDROID_HOME=/opt/android-sdk \
     ANDROID_SDK_ROOT=/opt/android-sdk \
+    CARGO_HOME=/tmp/cargo-home \
     GRADLE_USER_HOME=/opt/gradle-cache \
     MEDICINE_OCR_ASSETS_DIR=/opt/medicine-ocr-assets \
-    PATH=/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:$PATH
+    MEDICINE_ANDROID_NDK_VERSION=29.0.14206865 \
+    RUSTUP_HOME=/usr/local/rustup \
+    PATH=/usr/local/cargo/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:$PATH
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates unzip wget \
@@ -31,10 +38,15 @@ RUN apt-get update \
     && mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest" \
     && rm /tmp/cmdline-tools.zip \
     && yes | sdkmanager --licenses >/dev/null \
-    && sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
+    && sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;${MEDICINE_ANDROID_NDK_VERSION}" \
     && chmod -R a+rX "$ANDROID_HOME"
 
 COPY --from=ocr-assets /out /opt/medicine-ocr-assets
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace/android
 COPY android/settings.gradle.kts android/build.gradle.kts android/gradle.properties android/release.properties ./

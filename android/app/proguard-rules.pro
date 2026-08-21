@@ -3,3 +3,8 @@
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
+
+# Rust exports JNI symbols using this class and method names verbatim.
+-keep class com.medicine.android.MedicineNativeCore {
+    *;
+}
