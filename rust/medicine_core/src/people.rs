@@ -1,5 +1,5 @@
 use chrono::{Datelike, FixedOffset, NaiveDate, Utc};
-use rusqlite::{params, Connection, Row, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -23,7 +23,7 @@ enum PeopleRoute<'a> {
     Delete(&'a str),
 }
 
-enum PeopleError {
+pub(crate) enum PeopleError {
     BadRequest(String),
     NotFound(String),
     Unavailable,
@@ -69,6 +69,19 @@ impl PersonRecord {
             "profile_needs_review": profile_needs_review(self),
         }))
     }
+}
+
+pub(crate) fn load_person(con: &Connection, person_id: &str) -> Result<Value, PeopleError> {
+    con.query_row(
+        "SELECT id,name,birth_date,sex,pregnancy_status,lactation_status,notes,created_at
+         FROM people WHERE id=?",
+        [person_id],
+        PersonRecord::from_row,
+    )
+    .optional()
+    .map_err(|_| PeopleError::Internal)?
+    .ok_or_else(|| PeopleError::NotFound("person not found".to_owned()))?
+    .to_json()
 }
 
 pub(crate) fn handles_request(method: &str, path: &str) -> bool {

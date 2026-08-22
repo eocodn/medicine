@@ -146,6 +146,16 @@ fn coverage_summary(
     }))
 }
 
+pub(crate) fn coverage_for_product(
+    product: &Value,
+    dataset: &Value,
+    person: &Map<String, Value>,
+    issues: &BTreeMap<String, Vec<Value>>,
+    pregnancy_relevant: bool,
+) -> Result<Value, ()> {
+    coverage_summary(product, dataset, person, issues, pregnancy_relevant).map_err(|_| ())
+}
+
 fn parse_object(raw: &str, name: &str) -> Result<Map<String, Value>, BasisError> {
     let value = serde_json::from_str::<Value>(raw)
         .map_err(|_| BasisError::BadRequest(format!("{name} must be valid JSON")))?;

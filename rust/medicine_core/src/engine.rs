@@ -2,7 +2,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-use crate::{doses, medications, people, planning, prn};
+use crate::{doses, medications, people, planning, preview, prn};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccessClass {
@@ -92,6 +92,7 @@ impl MedicineEngine {
         (normalized_method(method) == "GET" && path == "/api/health")
             || people::handles_request(method, path)
             || planning::handles_request(method, path)
+            || preview::handles_request(method, path)
             || medications::handles_request(method, path)
             || prn::handles_request(method, path)
             || doses::handles_request(method, path)
@@ -99,6 +100,20 @@ impl MedicineEngine {
 
     pub fn request(&self, method: &str, raw_path: &str, body_json: &str) -> String {
         let path = request_path(raw_path);
+        let policy = classify_request(method, raw_path);
+        if policy.requires_reference
+            && !self.reference_available
+            && self.handles_request(method, raw_path)
+        {
+            return json!({
+                "status": 503,
+                "body": {
+                    "detail": "reference data unavailable; app update required",
+                    "reference_status": self.reference_status.as_deref().unwrap_or("unavailable"),
+                }
+            })
+            .to_string();
+        }
         if normalized_method(method) == "GET" && path == "/api/health" {
             return self.health_response();
         }
@@ -110,6 +125,15 @@ impl MedicineEngine {
         if let Some((status, body)) =
             planning::handle_request(self.personal_db.as_deref(), method, raw_path, path)
         {
+            return json!({"status": status, "body": body}).to_string();
+        }
+        if let Some((status, body)) = preview::handle_request(
+            self.canonical_db.as_deref(),
+            self.personal_db.as_deref(),
+            method,
+            path,
+            body_json,
+        ) {
             return json!({"status": status, "body": body}).to_string();
         }
         if let Some((status, body)) =

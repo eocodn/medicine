@@ -71,6 +71,9 @@ fn build(input_json: &str) -> Result<Value, DisplayError> {
         .ok_or_else(|| DisplayError::BadRequest("review_items must be an array".to_owned()))?;
     let as_of = parse_optional_date(input.get("as_of").and_then(Value::as_str))
         .map_err(|_| DisplayError::BadRequest("as_of must be YYYY-MM-DD".to_owned()))?;
+    let fallback_as_of = parse_optional_date(input.get("fallback_as_of").and_then(Value::as_str))
+        .map_err(|_| DisplayError::BadRequest("fallback_as_of must be YYYY-MM-DD".to_owned()))?
+        .or(as_of);
 
     let mut checks = build_checks(
         person,
@@ -83,7 +86,13 @@ fn build(input_json: &str) -> Result<Value, DisplayError> {
         candidate_course,
         as_of,
     )?;
-    apply_product_flag_fallbacks(&mut checks, product, person, &detailed_categories, as_of)?;
+    apply_product_flag_fallbacks(
+        &mut checks,
+        product,
+        person,
+        &detailed_categories,
+        fallback_as_of,
+    )?;
     checks.extend(build_product_flag_checks(product));
     let requires_review = !review_items.is_empty()
         || checks.iter().any(|item| {
