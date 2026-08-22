@@ -72,6 +72,7 @@ class RelationTarget:
     product_index: int
     field_index: int
     label: int
+    features: tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -374,6 +375,12 @@ def build_document_graph(document: Mapping[str, Any], *, neighbor_count: int = 1
             product_index=node_index[product_id],
             field_index=node_index[field_id],
             label=1 if label == "same_medication" else 0,
+            features=_edge_features(
+                nodes[node_index[product_id]],
+                nodes[node_index[field_id]],
+                document_width=document_width,
+                document_height=document_height,
+            ),
         ))
 
     return DocumentGraph(
