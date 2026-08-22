@@ -12,7 +12,6 @@ dependencies = [
 ]
 
 [project.scripts]
-medicine-app = "medicine_app.cli:main"
 medicine-canonical = "medicine_canonical.cli:main"
 
 [tool.setuptools.packages.find]

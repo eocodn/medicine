@@ -199,7 +199,132 @@ def add_flag(
     )
 
 
+def make_canonical_db(path: Path) -> None:
+    con = create_canonical_fixture(path)
+    add_product(con, "MFDS-Z", "졸피뎀제품", "Zolpidem", dosage_form="정제")
+    add_product(con, "MFDS-ZU", "졸피뎀제형미상제품", "Zolpidem", dosage_form=None)
+    add_product(con, "MFDS-I", "이트라코나졸제품", "Itraconazole", dosage_form="캡슐제")
+    add_product(con, "MFDS-A", "알프라졸람제품", "Alprazolam", dosage_form="정제")
+    add_product(con, "MFDS-X", "규칙없는제품", "Mystery Salt", dosage_form="정제")
+    add_product(con, "MFDS-U", "연결불완전제품", "FutureDrug Salt", dosage_form="정제")
+    add_product(con, "MFDS-LU", "수유범위미확정제품", "Osimertinib Mesylate", dosage_form="정제")
+    add_product(con, "MFDS-M", "정량비교졸피뎀", "Zolpidem", dosage_form="정제", edi="P-LINK")
+    add_product(con, "MFDS-AGE-T", "세티리진정", "Cetirizine", dosage_form=None)
+    add_product(con, "MFDS-AGE-U", "세티리진제형미상", "Cetirizine", dosage_form=None)
+    add_product(con, "MFDS-AGE-N", "비고연령금기제품", "DoxyLike", dosage_form="정제")
+    add_product(con, "MFDS-P1", "임부1등급제품", "PregnancyGradeOne", dosage_form="정제")
+    add_product(con, "MFDS-P2", "임부2등급제품", "PregnancyGradeTwo", dosage_form="정제")
+    add_product(con, "MFDS-PC", "조건부임부금기제품", "PregnancyConditional", dosage_form="정제")
+    add_product(con, "MFDS-PN", "비고조건임부금기제품", "PregnancyNoteConditional", dosage_form="정제")
+    add_product(con, "MFDS-PA", "임부등급충돌제품", "PregnancyAmbiguous", dosage_form="정제")
+    add_product(con, "MFDS-CW", "중단조건약", "ConditionalWashout", dosage_form="정제")
+    add_product(con, "MFDS-CT", "중단조건대상약", "ConditionalTarget", dosage_form="정제")
+    add_product(con, "MFDS-CN-A", "용량조건병용약", "ConditionalDoseA", dosage_form="정제")
+    add_product(con, "MFDS-CN-B", "용량조건대상약", "ConditionalDoseB", dosage_form="정제")
+    add_linked_rule(
+        con, category="duration_caution", item_seq="MFDS-Z", ingredient="Zolpidem",
+        rule_value="28일", details="최대 투여기간 28일", dosage_form="정제",
+    )
+    add_linked_rule(
+        con, category="duration_caution", item_seq="MFDS-M", ingredient="Zolpidem",
+        rule_value="28일", details="최대 투여기간 28일", dosage_form="정제",
+    )
+    add_linked_rule(
+        con, category="combination_contraindication", item_seq="MFDS-A", ingredient="Alprazolam",
+        paired_item_seq="MFDS-I", paired_ingredient="Itraconazole", details="병용금기",
+    )
+    add_linked_rule(
+        con,
+        category="age_contraindication",
+        item_seq="MFDS-AGE-T",
+        ingredient="Cetirizine",
+        rule_value="액제: 2세 미만, 정제, 캡슐제: 6세 미만",
+        product_dosage_form="필름코팅정",
+        criterion_dosage_form="액제, 정제, 캡슐제",
+    )
+    add_linked_rule(
+        con,
+        category="age_contraindication",
+        item_seq="MFDS-AGE-U",
+        ingredient="Cetirizine",
+        rule_value="액제: 2세 미만, 정제, 캡슐제: 6세 미만",
+        product_dosage_form=None,
+        criterion_dosage_form="액제, 정제, 캡슐제",
+    )
+    add_linked_rule(
+        con, category="age_contraindication", item_seq="MFDS-AGE-N",
+        ingredient="DoxyLike", rule_value="12세 미만", criterion_qualifier_note="다만, 다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여",
+        details="12세 미만 소아 주의", dosage_form="정제",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-P1",
+        ingredient="PregnancyGradeOne", rule_value="1등급", details="임부금기 1등급",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-P2",
+        ingredient="PregnancyGradeTwo", rule_value="2", details="임부금기 2등급",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-PC",
+        ingredient="PregnancyConditional", rule_value="2등급(말라리아 치료시 제외)",
+        details="말라리아 치료 목적이면 예외가 될 수 있음",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-PN",
+        ingredient="PregnancyNoteConditional", rule_value="2등급",
+        criterion_qualifier_note="단, 강심제로 사용시 제외",
+        details="강심제 사용 여부에 따라 예외가 있음",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-PA",
+        ingredient="PregnancyAmbiguous", rule_value="1등급", details="적응증 A",
+    )
+    add_linked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-PA",
+        ingredient="PregnancyAmbiguous", rule_value="2등급", details="적응증 B",
+    )
+    add_linked_rule(
+        con, category="combination_contraindication", item_seq="MFDS-CW",
+        ingredient="ConditionalWashout", paired_item_seq="MFDS-CT",
+        paired_ingredient="ConditionalTarget",
+        details="ConditionalWashout 중단한 직후에는 ConditionalTarget 시작할 수 없음",
+    )
+    add_linked_rule(
+        con, category="combination_contraindication", item_seq="MFDS-CN-A",
+        ingredient="ConditionalDoseA", paired_item_seq="MFDS-CN-B",
+        paired_ingredient="ConditionalDoseB", details="혈액학적 독성 증가",
+        criterion_qualifier_note="methotrexate(1週에 20mg 이상 투여시)",
+    )
+    add_unlinked_rule(
+        con, category="duration_caution", item_seq="MFDS-ZU", ingredient="Zolpidem",
+        details="제형 적용범위를 확정하지 못함",
+    )
+    add_unlinked_rule(
+        con, category="pregnancy_contraindication", item_seq="MFDS-U", ingredient="FutureDrug Salt",
+    )
+    # The mobile release gate verifies bridge materialization, so this synthetic
+    # canonical fixture carries representative bridge rows instead of bypassing
+    # release verification in tests.
+    criterion_id = con.execute("SELECT id FROM ingredient_rules ORDER BY id LIMIT 1").fetchone()[0]
+    con.execute(
+        "INSERT INTO dur_ingredient_concepts(concept_id,category,ingredient_code) VALUES('fixture:concept','duration_caution','D-MFDS-Z')"
+    )
+    con.execute(
+        """INSERT INTO dur_product_item_signatures(
+               item_seq,signature_type,signature_key,component_count,match_method,evidence_kind
+           ) VALUES('MFDS-Z','code','D-MFDS-Z',1,'mfds_ingredient_code','fixture')"""
+    )
+    con.execute(
+        """INSERT INTO dur_criterion_signatures(
+               criterion_rule_id,category,effect_key,signature_key,match_method,evidence_kind
+           ) VALUES(?,'duration_caution','','D-MFDS-Z','mfds_ingredient_code','fixture')""",
+        (criterion_id,),
+    )
+    con.commit()
+    con.close()
+
+
 __all__ = [
-    "create_canonical_fixture", "add_product", "add_linked_rule", "add_unlinked_rule",
+    "create_canonical_fixture", "make_canonical_db", "add_product", "add_linked_rule", "add_unlinked_rule",
     "add_flag", "PERMIT_SOURCE", "DUR_SOURCE", "CRITERION_SOURCE_BY_CATEGORY",
 ]

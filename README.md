@@ -313,7 +313,7 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 review UI는 없으며, learned parser runtime도 아직 연결되지 않았으므로 detector/recognizer가 구조화 약 행을 가장하지 않고
 parser unavailable 상태를 명시적으로 반환합니다.
 
-learned parser는 `medicine_app.intake`와 동일한 구조의 medication row를 출력합니다. 각 행은 `product_query`, 정규화 가능한
+learned parser는 `browser_ocr/document_parsing/contract.py`가 정의하는 구조의 medication row를 출력합니다. 각 행은 `product_query`, 정규화 가능한
 medication draft, 명시적 uncertainty code만 가지며 canonical 제품 identity를 확정하지 않습니다. `product_query`는 별도 OCR
 검색 모드 없이 일반 제품 검색으로 바로 전달되고, 선택된 제품과 draft/uncertainty는 최종 복용정보 편집 화면에서 한 번만
 확인·수정한 뒤 저장합니다. 이미지 URI, 파일 경로, OCR 원문 같은 raw source artifact는 이 구조화 경계를 통과하지 않습니다.

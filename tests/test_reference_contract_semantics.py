@@ -9,8 +9,6 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from medicine_app.canonical_runtime import canonical_manifest
-from medicine_app.reference_semantics import _mfds_criterion_note_requires_review
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.mobile import build_mobile_database
 from medicine_canonical.reference_contracts.v1 import (
@@ -28,7 +26,7 @@ from medicine_canonical.reference_contracts.registry import (
 )
 from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
 from tests.canonical_fixture_support import add_linked_rule, add_product
-from tests.test_safety_coverage import make_canonical_db
+from tests.canonical_fixture_support import make_canonical_db
 
 
 class ReferenceContractSemanticsTest(unittest.TestCase):
@@ -306,12 +304,13 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
             ).fetchone()
             self.assertIsNotNone(product)
             assert product is not None
-            runtime_before = dict(con.execute(
-                """SELECT * FROM product_rule_criteria
-                   WHERE item_seq=? AND category=? AND criterion_rule_id=?""",
-                (product["item_seq"], product["category"], original_criterion_id),
-            ).fetchone())
-            self.assertFalse(_mfds_criterion_note_requires_review(runtime_before, con))
+            before_review_facts = con.execute(
+                """SELECT COUNT(*) FROM reference_criterion_semantics
+                   WHERE criterion_rule_id=?
+                     AND (evaluation_mode='review_required' OR fallback_action='review_required')""",
+                (original_criterion_id,),
+            ).fetchone()[0]
+            self.assertEqual(before_review_facts, 0)
 
             before_dataset_id = logical_dataset_id(con)
             self.assertEqual(before_dataset_id, logical_dataset_id_oracle(con))
@@ -335,12 +334,13 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
                    WHERE product_rule_id=? AND criterion_rule_id=?""",
                 (duplicate_criterion_id, product_rule_id, original_criterion_id),
             )
-            runtime_after = dict(con.execute(
-                """SELECT * FROM product_rule_criteria
-                   WHERE item_seq=? AND category=? AND criterion_rule_id=?""",
-                (product["item_seq"], product["category"], duplicate_criterion_id),
-            ).fetchone())
-            self.assertTrue(_mfds_criterion_note_requires_review(runtime_after, con))
+            after_review_facts = con.execute(
+                """SELECT COUNT(*) FROM reference_criterion_semantics
+                   WHERE criterion_rule_id=?
+                     AND (evaluation_mode='review_required' OR fallback_action='review_required')""",
+                (duplicate_criterion_id,),
+            ).fetchone()[0]
+            self.assertGreater(after_review_facts, 0)
             after_dataset_id = logical_dataset_id(con)
             self.assertEqual(after_dataset_id, logical_dataset_id_oracle(con))
             con.execute(
@@ -359,7 +359,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
             "verified",
         )
 
-    def test_server_verified_contract_keeps_provenance_failure_diagnostic_only_at_runtime(self) -> None:
+    def test_frozen_server_verifier_ignores_diagnostic_provenance_values(self) -> None:
         with sqlite3.connect(self.mobile) as con:
             con.execute(
                 "UPDATE source_snapshots SET row_count='not-a-count' "
@@ -372,13 +372,8 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
             REFERENCE_CONTRACT_MAJOR,
             self.release["dataset_id"],
         )
-        with sqlite3.connect(self.mobile) as con:
-            runtime = canonical_manifest(con)
-
         self.assertEqual(verified["status"], "verified")
-        self.assertEqual(runtime["status"], "verified")
-        self.assertEqual(runtime["dataset_id"], self.release["dataset_id"])
-        self.assertEqual(runtime["provenance_status"], "not_verified")
+        self.assertEqual(verified["dataset_id"], self.release["dataset_id"])
 
     def test_server_verifier_rejects_replaced_runtime_product_rule_criteria_relation(self) -> None:
         with sqlite3.connect(self.mobile) as con:

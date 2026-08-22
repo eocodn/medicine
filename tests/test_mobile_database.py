@@ -6,11 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from medicine_app.core import MedicationApp
-from medicine_app.dur_status import DUR_CATEGORIES
+from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
 from medicine_canonical.mobile import RUNTIME_INDEXES, build_mobile_database
 from medicine_canonical.cli import main as canonical_main
-from tests.test_safety_coverage import make_canonical_db
+from tests.canonical_fixture_support import make_canonical_db
 
 
 class MobileDatabaseTest(unittest.TestCase):
@@ -20,13 +19,12 @@ class MobileDatabaseTest(unittest.TestCase):
         self.canonical_db = root / "canonical.sqlite"
         self.mobile_db = root / "mobile.sqlite"
         self.manifest = root / "mobile.manifest.json"
-        self.personal_db = root / "personal.sqlite"
         make_canonical_db(self.canonical_db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_compact_snapshot_preserves_canonical_runtime_behavior_without_legacy_tables(self) -> None:
+    def test_compact_snapshot_preserves_frozen_contract_without_legacy_tables(self) -> None:
         result = build_mobile_database(
             self.canonical_db, self.mobile_db, manifest_path=self.manifest
         )
@@ -60,38 +58,20 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertEqual(manifest["dataset_id"], result["dataset_id"])
         self.assertEqual(manifest["sha256"], result["sha256"])
         self.assertEqual(manifest["size_bytes"], self.mobile_db.stat().st_size)
-
-        app = MedicationApp(self.mobile_db, self.personal_db)
-        person = app.create_person("온디바이스", "1990-01-01", "female", "not_pregnant", "breastfeeding")
-        preview = app.preview_medication(
-            person["id"], {"product_ref": "MFDS-Z", "prescription_days": 35}
+        verified = verify_reference_database(
+            self.mobile_db, REFERENCE_CONTRACT_MAJOR, result["dataset_id"]
         )
-        self.assertEqual(preview["product"]["product_mapping_method"], "item_seq_exact")
-        self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "exceeded")
-        categories = {row["category"] for row in preview["dur_checks"]}
-        supported = {category for category, _label in DUR_CATEGORIES}
-        self.assertEqual(categories & supported, supported)
-        self.assertEqual(len(categories & supported), 7)
+        self.assertEqual(verified["status"], "verified")
+        self.assertEqual(verified["dataset_id"], result["dataset_id"])
 
-    def test_contract_runtime_uses_signed_dataset_identity_and_provenance_is_diagnostic_only(self) -> None:
+    def test_frozen_contract_uses_signed_dataset_identity_and_ignores_diagnostic_provenance(self) -> None:
         result = build_mobile_database(
             self.canonical_db, self.mobile_db, manifest_path=self.manifest
         )
-        app = MedicationApp(self.mobile_db, self.personal_db)
-        person = app.create_person(
-            "계약검증",
-            "1990-01-01",
-            "female",
-            "not_pregnant",
-            "not_breastfeeding",
+        first = verify_reference_database(
+            self.mobile_db, REFERENCE_CONTRACT_MAJOR, result["dataset_id"]
         )
-        draft = {"product_ref": "MFDS-Z", "prescription_days": 35}
-
-        first = app.preview_medication(person["id"], draft)
-        first_dataset = first["coverage"]["dataset"]
-        self.assertEqual(first_dataset["status"], "verified")
-        self.assertEqual(first_dataset["dataset_id"], result["dataset_id"])
-        self.assertIsNotNone(first["warning_token"])
+        self.assertEqual(first["status"], "verified")
 
         with sqlite3.connect(self.mobile_db) as con:
             con.execute(
@@ -101,12 +81,11 @@ class MobileDatabaseTest(unittest.TestCase):
             )
             con.commit()
 
-        second = app.preview_medication(person["id"], draft)
-        second_dataset = second["coverage"]["dataset"]
-        self.assertEqual(second_dataset["status"], "verified")
-        self.assertEqual(second_dataset["dataset_id"], result["dataset_id"])
-        self.assertEqual(second_dataset["provenance_status"], "not_verified")
-        self.assertEqual(second["warning_token"], first["warning_token"])
+        second = verify_reference_database(
+            self.mobile_db, REFERENCE_CONTRACT_MAJOR, result["dataset_id"]
+        )
+        self.assertEqual(second["status"], "verified")
+        self.assertEqual(second["dataset_id"], first["dataset_id"])
 
     def test_mobile_build_rejects_incomplete_source_snapshot_set(self) -> None:
         with sqlite3.connect(self.canonical_db) as con:

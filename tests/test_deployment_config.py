@@ -436,10 +436,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("addGeneratedSourceDirectory", gradle)
         self.assertNotIn("assets.srcDirs", gradle)
         self.assertNotIn("project.copy", gradle)
-        runtime = Path("medicine_app/canonical_runtime.py").read_text()
         self.assertNotIn('include("medicine_app/**/*.py")', gradle)
-        self.assertNotIn("from medicine_canonical", runtime)
-        self.assertNotIn("import medicine_canonical", runtime)
 
     def test_ui_service_runs_as_the_host_user_for_bind_mounted_screenshots(self) -> None:
         compose = Path("compose.yaml").read_text()
