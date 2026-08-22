@@ -198,6 +198,9 @@ APK 자체에는 해당 DB나 manifest를 포함하지 않습니다. APK에는 r
 
 ## 앱 제어 CLI
 
+`app` 서비스의 Python 코드는 CLI 인자와 출력 형식만 담당하며, 개인 DB 초기화와 모든 앱 도메인 요청은
+동일 이미지의 Rust `medicine-core` Agent Control CLI로 전달합니다.
+
 ```bash
 # 사람 목록
 docker compose run --rm app people --json
@@ -332,7 +335,7 @@ docker build -f browser_ocr/Dockerfile --target runtime \
 
 Android 앱은 WebView를 UI 셸로 사용하지만 외부 웹 서버에는 연결하지 않습니다. 정적 UI는 AndroidX WebKit의
 `https://appassets.androidplatform.net` 로컬 asset origin에서 제공하고, 앱의 `/api/...` 호출은
-`MedicineNative` 브리지를 통해 APK에 포함된 Python `MedicationApp` 코어를 직접 호출합니다. WebView의 다른
+`MedicineNative` 브리지를 통해 APK의 Rust `MedicineEngine`을 직접 호출합니다. WebView의 다른
 HTTP/HTTPS 요청은 차단합니다. Android manifest의 `INTERNET` 권한은 native reference downloader에만 사용됩니다.
 
 배포용 reference DB는 검증된 `canonical.sqlite`에서 런타임 테이블과 view만 추린 `mobile.sqlite`입니다.

@@ -12,7 +12,9 @@ services:
     entrypoint: ["python", "-m", "medicine_canonical.cli"]
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.app
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     environment:
       HOME: /tmp

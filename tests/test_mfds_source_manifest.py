@@ -114,9 +114,13 @@ class MfdsSourceManifestTest(unittest.TestCase):
         android = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
         rust_web = Path("Dockerfile.web").read_text(encoding="utf-8")
         self.assertIn('"medicine_reference*"', pyproject)
-        for dockerfile in ("Dockerfile", "Dockerfile.ui"):
+        builder = Path("Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("COPY medicine_reference ./medicine_reference", builder)
+        self.assertIn("COPY medicine_canonical ./medicine_canonical", builder)
+        for dockerfile in ("Dockerfile.app", "Dockerfile.ui", "Dockerfile.web"):
             content = Path(dockerfile).read_text(encoding="utf-8")
-            self.assertIn("COPY medicine_reference ./medicine_reference", content)
+            self.assertNotIn("COPY medicine_reference", content)
+            self.assertNotIn("COPY medicine_canonical", content)
         self.assertNotIn("COPY medicine_reference", rust_web)
         self.assertNotIn("COPY medicine_canonical", rust_web)
         self.assertNotIn('include("medicine_reference/**/*.py")', android)

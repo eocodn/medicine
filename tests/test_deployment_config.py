@@ -360,7 +360,20 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertTrue(Path("rust/medicine_core/src/bin/medicine_core.rs").is_file())
         self.assertIn("--lib", rust_build)
         app_service = compose.split("\n  app:\n", 1)[1].split("\n  web:\n", 1)[0]
+        app_dockerfile = Path("Dockerfile.app").read_text()
+        ui_dockerfile = Path("Dockerfile.ui").read_text()
+        self.assertIn("dockerfile: Dockerfile.app", app_service)
         self.assertIn('entrypoint: ["python", "-m", "medicine_app.cli"]', app_service)
+        self.assertIn("cargo build --locked --release --bin medicine-core", app_dockerfile)
+        self.assertIn("COPY --from=rust-cli", app_dockerfile)
+        self.assertIn("medicine-core", app_dockerfile)
+        self.assertIn("COPY medicine_app/__init__.py medicine_app/cli.py ./medicine_app/", app_dockerfile)
+        self.assertNotIn("COPY medicine_app ./medicine_app", app_dockerfile)
+        self.assertIn("cargo build --locked --release --features web --bin medicine-core --bin medicine-core-web", ui_dockerfile)
+        self.assertIn("medicine-core-web", ui_dockerfile)
+        self.assertIn("COPY medicine_app/__init__.py medicine_app/cli.py ./medicine_app/", ui_dockerfile)
+        self.assertIn("COPY medicine_app/static ./medicine_app/static", ui_dockerfile)
+        self.assertNotIn("COPY medicine_app ./medicine_app", ui_dockerfile)
 
     def test_android_bootstrap_contract_matches_embedded_runtime_contract(self) -> None:
         kotlin = Path(

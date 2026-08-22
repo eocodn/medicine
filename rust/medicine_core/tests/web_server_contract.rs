@@ -180,6 +180,27 @@ async fn local_http_adapter_serves_ui_and_routes_api_through_medicine_engine() {
         1
     );
 
+    for path in [
+        "/api/people/example/medications/ocr-preview",
+        "/api/people/example/medications/batch-preview",
+        "/api/people/example/medications/batch",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .expect("unsupported ingestion response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(response_json(response).await["detail"], "route not found");
+    }
+
     let unavailable_search = app
         .oneshot(
             Request::builder()
