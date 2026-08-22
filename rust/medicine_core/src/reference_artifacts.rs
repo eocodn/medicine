@@ -119,6 +119,13 @@ struct Header {
     target_size_bytes: u64,
 }
 
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 fn json_string(value: &Value, key: &str) -> Result<String, ArtifactError> {
     value
         .get(key)
@@ -311,8 +318,43 @@ pub fn apply_chunk_patch(
     destination: &Path,
     observer: &mut dyn ArtifactObserver,
 ) -> Result<ArtifactResult, ArtifactError> {
+    apply_chunk_patch_inner(source, patch, destination, None, observer)
+}
+
+pub fn apply_chunk_patch_verified(
+    source: &Path,
+    patch: &Path,
+    destination: &Path,
+    expected_target_size_bytes: u64,
+    expected_target_sha256: &str,
+    observer: &mut dyn ArtifactObserver,
+) -> Result<ArtifactResult, ArtifactError> {
+    if expected_target_size_bytes == 0 || !is_sha256(expected_target_sha256) {
+        return Err(error("invalid signed target identity"));
+    }
+    apply_chunk_patch_inner(
+        source,
+        patch,
+        destination,
+        Some((expected_target_size_bytes, expected_target_sha256)),
+        observer,
+    )
+}
+
+fn apply_chunk_patch_inner(
+    source: &Path,
+    patch: &Path,
+    destination: &Path,
+    expected_target: Option<(u64, &str)>,
+    observer: &mut dyn ArtifactObserver,
+) -> Result<ArtifactResult, ArtifactError> {
     let mut patch_handle = File::open(patch)?;
     let header = parse_header(&mut patch_handle)?;
+    if let Some((expected_size, expected_sha256)) = expected_target {
+        if header.target_size_bytes != expected_size || header.target_sha256 != expected_sha256 {
+            return Err(error("patch target does not match signed target identity"));
+        }
+    }
     let (source_size, source_hash) = sha256_file(source, "patch-verify-source", observer)?;
     if source_size != header.source_size_bytes || source_hash != header.source_sha256 {
         return Err(error("source size or SHA-256 does not match patch"));

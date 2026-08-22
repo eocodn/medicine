@@ -1,3 +1,6 @@
+#[path = "medicine_core/reference_cli.rs"]
+mod reference_cli;
+
 use medicine_core::{
     assemble_dur_display, checkpoint_personal_db, initialize_personal_db,
     inspect_interaction_risks, inspect_product, inspect_profile_risks, inspect_safety_basis,
@@ -25,6 +28,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "personal-schema" => personal_maintenance(&args[1..], false),
         "personal-checkpoint" => personal_maintenance(&args[1..], true),
         "reference-verify" => reference_verify(&args[1..]),
+        "reference-state" => reference_cli::reference_state(&args[1..], usage),
+        "reference-apply" => reference_cli::reference_apply(&args[1..], usage),
         "product" => product(&args[1..]),
         "draft-normalize" => draft_normalize(&args[1..]),
         "safety-basis" => safety_basis(&args[1..]),
@@ -451,5 +456,5 @@ fn print_response(response: &str, json_output: bool) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-core personal-schema --personal-db <PATH> [--json]\n       medicine-core personal-checkpoint --personal-db <PATH> [--json]\n       medicine-core reference-verify --reference-db <PATH> --contract-major <N> --dataset-id <SHA256> [--json]\n       medicine-core product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-core draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]\n       medicine-core safety-basis --canonical-db <PATH> --product-ref <REF> --person <JSON> --draft <JSON> [--json]\n       medicine-core dur-display --input <JSON> [--json]\n       medicine-core profile-risks --canonical-db <PATH> --product-ref <REF> --person <JSON> --course <JSON> [--as-of <YYYY-MM-DD>] [--json]\n       medicine-core interaction-risks --canonical-db <PATH> --product-ref <REF> --current <JSON> --course <JSON> [--json]".to_owned()
+    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-core personal-schema --personal-db <PATH> [--json]\n       medicine-core personal-checkpoint --personal-db <PATH> [--json]\n       medicine-core reference-verify --reference-db <PATH> --contract-major <N> --dataset-id <SHA256> [--json]\n       medicine-core reference-state --state-file <PATH> [--json]\n       medicine-core reference-apply --kind <full|patch> --artifact <PATH> [--source <PATH>] --destination <PATH> --target-size <BYTES> --target-sha256 <SHA256> [--json]\n       medicine-core product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-core draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]\n       medicine-core safety-basis --canonical-db <PATH> --product-ref <REF> --person <JSON> --draft <JSON> [--json]\n       medicine-core dur-display --input <JSON> [--json]\n       medicine-core profile-risks --canonical-db <PATH> --product-ref <REF> --person <JSON> --course <JSON> [--as-of <YYYY-MM-DD>] [--json]\n       medicine-core interaction-risks --canonical-db <PATH> --product-ref <REF> --current <JSON> --course <JSON> [--json]".to_owned()
 }

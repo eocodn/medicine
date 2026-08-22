@@ -1,7 +1,7 @@
 mod common;
 
 use medicine_core::reference_artifacts::{
-    apply_chunk_patch, decompress_snapshot, ArtifactObserver,
+    apply_chunk_patch, apply_chunk_patch_verified, decompress_snapshot, ArtifactObserver,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -110,6 +110,33 @@ fn chunk_patch_rebuilds_exact_target_and_reports_progress_and_checkpoint() {
         .iter()
         .all(|checkpoint| checkpoint.file_name().is_some()));
     fs::remove_dir_all(dir).expect("remove patch fixture");
+}
+
+#[test]
+fn verified_patch_rejects_signed_target_mismatch_before_mutating_destination() {
+    let dir = fixture_dir("artifact-patch-signed-target-mismatch");
+    let source = dir.join("source.sqlite");
+    let destination = dir.join("destination.sqlite");
+    fs::write(&source, SOURCE).expect("write source");
+    fs::write(&destination, b"keep-me").expect("write destination");
+    let patch = valid_patch(&dir);
+    let mut observer = RecordingObserver::default();
+
+    let error = apply_chunk_patch_verified(
+        &source,
+        &patch,
+        &destination,
+        TARGET.len() as u64,
+        &"d".repeat(64),
+        &mut observer,
+    )
+    .expect_err("signed target mismatch must fail before replacement");
+
+    assert!(error.to_string().contains("signed target identity"));
+    assert_destination_unchanged(&destination);
+    assert!(observer.progress.is_empty());
+    assert!(observer.checkpoints.is_empty());
+    fs::remove_dir_all(dir).ok();
 }
 
 #[test]
