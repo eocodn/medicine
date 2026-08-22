@@ -1,3 +1,4 @@
+mod canonical_products;
 mod dose_logs;
 mod doses;
 mod engine;
@@ -8,6 +9,21 @@ mod people;
 mod personal_db;
 mod planning;
 mod planning_medications;
+mod prescriptions;
 mod prn;
 
 pub use engine::{AccessClass, MedicineEngine};
+
+pub fn inspect_product(canonical_db: Option<&std::path::Path>, product_ref: &str) -> String {
+    let (status, body) = canonical_products::inspect(canonical_db, product_ref);
+    serde_json::json!({"status": status, "body": body}).to_string()
+}
+
+pub fn normalize_prescription_draft(
+    body_json: &str,
+    person_id: Option<&str>,
+    product_ref: Option<&str>,
+) -> String {
+    let (status, body) = prescriptions::inspect(body_json, person_id, product_ref);
+    serde_json::json!({"status": status, "body": body}).to_string()
+}

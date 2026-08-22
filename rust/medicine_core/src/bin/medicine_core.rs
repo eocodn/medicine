@@ -1,4 +1,4 @@
-use medicine_core::MedicineEngine;
+use medicine_core::{inspect_product, normalize_prescription_draft, MedicineEngine};
 use serde_json::json;
 use std::path::Path;
 
@@ -17,6 +17,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "request-access" => request_access(&args[1..]),
         "request" => request(&args[1..]),
         "health" => health(&args[1..]),
+        "product" => product(&args[1..]),
+        "draft-normalize" => draft_normalize(&args[1..]),
         _ => Err(usage()),
     }
 }
@@ -121,6 +123,80 @@ fn health(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn product(args: &[String]) -> Result<(), String> {
+    let mut canonical_db: Option<String> = None;
+    let mut product_ref: Option<String> = None;
+    let mut json_output = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--canonical-db" => {
+                index += 1;
+                canonical_db = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--product-ref" => {
+                index += 1;
+                product_ref = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--json" => json_output = true,
+            _ => return Err(usage()),
+        }
+        index += 1;
+    }
+    let canonical_db = canonical_db.ok_or_else(usage)?;
+    let product_ref = product_ref.ok_or_else(usage)?;
+    print_response(
+        &inspect_product(Some(Path::new(&canonical_db)), &product_ref),
+        json_output,
+    )
+}
+
+fn draft_normalize(args: &[String]) -> Result<(), String> {
+    let mut body: Option<String> = None;
+    let mut person_id: Option<String> = None;
+    let mut product_ref: Option<String> = None;
+    let mut json_output = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--body" => {
+                index += 1;
+                body = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--person" => {
+                index += 1;
+                person_id = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--product-ref" => {
+                index += 1;
+                product_ref = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--json" => json_output = true,
+            _ => return Err(usage()),
+        }
+        index += 1;
+    }
+    if person_id.is_some() != product_ref.is_some() {
+        return Err("--person and --product-ref must be supplied together".to_owned());
+    }
+    let body = body.ok_or_else(usage)?;
+    print_response(
+        &normalize_prescription_draft(&body, person_id.as_deref(), product_ref.as_deref()),
+        json_output,
+    )
+}
+
+fn print_response(response: &str, json_output: bool) -> Result<(), String> {
+    if json_output {
+        println!("{response}");
+    } else {
+        let parsed: serde_json::Value = serde_json::from_str(response)
+            .map_err(|error| format!("cannot decode response: {error}"))?;
+        println!("{}", parsed["body"]);
+    }
+    Ok(())
+}
+
 fn usage() -> String {
-    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]".to_owned()
+    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-core product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-core draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]".to_owned()
 }
