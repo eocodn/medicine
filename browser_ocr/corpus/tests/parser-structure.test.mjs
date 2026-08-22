@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { LAYOUT_FAMILIES } from "../../detection/synthetic_catalog.mjs";
+import { buildDocumentTruth } from "../../detection/synthetic_document.mjs";
 import { buildLayout } from "../../detection/synthetic_layouts.mjs";
 import { expectedRows, parserTrainingRows } from "../parser_truth.mjs";
 import {
@@ -21,6 +23,11 @@ function products() {
   return Array.from({ length: 12 }, (_, index) => `검증약${index}정`);
 }
 
+function semanticLayout(index, random, layoutFamily) {
+  const document = buildDocumentTruth(index, random, { products: products(), layoutFamily });
+  return buildLayout(index, random, { document });
+}
+
 test("parser structure recipes are split-specific and train covers its recipe pool", () => {
   const train = new Set(PARSER_STRUCTURE_VARIANTS.train);
   const val = new Set(PARSER_STRUCTURE_VARIANTS.val);
@@ -30,16 +37,16 @@ test("parser structure recipes are split-specific and train covers its recipe po
   assert.deepEqual(
     new Set(Array.from(
       { length: PARSER_STRUCTURE_VARIANTS.train.length },
-      (_, offset) => parserStructureVariantForSample(offset + 6, "train"),
+      (_, offset) => parserStructureVariantForSample(offset + LAYOUT_FAMILIES.length, "train"),
     )),
     train,
   );
-  assert.ok(Array.from({ length: 6 }, (_, index) => parserStructureVariantForSample(index, "train")).every((value) => value === "complete"));
+  assert.ok(Array.from({ length: LAYOUT_FAMILIES.length }, (_, index) => parserStructureVariantForSample(index, "train")).every((value) => value === "complete"));
 });
 
 test("product-only and numeric recipes alter document truth rather than parser postprocessing", () => {
   const productRandom = rng(41);
-  const productBase = buildLayout(10, productRandom, { products: products() });
+  const productBase = semanticLayout(10, productRandom, "classic_medication_bag");
   const productOnly = applyParserStructureVariant(productBase, { index: 10, split: "train", splitOrdinal: 4, random: productRandom });
   assert.equal(productOnly.parser_structure_variant, "product_only");
   const groups = [...new Set(productOnly.regions.filter((region) => region.semantic_role === "product").map((region) => region.association_group))];
@@ -49,13 +56,13 @@ test("product-only and numeric recipes alter document truth rather than parser p
   }));
 
   const scheduleRandom = rng(45);
-  const scheduleBase = buildLayout(8, scheduleRandom, { products: products() });
+  const scheduleBase = semanticLayout(8, scheduleRandom, "legacy_preprinted_medication_bag");
   const scheduleProductOnly = applyParserStructureVariant(scheduleBase, { index: 8, split: "train", splitOrdinal: 4, random: scheduleRandom });
   assert.equal(scheduleProductOnly.parser_structure_variant, "product_only");
   assert.equal(scheduleProductOnly.regions.some((region) => region.semantic_role === "schedule" && region.association_group !== "document"), false);
 
   const numericRandom = rng(43);
-  const numericBase = buildLayout(13, numericRandom, { products: products() });
+  const numericBase = semanticLayout(13, numericRandom, "prescription_table");
   const numeric = applyParserStructureVariant(numericBase, { index: 13, split: "train", splitOrdinal: 7, random: numericRandom });
   assert.equal(numeric.parser_structure_variant, "numeric_cells");
   assert.ok(numeric.regions.filter((region) => ["dose", "frequency", "duration"].includes(region.semantic_role)).every((region) => /^\d+(?:\.\d+)?$/.test(region.text)));
@@ -63,7 +70,7 @@ test("product-only and numeric recipes alter document truth rather than parser p
 
 test("held-out recipes include fraction/partial-header and header-only negatives", () => {
   const fractionRandom = rng(47);
-  const fractionBase = buildLayout(15, fractionRandom, { products: products() });
+  const fractionBase = semanticLayout(15, fractionRandom, "compact_prescription_form");
   const fraction = applyParserStructureVariant(fractionBase, { index: 15, split: "val", splitOrdinal: 1, random: fractionRandom });
   assert.equal(fraction.parser_structure_variant, "fraction_dose_partial_headers");
   assert.ok(fraction.regions.some((region) => region.semantic_role === "dose" && region.text === "1/2정"));
@@ -71,13 +78,13 @@ test("held-out recipes include fraction/partial-header and header-only negatives
   assert.ok(fractionRows.some((row) => row.draft.dose_amount === 0.5));
 
   const negativeRandom = rng(53);
-  const negativeBase = buildLayout(25, negativeRandom, { products: products() });
+  const negativeBase = semanticLayout(25, negativeRandom, "pharmacy_information_sheet");
   const negative = applyParserStructureVariant(negativeBase, { index: 25, split: "val", splitOrdinal: 2, random: negativeRandom });
   assert.equal(negative.parser_structure_variant, "header_only_negative");
   assert.equal(negative.regions.some((region) => ["product", "product_label", "dose", "frequency", "duration", "instruction", "schedule"].includes(region.semantic_role) && region.association_group !== "document"), false);
 
   const scheduleNegativeRandom = rng(55);
-  const scheduleNegativeBase = buildLayout(8, scheduleNegativeRandom, { products: products() });
+  const scheduleNegativeBase = semanticLayout(8, scheduleNegativeRandom, "legacy_preprinted_medication_bag");
   const scheduleNegative = applyParserStructureVariant(scheduleNegativeBase, { index: 8, split: "val", splitOrdinal: 2, random: scheduleNegativeRandom });
   assert.equal(scheduleNegative.regions.some((region) => region.semantic_role === "schedule" && region.association_group !== "document"), false);
 });

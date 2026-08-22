@@ -1,4 +1,5 @@
 import { DOCUMENT_HEIGHT, DOCUMENT_WIDTH, estimateRenderedTextBox } from "../detection/synthetic_layouts.mjs";
+import { LAYOUT_FAMILIES } from "../detection/synthetic_catalog.mjs";
 
 export const PARSER_STRUCTURE_REVISION = 3;
 
@@ -183,7 +184,7 @@ export function parserStructureVariantForSample(index, split, splitOrdinal = ind
   // Keep the original one-per-layout smoke harness structurally intact. Parser
   // stress recipes begin after that fixture band, while larger corpora still
   // cycle through every training recipe deterministically.
-  if (split === "train" && index < 6) return "complete";
+  if (split === "train" && index < LAYOUT_FAMILIES.length) return "complete";
   return pool[splitOrdinal % pool.length];
 }
 

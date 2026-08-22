@@ -23,13 +23,14 @@ import {
   MATERIAL_PROFILES,
   PRINTER_PROFILES,
 } from "../detection/synthetic_catalog.mjs";
+import { buildDocumentTruth, SYNTHETIC_DOCUMENT_MODEL_VERSION } from "../detection/synthetic_document.mjs";
 import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH, renderLayoutRegions } from "../detection/synthetic_layouts.mjs";
 import { rasterizerIdentity, renderRasterJpeg } from "../detection/synthetic_raster.mjs";
 import { PARSER_STRUCTURE_REVISION, applyParserStructureVariant } from "./parser_structure.mjs";
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
-const GENERATOR_VERSION = 5;
-const GENERATOR_REVISION = 8;
+const GENERATOR_VERSION = 6;
+const GENERATOR_REVISION = 1;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -57,12 +58,6 @@ function splitOrdinalForIndex(index, seed, split) {
     if (splitForIndex(candidate, seed) === split) ordinal += 1;
   }
   return ordinal;
-}
-
-function documentType(layoutFamily) {
-  return ["prescription_table", "compact_prescription_form"].includes(layoutFamily)
-    ? "prescription"
-    : "medication_bag";
 }
 
 function digest(content) {
@@ -101,6 +96,7 @@ async function configurationFingerprint({ seed, count, drugNamePolicy }) {
       material_profiles: MATERIAL_PROFILES,
       printer_profiles: PRINTER_PROFILES,
       background_profiles: BACKGROUND_PROFILES,
+      document_model_version: SYNTHETIC_DOCUMENT_MODEL_VERSION,
       tasks: TASKS,
       split_policy: { id: SPLIT_POLICY_ID, ratios: SPLIT_RATIOS },
       drug_name_policy: drugNamePolicy,
@@ -134,7 +130,9 @@ ${materialOverlay}
 
 function buildSamplePlan(index, seed, drugAssignment) {
   const baseSeed = sampleSeed(seed, index);
-  // Independent deterministic streams keep capture severity stable when layout generation evolves.
+  // Independent deterministic streams keep semantic content, layout geometry, and capture severity
+  // stable when another layer evolves.
+  const documentRandom = rng(baseSeed ^ 0x2f6e2b1d);
   const layoutRandom = rng(baseSeed ^ 0xa511e9b3);
   const captureRandom = rng(baseSeed ^ 0x63d83595);
   const split = splitForIndex(index, seed);
@@ -142,7 +140,12 @@ function buildSamplePlan(index, seed, drugAssignment) {
   const drugPool = drugAssignment.pools[split];
   if (!Array.isArray(drugPool) || drugPool.length === 0) throw new Error(`drug pool ${split} is empty`);
   const productMetadata = new Map(drugPool.map((product) => [normalizeDrugName(product.product_name), product]));
-  const baseLayout = buildLayout(index, layoutRandom, { products: drugPool.map((product) => product.product_name) });
+  const layoutFamily = LAYOUT_FAMILIES[index % LAYOUT_FAMILIES.length];
+  const document = buildDocumentTruth(index, documentRandom, {
+    products: drugPool.map((product) => product.product_name),
+    layoutFamily,
+  });
+  const baseLayout = buildLayout(index, layoutRandom, { document });
   const layout = applyParserStructureVariant(baseLayout, { index, split, splitOrdinal, random: layoutRandom });
   const captureIndex = Math.floor(index / LAYOUT_FAMILIES.length) % CAPTURE_PROFILES.length;
   const capture = captureForSample(index, captureIndex, captureRandom, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
@@ -183,7 +186,7 @@ function buildSamplePlan(index, seed, drugAssignment) {
       split,
       drug_name_split: split,
       drug_name_exposure: drugExposure(split),
-      document_type: documentType(layout.layout_family),
+      document_type: document.document_type,
       layout_family: layout.layout_family,
       parser_structure_variant: layout.parser_structure_variant,
       capture_profile: capture.profile,
@@ -226,7 +229,7 @@ async function renderSample(index, seed, outputDir, drugAssignment) {
 function buildCorpus({ seed, count, fingerprint, rasterizer, drugNamePolicy, samples }) {
   return validateCorpus({
     schema_version: 3,
-    corpus_id: `synthetic-medicine-document-v5-seed-${seed}-drug-seed-${drugNamePolicy.assignment_seed}-hist-${drugNamePolicy.historical_exposure.families_sha256.slice(0, 12)}-n-${count}`,
+    corpus_id: `synthetic-medicine-document-v6-seed-${seed}-drug-seed-${drugNamePolicy.assignment_seed}-hist-${drugNamePolicy.historical_exposure.families_sha256.slice(0, 12)}-n-${count}`,
     synthetic_only: true,
     tasks: [...TASKS],
     split_policy: {

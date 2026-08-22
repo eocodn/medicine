@@ -51,7 +51,7 @@ test("one document corpus materializes aligned detection recognition parsing and
 
     assert.equal(corpus.schema_version, 3);
     assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
-    assert.equal(corpus.generator.version, 5);
+    assert.equal(corpus.generator.version, 6);
     assert.equal(corpus.drug_name_policy.id, "canonical-product-family-historical-holdout-v2");
     assert.equal(corpus.drug_name_policy.historical_exposure.id, "selected-recognizer-training-exposure-v1");
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.augmentation_difficulty)), new Set(["clean", "medium", "hard"]));

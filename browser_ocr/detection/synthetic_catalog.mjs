@@ -5,6 +5,7 @@ export const LAYOUT_FAMILIES = [
   "classic_medication_bag",
   "counseling_medication_bag",
   "pharmacy_information_sheet",
+  "pharmacy_guide_receipt_sidecar",
 ];
 
 export const CAPTURE_PROFILES = [

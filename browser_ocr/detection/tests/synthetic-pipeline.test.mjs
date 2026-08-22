@@ -81,8 +81,10 @@ test("legacy bag labels share the regimen association group with their values", 
     const legacy = corpus.samples.find((sample) => sample.layout_family === "legacy_preprinted_medication_bag");
     assert.ok(legacy);
     const groups = new Map(legacy.regions.map((region) => [region.region_id, region.association_group]));
+    const medicationGroup = groups.get("product");
+    assert.match(medicationGroup, /^med-\d+$/);
     for (const id of ["daily", "frequency", "each", "dose", "days-label", "days", "product-label", "product"]) {
-      assert.equal(groups.get(id), "bag-regimen");
+      assert.equal(groups.get(id), medicationGroup);
     }
     assert.ok(legacy.regions.every((region) => region.natural_text_polygon?.length === 4));
   } finally {
@@ -95,7 +97,7 @@ test("scaled generator covers realistic layout/camera/material strata with raste
   try {
     const corpus = await generateCorpus({ outputDir: root, count: 36, seed: 153 });
     assert.equal(corpus.schema_version, 3);
-    assert.equal(corpus.generator.version, 5);
+    assert.equal(corpus.generator.version, 6);
     assert.ok(corpus.generator.revision >= 1);
     assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
     assert.ok(corpus.samples.every((sample) => ["train", "val", "test"].includes(sample.split)));

@@ -61,7 +61,7 @@ function validateGenerator(generator, schemaVersion) {
   if (!generator || typeof generator !== "object" || Array.isArray(generator)) fail("generator must be an object");
   if (generator.id !== "medicine_full_document_synthetic") fail("generator.id is unsupported");
   if (schemaVersion === 3) {
-    if (![4, 5].includes(generator.version)) fail("generator.version must be 4 or 5");
+    if (![4, 5, 6].includes(generator.version)) fail("generator.version must be 4, 5 or 6");
   } else if (generator.version !== 2) {
     fail("generator.version must be 2");
   }

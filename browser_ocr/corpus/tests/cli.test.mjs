@@ -36,7 +36,7 @@ test("ocr corpus CLI generates and validates the canonical multi-stage corpus", 
     assert.equal(generatedJson.schema_version, 3);
     assert.deepEqual(generatedJson.tasks, ["detection", "recognition", "parsing", "e2e"]);
     assert.equal(generatedJson.documents, 6);
-    assert.equal(generatedJson.generator.version, 5);
+    assert.equal(generatedJson.generator.version, 6);
     assert.equal(generatedJson.drug_name_policy.source.dataset_key, "mfds_permit:products");
 
     const validated = await run(["validate", "--corpus", join(root, "manifest.json"), "--json"]);

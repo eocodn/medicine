@@ -17,12 +17,12 @@ Detection remains independently benchmarkable, but its synthetic documents now c
 
 ## Full-document synthetic pipeline
 
-The canonical generator is unified OCR corpus generator v4. It is designed to scale beyond the original six-document harness while keeping the ground truth authoritative and resumable. Detection consumes the full-page view; recognizer, parser, and E2E views are materialized from the same documents by `browser_ocr/corpus`.
+The canonical generator is the unified OCR corpus generator, currently v6. It retains the v4 composable capture augmentation and v5 drug-family holdout while separating semantic document truth from layout geometry. It is designed to scale beyond the original small harness while keeping the ground truth authoritative and resumable. Detection consumes the full-page view; recognizer, parser, and E2E views are materialized from the same documents by `browser_ocr/corpus`.
 
-- Six procedural layout families: general prescription table, dense administrative prescription form, legacy blue preprinted medication bag, classic medication bag, counseling/information-dense medication bag, and pharmacy information sheet.
+- Seven procedural layout families: general prescription table, dense administrative prescription form, legacy blue preprinted medication bag, classic medication bag, counseling/information-dense medication bag, pharmacy information sheet, and a pharmacy-guide form with a dense accounting receipt sidecar.
 - Six balanced capture anchor profiles: flat scan, phone perspective, low-contrast defocus, glare/shadow, motion-blur + JPEG compression, and partial-crop + foreground clutter. Generator v4 no longer makes those effects mutually exclusive: medium/hard documents compose multiple camera failures in the same raster.
 - Three explicit augmentation difficulties (`clean`, `medium`, `hard`). The manifest records the exact component vector and bounded parameters for perspective, defocus, motion blur, JPEG, exposure/contrast, glare/shadow, downscale→upsample loss, deterministic sensor noise, white-balance shift, crop, and clutter.
-- Layout families vary medication density, row spacing, column positions, typography, and selected instruction wrapping instead of emitting one fixed geometry per family.
+- Generator v6 builds semantic medication/context/accounting truth before any coordinates exist, then layout families vary medication density, row spacing, column positions, typography, and selected instruction wrapping. The receipt-sidecar family explicitly contributes dense numeric hard negatives that remain outside medication association groups.
 - Three material profiles (plain paper, folded paper, wrinkled plastic), three printer profiles (clean laser, low toner, ink bleed), and three scene-background profiles.
 - Every visible synthetic text item is annotated. Medication fields, contextual fields, and distractor text are separate `region_class` values.
 - Each text region stores an annotation polygon plus a tighter natural text-core polygon, both before and after homography. Layout slots are kept separately and are not used as text GT.
