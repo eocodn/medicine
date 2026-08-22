@@ -167,8 +167,8 @@ Full-document fine-tuning does not train directly from the raw materialized reco
 ```bash
 COMPOSE_PROJECT_NAME=medicine_ocr_training_view \
   docker compose run --rm ocr-finetune-train prepare-training-view \
-  --manifest /workspace/path/to/views/recognition/manifest.json \
-  --split /workspace/path/to/views/recognition/document-split.json \
+  --manifest /artifacts/ocr/corpora/unified-360/views/recognition/manifest.json \
+  --split /artifacts/ocr/corpora/unified-360/views/recognition/document-split.json \
   --output-dir /artifacts/ocr/recognition/training-view \
   --json
 ```

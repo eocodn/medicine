@@ -62,6 +62,19 @@ class OcrArtifactStoragePolicyTest(unittest.TestCase):
             cli,
         )
 
+    def test_training_view_docs_keep_hardlink_source_on_artifact_mount(self) -> None:
+        readme = (ROOT / "browser_ocr" / "finetune" / "README.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "--manifest /artifacts/ocr/corpora/unified-360/views/recognition/manifest.json",
+            readme,
+        )
+        self.assertIn(
+            "--split /artifacts/ocr/corpora/unified-360/views/recognition/document-split.json",
+            readme,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
