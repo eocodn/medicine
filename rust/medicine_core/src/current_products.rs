@@ -4,12 +4,20 @@ use serde_json::{json, Map, Value};
 use crate::canonical_products;
 use crate::medication_records::{self, Medication, RecordError};
 
-pub(crate) fn load_for_preview(
+pub(crate) fn load_for_preview_excluding(
     personal: &Connection,
     canonical: &Connection,
     person_id: &str,
+    exclude_medication_id: Option<&str>,
 ) -> Result<(Vec<Map<String, Value>>, usize), RecordError> {
     let medications = medication_records::load_for_person(personal, person_id, false)?;
+    let medications = medications
+        .into_iter()
+        .filter(|medication| match exclude_medication_id {
+            Some(excluded_id) => medication.id().map_or(true, |id| id != excluded_id),
+            None => true,
+        })
+        .collect::<Vec<_>>();
     let active_count = medications
         .iter()
         .filter(|medication| medication.active())

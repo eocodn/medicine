@@ -15,6 +15,7 @@ mod interaction_timing;
 mod jni_bridge;
 mod medication_create;
 mod medication_records;
+mod medication_update;
 mod medications;
 mod people;
 mod personal_db;

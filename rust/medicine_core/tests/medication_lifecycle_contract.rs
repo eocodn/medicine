@@ -186,7 +186,7 @@ fn medication_stop_preserves_revision_conflict_cleanup_and_history_semantics() {
     let personal = temp_medication_db();
     let engine = MedicineEngine::new(None, Some(personal.as_path()), None);
     assert!(engine.handles_request("DELETE", "/api/medications/m1?expected_revision=2"));
-    assert!(!engine.handles_request("PATCH", "/api/medications/m1"));
+    assert!(engine.handles_request("PATCH", "/api/medications/m1"));
 
     let invalid = response(
         &engine,

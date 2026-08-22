@@ -215,7 +215,7 @@ fn preview_route_keeps_validation_and_not_found_envelopes() {
 
     assert!(engine.handles_request("POST", "/api/people/adult/medications/preview"));
     assert!(engine.handles_request("POST", "/api/people/adult/medications"));
-    assert!(!engine.handles_request("PATCH", "/api/medications/example"));
+    assert!(engine.handles_request("PATCH", "/api/medications/example"));
 
     let missing_ref = preview(&engine, "adult", json!({"long_term": true}));
     assert_eq!(missing_ref["status"], 400);

@@ -5,11 +5,13 @@ use std::path::Path;
 
 use crate::medication_create;
 use crate::medication_records::{self, RecordError};
+use crate::medication_update;
 use crate::personal_db::{self, Access, OpenError};
 
 enum MedicationRoute<'a> {
     Create(&'a str),
     History(&'a str),
+    Update(&'a str),
     Stop(&'a str),
 }
 
@@ -52,9 +54,18 @@ pub(crate) fn handle_request(
             body_json,
         ));
     }
+    if let MedicationRoute::Update(medication_id) = route {
+        return Some(medication_update::handle(
+            canonical_db,
+            personal_db,
+            medication_id,
+            body_json,
+        ));
+    }
     let result = match route {
         MedicationRoute::Create(_) => unreachable!(),
         MedicationRoute::History(medication_id) => history(personal_db, medication_id),
+        MedicationRoute::Update(_) => unreachable!(),
         MedicationRoute::Stop(medication_id) => stop(personal_db, medication_id, raw_path),
     };
     Some(match result {
@@ -85,6 +96,9 @@ fn route<'a>(method: &str, path: &'a str) -> Option<MedicationRoute<'a>> {
             return Some(MedicationRoute::History(medication_id));
         }
         return None;
+    }
+    if method.trim().eq_ignore_ascii_case("PATCH") && !rest.is_empty() && !rest.contains('/') {
+        return Some(MedicationRoute::Update(rest));
     }
     if method.trim().eq_ignore_ascii_case("DELETE") && !rest.is_empty() && !rest.contains('/') {
         return Some(MedicationRoute::Stop(rest));

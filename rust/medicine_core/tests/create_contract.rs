@@ -173,7 +173,7 @@ fn create_route_is_atomic_and_request_id_is_idempotent() {
     let personal = temp_personal_db();
     let engine = engine(&reference, &personal);
     assert!(engine.handles_request("POST", "/api/people/adult/medications"));
-    assert!(!engine.handles_request("PATCH", "/api/medications/example"));
+    assert!(engine.handles_request("PATCH", "/api/medications/example"));
 
     let body = json!({
         "product_ref":"SAFE",

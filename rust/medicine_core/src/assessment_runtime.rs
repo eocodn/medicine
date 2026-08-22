@@ -47,13 +47,37 @@ pub(crate) fn evaluate(
     draft: &Value,
     acknowledged: bool,
 ) -> Result<AssessmentBundle, AssessmentError> {
+    evaluate_excluding_medication(
+        canonical,
+        personal,
+        person_id,
+        product,
+        draft,
+        acknowledged,
+        None,
+    )
+}
+
+pub(crate) fn evaluate_excluding_medication(
+    canonical: &Connection,
+    personal: &Connection,
+    person_id: &str,
+    product: &Value,
+    draft: &Value,
+    acknowledged: bool,
+    exclude_medication_id: Option<&str>,
+) -> Result<AssessmentBundle, AssessmentError> {
     let product_object = product.as_object().ok_or(AssessmentError::Internal)?;
     let draft_object = draft.as_object().ok_or(AssessmentError::Internal)?;
     let person = people::load_person(personal, person_id).map_err(AssessmentError::from)?;
     let person_object = person.as_object().ok_or(AssessmentError::Internal)?;
-    let (current, current_count) =
-        current_products::load_for_preview(personal, canonical, person_id)
-            .map_err(AssessmentError::from)?;
+    let (current, current_count) = current_products::load_for_preview_excluding(
+        personal,
+        canonical,
+        person_id,
+        exclude_medication_id,
+    )
+    .map_err(AssessmentError::from)?;
 
     let review_items = regimen_review::duplicate_review_items(&current, product, draft_object)
         .map_err(|_| AssessmentError::Internal)?;
