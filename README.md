@@ -84,9 +84,10 @@ docker compose down
   - 복용 완료 / 건너뜀 상태 추적 및 잘못 누른 기록 되돌리기
   - PRN 약은 고정 일정과 분리하고 실제 복용 시점만 별도로 기록
 - 복용 종료 처리 / 최근 복용 기록 조회
-- JSON API와 동일 코어를 사용하는 headless CLI
+- Android, 로컬 개발 웹, Agent Control CLI가 공유하는 Rust `MedicineEngine` 코어
+- 로컬 개발용 standalone web은 Rust HTTP 어댑터로 정적 UI와 JSON API를 제공하며 기본적으로 `127.0.0.1`에만 공개
 - 서버 없는 Android 패키징
-  - WebView UI와 Python 앱 코어는 APK에 포함하고 reference DB는 signed hosted channel에서 first-launch bootstrap
+  - WebView UI는 APK에 포함하고 앱 도메인/API는 JNI를 통해 동일한 Rust `MedicineEngine`을 사용하며, reference DB는 signed hosted channel에서 first-launch bootstrap
   - `INTERNET` 권한은 native reference downloader에만 사용하며 WebView 외부 HTTP/HTTPS 요청은 차단
   - 개인 복약 DB는 Android Keystore AES-GCM 키로 요청 사이에 암호화해 보관하고, SQLite 처리 중에만 앱 전용 저장소의 임시 평문 DB를 사용
   - 비정상 종료로 임시 평문 DB가 남으면 다음 시작 시 이를 최신 상태로 복구·checkpoint한 뒤 즉시 다시 암호화
@@ -193,7 +194,7 @@ R2 bucket은 public 개발 URL을 켜기 전에 `medicine-canonical r2-public-au
 
 `canonical verify`가 실패하면 앱은 데이터셋을 verified로 취급하지 않습니다. Reference publish workflow는
 `canonical mobile-build`로 `mobile.sqlite`와 manifest를 생성해 signed hosted release로 배포하지만, Android
-APK 자체에는 해당 DB나 manifest를 포함하지 않습니다. APK에는 DB를 검증하는 동일한 Python runtime core만 패키징합니다.
+APK 자체에는 해당 DB나 manifest를 포함하지 않습니다. APK에는 reference 계약·서명·DB를 검증하고 앱 API를 실행하는 Rust 코어만 패키징하며 Python/Chaquopy runtime은 포함하지 않습니다.
 
 ## 앱 제어 CLI
 

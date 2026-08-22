@@ -109,13 +109,16 @@ class MfdsSourceManifestTest(unittest.TestCase):
             self.assertEqual(source.source_family, "mfds_dur_ingredient_api")
             self.assertEqual(source.source_locator.rsplit("/", 1)[-1], operation)
 
-    def test_shared_manifest_is_packaged_for_server_but_not_android_runtime(self) -> None:
+    def test_shared_manifest_is_packaged_only_for_python_builder_tools(self) -> None:
         pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
         android = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
+        rust_web = Path("Dockerfile.web").read_text(encoding="utf-8")
         self.assertIn('"medicine_reference*"', pyproject)
-        for dockerfile in ("Dockerfile", "Dockerfile.web", "Dockerfile.ui"):
+        for dockerfile in ("Dockerfile", "Dockerfile.ui"):
             content = Path(dockerfile).read_text(encoding="utf-8")
             self.assertIn("COPY medicine_reference ./medicine_reference", content)
+        self.assertNotIn("COPY medicine_reference", rust_web)
+        self.assertNotIn("COPY medicine_canonical", rust_web)
         self.assertNotIn('include("medicine_reference/**/*.py")', android)
         self.assertNotIn("mfds_remark_registry.tsv", android)
 

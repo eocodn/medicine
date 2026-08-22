@@ -39,6 +39,8 @@ pub mod reference_state;
 mod regimen_review;
 mod safety_basis;
 mod safety_time;
+#[cfg(feature = "web")]
+pub mod web;
 
 pub use engine::{AccessClass, MedicineEngine};
 pub use reference_db_verifier::{

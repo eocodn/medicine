@@ -3,6 +3,10 @@ name = "medicine_core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+web = ["dep:axum", "dep:tokio", "dep:tower", "dep:tower-http"]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -10,7 +14,13 @@ crate-type = ["cdylib", "rlib"]
 name = "medicine-core"
 path = "src/bin/medicine_core.rs"
 
+[[bin]]
+name = "medicine-core-web"
+path = "src/bin/medicine_core_web.rs"
+required-features = ["web"]
+
 [dependencies]
+axum = { version = "0.8", optional = true }
 chrono = "0.4"
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 jni = "0.21"
@@ -21,5 +31,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"], optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+tower-http = { version = "0.6", features = ["fs"], optional = true }
 unicode-normalization = "0.1"
 uuid = { version = "1.18", features = ["v4"] }
