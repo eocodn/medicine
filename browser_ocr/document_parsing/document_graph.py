@@ -260,6 +260,23 @@ def _distance(source: GraphNode, target: GraphNode, width: float, height: float)
     return math.hypot((scx - tcx) / width, (scy - tcy) / height)
 
 
+def relation_pair_features(
+    graph: DocumentGraph,
+    product_index: int,
+    field_index: int,
+) -> tuple[float, ...]:
+    if not 1 <= product_index < len(graph.nodes) or not 1 <= field_index < len(graph.nodes):
+        raise ValueError("relation pair indices must reference OCR nodes")
+    if product_index == field_index:
+        raise ValueError("relation pair endpoints must be different OCR nodes")
+    return _edge_features(
+        graph.nodes[product_index],
+        graph.nodes[field_index],
+        document_width=graph.width,
+        document_height=graph.height,
+    )
+
+
 def build_document_graph(document: Mapping[str, Any], *, neighbor_count: int = 12) -> DocumentGraph:
     if not 1 <= neighbor_count <= 32:
         raise ValueError("neighbor_count must be between 1 and 32")
@@ -407,4 +424,5 @@ __all__ = [
     "RelationTarget",
     "build_document_graph",
     "graph_encoder_parameter_count",
+    "relation_pair_features",
 ]

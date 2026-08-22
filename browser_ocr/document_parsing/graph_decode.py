@@ -187,6 +187,41 @@ def _add_uncertainty(row: dict[str, Any], code: str) -> None:
         row["uncertainty_codes"].append(code)
 
 
+def decode_candidates(
+    document: Mapping[str, Any],
+    role_scores: Mapping[str, Mapping[str, float]],
+    *,
+    config: DecodeConfig = DecodeConfig(),
+) -> tuple[list[str], list[tuple[str, str]]]:
+    observation = document.get("observation")
+    if not isinstance(observation, Mapping) or not isinstance(observation.get("nodes"), list):
+        raise ValueError("parser document observation nodes are required")
+    node_ids: list[str] = []
+    for raw in observation["nodes"]:
+        if not isinstance(raw, Mapping):
+            raise ValueError("parser observation contains a non-object node")
+        node_id = str(raw.get("node_id") or "")
+        if not node_id or node_id in node_ids:
+            raise ValueError("parser observation node ids must be non-empty and unique")
+        node_ids.append(node_id)
+    if set(role_scores) != set(node_ids):
+        raise ValueError("role scores must cover every OCR node exactly once")
+    predicted_roles = {node_id: _ranked_role(role_scores[node_id]) for node_id in node_ids}
+    products = [
+        node_id for node_id in node_ids
+        if predicted_roles[node_id][0] == "product"
+        and predicted_roles[node_id][1] >= config.product_threshold
+        and predicted_roles[node_id][1] - predicted_roles[node_id][2] >= config.product_margin
+    ]
+    fields = [
+        (node_id, predicted_roles[node_id][0]) for node_id in node_ids
+        if predicted_roles[node_id][0] in _FIELD_ROLES
+        and predicted_roles[node_id][1] >= config.field_threshold
+        and predicted_roles[node_id][1] - predicted_roles[node_id][2] >= config.field_margin
+    ]
+    return products, fields
+
+
 def decode_graph_scores(
     document: Mapping[str, Any],
     role_scores: Mapping[str, Mapping[str, float]],
@@ -208,17 +243,7 @@ def decode_graph_scores(
             raise ValueError("parser observation node ids must be non-empty and unique")
         nodes[node_id] = raw
         order[node_id] = index
-    if set(role_scores) != set(nodes):
-        raise ValueError("role scores must cover every OCR node exactly once")
-
-    predicted_roles: dict[str, tuple[str, float, float]] = {
-        node_id: _ranked_role(role_scores[node_id]) for node_id in nodes
-    }
-    products = [
-        node_id for node_id, (role, score, second) in predicted_roles.items()
-        if role == "product" and score >= config.product_threshold and score - second >= config.product_margin
-    ]
-    products.sort(key=lambda node_id: order[node_id])
+    products, field_candidates = decode_candidates(document, role_scores, config=config)
     rows: dict[str, dict[str, Any]] = {}
     for node_id in products:
         product_query = _PRODUCT_PREFIX.sub("", str(nodes[node_id].get("text") or "")).strip()
@@ -236,9 +261,7 @@ def decode_graph_scores(
         return []
 
     assigned: dict[str, list[tuple[float, str, str]]] = {product: [] for product in products}
-    for field_id, (role, role_score, second_role_score) in predicted_roles.items():
-        if role not in _FIELD_ROLES or role_score < config.field_threshold or role_score - second_role_score < config.field_margin:
-            continue
+    for field_id, role in field_candidates:
         ranked: list[tuple[float, str]] = []
         for product_id in products:
             raw_score = association_scores.get((product_id, field_id))
@@ -307,4 +330,4 @@ def decode_graph_scores(
     return [rows[product_id] for product_id in products]
 
 
-__all__ = ["DecodeConfig", "decode_graph_scores"]
+__all__ = ["DecodeConfig", "decode_candidates", "decode_graph_scores"]

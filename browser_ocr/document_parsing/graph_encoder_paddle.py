@@ -124,15 +124,21 @@ class SparseDocumentGraphEncoder(nn.Layer):
     ) -> tuple[paddle.Tensor, paddle.Tensor]:
         hidden = self.encode(node_features, edge_index, edge_features)
         role_logits = self.role_head(hidden)
+        return role_logits, self.relation_logits(hidden, relation_index, relation_features)
+
+    def relation_logits(
+        self,
+        hidden: paddle.Tensor,
+        relation_index: paddle.Tensor,
+        relation_features: paddle.Tensor,
+    ) -> paddle.Tensor:
         if relation_index.shape[0] == 0:
-            relation_logits = paddle.zeros([0], dtype=hidden.dtype)
-        else:
-            product_hidden = paddle.gather(hidden, relation_index[:, 0], axis=0)
-            field_hidden = paddle.gather(hidden, relation_index[:, 1], axis=0)
-            pair_input = paddle.concat([product_hidden, field_hidden, relation_features], axis=1)
-            pair_hidden = F.gelu(self.pair_hidden(pair_input))
-            relation_logits = self.pair_output(pair_hidden).reshape([-1])
-        return role_logits, relation_logits
+            return paddle.zeros([0], dtype=hidden.dtype)
+        product_hidden = paddle.gather(hidden, relation_index[:, 0], axis=0)
+        field_hidden = paddle.gather(hidden, relation_index[:, 1], axis=0)
+        pair_input = paddle.concat([product_hidden, field_hidden, relation_features], axis=1)
+        pair_hidden = F.gelu(self.pair_hidden(pair_input))
+        return self.pair_output(pair_hidden).reshape([-1])
 
 
 def graph_loss(
