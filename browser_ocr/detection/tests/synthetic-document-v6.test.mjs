@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { LAYOUT_FAMILIES, PAGE_ROTATIONS } from "../synthetic_catalog.mjs";
+import { captureForSample } from "../synthetic_capture.mjs";
 import { buildDocumentTruth } from "../synthetic_document.mjs";
-import { buildLayout } from "../synthetic_layouts.mjs";
+import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH } from "../synthetic_layouts.mjs";
 
 function seeded(seed) {
   let state = seed >>> 0 || 1;
@@ -70,4 +72,22 @@ test("receipt-sidecar layout derives medication truth and keeps accounting numer
   assert.ok(receiptRegions.every((region) => region.region_class === "distractor"));
   assert.ok(receiptRegions.some((region) => /^\d{1,3}(?:,\d{3})*$/u.test(region.text)));
   assert.ok(receiptRegions.some((region) => /^\d+$/u.test(region.text)));
+});
+
+test("v6 capture cycle includes metadata-free right-angle full-page rotations", () => {
+  const captures = Array.from({ length: LAYOUT_FAMILIES.length * 6 }, (_, index) => {
+    const profileIndex = Math.floor(index / LAYOUT_FAMILIES.length) % 6;
+    return captureForSample(index, profileIndex, seeded(8100 + index), DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
+  });
+  assert.deepEqual(new Set(captures.map((capture) => capture.page_rotation_degrees)), new Set(PAGE_ROTATIONS));
+  assert.ok(captures.filter((capture) => capture.page_rotation_degrees !== 0).every((capture) => (
+    capture.augmentation_components.includes("right_angle_rotation")
+    && capture.risk_tags.includes("page_rotation")
+  )));
+
+  const rotated = captureForSample(2, 0, () => 0.99, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
+  assert.equal(rotated.page_rotation_degrees, 90);
+  const xs = rotated.destination_corners.map(([x]) => x);
+  const ys = rotated.destination_corners.map(([, y]) => y);
+  assert.ok(Math.max(...xs) - Math.min(...xs) > Math.max(...ys) - Math.min(...ys));
 });

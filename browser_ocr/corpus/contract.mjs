@@ -1,4 +1,5 @@
 import { DRUG_NAME_POLICY_ID, HISTORICAL_EXPOSURE_ID, drugExposure, observedDrugLeakageReport } from "./drug_holdout.mjs";
+import { PAGE_ROTATIONS } from "../detection/synthetic_catalog.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const TASKS = ["detection", "recognition", "parsing", "e2e"];
@@ -153,7 +154,13 @@ function validateDrugNamePolicy(policy, splitPolicy) {
   if (productTotal !== policy.eligible_product_count) fail("drug_name_policy pool product counts must sum to eligible_product_count");
 }
 
-function validateCapture(capture, sampleId, captureProfile, requireComposableAugmentation = false) {
+function validateCapture(
+  capture,
+  sampleId,
+  captureProfile,
+  requireComposableAugmentation = false,
+  requireRightAngleRotation = false,
+) {
   if (!capture || typeof capture !== "object" || Array.isArray(capture)) fail(`${sampleId}.capture must be an object`);
   if (capture.profile !== captureProfile) fail(`${sampleId}.capture.profile must match capture_profile`);
   if (!["projective", "homography_affine"].includes(capture.geometry_model)) fail(`${sampleId}.capture.geometry_model is invalid`);
@@ -185,6 +192,18 @@ function validateCapture(capture, sampleId, captureProfile, requireComposableAug
       fail(`${sampleId}.capture.noise_seed must be an unsigned 32-bit integer`);
     }
     if (capture.jpeg_quality < 42 || capture.jpeg_quality > 96) fail(`${sampleId}.capture.jpeg_quality is outside [42,96]`);
+  }
+  if (requireRightAngleRotation) {
+    if (!Number.isInteger(capture.page_rotation_degrees) || !PAGE_ROTATIONS.includes(capture.page_rotation_degrees)) {
+      fail(`${sampleId}.capture.page_rotation_degrees must be 0, 90, 180 or 270`);
+    }
+    const rotated = capture.page_rotation_degrees !== 0;
+    if (capture.augmentation_components.includes("right_angle_rotation") !== rotated) {
+      fail(`${sampleId}.capture.right_angle_rotation component must match page_rotation_degrees`);
+    }
+    if (capture.risk_tags.includes("page_rotation") !== rotated) {
+      fail(`${sampleId}.capture.page_rotation risk must match page_rotation_degrees`);
+    }
   }
 }
 
@@ -232,7 +251,13 @@ export function validateUnifiedCorpus(input) {
       if (typeof sample.printer_profile !== "string" || !sample.printer_profile.trim()) fail(`${sample.id}.printer_profile is required`);
       if (typeof sample.background_profile !== "string" || !sample.background_profile.trim()) fail(`${sample.id}.background_profile is required`);
       if (!Number.isInteger(sample.sample_index) || sample.sample_index < 0) fail(`${sample.id}.sample_index must be a non-negative integer`);
-      validateCapture(sample.capture, sample.id, sample.capture_profile, unified && input.generator.version >= 4);
+      validateCapture(
+        sample.capture,
+        sample.id,
+        sample.capture_profile,
+        unified && input.generator.version >= 4,
+        unified && input.generator.version >= 6,
+      );
     }
     if (unified) {
       if (!SPLITS.has(sample.split)) fail(`${sample.id}.split must be train, val or test`);

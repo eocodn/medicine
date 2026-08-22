@@ -2,12 +2,15 @@ import {
   AUGMENTATION_DIFFICULTIES,
   BACKGROUND_PROFILES,
   CAPTURE_PROFILES,
+  LEGACY_LAYOUT_FAMILIES,
   LAYOUT_FAMILIES,
   MATERIAL_PROFILES,
   PRINTER_PROFILES,
   REQUIRED_AUGMENTATION_COMPONENTS,
   REQUIRED_CRITICAL_SEMANTIC_ROLES,
   REQUIRED_RISK_TAGS,
+  REQUIRED_V6_AUGMENTATION_COMPONENTS,
+  REQUIRED_V6_RISK_TAGS,
 } from "./synthetic_catalog.mjs";
 
 function counts(values) {
@@ -26,6 +29,7 @@ export function auditCoverage(corpus, {
   minimumPerRisk = 1,
   minimumCriticalPerRole = 1,
 } = {}) {
+  const requiredLayoutFamilies = corpus.generator?.version >= 6 ? LAYOUT_FAMILIES : LEGACY_LAYOUT_FAMILIES;
   const layoutCounts = counts(corpus.samples.map((sample) => sample.layout_family));
   const captureCounts = counts(corpus.samples.map((sample) => sample.capture_profile));
   const difficultyCounts = counts(corpus.samples.map((sample) => sample.augmentation_difficulty));
@@ -41,7 +45,7 @@ export function auditCoverage(corpus, {
   )));
   const failures = [];
 
-  for (const family of LAYOUT_FAMILIES) {
+  for (const family of requiredLayoutFamilies) {
     if ((layoutCounts[family] || 0) < minimumPerLayout) failures.push(`layout family ${family} < ${minimumPerLayout}`);
   }
   for (const profile of CAPTURE_PROFILES) {
@@ -52,6 +56,11 @@ export function auditCoverage(corpus, {
   }
   for (const component of REQUIRED_AUGMENTATION_COMPONENTS) {
     if ((augmentationComponentCounts[component] || 0) < 1) failures.push(`augmentation component ${component} < 1`);
+  }
+  if (corpus.generator?.version >= 6) {
+    for (const component of REQUIRED_V6_AUGMENTATION_COMPONENTS) {
+      if ((augmentationComponentCounts[component] || 0) < 1) failures.push(`augmentation component ${component} < 1`);
+    }
   }
   for (const profile of MATERIAL_PROFILES) {
     if ((materialCounts[profile] || 0) < 1) failures.push(`material profile ${profile} < 1`);
@@ -64,6 +73,11 @@ export function auditCoverage(corpus, {
   }
   for (const risk of REQUIRED_RISK_TAGS) {
     if ((riskCounts[risk] || 0) < minimumPerRisk) failures.push(`risk tag ${risk} < ${minimumPerRisk}`);
+  }
+  if (corpus.generator?.version >= 6) {
+    for (const risk of REQUIRED_V6_RISK_TAGS) {
+      if ((riskCounts[risk] || 0) < minimumPerRisk) failures.push(`risk tag ${risk} < ${minimumPerRisk}`);
+    }
   }
   for (const role of REQUIRED_CRITICAL_SEMANTIC_ROLES) {
     if ((criticalSemanticCounts[role] || 0) < minimumCriticalPerRole) {

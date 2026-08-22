@@ -203,6 +203,13 @@ test("coverage audit fails closed when a required synthetic stratum disappears",
     assert.ok(report.critical_semantic_roles.product > 0);
     assert.ok(report.critical_semantic_roles.dose > 0);
 
+    const legacy = structuredClone(corpus);
+    legacy.generator.version = 5;
+    legacy.samples = legacy.samples.filter((sample) => sample.layout_family !== "pharmacy_guide_receipt_sidecar");
+    const legacyReport = auditCoverage(legacy);
+    assert.equal(legacyReport.status, "pass");
+    assert.equal(legacyReport.failures.some((failure) => failure.includes("pharmacy_guide_receipt_sidecar")), false);
+
     const broken = structuredClone(corpus);
     for (const sample of broken.samples) {
       if (sample.capture_profile === "glare_shadow") sample.capture_profile = "flat_clean";

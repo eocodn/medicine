@@ -36,6 +36,8 @@ Generator v6 separates **semantic document truth** from rendered coordinates. `s
 
 The first v6-only family is `pharmacy_guide_receipt_sidecar`, derived from the real-photo distribution review. It renders one medication in a wide guide area plus a narrow dense accounting sidecar with dates, counts, amounts, identifiers, and other medication-shaped numeric hard negatives. Sidecar text is explicitly `region_class=distractor`, uses the document association group, and never inherits medication associations. The page also contains a large ruled blank body and non-text pictogram decorations. This family is procedural and contains no patient-derived image content.
 
+Generator v6 revision 2 also makes metadata-free right-angle camera orientation part of the source distribution. The deterministic capture cycle includes 0/90/180/270-degree full-page rotations, records `capture.page_rotation_degrees`, and tags non-upright samples with `right_angle_rotation` / `page_rotation`. Rendered JPEGs are stripped of metadata, so sideways samples cannot rely on EXIF orientation. This is corpus coverage only; runtime orientation canonicalization remains an explicit OCR-boundary responsibility rather than a parser layout heuristic.
+
 Existing v5 parser-structure recipes are temporarily retained after semantic layout composition so current parser/evaluation consumers continue to receive their held-out structural stress cases during the migration. They are not the target architecture for v6; future structural diversity should move into semantic-document and layout composition rather than accumulate as post-layout special cases.
 
 ## Parser structure holdout

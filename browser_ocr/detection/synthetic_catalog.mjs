@@ -1,10 +1,14 @@
-export const LAYOUT_FAMILIES = [
+export const LEGACY_LAYOUT_FAMILIES = [
   "prescription_table",
   "compact_prescription_form",
   "legacy_preprinted_medication_bag",
   "classic_medication_bag",
   "counseling_medication_bag",
   "pharmacy_information_sheet",
+];
+
+export const LAYOUT_FAMILIES = [
+  ...LEGACY_LAYOUT_FAMILIES,
   "pharmacy_guide_receipt_sidecar",
 ];
 
@@ -16,6 +20,8 @@ export const CAPTURE_PROFILES = [
   "motion_jpeg",
   "cropped_clutter",
 ];
+
+export const PAGE_ROTATIONS = [0, 90, 180, 270];
 
 export const AUGMENTATION_DIFFICULTIES = [
   "clean",
@@ -36,6 +42,10 @@ export const REQUIRED_AUGMENTATION_COMPONENTS = [
   "white_balance",
   "partial_crop",
   "foreground_clutter",
+];
+
+export const REQUIRED_V6_AUGMENTATION_COMPONENTS = [
+  "right_angle_rotation",
 ];
 
 export const MATERIAL_PROFILES = [
@@ -73,6 +83,10 @@ export const REQUIRED_RISK_TAGS = [
   "downscale",
   "sensor_noise",
   "white_balance",
+];
+
+export const REQUIRED_V6_RISK_TAGS = [
+  "page_rotation",
 ];
 
 export const REQUIRED_CRITICAL_SEMANTIC_ROLES = [

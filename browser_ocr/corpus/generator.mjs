@@ -21,6 +21,7 @@ import {
   CAPTURE_PROFILES,
   LAYOUT_FAMILIES,
   MATERIAL_PROFILES,
+  PAGE_ROTATIONS,
   PRINTER_PROFILES,
 } from "../detection/synthetic_catalog.mjs";
 import { buildDocumentTruth, SYNTHETIC_DOCUMENT_MODEL_VERSION } from "../detection/synthetic_document.mjs";
@@ -30,7 +31,7 @@ import { PARSER_STRUCTURE_REVISION, applyParserStructureVariant } from "./parser
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 6;
-const GENERATOR_REVISION = 1;
+const GENERATOR_REVISION = 2;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -92,6 +93,7 @@ async function configurationFingerprint({ seed, count, drugNamePolicy }) {
       height: DOCUMENT_HEIGHT,
       layout_families: LAYOUT_FAMILIES,
       capture_profiles: CAPTURE_PROFILES,
+      page_rotations: PAGE_ROTATIONS,
       augmentation_difficulties: AUGMENTATION_DIFFICULTIES,
       material_profiles: MATERIAL_PROFILES,
       printer_profiles: PRINTER_PROFILES,
