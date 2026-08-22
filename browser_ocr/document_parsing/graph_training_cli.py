@@ -13,6 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Train the mobile sparse document-graph medication parser",
     )
     parser.add_argument("--train-manifest", action="append", required=True)
+    parser.add_argument("--train-weight", action="append", type=float)
     parser.add_argument("--val-manifest", action="append", required=True)
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--epochs", type=int, default=12)
@@ -48,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         result = run_graph_training(
             train_manifests=args.train_manifest,
+            train_weights=args.train_weight,
             val_manifests=args.val_manifest,
             run_dir=args.run_dir,
             config=config,

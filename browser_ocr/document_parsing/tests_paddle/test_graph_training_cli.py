@@ -14,6 +14,8 @@ class GraphTrainingCliTest(unittest.TestCase):
         args = build_parser().parse_args([
             "--train-manifest", "/data/train-a/manifest.json",
             "--train-manifest", "/data/train-b/manifest.json",
+            "--train-weight", "0.7",
+            "--train-weight", "0.3",
             "--val-manifest", "/data/val/manifest.json",
             "--run-dir", "/artifacts/parser/model-v1",
         ])
@@ -21,6 +23,7 @@ class GraphTrainingCliTest(unittest.TestCase):
             "/data/train-a/manifest.json",
             "/data/train-b/manifest.json",
         ])
+        self.assertEqual(args.train_weight, [0.7, 0.3])
         self.assertEqual(args.val_manifest, ["/data/val/manifest.json"])
         self.assertEqual(args.hidden_dim, 96)
         self.assertEqual(args.layers, 2)

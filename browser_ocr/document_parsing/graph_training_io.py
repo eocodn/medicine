@@ -65,6 +65,7 @@ def atomic_checkpoint(
     model: SparseDocumentGraphEncoder,
     optimizer: paddle.optimizer.Optimizer,
     training_loss: float,
+    training_view_steps: Mapping[str, int],
     validation: Mapping[str, Any],
 ) -> dict[str, Any]:
     checkpoints = root / CHECKPOINTS_DIR
@@ -85,6 +86,7 @@ def atomic_checkpoint(
             "epoch": epoch,
             "profile_sha256": profile_sha256,
             "training_loss": training_loss,
+            "training_view_steps": dict(training_view_steps),
             "validation": dict(validation),
             "model_sha256": sha256_file(model_path),
             "optimizer_sha256": sha256_file(optimizer_path),
@@ -97,6 +99,7 @@ def atomic_checkpoint(
     return {
         "epoch": epoch,
         "training_loss": training_loss,
+        "train_view_steps": dict(training_view_steps),
         "validation": dict(validation),
         "checkpoint": str(final / "model.pdparams"),
         "model_sha256": record["model_sha256"],
@@ -121,9 +124,16 @@ def checkpoint_record(root: Path, epoch: int, profile_sha256: str) -> dict[str, 
     validation = raw.get("validation")
     if not isinstance(validation, Mapping):
         raise ValueError(f"graph training checkpoint {epoch} validation metrics are invalid")
+    training_view_steps = raw.get("training_view_steps")
+    if not isinstance(training_view_steps, Mapping) or any(
+        not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for key, value in training_view_steps.items()
+    ):
+        raise ValueError(f"graph training checkpoint {epoch} training view steps are invalid")
     return {
         "epoch": epoch,
         "training_loss": float(raw["training_loss"]),
+        "train_view_steps": dict(training_view_steps),
         "validation": dict(validation),
         "checkpoint": str(model),
         "model_sha256": str(raw["model_sha256"]),

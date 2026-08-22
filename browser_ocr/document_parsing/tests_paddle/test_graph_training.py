@@ -188,6 +188,73 @@ class GraphTrainingPaddleTest(unittest.TestCase):
             self.assertEqual(result["epochs_completed"], 3)
             self.assertEqual([item["epoch"] for item in result["history"]], [1, 2, 3])
 
+    def test_training_views_have_explicit_deterministic_sampling_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifests = []
+            for view_index in range(3):
+                manifests.append(write_parser_dataset(
+                    root / f"train-view-{view_index}",
+                    dataset_id=f"parser-train-view-{view_index}",
+                    documents=[
+                        _document(f"view-{view_index}-doc-1", "train", view_index * 10 + 1),
+                        _document(f"view-{view_index}-doc-2", "train", view_index * 10 + 2),
+                    ],
+                ))
+            val = write_parser_dataset(
+                root / "val",
+                dataset_id="parser-weighted-val",
+                documents=[_document("weighted-val", "val", 99)],
+            )
+            config = GraphTrainingConfig(
+                epochs=1,
+                learning_rate=0.01,
+                seed=17,
+                hidden_dim=32,
+                layers=1,
+                neighbor_count=4,
+                pair_hidden_dim=24,
+                device="cpu",
+            )
+            first = run_graph_training(
+                train_manifests=manifests,
+                train_weights=[0.6, 0.2, 0.2],
+                val_manifests=[val],
+                run_dir=root / "weighted-a",
+                config=config,
+            )
+            second = run_graph_training(
+                train_manifests=manifests,
+                train_weights=[0.6, 0.2, 0.2],
+                val_manifests=[val],
+                run_dir=root / "weighted-b",
+                config=config,
+            )
+            self.assertEqual(
+                [view["weight"] for view in first["profile"]["train_views"]],
+                [0.6, 0.2, 0.2],
+            )
+            self.assertEqual(first["history"][0]["train_view_steps"], second["history"][0]["train_view_steps"])
+            steps = first["history"][0]["train_view_steps"]
+            self.assertEqual(sum(steps.values()), 6)
+            self.assertEqual(sorted(steps.values()), [1, 1, 4])
+
+            with self.assertRaisesRegex(ValueError, "train_weights"):
+                run_graph_training(
+                    train_manifests=manifests,
+                    train_weights=[1.0, 1.0],
+                    val_manifests=[val],
+                    run_dir=root / "bad-weights",
+                    config=config,
+                )
+            with self.assertRaisesRegex(ValueError, "train_weights"):
+                run_graph_training(
+                    train_manifests=manifests,
+                    val_manifests=[val],
+                    run_dir=root / "missing-weights",
+                    config=config,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

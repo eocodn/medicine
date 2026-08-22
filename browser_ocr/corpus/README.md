@@ -50,7 +50,7 @@ Generator v5 revision 8 introduced parser-specific structural recipes before ren
 
 - `detection/`: full-page references plus region polygons, with train/val/test JSONL files and PaddleOCR detection-training labels under `detection/paddle/`.
 - `recognition/`: perspective-normalized crops cut from the already-degraded full-page raster using GT region polygons. It includes the existing fine-tune dataset manifest plus a ready-to-use PaddleOCR `train.txt`, `val.txt`, and `test.txt` export.
-- `parsing/`: authoritative document truth plus oracle manifests and strict learned-parser datasets. Materialization emits oracle and deterministic synthetic-OCR train/val/test manifests whose observed boxes may be dropped, split, merged, jittered or corrupted before geometry-based labeling. Relations include `same_medication` positives and cross-medication hard negatives.
+- `parsing/`: authoritative document truth plus oracle manifests and strict learned-parser datasets. Materialization emits an all-split oracle dataset, a train-only oracle view for controlled auxiliary supervision, and deterministic synthetic-OCR train/val/test manifests whose observed boxes may be dropped, split, merged, jittered or corrupted before geometry-based labeling. Relations include `same_medication` positives and cross-medication hard negatives.
 - `e2e/`: full-page images plus expected structured rows and critical region ids, preserving the same document split for future learned-parser end-to-end evaluation.
 
 Recognition crops deliberately come from the final degraded raster rather than from pristine source text. Motion blur, JPEG compression, perspective, glare, printer degradation, and other document-level effects therefore reach recognizer training/evaluation exactly as they appear in the E2E image. Crop checkpoints bind both source-image bytes and a rolling SHA-256 chain of completed crop outputs, so a same-path source change or mutated completed crop is rejected instead of being silently reused.
@@ -94,7 +94,7 @@ docker compose run --rm ocr-corpus materialize --corpus /artifacts/ocr/corpora/u
 docker compose run --rm ocr-corpus audit --corpus /artifacts/ocr/corpora/unified-360/manifest.json --json
 ```
 
-Generation and materialization use exclusive locks, atomic state files, content hashes, resumable checkpoints, and explicit progress on stderr. Materializer v13 uses a kernel advisory lock held by a helper process, so a dead process cannot strand an existence-based lock file; the lock file itself may persist harmlessly. Completed reuse revalidates the report SHA, a fixed set of stage/parser artifact hashes, recognition image hashes through the recognition dataset core, and all emitted parser datasets before returning success. Reusing an output directory with a different generator/materializer profile fails rather than mixing artifacts.
+Generation and materialization use exclusive locks, atomic state files, content hashes, resumable checkpoints, and explicit progress on stderr. Materializer v14 uses a kernel advisory lock held by a helper process, so a dead process cannot strand an existence-based lock file; the lock file itself may persist harmlessly. Completed reuse revalidates the report SHA, a fixed set of stage/parser artifact hashes, recognition image hashes through the recognition dataset core, and all emitted parser datasets before returning success. Reusing an output directory with a different generator/materializer profile fails rather than mixing artifacts.
 
 ## Training and evaluation boundaries
 

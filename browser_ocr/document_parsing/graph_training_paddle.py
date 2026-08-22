@@ -3,7 +3,6 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import math
-import random
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -33,6 +32,7 @@ from .graph_training_io import (
     sha256_file,
     validate_completed_result,
 )
+from .graph_training_sampling import normalize_view_weights, weighted_epoch_schedule
 from .training_dataset import ParserDataset, load_parser_dataset
 
 
@@ -88,6 +88,7 @@ def _implementation_sha256() -> str:
         root / "document_graph.py",
         root / "graph_encoder_paddle.py",
         root / "graph_training_io.py",
+        root / "graph_training_sampling.py",
         Path(__file__).resolve(),
     ]
     digest = hashlib.sha256()
@@ -116,6 +117,9 @@ def _load_training_datasets(
         raise ValueError("graph training requires at least one train and one validation dataset")
     train = [load_parser_dataset(path) for path in train_manifests]
     validation = [load_parser_dataset(path) for path in val_manifests]
+    train_ids = [dataset.dataset_id for dataset in train]
+    if len(set(train_ids)) != len(train_ids):
+        raise ValueError("graph training view dataset_id values must be unique")
     train_splits = {document["split"] for dataset in train for document in dataset.documents}
     val_splits = {document["split"] for dataset in validation for document in dataset.documents}
     if train_splits != {"train"}:
@@ -130,6 +134,16 @@ def _graphs(datasets: Sequence[ParserDataset], spec: GraphEncoderSpec):
         build_document_graph(document, neighbor_count=spec.neighbor_count)
         for dataset in datasets
         for document in dataset.documents
+    ]
+
+
+def _graph_views(datasets: Sequence[ParserDataset], spec: GraphEncoderSpec):
+    return [
+        [
+            build_document_graph(document, neighbor_count=spec.neighbor_count)
+            for document in dataset.documents
+        ]
+        for dataset in datasets
     ]
 
 
@@ -160,20 +174,25 @@ def _relation_pos_weight(graphs, maximum: float) -> float:
 def _train_epoch(
     model: SparseDocumentGraphEncoder,
     optimizer: paddle.optimizer.Optimizer,
-    graphs,
+    graph_views,
+    view_weights: Sequence[float],
     *,
     epoch: int,
     seed: int,
     role_weight: paddle.Tensor,
     relation_loss_weight: float,
     relation_pos_weight: float,
-) -> float:
-    order = list(range(len(graphs)))
-    random.Random(seed + epoch * 1_000_003).shuffle(order)
+) -> tuple[float, tuple[int, ...]]:
+    schedule, step_counts = weighted_epoch_schedule(
+        [len(view) for view in graph_views],
+        view_weights,
+        seed=seed,
+        epoch=epoch,
+    )
     model.train()
     total_loss = 0.0
-    for graph_index in order:
-        tensors = graph_tensors(graphs[graph_index])
+    for view_index, graph_index in schedule:
+        tensors = graph_tensors(graph_views[view_index][graph_index])
         role_logits, relation_logits = model(
             tensors.node_features,
             tensors.edge_index,
@@ -200,7 +219,7 @@ def _train_epoch(
             optimizer.step()
         optimizer.clear_grad()
         total_loss += float(loss.item())
-    return total_loss / len(order)
+    return total_loss / len(schedule), step_counts
 
 
 def _f_score(precision: float, recall: float, beta: float) -> float:
@@ -301,13 +320,17 @@ def _selection_key(record: Mapping[str, Any]) -> tuple[float, float, float, floa
 
 def _profile(
     train: Sequence[ParserDataset],
+    train_weights: Sequence[float],
     validation: Sequence[ParserDataset],
     config: GraphTrainingConfig,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "implementation_sha256": _implementation_sha256(),
-        "train_datasets": [_dataset_identity(dataset) for dataset in train],
+        "train_views": [
+            {**_dataset_identity(dataset), "weight": weight}
+            for dataset, weight in zip(train, train_weights, strict=True)
+        ],
         "validation_datasets": [_dataset_identity(dataset) for dataset in validation],
         "config": asdict(config),
         "architecture": architecture_manifest(config.spec),
@@ -317,12 +340,14 @@ def _profile(
 def run_graph_training(
     *,
     train_manifests: Sequence[str | Path],
+    train_weights: Sequence[float] | None = None,
     val_manifests: Sequence[str | Path],
     run_dir: str | Path,
     config: GraphTrainingConfig = GraphTrainingConfig(),
 ) -> dict[str, Any]:
     train_datasets, val_datasets = _load_training_datasets(train_manifests, val_manifests)
-    profile = _profile(train_datasets, val_datasets, config)
+    normalized_train_weights = normalize_view_weights(len(train_datasets), train_weights)
+    profile = _profile(train_datasets, normalized_train_weights, val_datasets, config)
     profile_sha256 = sha256_bytes(canonical_json(profile))
     root = Path(run_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -367,7 +392,8 @@ def run_graph_training(
         paddle.set_device(config.device)
         paddle.seed(config.seed)
         spec = config.spec
-        train_graphs = _graphs(train_datasets, spec)
+        train_graph_views = _graph_views(train_datasets, spec)
+        train_graphs = [graph for view in train_graph_views for graph in view]
         val_graphs = _graphs(val_datasets, spec)
         role_weight = _role_weights(train_graphs)
         relation_pos_weight = _relation_pos_weight(train_graphs, config.max_relation_pos_weight)
@@ -390,10 +416,11 @@ def run_graph_training(
 
         try:
             for epoch in range(len(history) + 1, config.epochs + 1):
-                training_loss = _train_epoch(
+                training_loss, train_step_counts = _train_epoch(
                     model,
                     optimizer,
-                    train_graphs,
+                    train_graph_views,
+                    normalized_train_weights,
                     epoch=epoch,
                     seed=config.seed,
                     role_weight=role_weight,
@@ -401,6 +428,10 @@ def run_graph_training(
                     relation_pos_weight=relation_pos_weight,
                 )
                 validation = evaluate_graph_model(model, val_graphs)
+                train_view_steps = {
+                    dataset.dataset_id: count
+                    for dataset, count in zip(train_datasets, train_step_counts, strict=True)
+                }
                 record = atomic_checkpoint(
                     root,
                     epoch=epoch,
@@ -408,6 +439,7 @@ def run_graph_training(
                     model=model,
                     optimizer=optimizer,
                     training_loss=training_loss,
+                    training_view_steps=train_view_steps,
                     validation=validation,
                 )
                 history.append(record)
