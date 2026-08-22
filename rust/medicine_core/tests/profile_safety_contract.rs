@@ -1,16 +1,13 @@
+mod common;
+
 use medicine_core::inspect_profile_risks;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_reference_db() -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("medicine-profile-safety-{nonce}.sqlite"));
+    let path = common::temp_sqlite_path("profile-safety");
     let con = Connection::open(&path).expect("create profile safety fixture");
     con.execute_batch(
         r#"

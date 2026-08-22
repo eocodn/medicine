@@ -1,16 +1,13 @@
+mod common;
+
 use rusqlite::Connection;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_personal_db() -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("medicine-cli-{nonce}.sqlite"));
+    let path = common::temp_sqlite_path("cli");
     let con = Connection::open(&path).expect("create CLI sqlite fixture");
     con.execute_batch(
         "CREATE TABLE people(
@@ -30,11 +27,7 @@ fn temp_personal_db() -> PathBuf {
 }
 
 fn temp_canonical_db() -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("medicine-cli-canonical-{nonce}.sqlite"));
+    let path = common::temp_sqlite_path("cli-canonical");
     let con = Connection::open(&path).expect("create CLI canonical fixture");
     con.execute_batch(
         "CREATE TABLE canonical_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);

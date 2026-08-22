@@ -1,16 +1,13 @@
+mod common;
+
 use medicine_core::MedicineEngine;
 use rusqlite::Connection;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_planning_db() -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("medicine-planning-{nonce}.sqlite"));
+    let path = common::temp_sqlite_path("planning");
     let con = Connection::open(&path).expect("create planning fixture");
     con.execute_batch(
         "PRAGMA foreign_keys=ON;

@@ -1,16 +1,13 @@
+mod common;
+
 use medicine_core::MedicineEngine;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_path(label: &str) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_nanos();
-    std::env::temp_dir().join(format!("medicine-preview-{label}-{nonce}.sqlite"))
+    common::temp_sqlite_path(&format!("preview-{label}"))
 }
 
 fn temp_reference_db() -> PathBuf {

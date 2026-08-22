@@ -1,16 +1,13 @@
+mod common;
+
 use medicine_core::{inspect_product, normalize_prescription_draft};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_canonical_db() -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("medicine-safety-substrate-{nonce}.sqlite"));
+    let path = common::temp_sqlite_path("safety-substrate");
     let con = Connection::open(&path).expect("create canonical fixture");
     con.execute_batch(
         "CREATE TABLE products(

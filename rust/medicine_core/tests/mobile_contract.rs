@@ -1,16 +1,13 @@
+mod common;
+
 use medicine_core::{AccessClass, MedicineEngine};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_db(name: &str, with_product: bool) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("medicine-{name}-{nonce}.sqlite"));
+    let path = common::temp_sqlite_path(name);
     let con = Connection::open(&path).expect("create sqlite fixture");
     con.execute_batch("CREATE TABLE products(item_seq TEXT PRIMARY KEY);")
         .expect("create products table");
@@ -23,11 +20,7 @@ fn temp_db(name: &str, with_product: bool) -> PathBuf {
 }
 
 fn temp_personal_db(name: &str) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("medicine-{name}-{nonce}.sqlite"));
+    let path = common::temp_sqlite_path(name);
     let con = Connection::open(&path).expect("create personal sqlite fixture");
     con.execute_batch(
         "PRAGMA foreign_keys=ON;
