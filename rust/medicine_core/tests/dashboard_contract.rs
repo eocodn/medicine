@@ -208,6 +208,42 @@ fn cleanup(reference: Option<PathBuf>, personal: PathBuf) {
 }
 
 #[test]
+fn medication_list_route_is_personal_read_and_never_materializes_daily_plan() {
+    let reference = reference_db();
+    let personal = personal_db();
+    let engine = engine(Some(&reference), &personal);
+    let path = "/api/people/p1/medications?date=2026-08-10";
+
+    assert_eq!(
+        engine.request_access("GET", path),
+        AccessClass::PersonalRead
+    );
+    assert!(engine.handles_request("GET", path));
+
+    let response = get(&engine, path);
+    assert_eq!(response["status"], 200, "{response}");
+    assert_eq!(
+        response["body"]
+            .as_array()
+            .expect("medication list")
+            .iter()
+            .map(|medication| medication["id"].as_str().expect("medication id"))
+            .collect::<Vec<_>>(),
+        vec!["early", "late"]
+    );
+    assert_eq!(response["body"][0]["course_progress"]["status"], "active");
+    assert!(response["body"][0]["current_assessment"].is_object());
+
+    let con = Connection::open(&personal).expect("observe medication-list side effects");
+    let count: i64 = con
+        .query_row("SELECT COUNT(*) FROM dose_instances", [], |row| row.get(0))
+        .expect("count dose instances");
+    assert_eq!(count, 0);
+
+    cleanup(Some(reference), personal);
+}
+
+#[test]
 fn dashboard_route_is_rust_owned_personal_write_and_strips_query_for_matching() {
     let engine = MedicineEngine::new(None, None, None);
     let path = "/api/people/p1/dashboard?date=2026-08-10";

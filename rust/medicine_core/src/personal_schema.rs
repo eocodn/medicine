@@ -65,8 +65,8 @@ impl SchemaLock {
             .read(true)
             .write(true)
             .open(PathBuf::from(lock_path))?;
-        // Python's migration path uses flock on this same retained file. The
-        // Rust boundary must participate until the Python runtime is removed.
+        // Keep a retained advisory lock file so concurrent app and CLI processes
+        // serialize schema migration before opening their SQLite write boundary.
         let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
         if result != 0 {
             return Err(io::Error::last_os_error().into());

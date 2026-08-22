@@ -363,7 +363,7 @@ def _dispatch_native(args) -> tuple[dict, bool]:
     if args.command == "meds":
         person = quote(args.person, safe="")
         query = "" if args.date is None else f"?{urlencode({'date': args.date})}"
-        return _native_request(args, "GET", f"/api/people/{person}/dashboard{query}"), True
+        return _native_request(args, "GET", f"/api/people/{person}/medications{query}"), False
     if args.command == "risk-preview":
         person = quote(args.person, safe="")
         payload = _optional_values({

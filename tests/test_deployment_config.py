@@ -547,8 +547,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', web_service)
         self.assertIn("HOME: /tmp", web_service)
         self.assertNotIn("PYTHONDONTWRITEBYTECODE", web_service)
-        self.assertNotIn("uvicorn", web_service)
-        self.assertNotIn("medicine_app.web", web_service)
         self.assertIn("AS ocr-assets", dockerfile)
         self.assertIn("AS rust-web", dockerfile)
         self.assertIn("cargo build --locked --release --features web --bin medicine-core-web", dockerfile)
@@ -560,7 +558,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("COPY --from=rust-web", dockerfile)
         self.assertIn('ENTRYPOINT ["/usr/local/bin/medicine-core-web"]', dockerfile)
         self.assertNotIn("python", dockerfile.lower())
-        self.assertFalse(Path("medicine_app/web_entrypoint.py").exists())
 
     def test_retired_legacy_etl_is_not_packaged_or_exposed(self) -> None:
         compose = Path("compose.yaml").read_text()

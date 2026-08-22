@@ -3,7 +3,8 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    dashboard, doses, medications, people, personal_schema, planning, preview, prn, product_search,
+    dashboard, doses, medication_list, medications, people, personal_schema, planning, preview,
+    prn, product_search,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,6 +111,7 @@ impl MedicineEngine {
         (normalized_method(method) == "GET" && path == "/api/health")
             || product_search::handles_request(method, raw_path)
             || people::handles_request(method, path)
+            || medication_list::handles_request(method, path)
             || dashboard::handles_request(method, path)
             || planning::handles_request(method, path)
             || preview::handles_request(method, path)
@@ -145,12 +147,21 @@ impl MedicineEngine {
         {
             return json!({"status": status, "body": body}).to_string();
         }
-        let dashboard_reference = self
+        let active_reference = self
             .reference_available
             .then_some(self.canonical_db.as_deref())
             .flatten();
+        if let Some((status, body)) = medication_list::handle_request(
+            active_reference,
+            self.personal_db.as_deref(),
+            method,
+            raw_path,
+            path,
+        ) {
+            return json!({"status": status, "body": body}).to_string();
+        }
         if let Some((status, body)) = dashboard::handle_request(
-            dashboard_reference,
+            active_reference,
             self.personal_db.as_deref(),
             method,
             raw_path,
@@ -239,6 +250,9 @@ fn classify_request(method: &str, raw_path: &str) -> RequestPolicy {
         return RequestPolicy::new(AccessClass::PersonalRead, false);
     }
     if method == "GET" && single_segment_route(path, "/api/medications/", "/history") {
+        return RequestPolicy::new(AccessClass::PersonalRead, false);
+    }
+    if method == "GET" && single_segment_route(path, "/api/people/", "/medications") {
         return RequestPolicy::new(AccessClass::PersonalRead, false);
     }
     if method == "POST" && single_segment_route(path, "/api/people/", "/medications/preview") {

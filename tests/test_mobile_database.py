@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,6 +64,64 @@ class MobileDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(verified["status"], "verified")
         self.assertEqual(verified["dataset_id"], result["dataset_id"])
+
+        rust_verified = subprocess.run(
+            [
+                "medicine-core", "reference-verify",
+                "--reference-db", str(self.mobile_db),
+                "--contract-major", str(REFERENCE_CONTRACT_MAJOR),
+                "--dataset-id", result["dataset_id"],
+                "--json",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        rust_verified_payload = json.loads(rust_verified.stdout)
+        self.assertEqual(rust_verified_payload["status"], 200)
+        self.assertEqual(rust_verified_payload["body"]["status"], "verified")
+        self.assertEqual(rust_verified_payload["body"]["dataset_id"], result["dataset_id"])
+
+        rust_product = subprocess.run(
+            [
+                "medicine-core", "product",
+                "--canonical-db", str(self.mobile_db),
+                "--product-ref", "MFDS-Z",
+                "--json",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        product_payload = json.loads(rust_product.stdout)
+        self.assertEqual(product_payload["status"], 200)
+        self.assertEqual(product_payload["body"]["catalog_item_seq"], "MFDS-Z")
+        self.assertEqual(product_payload["body"]["product_mapping_method"], "item_seq_exact")
+
+        rust_safety = subprocess.run(
+            [
+                "medicine-core", "safety-basis",
+                "--canonical-db", str(self.mobile_db),
+                "--product-ref", "MFDS-Z",
+                "--person", json.dumps({
+                    "birth_date": "1990-01-01",
+                    "sex": "male",
+                    "pregnancy_status": "not_applicable",
+                }, separators=(",", ":")),
+                "--draft", json.dumps({
+                    "prescription_days": 35,
+                    "start_date": "2026-08-20",
+                }, separators=(",", ":")),
+                "--json",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        safety_payload = json.loads(rust_safety.stdout)
+        self.assertEqual(safety_payload["status"], 200)
+        self.assertEqual(
+            safety_payload["body"]["quantitative_checks"]["duration"]["result"],
+            "exceeded",
+        )
+        self.assertEqual(
+            safety_payload["body"]["quantitative_checks"]["duration"]["maximum_days"],
+            28,
+        )
 
     def test_frozen_contract_uses_signed_dataset_identity_and_ignores_diagnostic_provenance(self) -> None:
         result = build_mobile_database(

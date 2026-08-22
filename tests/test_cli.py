@@ -138,17 +138,17 @@ class CliAdapterTest(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn("different input", payload["detail"])
 
-    def test_meds_uses_rust_dashboard_and_presents_only_medications(self) -> None:
+    def test_meds_uses_read_only_rust_medication_list(self) -> None:
         status, payload, calls = self.run_cli(
             "meds", "--person", "person-1", "--date", "2026-08-11",
             responses=[
                 {"status": 200, "body": {"initialized": True, "schema_version": 4}},
-                {"status": 200, "body": {"medications": [{"id": "m1"}], "daily_plan": {}}},
+                {"status": 200, "body": [{"id": "m1"}]},
             ],
         )
         self.assertEqual(status, 0)
         self.assertEqual(payload, [{"id": "m1"}])
-        self.assertIn("/api/people/person-1/dashboard?date=2026-08-11", calls[1])
+        self.assertIn("/api/people/person-1/medications?date=2026-08-11", calls[1])
 
     def test_screenshot_can_target_the_medication_screen(self) -> None:
         args = build_parser().parse_args(["screenshot", "--screen", "meds"])

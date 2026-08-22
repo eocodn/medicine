@@ -89,6 +89,10 @@ fn request_policy_matches_existing_mobile_contract() {
         AccessClass::PersonalRead
     );
     assert_eq!(
+        engine.request_access("GET", "/api/people/example/medications?date=2026-08-20"),
+        AccessClass::PersonalRead
+    );
+    assert_eq!(
         engine.request_access("POST", "/api/people/example/medications/preview"),
         AccessClass::PersonalRead
     );
@@ -149,6 +153,7 @@ fn migrated_runtime_routes_are_owned_by_rust() {
     assert!(engine.handles_request("DELETE", "/api/people/example"));
     assert!(engine.handles_request("GET", "/api/people/example/daily-plan?date=2026-08-20"));
     assert!(engine.handles_request("GET", "/api/people/example/dashboard?date=2026-08-20"));
+    assert!(engine.handles_request("GET", "/api/people/example/medications?date=2026-08-20"));
     assert!(engine.handles_request("GET", "/api/medications/example/history"));
     assert!(engine.handles_request("DELETE", "/api/medications/example?expected_revision=1"));
     assert!(engine.handles_request("POST", "/api/people/example/medications/preview"));
