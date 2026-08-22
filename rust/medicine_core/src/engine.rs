@@ -136,9 +136,14 @@ impl MedicineEngine {
         ) {
             return json!({"status": status, "body": body}).to_string();
         }
-        if let Some((status, body)) =
-            medications::handle_request(self.personal_db.as_deref(), method, raw_path, path)
-        {
+        if let Some((status, body)) = medications::handle_request(
+            self.canonical_db.as_deref(),
+            self.personal_db.as_deref(),
+            method,
+            raw_path,
+            path,
+            body_json,
+        ) {
             return json!({"status": status, "body": body}).to_string();
         }
         if let Some((status, body)) =

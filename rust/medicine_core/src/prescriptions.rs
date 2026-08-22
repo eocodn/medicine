@@ -147,6 +147,14 @@ pub(crate) fn draft_hash(
     product_ref: &str,
     draft: &Value,
 ) -> Result<String, DraftError> {
+    draft_hash_optional(person_id, Some(product_ref), draft)
+}
+
+pub(crate) fn draft_hash_optional(
+    person_id: &str,
+    product_ref: Option<&str>,
+    draft: &Value,
+) -> Result<String, DraftError> {
     let Value::Object(draft) = draft else {
         return Err(DraftError::Internal);
     };
@@ -154,7 +162,9 @@ pub(crate) fn draft_hash(
     payload.insert("person_id".to_owned(), Value::String(person_id.to_owned()));
     payload.insert(
         "product_ref".to_owned(),
-        Value::String(product_ref.to_owned()),
+        product_ref
+            .map(|value| Value::String(value.to_owned()))
+            .unwrap_or(Value::Null),
     );
     for (key, value) in draft {
         payload.insert(key.clone(), value.clone());

@@ -19,7 +19,9 @@ pub(crate) fn duplicate_review_items(
     product: &Value,
     draft: &Map<String, Value>,
 ) -> Result<Vec<Value>, ()> {
-    let target = item_seq(product.as_object().ok_or(())?).ok_or(())?;
+    let Some(target) = item_seq(product.as_object().ok_or(())?) else {
+        return Ok(Vec::new());
+    };
     let target_signature = signature(draft)?;
     let mut items = Vec::new();
     for medication in current {

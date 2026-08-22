@@ -1,5 +1,5 @@
 use medicine_core::MedicineEngine;
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,12 +10,12 @@ fn temp_path(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock before epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!("medicine-preview-{label}-{nonce}.sqlite"))
+    std::env::temp_dir().join(format!("medicine-create-{label}-{nonce}.sqlite"))
 }
 
 fn temp_reference_db() -> PathBuf {
     let path = temp_path("reference");
-    let con = Connection::open(&path).expect("create preview reference fixture");
+    let con = Connection::open(&path).expect("create reference fixture");
     con.execute_batch(
         r#"
         CREATE TABLE canonical_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -93,17 +93,17 @@ fn temp_reference_db() -> PathBuf {
             permit_date,cancel_date,cancel_name,permit_status
         ) VALUES
             ('SAFE','안전약','제약','SafeDrug','정제','2020-01-01',NULL,'정상','active'),
-            ('OTHER','다른약','제약','OtherDrug','정제','2020-01-01',NULL,'정상','active');
+            ('INACTIVE','취소약','제약','OldDrug','정제','2020-01-01','2026-01-01','취소','inactive');
         "#,
     )
-    .expect("create preview reference schema");
+    .expect("create reference schema");
     drop(con);
     path
 }
 
 fn temp_personal_db() -> PathBuf {
     let path = temp_path("personal");
-    let con = Connection::open(&path).expect("create preview personal fixture");
+    let con = Connection::open(&path).expect("create personal fixture");
     con.execute_batch(
         r#"
         CREATE TABLE people(
@@ -133,6 +133,10 @@ fn temp_personal_db() -> PathBuf {
             request_id TEXT,payload_hash TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(medication_id,revision)
         );
+        CREATE TABLE medication_requests(
+            request_id TEXT PRIMARY KEY,person_id TEXT NOT NULL,payload_hash TEXT NOT NULL,
+            medication_id TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
 
         INSERT INTO people(id,name,birth_date,sex,pregnancy_status,lactation_status)
         VALUES
@@ -140,7 +144,7 @@ fn temp_personal_db() -> PathBuf {
             ('child','소아','2015-01-01','male','not_applicable','not_applicable');
         "#,
     )
-    .expect("create preview personal schema");
+    .expect("create personal schema");
     drop(con);
     path
 }
@@ -149,254 +153,229 @@ fn engine(reference: &Path, personal: &Path) -> MedicineEngine {
     MedicineEngine::new(Some(reference), Some(personal), None)
 }
 
-fn preview(engine: &MedicineEngine, person_id: &str, body: Value) -> Value {
+fn create(engine: &MedicineEngine, person_id: &str, body: Value) -> Value {
     serde_json::from_str(&engine.request(
         "POST",
-        &format!("/api/people/{person_id}/medications/preview"),
+        &format!("/api/people/{person_id}/medications"),
         &body.to_string(),
     ))
-    .expect("preview response json")
+    .expect("create response json")
 }
 
-fn insert_duplicate(personal: &PathBuf) {
-    let con = Connection::open(personal).expect("open duplicate fixture");
-    con.execute(
-        "INSERT INTO medications(
-            id,person_id,catalog_item_seq,product_code,product_name,ingredient_name,manufacturer,
-            catalog_source,dosage_text,dose_amount,dose_unit,frequency_per_day,meal_relation,
-            administration_route,as_needed,prn_max_per_day,prescription_days,long_term,
-            start_date,end_date,active,source,revision
-         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        params![
-            "existing-safe",
-            "adult",
-            "SAFE",
-            "SAFE",
-            "안전약",
-            "SafeDrug",
-            "제약",
-            "canonical",
-            "1정",
-            1.0,
-            "정",
-            2,
-            "unspecified",
-            "oral",
-            0,
-            Option::<i64>::None,
-            7,
-            0,
-            "2026-08-20",
-            "2026-08-26",
-            1,
-            "canonical",
-            1,
-        ],
-    )
-    .expect("insert duplicate medication");
-    con.execute(
-        "INSERT INTO medication_schedules(id,medication_id,time_of_day,dose_text)
-         VALUES('s1','existing-safe','08:00','1정'),('s2','existing-safe','20:00','1정')",
-        [],
-    )
-    .expect("insert duplicate schedules");
-    con.execute(
-        "INSERT INTO medication_revisions(
-            medication_id,revision,action,snapshot_json,assessment_json,acknowledged
-         ) VALUES('existing-safe',1,'create','{}','{}',0)",
-        [],
-    )
-    .expect("insert duplicate revision");
-    drop(con);
+fn row_count(path: &Path, table: &str) -> i64 {
+    let con = Connection::open(path).expect("open count fixture");
+    con.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+        row.get(0)
+    })
+    .expect("row count")
 }
 
 #[test]
-fn preview_route_keeps_validation_and_not_found_envelopes() {
+fn create_route_is_atomic_and_request_id_is_idempotent() {
     let reference = temp_reference_db();
     let personal = temp_personal_db();
     let engine = engine(&reference, &personal);
-
-    assert!(engine.handles_request("POST", "/api/people/adult/medications/preview"));
     assert!(engine.handles_request("POST", "/api/people/adult/medications"));
     assert!(!engine.handles_request("PATCH", "/api/medications/example"));
 
-    let missing_ref = preview(&engine, "adult", json!({"long_term": true}));
-    assert_eq!(missing_ref["status"], 400);
+    let body = json!({
+        "product_ref":"SAFE",
+        "dose_amount":1,
+        "dose_unit":"정",
+        "frequency_per_day":2,
+        "schedule_times":["08:00","20:00"],
+        "administration_route":"oral",
+        "prescription_days":7,
+        "start_date":"2026-08-20",
+        "request_id":"safe-create-1"
+    });
+    let first = create(&engine, "adult", body.clone());
+    assert_eq!(first["status"], 201);
+    assert_eq!(first["body"]["catalog_item_seq"], "SAFE");
+    assert_eq!(first["body"]["source"], "catalog_search");
+    assert_eq!(first["body"]["revision"], 1);
+    assert_eq!(first["body"]["schedules"].as_array().map(Vec::len), Some(2));
+    assert_eq!(first["body"]["assessment"]["requires_review"], false);
+    assert_eq!(row_count(&personal, "medications"), 1);
+    assert_eq!(row_count(&personal, "medication_schedules"), 2);
+    assert_eq!(row_count(&personal, "medication_revisions"), 1);
+    assert_eq!(row_count(&personal, "medication_requests"), 1);
+
+    let retry = create(&engine, "adult", body.clone());
+    assert_eq!(retry["status"], 201);
+    assert_eq!(retry["body"]["id"], first["body"]["id"]);
+    assert_eq!(row_count(&personal, "medications"), 1);
+
+    let conflict = create(
+        &engine,
+        "adult",
+        json!({"product_ref":"SAFE","dose_amount":2,"dose_unit":"정","prescription_days":7,
+               "start_date":"2026-08-20","request_id":"safe-create-1"}),
+    );
+    assert_eq!(conflict["status"], 409);
     assert_eq!(
-        missing_ref["body"]["detail"],
-        "product_ref or product_code is required"
+        conflict["body"]["detail"],
+        "request_id was already used with a different prescription payload"
     );
-
-    let unknown = preview(
-        &engine,
-        "adult",
-        json!({"product_ref":"SAFE","long_term":true,"extra":1}),
-    );
-    assert_eq!(unknown["status"], 400);
-    assert_eq!(unknown["body"]["detail"], "unknown fields: extra");
-
-    let person_missing = preview(
-        &engine,
-        "missing",
-        json!({"product_ref":"SAFE","long_term":true}),
-    );
-    assert_eq!(person_missing["status"], 404);
-    assert_eq!(person_missing["body"]["detail"], "person not found");
-
-    let product_missing = preview(
-        &engine,
-        "adult",
-        json!({"product_ref":"MISSING","long_term":true}),
-    );
-    assert_eq!(product_missing["status"], 404);
-    assert_eq!(product_missing["body"]["detail"], "product not found");
-
-    let non_object: Value = serde_json::from_str(&engine.request(
-        "POST",
-        "/api/people/adult/medications/preview",
-        "[]",
-    ))
-    .expect("non-object preview response json");
-    assert_eq!(non_object["status"], 400);
-    assert_eq!(
-        non_object["body"]["detail"],
-        "request body must be a JSON object"
-    );
-
-    let via_product_code = preview(
-        &engine,
-        "adult",
-        json!({"product_code":"SAFE","long_term":true}),
-    );
-    assert_eq!(via_product_code["status"], 200);
-    assert_eq!(via_product_code["body"]["product"]["product_ref"], "SAFE");
+    assert_eq!(row_count(&personal, "medications"), 1);
 
     fs::remove_file(reference).ok();
     fs::remove_file(personal).ok();
 }
 
 #[test]
-fn preview_route_keeps_reference_disabled_envelope() {
-    let reference = temp_reference_db();
-    let personal = temp_personal_db();
-    let mut engine = engine(&reference, &personal);
-    engine
-        .set_reference_available(false, Some("update_required"))
-        .expect("disable reference");
-
-    let result = preview(
-        &engine,
-        "adult",
-        json!({"product_ref":"SAFE","long_term":true}),
-    );
-    assert_eq!(result["status"], 503);
-    assert_eq!(
-        result["body"]["detail"],
-        "reference data unavailable; app update required"
-    );
-    assert_eq!(result["body"]["reference_status"], "update_required");
-
-    fs::remove_file(reference).ok();
-    fs::remove_file(personal).ok();
-}
-
-#[test]
-fn safe_adult_preview_preserves_public_shape_without_warning_token() {
+fn create_requires_exact_warning_acknowledgement_before_any_write() {
     let reference = temp_reference_db();
     let personal = temp_personal_db();
     let engine = engine(&reference, &personal);
+    let body = json!({
+        "product_ref":"SAFE","dose_amount":1,"dose_unit":"정",
+        "prescription_days":7,"start_date":"2026-08-20","request_id":"child-create-1"
+    });
 
-    let result = preview(
-        &engine,
-        "adult",
-        json!({
-            "product_ref":"SAFE",
-            "dose_amount":1,
-            "dose_unit":"정",
-            "frequency_per_day":2,
-            "schedule_times":["08:00","20:00"],
-            "administration_route":"oral",
-            "prescription_days":7,
-            "start_date":"2026-08-20"
-        }),
-    );
-    assert_eq!(result["status"], 200);
-    let body = &result["body"];
-    assert_eq!(body["person"]["id"], "adult");
-    assert_eq!(body["product"]["product_ref"], "SAFE");
-    assert_eq!(body["draft"]["end_date"], "2026-08-26");
-    assert_eq!(body["current_medication_count"], 0);
-    assert_eq!(body["risks"], json!([]));
-    assert_eq!(body["review_items"], json!([]));
-    assert_eq!(body["dur_checks"].as_array().map(Vec::len), Some(7));
-    assert_eq!(body["warning_token"], Value::Null);
-    assert_eq!(body["coverage"]["status"], "complete");
+    let blocked = create(&engine, "child", body.clone());
+    assert_eq!(blocked["status"], 409);
+    assert_eq!(blocked["body"]["confirmation_required"], true);
+    assert_eq!(blocked["body"]["request_id"], "child-create-1");
+    assert_eq!(blocked["body"]["assessment"]["requires_review"], true);
+    let warning_token = blocked["body"]["warning_token"]
+        .as_str()
+        .expect("warning token")
+        .to_owned();
+    assert_eq!(row_count(&personal, "medications"), 0);
+    assert_eq!(row_count(&personal, "medication_revisions"), 0);
+    assert_eq!(row_count(&personal, "medication_requests"), 0);
 
-    fs::remove_file(reference).ok();
-    fs::remove_file(personal).ok();
-}
-
-#[test]
-fn pediatric_and_duplicate_reviews_remain_fail_closed_and_token_bound() {
-    let reference = temp_reference_db();
-    let personal = temp_personal_db();
-    insert_duplicate(&personal);
-    let engine = engine(&reference, &personal);
-
-    let child = preview(
+    let wrong = create(
         &engine,
         "child",
         json!({
-            "product_ref":"SAFE",
-            "dose_amount":1,
-            "dose_unit":"정",
-            "prescription_days":7,
-            "start_date":"2026-08-20"
+            "product_ref":"SAFE","dose_amount":1,"dose_unit":"정",
+            "prescription_days":7,"start_date":"2026-08-20","request_id":"child-create-1",
+            "acknowledge_warnings":true,"warning_token":"wrong"
         }),
     );
-    assert_eq!(child["status"], 200);
-    assert_eq!(
-        child["body"]["quantitative_checks"]["dose"]["result"],
-        "not_evaluable"
+    assert_eq!(wrong["status"], 409);
+    assert_eq!(row_count(&personal, "medications"), 0);
+
+    let padded = create(
+        &engine,
+        "child",
+        json!({
+            "product_ref":"SAFE","dose_amount":1,"dose_unit":"정",
+            "prescription_days":7,"start_date":"2026-08-20","request_id":"child-create-1",
+            "acknowledge_warnings":true,"warning_token":format!(" {warning_token} ")
+        }),
     );
-    assert_eq!(
-        child["body"]["quantitative_checks"]["dose"]["pediatric_review"],
-        true
+    assert_eq!(padded["status"], 409);
+    assert_eq!(row_count(&personal, "medications"), 0);
+
+    let accepted = create(
+        &engine,
+        "child",
+        json!({
+            "product_ref":"SAFE","dose_amount":1,"dose_unit":"정",
+            "prescription_days":7,"start_date":"2026-08-20","request_id":"child-create-1",
+            "acknowledge_warnings":true,"warning_token":warning_token
+        }),
     );
+    assert_eq!(accepted["status"], 201);
+    assert_eq!(accepted["body"]["assessment"]["acknowledged"], true);
+    assert_eq!(row_count(&personal, "medications"), 1);
+    assert_eq!(row_count(&personal, "medication_revisions"), 1);
+    assert_eq!(row_count(&personal, "medication_requests"), 1);
+
+    fs::remove_file(reference).ok();
+    fs::remove_file(personal).ok();
+}
+
+#[test]
+fn create_preserves_manual_product_and_validation_contracts() {
+    let reference = temp_reference_db();
+    let personal = temp_personal_db();
+    let engine = engine(&reference, &personal);
+
+    let missing_bound = create(&engine, "adult", json!({"product_ref":"SAFE"}));
+    assert_eq!(missing_bound["status"], 400);
     assert_eq!(
-        child["body"]["warning_token"],
-        "1756c70efca2607d41352ec493ef252505857a56d27df2dc5e3b14263ec75b42"
+        missing_bound["body"]["detail"],
+        "prescription duration or explicit long_term mode is required"
     );
 
-    let duplicate = preview(
+    let inactive = create(
+        &engine,
+        "adult",
+        json!({"product_ref":"INACTIVE","long_term":true}),
+    );
+    assert_eq!(inactive["status"], 400);
+    assert_eq!(
+        inactive["body"]["detail"],
+        "inactive permit product cannot be added to the current medication regimen"
+    );
+
+    let manual = create(
+        &engine,
+        "adult",
+        json!({"manual_name":" 수기약 ","ingredient_name":"성분","long_term":true,"request_id":"manual-1"}),
+    );
+    assert_eq!(manual["status"], 409);
+    assert_eq!(manual["body"]["confirmation_required"], true);
+    assert_eq!(
+        manual["body"]["assessment"]["coverage"]["status"],
+        "limited"
+    );
+    let token = manual["body"]["warning_token"]
+        .as_str()
+        .expect("manual warning token");
+    let accepted = create(
         &engine,
         "adult",
         json!({
-            "product_ref":"SAFE",
-            "dose_amount":1,
-            "dose_unit":"정",
-            "frequency_per_day":2,
-            "schedule_times":["08:00","20:00"],
-            "administration_route":"oral",
-            "prescription_days":7,
-            "start_date":"2026-08-20"
+            "manual_name":" 수기약 ","ingredient_name":"성분","long_term":true,
+            "request_id":"manual-1","acknowledge_warnings":true,"warning_token":token
         }),
     );
-    assert_eq!(duplicate["status"], 200);
-    assert_eq!(duplicate["body"]["current_medication_count"], 1);
-    assert_eq!(
-        duplicate["body"]["review_items"].as_array().map(Vec::len),
-        Some(1)
+    assert_eq!(accepted["status"], 201);
+    assert_eq!(accepted["body"]["product_name"], "수기약");
+    assert_eq!(accepted["body"]["ingredient_name"], "성분");
+    assert_eq!(accepted["body"]["catalog_source"], "manual");
+    assert_eq!(accepted["body"]["source"], "manual");
+    assert!(accepted["body"]["catalog_item_seq"].is_null());
+
+    fs::remove_file(reference).ok();
+    fs::remove_file(personal).ok();
+}
+
+#[test]
+fn create_keeps_product_code_alias_and_reference_disabled_envelope() {
+    let reference = temp_reference_db();
+    let personal = temp_personal_db();
+    let mut engine = engine(&reference, &personal);
+
+    let created = create(
+        &engine,
+        "adult",
+        json!({"product_code":"SAFE","long_term":true,"request_id":"alias-1"}),
     );
-    assert_eq!(
-        duplicate["body"]["review_items"][0]["type"],
-        "duplicate_regimen"
+    assert_eq!(created["status"], 201);
+    assert_eq!(created["body"]["catalog_item_seq"], "SAFE");
+    assert_eq!(row_count(&personal, "medications"), 1);
+
+    engine
+        .set_reference_available(false, Some("update_required"))
+        .expect("disable reference");
+    let blocked = create(
+        &engine,
+        "adult",
+        json!({"product_code":"SAFE","long_term":true,"request_id":"alias-2"}),
     );
+    assert_eq!(blocked["status"], 503);
     assert_eq!(
-        duplicate["body"]["review_items"][0]["related_medication_id"],
-        "existing-safe"
+        blocked["body"]["detail"],
+        "reference data unavailable; app update required"
     );
-    assert!(duplicate["body"]["warning_token"].as_str().is_some());
+    assert_eq!(blocked["body"]["reference_status"], "update_required");
+    assert_eq!(row_count(&personal, "medications"), 1);
 
     fs::remove_file(reference).ok();
     fs::remove_file(personal).ok();

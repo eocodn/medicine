@@ -3,10 +3,12 @@ use rusqlite::{params, Connection, TransactionBehavior};
 use serde_json::{json, Value};
 use std::path::Path;
 
+use crate::medication_create;
 use crate::medication_records::{self, RecordError};
 use crate::personal_db::{self, Access, OpenError};
 
 enum MedicationRoute<'a> {
+    Create(&'a str),
     History(&'a str),
     Stop(&'a str),
 }
@@ -34,13 +36,24 @@ pub(crate) fn handles_request(method: &str, path: &str) -> bool {
 }
 
 pub(crate) fn handle_request(
+    canonical_db: Option<&Path>,
     personal_db: Option<&Path>,
     method: &str,
     raw_path: &str,
     path: &str,
+    body_json: &str,
 ) -> Option<(u16, Value)> {
     let route = route(method, path)?;
+    if let MedicationRoute::Create(person_id) = route {
+        return Some(medication_create::handle(
+            canonical_db,
+            personal_db,
+            person_id,
+            body_json,
+        ));
+    }
     let result = match route {
+        MedicationRoute::Create(_) => unreachable!(),
         MedicationRoute::History(medication_id) => history(personal_db, medication_id),
         MedicationRoute::Stop(medication_id) => stop(personal_db, medication_id, raw_path),
     };
@@ -57,6 +70,14 @@ pub(crate) fn handle_request(
 }
 
 fn route<'a>(method: &str, path: &'a str) -> Option<MedicationRoute<'a>> {
+    if method.trim().eq_ignore_ascii_case("POST") {
+        let rest = path.strip_prefix("/api/people/")?;
+        let person_id = rest.strip_suffix("/medications")?;
+        if !person_id.is_empty() && !person_id.contains('/') {
+            return Some(MedicationRoute::Create(person_id));
+        }
+        return None;
+    }
     let rest = path.strip_prefix("/api/medications/")?;
     if method.trim().eq_ignore_ascii_case("GET") {
         let medication_id = rest.strip_suffix("/history")?;
