@@ -4,7 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest import mock
@@ -36,7 +36,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.canonical = root / "canonical.sqlite"
         self.mobile = root / "mobile.sqlite"
         make_canonical_db(self.canonical)
-        with sqlite3.connect(self.canonical) as con:
+        with closing(sqlite3.connect(self.canonical)) as con, con:
             add_product(con, "SEM-A", "semantic A", "SemanticA", dosage_form="정제")
             add_product(con, "SEM-B", "semantic B", "SemanticB", dosage_form="정제")
             add_product(con, "SEM-M", "semantic minoxidil", "Minoxidil", dosage_form="정제")
@@ -65,7 +65,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _semantic_for_remark(self, remark: str) -> sqlite3.Row:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.row_factory = sqlite3.Row
             row = con.execute(
                 """SELECT * FROM reference_criterion_semantics
@@ -77,7 +77,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         return row
 
     def test_contract_meta_separates_public_contract_from_build_diagnostics(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             contract = dict(con.execute("SELECT key,value FROM reference_contract_meta"))
             build = dict(con.execute("SELECT key,value FROM reference_build_meta"))
         self.assertEqual(REFERENCE_CONTRACT_MAJOR, 1)
@@ -114,8 +114,38 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.assertEqual(release["contract_major"], 1)
         self.assertEqual(verified["status"], "verified")
 
+    def test_server_verifier_closes_every_connection_it_owns(self) -> None:
+        real_connect = sqlite3.connect
+        connections: list[sqlite3.Connection] = []
+
+        class TrackingConnection(sqlite3.Connection):
+            closed = False
+
+            def close(self) -> None:
+                self.closed = True
+                super().close()
+
+        def tracking_connect(*args, **kwargs):
+            kwargs["factory"] = TrackingConnection
+            con = real_connect(*args, **kwargs)
+            connections.append(con)
+            return con
+
+        with mock.patch(
+            "medicine_canonical.reference_contracts.v1.sqlite3.connect",
+            side_effect=tracking_connect,
+        ):
+            verify_reference_database(
+                self.mobile,
+                REFERENCE_CONTRACT_MAJOR,
+                self.release["dataset_id"],
+            )
+
+        self.assertGreaterEqual(len(connections), 3)
+        self.assertTrue(all(getattr(con, "closed", False) for con in connections))
+
     def test_server_verifier_rejects_missing_reviewed_semantic_materialization(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             criterion_rule_id = con.execute(
                 """SELECT criterion_rule_id FROM reference_criterion_semantics
                    WHERE source_remark=? ORDER BY criterion_rule_id LIMIT 1""",
@@ -140,7 +170,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
             verify_reference_database(self.mobile, REFERENCE_CONTRACT_MAJOR, dataset_id)
 
     def test_server_verifier_recomputes_frozen_logical_dataset_identity(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute(
                 "UPDATE products SET product_name=product_name || ' mutated' WHERE item_seq='SEM-A'"
             )
@@ -174,11 +204,11 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         oracle.assert_called_once()
 
     def test_fast_logical_dataset_identity_matches_frozen_oracle(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             self.assertEqual(logical_dataset_id(con), logical_dataset_id_oracle(con))
 
     def test_fast_logical_dataset_identity_preserves_caller_transaction(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             original = con.execute(
                 "SELECT product_name FROM products WHERE item_seq='SEM-A'"
             ).fetchone()[0]
@@ -199,7 +229,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
 
     def test_fast_logical_dataset_identity_works_on_query_only_connection(self) -> None:
         uri = f"file:{self.mobile.resolve()}?mode=ro"
-        with sqlite3.connect(uri, uri=True) as con:
+        with closing(sqlite3.connect(uri, uri=True)) as con, con:
             con.execute("PRAGMA query_only=ON")
             self.assertEqual(logical_dataset_id(con), logical_dataset_id_oracle(con))
 
@@ -227,7 +257,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         facts = semantic_facts_for_reviewed_remark(reviewed)
         self.assertTrue(facts)
 
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.row_factory = sqlite3.Row
             linked = con.execute(
                 """SELECT l.product_rule_id,l.criterion_rule_id,i.*
@@ -360,7 +390,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         )
 
     def test_frozen_server_verifier_ignores_diagnostic_provenance_values(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute(
                 "UPDATE source_snapshots SET row_count='not-a-count' "
                 "WHERE dataset_key=(SELECT dataset_key FROM source_snapshots ORDER BY dataset_key LIMIT 1)"
@@ -376,7 +406,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.assertEqual(verified["dataset_id"], self.release["dataset_id"])
 
     def test_server_verifier_rejects_replaced_runtime_product_rule_criteria_relation(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute(
                 "CREATE TABLE product_rule_criteria_replacement AS "
                 "SELECT * FROM product_rule_criteria WHERE 0"

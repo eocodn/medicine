@@ -7,7 +7,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -164,7 +164,7 @@ class CliAdapterTest(unittest.TestCase):
         self.assertNotIn("settings", screen_action.choices)
 
     def test_screenshot_launches_rust_web_against_read_only_snapshot(self) -> None:
-        with sqlite3.connect(self.personal_db) as con:
+        with closing(sqlite3.connect(self.personal_db)) as con, con:
             con.execute("CREATE TABLE marker(value TEXT NOT NULL)")
             con.execute("INSERT INTO marker(value) VALUES ('source')")
         output = Path(self.tmp.name) / "shot.png"
@@ -204,7 +204,7 @@ class CliAdapterTest(unittest.TestCase):
         self.assertNotIn("screen=", health_url)
 
     def test_personal_database_snapshot_reads_a_read_only_source(self) -> None:
-        with sqlite3.connect(self.personal_db) as con:
+        with closing(sqlite3.connect(self.personal_db)) as con, con:
             con.execute("CREATE TABLE marker(value TEXT NOT NULL)")
             con.execute("INSERT INTO marker(value) VALUES ('source')")
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -215,7 +215,7 @@ class CliAdapterTest(unittest.TestCase):
             finally:
                 self.personal_db.chmod(0o644)
 
-            with sqlite3.connect(destination) as con:
+            with closing(sqlite3.connect(destination)) as con, con:
                 marker = con.execute("SELECT value FROM marker").fetchone()
         self.assertEqual(marker, ("source",))
 

@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
@@ -132,7 +133,7 @@ class MobileDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(first["status"], "verified")
 
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             con.execute(
                 "UPDATE source_snapshots SET sha256=?, row_count=0 "
                 "WHERE dataset_key=(SELECT dataset_key FROM source_snapshots ORDER BY dataset_key LIMIT 1)",
@@ -147,7 +148,7 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertEqual(second["dataset_id"], first["dataset_id"])
 
     def test_mobile_build_rejects_incomplete_source_snapshot_set(self) -> None:
-        with sqlite3.connect(self.canonical_db) as con:
+        with closing(sqlite3.connect(self.canonical_db)) as con, con:
             con.execute("DELETE FROM source_snapshots WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'")
             con.commit()
         with self.assertRaisesRegex(ValueError, "canonical verification failed"):
@@ -157,7 +158,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_product_rules_omits_source_identity_unique_index(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             indexes = con.execute("PRAGMA index_list('mobile_product_rules')").fetchall()
         self.assertFalse(
             any(bool(row[2]) for row in indexes),
@@ -166,7 +167,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_product_rules_uses_one_runtime_composite_index(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             columns = [
                 str(row[2])
                 for row in con.execute("PRAGMA index_info('idx_product_rules_runtime')")
@@ -199,7 +200,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_product_rules_uses_compact_physical_storage_with_compatibility_view(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             objects = {
                 str(row[0]): str(row[1])
                 for row in con.execute(
@@ -236,7 +237,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_criterion_links_use_compact_codes_with_compatibility_view(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             objects = {
                 str(row[0]): str(row[1])
                 for row in con.execute(
@@ -265,7 +266,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_build_rejects_duplicate_product_rule_source_identity(self) -> None:
         duplicate_source = self.canonical_db.with_name("canonical-duplicate-rule.sqlite")
-        with sqlite3.connect(self.canonical_db) as source:
+        with closing(sqlite3.connect(self.canonical_db)) as source, source:
             dump = "\n".join(source.iterdump())
         unique_clause = ",\n    UNIQUE(source_dataset_key, source_row)\n)"
         self.assertIn(unique_clause, dump)
@@ -273,7 +274,7 @@ class MobileDatabaseTest(unittest.TestCase):
         # product_rules. Remove this build-time identity constraint from the
         # synthetic source tables so the fixture can represent corrupt input.
         dump = dump.replace(unique_clause, "\n)")
-        with sqlite3.connect(duplicate_source) as con:
+        with closing(sqlite3.connect(duplicate_source)) as con, con:
             con.executescript(dump)
             columns = [
                 str(row[1])
@@ -301,7 +302,12 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_preserves_product_rule_ids_and_criterion_links(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.canonical_db) as source, sqlite3.connect(self.mobile_db) as mobile:
+        with (
+            closing(sqlite3.connect(self.canonical_db)) as source,
+            source,
+            closing(sqlite3.connect(self.mobile_db)) as mobile,
+            mobile,
+        ):
             source_rules = source.execute(
                 "SELECT * FROM product_rules ORDER BY id"
             ).fetchall()
@@ -341,7 +347,7 @@ class MobileDatabaseTest(unittest.TestCase):
         first = build_mobile_database(
             self.canonical_db, self.mobile_db, manifest_path=self.manifest
         )
-        with sqlite3.connect(self.canonical_db) as con:
+        with closing(sqlite3.connect(self.canonical_db)) as con, con:
             con.execute(
                 "UPDATE ingredient_rules SET details=COALESCE(details,'') || ' semantic-change' "
                 "WHERE id=(SELECT MIN(id) FROM ingredient_rules)"

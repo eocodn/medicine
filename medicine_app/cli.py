@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+from contextlib import closing
 from urllib.parse import quote, urlencode
 from pathlib import Path
 
@@ -38,8 +39,8 @@ def _snapshot_personal_database(source: Path, destination: Path) -> None:
     if not source.exists():
         return
     uri = f"file:{source.resolve()}?mode=ro"
-    with sqlite3.connect(uri, uri=True, timeout=10) as source_con:
-        with sqlite3.connect(destination) as destination_con:
+    with closing(sqlite3.connect(uri, uri=True, timeout=10)) as source_con, source_con:
+        with closing(sqlite3.connect(destination)) as destination_con, destination_con:
             source_con.backup(destination_con)
 
 

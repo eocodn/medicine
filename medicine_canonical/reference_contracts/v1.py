@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -388,7 +389,7 @@ def verify_built_reference_database(
         expected_dataset_id=dataset_id,
     )
     uri = f"file:{Path(database).resolve()}?mode=ro"
-    with sqlite3.connect(uri, uri=True, timeout=10) as con:
+    with closing(sqlite3.connect(uri, uri=True, timeout=10)) as con, con:
         _verify_frozen_runtime_views(con)
         _verify_reviewed_semantic_materialization(con)
     return result
@@ -404,7 +405,7 @@ def verify_reference_database(
     """Frozen strict server-side verifier for an arbitrary C1 release candidate."""
     result = verify_built_reference_database(database, contract_major, dataset_id)
     uri = f"file:{Path(database).resolve()}?mode=ro"
-    with sqlite3.connect(uri, uri=True, timeout=10) as con:
+    with closing(sqlite3.connect(uri, uri=True, timeout=10)) as con, con:
         # Keep the arbitrary-file verifier independent from the optimized
         # exporter.  The oracle SQL is the frozen C1 identity specification;
         # reusing the fast executor here would let one implementation defect
