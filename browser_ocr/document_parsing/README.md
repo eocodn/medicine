@@ -119,6 +119,8 @@ Every epoch writes an atomic model+optimizer checkpoint and validation metrics b
 
 `graph_decode.py` is the fail-closed boundary from learned graph scores to medication rows. A row is emitted only for a product node that clears both a probability threshold and a role margin. A field is attached only when its learned role is confident and the learned product↔field association clears both an absolute threshold and a best-vs-second-product margin; otherwise the field remains unresolved rather than being borrowed from the nearest plausible medication. Deterministic code after that boundary only normalizes typed dose/frequency/duration/instruction values and enforces cross-field invariants such as PRN vs fixed schedules. Every exact value keeps the OCR node id that proved it. `evaluate_parser_document()` adapts strict parser gold to the existing evidence-aware safety metrics, so a high-confidence wrong-row association remains visible as `cross_medication_associations` even when the copied numeric value happens to match.
 
+`ocr-parser-eval-model` binds evaluation to the completed training state, selected checkpoint hash, strict dataset fingerprints, decoder thresholds and evaluation implementation. It evaluates one document at a time, atomically checkpoints each prediction+metric record, and resumes from the last verified document after interruption. Train documents are always rejected. Test documents are also rejected by default and require the explicit `--allow-test` flag, so routine validation cannot casually consume the locked holdout. Aggregation uses the same evidence-aware safety metrics as the parser contract; unresolved fields do not count as false exact claims, while invented values, unproven evidence and cross-medication associations remain release-blocking.
+
 ```sh
 docker compose run --rm ocr-parser-train \
   --train-manifest /workspace/path/to/views/parsing/datasets/train-oracle/manifest.json \
@@ -131,6 +133,18 @@ docker compose run --rm ocr-parser-train \
   --run-dir /artifacts/parser/models/sparse-graph-v1 \
   --json
 ```
+
+After training, validation can be run without unlocking the test split:
+
+```sh
+docker compose run --rm ocr-parser-eval-model \
+  --model-result /artifacts/parser/models/sparse-graph-v1/result.json \
+  --dataset-manifest /artifacts/parser/synthetic-runtime-v6/datasets/val/manifest.json \
+  --output-dir /artifacts/parser/evaluations/sparse-graph-v1-runtime-val \
+  --json
+```
+
+Only after the candidate is frozen should a test manifest be evaluated, with `--allow-test` recorded in the evaluation profile.
 
 Use the dataset Agent Control service directly when needed. Writable OCR/parser services mount host `~/dev/artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
 
