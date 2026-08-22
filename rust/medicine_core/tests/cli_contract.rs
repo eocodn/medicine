@@ -266,3 +266,35 @@ fn dur_display_command_uses_the_same_display_core() {
     );
     assert_eq!(value["body"]["requires_review"], false);
 }
+
+#[test]
+fn profile_risks_command_uses_the_same_profile_safety_core() {
+    let canonical = temp_canonical_db();
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+        .args([
+            "profile-risks",
+            "--canonical-db",
+            canonical.to_str().expect("canonical path"),
+            "--product-ref",
+            "P-CLI",
+            "--person",
+            r#"{"birth_date":"1990-01-01","sex":"male","pregnancy_status":"not_applicable"}"#,
+            "--course",
+            r#"{"start_date":"2026-08-22"}"#,
+            "--as-of",
+            "2026-08-22",
+            "--json",
+        ])
+        .output()
+        .expect("run profile-risks command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("profile risks json");
+    assert_eq!(value["status"], 200);
+    assert_eq!(value["body"]["product"]["product_ref"], "P-CLI");
+    assert_eq!(value["body"]["risks"], serde_json::json!([]));
+    fs::remove_file(canonical).ok();
+}

@@ -119,6 +119,51 @@ pub(crate) fn linked_product_rows(
     Ok(result)
 }
 
+pub(crate) fn resolved_product_rows(
+    con: &Connection,
+    item_seq: &str,
+    category: &str,
+) -> Result<Vec<Map<String, Value>>, ()> {
+    let mut rows = linked_product_rows(con, item_seq, category)?;
+    if !matches!(
+        category,
+        "elderly_caution" | "therapeutic_duplication_caution"
+    ) {
+        return Ok(rows);
+    }
+    let linked_keys = rows
+        .iter()
+        .filter_map(|row| {
+            Some((
+                text(row, "product_source_dataset_key")?.to_owned(),
+                row.get("product_source_row")?.as_i64()?,
+            ))
+        })
+        .collect::<BTreeSet<_>>();
+    for mut row in query_maps(
+        con,
+        "SELECT r.* FROM product_rules r
+         WHERE r.item_seq=? AND r.category=? ORDER BY r.source_dataset_key,r.source_row",
+        params![item_seq, category],
+    )? {
+        let source_key = (
+            text(&row, "source_dataset_key").unwrap_or("").to_owned(),
+            row.get("source_row")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+        );
+        if linked_keys.contains(&source_key) && category != "therapeutic_duplication_caution" {
+            continue;
+        }
+        if !direct_rule_is_resolved(&row) {
+            continue;
+        }
+        alias_direct_runtime_row(&mut row);
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
 pub(crate) fn unlinked_product_rules(
     con: &Connection,
     item_seq: &str,
@@ -270,6 +315,43 @@ fn direct_rule_is_resolved(row: &Map<String, Value>) -> bool {
         }
         _ => false,
     }
+}
+
+fn alias_direct_runtime_row(row: &mut Map<String, Value>) {
+    copy_alias(row, "product_source_dataset_key", "source_dataset_key");
+    copy_alias(row, "product_source_row", "source_row");
+    for key in [
+        "criterion_source_dataset_key",
+        "criterion_source_row",
+        "criterion_ingredient_name",
+        "criterion_paired_ingredient_name",
+        "criterion_rule_value",
+        "criterion_dosage_form",
+        "criterion_note",
+        "criterion_qualifier_note",
+        "criterion_details",
+        "maximum_daily_amount",
+        "maximum_daily_unit",
+        "dose_parse_status",
+        "dose_parse_reason",
+        "notice_no",
+        "notice_date",
+        "pair_orientation",
+    ] {
+        row.insert(key.to_owned(), Value::Null);
+    }
+    copy_alias(row, "product_dosage_form", "dosage_form");
+    copy_alias(row, "product_details", "details");
+    copy_alias(row, "dataset_key", "source_dataset_key");
+    copy_alias(row, "product_code", "item_seq");
+    copy_alias(row, "paired_product_code", "paired_item_seq");
+    row.insert("rule_value".to_owned(), Value::Null);
+    row.insert("note".to_owned(), Value::Null);
+    row.insert("qualifier_note".to_owned(), Value::Null);
+    row.insert(
+        "match_method".to_owned(),
+        Value::String("mfds_item_rule".to_owned()),
+    );
 }
 
 fn row_to_map(row: &Row<'_>, columns: &[String]) -> rusqlite::Result<Map<String, Value>> {

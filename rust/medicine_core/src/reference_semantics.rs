@@ -35,6 +35,10 @@ pub(crate) fn criterion_note_requires_review(
     Ok(semantics.iter().any(semantic_requires_review))
 }
 
+pub(crate) fn has_semantics(con: &Connection, row: &Map<String, Value>) -> Result<bool, ()> {
+    Ok(!semantics(con, row)?.is_empty())
+}
+
 pub(crate) fn dedupe_qualifiers(values: Vec<Value>) -> Vec<Value> {
     let mut seen = BTreeSet::new();
     let mut result = Vec::new();

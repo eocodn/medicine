@@ -16,6 +16,8 @@ mod planning;
 mod planning_medications;
 mod prescriptions;
 mod prn;
+mod profile_age;
+mod profile_safety;
 mod quantitative_safety;
 mod reference_runtime;
 mod reference_semantics;
@@ -50,5 +52,22 @@ pub fn inspect_safety_basis(
 
 pub fn assemble_dur_display(input_json: &str) -> String {
     let (status, body) = dur_display::inspect(input_json);
+    serde_json::json!({"status": status, "body": body}).to_string()
+}
+
+pub fn inspect_profile_risks(
+    canonical_db: Option<&std::path::Path>,
+    product_ref: &str,
+    person_json: &str,
+    candidate_course_json: &str,
+    as_of: Option<&str>,
+) -> String {
+    let (status, body) = profile_safety::inspect(
+        canonical_db,
+        product_ref,
+        person_json,
+        candidate_course_json,
+        as_of,
+    );
     serde_json::json!({"status": status, "body": body}).to_string()
 }

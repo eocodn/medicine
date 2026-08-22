@@ -90,7 +90,7 @@ fn parse_date(value: &str) -> Result<NaiveDate, ()> {
     NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| ())
 }
 
-fn today_kst() -> NaiveDate {
+pub(crate) fn today_kst() -> NaiveDate {
     let offset = FixedOffset::east_opt(9 * 60 * 60).expect("valid KST offset");
     offset
         .from_utc_datetime(&Utc::now().naive_utc())
