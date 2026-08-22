@@ -2,6 +2,10 @@ mod canonical_products;
 mod dose_logs;
 mod dose_quantity;
 mod doses;
+mod dur_display;
+mod dur_display_support;
+mod dur_product_flags;
+mod dur_quantitative_display;
 mod engine;
 mod jni_bridge;
 mod medication_records;
@@ -16,6 +20,7 @@ mod quantitative_safety;
 mod reference_runtime;
 mod reference_semantics;
 mod safety_basis;
+mod safety_time;
 
 pub use engine::{AccessClass, MedicineEngine};
 
@@ -40,5 +45,10 @@ pub fn inspect_safety_basis(
     draft_json: &str,
 ) -> String {
     let (status, body) = safety_basis::inspect(canonical_db, product_ref, person_json, draft_json);
+    serde_json::json!({"status": status, "body": body}).to_string()
+}
+
+pub fn assemble_dur_display(input_json: &str) -> String {
+    let (status, body) = dur_display::inspect(input_json);
     serde_json::json!({"status": status, "body": body}).to_string()
 }

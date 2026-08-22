@@ -232,3 +232,37 @@ fn safety_basis_command_exposes_reference_and_quantitative_core() {
     );
     fs::remove_file(canonical).ok();
 }
+
+#[test]
+fn dur_display_command_uses_the_same_display_core() {
+    let payload = r#"{
+        "person":{"birth_date":"1990-01-01","sex":"male","pregnancy_status":"not_applicable"},
+        "current":[],
+        "risks":[],
+        "duration":{"result":"not_applicable","source_scope":"canonical_product","source_rows":[]},
+        "dose":{"result":"not_applicable","source_scope":"canonical_product","source_rows":[]},
+        "coverage":{"status":"complete","product":{"status":"matched"},"category_resolution":{},"not_evaluable_checks":[]},
+        "dataset":{"status":"verified"},
+        "candidate_course":{"start_date":"2026-08-22"},
+        "product":{"product_flags":[]},
+        "detailed_product_categories":[],
+        "review_items":[],
+        "as_of":"2026-08-22"
+    }"#;
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+        .args(["dur-display", "--input", payload, "--json"])
+        .output()
+        .expect("run dur-display command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("DUR display json");
+    assert_eq!(value["status"], 200);
+    assert_eq!(
+        value["body"]["dur_checks"].as_array().map(Vec::len),
+        Some(7)
+    );
+    assert_eq!(value["body"]["requires_review"], false);
+}
