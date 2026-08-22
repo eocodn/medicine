@@ -135,7 +135,7 @@ class ReferenceBootstrapper(
                 observer.progress("download", completed, total)
             }
             observer.phase("rebuild")
-            rebuilder.rebuild(null, artifact, downloaded, candidate)
+            rebuilder.rebuild(null, version, artifact, downloaded, candidate, observer)
             observer.phase("verify-and-install")
             val installed = store.installInitial(version, candidate)
             downloaded.delete()
@@ -205,7 +205,7 @@ class AndroidReferenceInstaller(
         val store = ReferenceStore(
             referenceDir,
             AtomicFileReferenceStateStorage(File(referenceDir, REFERENCE_STATE_FILE)),
-            PythonReferenceDatabaseVerifier(),
+            RustReferenceDatabaseVerifier(),
             fileSealProvider = AndroidReferenceFileSealProvider(),
         )
         val source = HttpsReferenceReleaseSource(
@@ -216,7 +216,7 @@ class AndroidReferenceInstaller(
             referenceDir,
             store,
             source,
-            PythonReferenceArtifactRebuilder(),
+            RustReferenceArtifactRebuilder(),
             AndroidReferenceStorageCapacity(),
             observer,
         )

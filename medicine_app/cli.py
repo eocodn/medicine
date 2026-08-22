@@ -7,18 +7,20 @@ import shutil
 import socket
 import sqlite3
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.request
+from contextlib import closing
+from urllib.parse import quote, urlencode
 from pathlib import Path
 
-from .core import ConfirmationRequired, MedicationApp
-from .products import ProductSearchUnavailable
 
 
 DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")
 DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
+MEDICINE_CORE_BINARY = os.environ.get("MEDICINE_CORE_BINARY", "medicine-core")
+MEDICINE_CORE_WEB_BINARY = os.environ.get("MEDICINE_CORE_WEB_BINARY", "medicine-core-web")
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 def emit(payload, as_json: bool) -> None:
@@ -37,8 +39,8 @@ def _snapshot_personal_database(source: Path, destination: Path) -> None:
     if not source.exists():
         return
     uri = f"file:{source.resolve()}?mode=ro"
-    with sqlite3.connect(uri, uri=True, timeout=10) as source_con:
-        with sqlite3.connect(destination) as destination_con:
+    with closing(sqlite3.connect(uri, uri=True, timeout=10)) as source_con, source_con:
+        with closing(sqlite3.connect(destination)) as destination_con, destination_con:
             source_con.backup(destination_con)
 
 
@@ -63,40 +65,42 @@ def capture_screenshot(
     with tempfile.TemporaryDirectory(prefix="medicine-screenshot-") as temp_dir:
         snapshot_db = Path(temp_dir) / "personal.sqlite"
         _snapshot_personal_database(personal_db, snapshot_db)
-        env = os.environ.copy()
-        env["MEDICINE_CANONICAL_DB"] = str(canonical_db.resolve())
-        env["MEDICINE_PERSONAL_DB"] = str(snapshot_db)
+        command = [
+            MEDICINE_CORE_WEB_BINARY,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--canonical-db",
+            str(canonical_db.resolve()),
+            "--personal-db",
+            str(snapshot_db),
+            "--static-dir",
+            str(STATIC_DIR.resolve()),
+        ]
+        ocr_assets = os.environ.get("MEDICINE_OCR_ASSETS_DIR")
+        if ocr_assets:
+            command.extend(["--ocr-assets-dir", ocr_assets])
         server = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "medicine_app.web:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(port),
-                "--log-level",
-                "warning",
-            ],
-            env=env,
+            command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        url = f"http://127.0.0.1:{port}/?screen={screen}"
+        base_url = f"http://127.0.0.1:{port}"
+        url = f"{base_url}/?screen={screen}"
         try:
             deadline = time.monotonic() + 10
             while True:
                 if server.poll() is not None:
-                    raise RuntimeError("temporary web server exited before screenshot")
+                    raise RuntimeError("temporary Rust web server exited before screenshot")
                 try:
-                    with urllib.request.urlopen(f"{url}/api/health", timeout=0.5) as response:
+                    with urllib.request.urlopen(f"{base_url}/api/health", timeout=0.5) as response:
                         if response.status == 200:
                             break
                 except OSError:
                     pass
                 if time.monotonic() >= deadline:
-                    raise RuntimeError("temporary web server did not become ready")
+                    raise RuntimeError("temporary Rust web server did not become ready")
                 time.sleep(0.1)
 
             subprocess.run(
@@ -274,129 +278,219 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _dispatch(args, app: MedicationApp):
-    if args.command == "people":
-        payload = app.list_people()
-    elif args.command == "person-add":
-        payload = app.create_person(
-            args.name, args.birth_date, args.sex, args.pregnancy_status, args.lactation_status
-        )
-    elif args.command == "person-update":
-        payload = app.update_person(
-            args.person, args.name, args.birth_date, args.sex,
-            args.pregnancy_status, args.lactation_status,
-        )
-    elif args.command == "person-delete":
-        payload = app.delete_person(args.person)
-    elif args.command == "drug-search":
-        payload = app.search_products(
-            args.term,
-            args.limit,
-            include_inactive=args.include_inactive,
-            explain=args.explain_matches,
-        )
-    elif args.command == "meds":
-        payload = app.list_medications(args.person, as_of=args.date)
-    elif args.command == "risk-preview":
-        payload = app.preview_medication(args.person, {
-            "product_ref": args.product_ref, "dose_amount": args.dose_amount,
-            "dose_unit": args.dose_unit, "frequency_per_day": args.frequency,
-            "meal_relation": args.meal_relation, "administration_route": args.route,
-            "as_needed": args.prn, "prn_max_per_day": args.prn_max,
-            "prescription_days": args.days, "long_term": args.long_term,
-            "start_date": args.start_date, "end_date": args.end_date,
-            "schedule_times": args.time,
-        })
-    elif args.command == "med-add":
-        payload = app.add_medication(
-            args.person,
-            product_ref=args.product_ref,
-            dosage_text=args.dose,
-            dose_amount=args.dose_amount,
-            dose_unit=args.dose_unit,
-            frequency_per_day=args.frequency,
-            meal_relation=args.meal_relation,
-            administration_route=args.route,
-            as_needed=args.prn,
-            prn_max_per_day=args.prn_max,
-            prescription_days=args.days,
-            long_term=args.long_term,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            schedule_times=args.time,
-            request_id=args.request_id,
-            acknowledge_warnings=args.acknowledge_warnings,
-            warning_token=args.warning_token,
-        )
-    elif args.command == "med-update":
-        mapping = {
-            "dosage_text": args.dose, "dose_amount": args.dose_amount,
-            "dose_unit": args.dose_unit, "frequency_per_day": args.frequency,
-            "meal_relation": args.meal_relation, "administration_route": args.route,
-            "as_needed": args.as_needed, "prn_max_per_day": args.prn_max,
-            "prescription_days": args.days, "long_term": args.long_term,
-            "start_date": args.start_date, "end_date": args.end_date,
-            "schedule_times": args.time,
-        }
-        payload = app.update_medication(
-            args.medication, expected_revision=args.expected_revision,
-            acknowledge_warnings=args.acknowledge_warnings, warning_token=args.warning_token,
-            **{key: value for key, value in mapping.items() if value is not None},
-        )
-    elif args.command == "med-history":
-        payload = app.list_medication_revisions(args.medication)
-    elif args.command == "med-stop":
-        payload = app.stop_medication(args.medication, expected_revision=args.expected_revision)
-    elif args.command == "daily-plan":
-        payload = app.get_daily_plan(args.person, args.date)
-    elif args.command == "dose-instance":
-        payload = (
-            app.record_dose_instance(args.instance, args.status, args.at)
-            if args.at is not None
-            else app.record_dose_instance(args.instance, args.status)
-        )
-    elif args.command == "dose-instance-cancel":
-        payload = app.cancel_dose_instance(args.instance)
-    elif args.command == "prn-intake":
-        payload = app.record_prn_dose(
-            args.medication,
-            args.at,
-            args.note,
-            request_id=args.request_id,
-        )
-    else:
-        raise AssertionError(args.command)
-
+def _native_json(arguments: list[str]) -> dict:
+    command = [MEDICINE_CORE_BINARY, *arguments, "--json"]
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "medicine-core failed"
+        raise RuntimeError(detail)
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("medicine-core returned invalid JSON") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("status"), int) or "body" not in payload:
+        raise RuntimeError("medicine-core returned an invalid response envelope")
     return payload
+
+
+def _initialize_personal_database(personal_db: Path) -> None:
+    personal_db.parent.mkdir(parents=True, exist_ok=True)
+    response = _native_json(["personal-schema", "--personal-db", str(personal_db)])
+    if not 200 <= response["status"] < 300:
+        raise RuntimeError(str(response["body"].get("detail", "personal database initialization failed")))
+
+
+def _native_request(
+    args,
+    method: str,
+    path: str,
+    body: dict | None = None,
+) -> dict:
+    command = [
+        "request",
+        method,
+        path,
+        "--canonical-db",
+        str(args.canonical_db),
+        "--personal-db",
+        str(args.personal_db),
+    ]
+    if body is not None:
+        command.extend(["--body", json.dumps(body, ensure_ascii=False, separators=(",", ":"))])
+    return _native_json(command)
+
+
+def _optional_values(values: dict) -> dict:
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def _dispatch_native(args) -> tuple[dict, bool]:
+    _initialize_personal_database(args.personal_db)
+
+    if args.command == "people":
+        return _native_request(args, "GET", "/api/people"), False
+    if args.command == "person-add":
+        return _native_request(args, "POST", "/api/people", {
+            "name": args.name,
+            "birth_date": args.birth_date,
+            "sex": args.sex,
+            "pregnancy_status": args.pregnancy_status,
+            "lactation_status": args.lactation_status,
+        }), False
+    if args.command == "person-update":
+        person = quote(args.person, safe="")
+        return _native_request(args, "PATCH", f"/api/people/{person}", {
+            "name": args.name,
+            "birth_date": args.birth_date,
+            "sex": args.sex,
+            "pregnancy_status": args.pregnancy_status,
+            "lactation_status": args.lactation_status,
+        }), False
+    if args.command == "person-delete":
+        person = quote(args.person, safe="")
+        return _native_request(args, "DELETE", f"/api/people/{person}"), False
+    if args.command == "drug-search":
+        query = urlencode({
+            "q": args.term,
+            "limit": args.limit,
+            "include_inactive": "true" if args.include_inactive else "false",
+        })
+        return _native_request(args, "GET", f"/api/products?{query}"), False
+    if args.command == "meds":
+        person = quote(args.person, safe="")
+        query = "" if args.date is None else f"?{urlencode({'date': args.date})}"
+        return _native_request(args, "GET", f"/api/people/{person}/medications{query}"), False
+    if args.command == "risk-preview":
+        person = quote(args.person, safe="")
+        payload = _optional_values({
+            "product_ref": args.product_ref,
+            "dose_amount": args.dose_amount,
+            "dose_unit": args.dose_unit,
+            "frequency_per_day": args.frequency,
+            "meal_relation": args.meal_relation,
+            "administration_route": args.route,
+            "as_needed": args.prn,
+            "prn_max_per_day": args.prn_max,
+            "prescription_days": args.days,
+            "long_term": args.long_term,
+            "schedule_times": args.time,
+            "start_date": args.start_date,
+            "end_date": args.end_date,
+        })
+        return _native_request(args, "POST", f"/api/people/{person}/medications/preview", payload), False
+    if args.command == "med-add":
+        person = quote(args.person, safe="")
+        payload = _optional_values({
+            "product_ref": args.product_ref,
+            "dosage_text": args.dose,
+            "dose_amount": args.dose_amount,
+            "dose_unit": args.dose_unit,
+            "frequency_per_day": args.frequency,
+            "meal_relation": args.meal_relation,
+            "administration_route": args.route,
+            "as_needed": args.prn,
+            "prn_max_per_day": args.prn_max,
+            "prescription_days": args.days,
+            "long_term": args.long_term,
+            "schedule_times": args.time,
+            "start_date": args.start_date,
+            "end_date": args.end_date,
+            "request_id": args.request_id,
+            "acknowledge_warnings": args.acknowledge_warnings,
+            "warning_token": args.warning_token,
+        })
+        return _native_request(args, "POST", f"/api/people/{person}/medications", payload), False
+    if args.command == "med-update":
+        medication = quote(args.medication, safe="")
+        payload = _optional_values({
+            "expected_revision": args.expected_revision,
+            "dosage_text": args.dose,
+            "dose_amount": args.dose_amount,
+            "dose_unit": args.dose_unit,
+            "frequency_per_day": args.frequency,
+            "meal_relation": args.meal_relation,
+            "administration_route": args.route,
+            "as_needed": args.as_needed,
+            "prn_max_per_day": args.prn_max,
+            "prescription_days": args.days,
+            "long_term": args.long_term,
+            "schedule_times": args.time,
+            "start_date": args.start_date,
+            "end_date": args.end_date,
+            "acknowledge_warnings": args.acknowledge_warnings,
+            "warning_token": args.warning_token,
+        })
+        return _native_request(args, "PATCH", f"/api/medications/{medication}", payload), False
+    if args.command == "med-history":
+        medication = quote(args.medication, safe="")
+        return _native_request(args, "GET", f"/api/medications/{medication}/history"), False
+    if args.command == "med-stop":
+        medication = quote(args.medication, safe="")
+        query = urlencode({"expected_revision": args.expected_revision})
+        return _native_request(args, "DELETE", f"/api/medications/{medication}?{query}"), False
+    if args.command == "daily-plan":
+        person = quote(args.person, safe="")
+        query = "" if args.date is None else f"?{urlencode({'date': args.date})}"
+        return _native_request(args, "GET", f"/api/people/{person}/daily-plan{query}"), False
+    if args.command == "dose-instance":
+        instance = quote(args.instance, safe="")
+        payload = {"status": args.status}
+        if args.at is not None:
+            payload["occurred_at"] = args.at
+        return _native_request(args, "POST", f"/api/dose-instances/{instance}", payload), False
+    if args.command == "dose-instance-cancel":
+        instance = quote(args.instance, safe="")
+        return _native_request(args, "DELETE", f"/api/dose-instances/{instance}/completion"), False
+    if args.command == "prn-intake":
+        medication = quote(args.medication, safe="")
+        payload = _optional_values({
+            "request_id": args.request_id,
+            "occurred_at": args.at,
+            "note": args.note,
+        })
+        return _native_request(args, "POST", f"/api/medications/{medication}/prn-intakes", payload), False
+    raise AssertionError(args.command)
+
+
+def _exit_code(envelope: dict) -> int:
+    status = envelope["status"]
+    body = envelope["body"]
+    if 200 <= status < 300:
+        return 0
+    if status == 409 and isinstance(body, dict) and body.get("confirmation_required") is True:
+        return 2
+    if status == 503 and isinstance(body, dict) and body.get("detail") == "product search engine is not implemented":
+        return 3
+    return 1
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        if args.command == "screenshot":
-            if args.width < 320 or args.height < 480:
-                raise SystemExit("screenshot dimensions are too small")
-            payload = capture_screenshot(
-                args.canonical_db, args.personal_db, args.output,
-                args.width, args.height, args.screen,
-            )
-        else:
-            app = MedicationApp(args.canonical_db, args.personal_db)
-            payload = _dispatch(args, app)
-    except ProductSearchUnavailable as exc:
-        emit({"detail": str(exc)}, getattr(args, "json", False))
-        return 3
-    except ConfirmationRequired as exc:
-        emit({
-            "confirmation_required": True,
-            "request_id": exc.request_id,
-            "warning_token": exc.assessment.get("warning_token"),
-            "assessment": exc.assessment,
-        }, getattr(args, "json", False))
-        return 2
+    if args.command == "screenshot":
+        if args.width < 320 or args.height < 480:
+            raise SystemExit("screenshot dimensions are too small")
+        payload = capture_screenshot(
+            args.canonical_db,
+            args.personal_db,
+            args.output,
+            args.width,
+            args.height,
+            args.screen,
+        )
+        emit(payload, args.json)
+        return 0
 
+    envelope, medications_only = _dispatch_native(args)
+    payload = envelope["body"]
+    if medications_only and 200 <= envelope["status"] < 300:
+        payload = payload["medications"]
     emit(payload, args.json)
-    return 0
+    return _exit_code(envelope)
 
 
 if __name__ == "__main__":

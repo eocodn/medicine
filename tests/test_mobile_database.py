@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
-from medicine_app.core import MedicationApp
-from medicine_app.dur_status import DUR_CATEGORIES
+from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
 from medicine_canonical.mobile import RUNTIME_INDEXES, build_mobile_database
 from medicine_canonical.cli import main as canonical_main
-from tests.test_safety_coverage import make_canonical_db
+from tests.canonical_fixture_support import make_canonical_db
 
 
 class MobileDatabaseTest(unittest.TestCase):
@@ -20,13 +21,12 @@ class MobileDatabaseTest(unittest.TestCase):
         self.canonical_db = root / "canonical.sqlite"
         self.mobile_db = root / "mobile.sqlite"
         self.manifest = root / "mobile.manifest.json"
-        self.personal_db = root / "personal.sqlite"
         make_canonical_db(self.canonical_db)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_compact_snapshot_preserves_canonical_runtime_behavior_without_legacy_tables(self) -> None:
+    def test_compact_snapshot_preserves_frozen_contract_without_legacy_tables(self) -> None:
         result = build_mobile_database(
             self.canonical_db, self.mobile_db, manifest_path=self.manifest
         )
@@ -60,40 +60,80 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertEqual(manifest["dataset_id"], result["dataset_id"])
         self.assertEqual(manifest["sha256"], result["sha256"])
         self.assertEqual(manifest["size_bytes"], self.mobile_db.stat().st_size)
-
-        app = MedicationApp(self.mobile_db, self.personal_db)
-        person = app.create_person("온디바이스", "1990-01-01", "female", "not_pregnant", "breastfeeding")
-        preview = app.preview_medication(
-            person["id"], {"product_ref": "MFDS-Z", "prescription_days": 35}
+        verified = verify_reference_database(
+            self.mobile_db, REFERENCE_CONTRACT_MAJOR, result["dataset_id"]
         )
-        self.assertEqual(preview["product"]["product_mapping_method"], "item_seq_exact")
-        self.assertEqual(preview["quantitative_checks"]["duration"]["result"], "exceeded")
-        categories = {row["category"] for row in preview["dur_checks"]}
-        supported = {category for category, _label in DUR_CATEGORIES}
-        self.assertEqual(categories & supported, supported)
-        self.assertEqual(len(categories & supported), 7)
+        self.assertEqual(verified["status"], "verified")
+        self.assertEqual(verified["dataset_id"], result["dataset_id"])
 
-    def test_contract_runtime_uses_signed_dataset_identity_and_provenance_is_diagnostic_only(self) -> None:
+        rust_verified = subprocess.run(
+            [
+                "medicine-core", "reference-verify",
+                "--reference-db", str(self.mobile_db),
+                "--contract-major", str(REFERENCE_CONTRACT_MAJOR),
+                "--dataset-id", result["dataset_id"],
+                "--json",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        rust_verified_payload = json.loads(rust_verified.stdout)
+        self.assertEqual(rust_verified_payload["status"], 200)
+        self.assertEqual(rust_verified_payload["body"]["status"], "verified")
+        self.assertEqual(rust_verified_payload["body"]["dataset_id"], result["dataset_id"])
+
+        rust_product = subprocess.run(
+            [
+                "medicine-core", "product",
+                "--canonical-db", str(self.mobile_db),
+                "--product-ref", "MFDS-Z",
+                "--json",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        product_payload = json.loads(rust_product.stdout)
+        self.assertEqual(product_payload["status"], 200)
+        self.assertEqual(product_payload["body"]["catalog_item_seq"], "MFDS-Z")
+        self.assertEqual(product_payload["body"]["product_mapping_method"], "item_seq_exact")
+
+        rust_safety = subprocess.run(
+            [
+                "medicine-core", "safety-basis",
+                "--canonical-db", str(self.mobile_db),
+                "--product-ref", "MFDS-Z",
+                "--person", json.dumps({
+                    "birth_date": "1990-01-01",
+                    "sex": "male",
+                    "pregnancy_status": "not_applicable",
+                }, separators=(",", ":")),
+                "--draft", json.dumps({
+                    "prescription_days": 35,
+                    "start_date": "2026-08-20",
+                }, separators=(",", ":")),
+                "--json",
+            ],
+            check=True, capture_output=True, text=True,
+        )
+        safety_payload = json.loads(rust_safety.stdout)
+        self.assertEqual(safety_payload["status"], 200)
+        self.assertEqual(
+            safety_payload["body"]["quantitative_checks"]["duration"]["result"],
+            "exceeded",
+        )
+        self.assertEqual(
+            safety_payload["body"]["quantitative_checks"]["duration"]["maximum_days"],
+            28,
+        )
+
+    def test_frozen_contract_uses_signed_dataset_identity_and_ignores_diagnostic_provenance(self) -> None:
         result = build_mobile_database(
             self.canonical_db, self.mobile_db, manifest_path=self.manifest
         )
-        app = MedicationApp(self.mobile_db, self.personal_db)
-        person = app.create_person(
-            "계약검증",
-            "1990-01-01",
-            "female",
-            "not_pregnant",
-            "not_breastfeeding",
+        first = verify_reference_database(
+            self.mobile_db, REFERENCE_CONTRACT_MAJOR, result["dataset_id"]
         )
-        draft = {"product_ref": "MFDS-Z", "prescription_days": 35}
+        self.assertEqual(first["status"], "verified")
 
-        first = app.preview_medication(person["id"], draft)
-        first_dataset = first["coverage"]["dataset"]
-        self.assertEqual(first_dataset["status"], "verified")
-        self.assertEqual(first_dataset["dataset_id"], result["dataset_id"])
-        self.assertIsNotNone(first["warning_token"])
-
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             con.execute(
                 "UPDATE source_snapshots SET sha256=?, row_count=0 "
                 "WHERE dataset_key=(SELECT dataset_key FROM source_snapshots ORDER BY dataset_key LIMIT 1)",
@@ -101,15 +141,14 @@ class MobileDatabaseTest(unittest.TestCase):
             )
             con.commit()
 
-        second = app.preview_medication(person["id"], draft)
-        second_dataset = second["coverage"]["dataset"]
-        self.assertEqual(second_dataset["status"], "verified")
-        self.assertEqual(second_dataset["dataset_id"], result["dataset_id"])
-        self.assertEqual(second_dataset["provenance_status"], "not_verified")
-        self.assertEqual(second["warning_token"], first["warning_token"])
+        second = verify_reference_database(
+            self.mobile_db, REFERENCE_CONTRACT_MAJOR, result["dataset_id"]
+        )
+        self.assertEqual(second["status"], "verified")
+        self.assertEqual(second["dataset_id"], first["dataset_id"])
 
     def test_mobile_build_rejects_incomplete_source_snapshot_set(self) -> None:
-        with sqlite3.connect(self.canonical_db) as con:
+        with closing(sqlite3.connect(self.canonical_db)) as con, con:
             con.execute("DELETE FROM source_snapshots WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'")
             con.commit()
         with self.assertRaisesRegex(ValueError, "canonical verification failed"):
@@ -119,7 +158,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_product_rules_omits_source_identity_unique_index(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             indexes = con.execute("PRAGMA index_list('mobile_product_rules')").fetchall()
         self.assertFalse(
             any(bool(row[2]) for row in indexes),
@@ -128,7 +167,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_product_rules_uses_one_runtime_composite_index(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             columns = [
                 str(row[2])
                 for row in con.execute("PRAGMA index_info('idx_product_rules_runtime')")
@@ -161,7 +200,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_product_rules_uses_compact_physical_storage_with_compatibility_view(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             objects = {
                 str(row[0]): str(row[1])
                 for row in con.execute(
@@ -198,7 +237,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_criterion_links_use_compact_codes_with_compatibility_view(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.mobile_db) as con:
+        with closing(sqlite3.connect(self.mobile_db)) as con, con:
             objects = {
                 str(row[0]): str(row[1])
                 for row in con.execute(
@@ -227,7 +266,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_build_rejects_duplicate_product_rule_source_identity(self) -> None:
         duplicate_source = self.canonical_db.with_name("canonical-duplicate-rule.sqlite")
-        with sqlite3.connect(self.canonical_db) as source:
+        with closing(sqlite3.connect(self.canonical_db)) as source, source:
             dump = "\n".join(source.iterdump())
         unique_clause = ",\n    UNIQUE(source_dataset_key, source_row)\n)"
         self.assertIn(unique_clause, dump)
@@ -235,7 +274,7 @@ class MobileDatabaseTest(unittest.TestCase):
         # product_rules. Remove this build-time identity constraint from the
         # synthetic source tables so the fixture can represent corrupt input.
         dump = dump.replace(unique_clause, "\n)")
-        with sqlite3.connect(duplicate_source) as con:
+        with closing(sqlite3.connect(duplicate_source)) as con, con:
             con.executescript(dump)
             columns = [
                 str(row[1])
@@ -263,7 +302,12 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def test_mobile_preserves_product_rule_ids_and_criterion_links(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
-        with sqlite3.connect(self.canonical_db) as source, sqlite3.connect(self.mobile_db) as mobile:
+        with (
+            closing(sqlite3.connect(self.canonical_db)) as source,
+            source,
+            closing(sqlite3.connect(self.mobile_db)) as mobile,
+            mobile,
+        ):
             source_rules = source.execute(
                 "SELECT * FROM product_rules ORDER BY id"
             ).fetchall()
@@ -303,7 +347,7 @@ class MobileDatabaseTest(unittest.TestCase):
         first = build_mobile_database(
             self.canonical_db, self.mobile_db, manifest_path=self.manifest
         )
-        with sqlite3.connect(self.canonical_db) as con:
+        with closing(sqlite3.connect(self.canonical_db)) as con, con:
             con.execute(
                 "UPDATE ingredient_rules SET details=COALESCE(details,'') || ' semantic-change' "
                 "WHERE id=(SELECT MIN(id) FROM ingredient_rules)"

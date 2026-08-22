@@ -2,8 +2,6 @@ package com.medicine.android
 
 import android.util.Log
 import android.webkit.JavascriptInterface
-import com.chaquo.python.PyObject
-import com.chaquo.python.Python
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ExecutorService
@@ -15,26 +13,31 @@ class MedicineBridge(
     private val vault: PersonalDatabaseVault,
 ) {
     private val apiLock = Any()
-    private val api: PyObject
+    private val nativeCore: MedicineNativeCore
     private val requestExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     @Volatile private var responseHandler: ((String, String) -> Unit)? = null
     private val dispatcher: BridgeRequestDispatcher
+    private val closeLock = Any()
+    private var closed = false
 
     init {
-        api = PersonalDatabaseOperationCoordinator.exclusive {
-            vault.openForUse()
-            try {
-                Python.getInstance()
-                    .getModule("medicine_app.mobile_api")
-                    .callAttr(
-                        "create_bridge",
-                        referenceDatabase?.absolutePath,
-                        personalDatabase.absolutePath,
-                    )
-                    .also { created -> synchronized(apiLock) { created.callAttr("prepare_for_seal") } }
-            } finally {
-                vault.sealAfterUse()
+        nativeCore = MedicineNativeCore(referenceDatabase, personalDatabase)
+        try {
+            PersonalDatabaseOperationCoordinator.exclusive {
+                vault.openForUse()
+                try {
+                    nativeCore.initializePersonalDatabase()
+                } finally {
+                    // A failed initialization may still leave a recoverable WAL.
+                    // Never encrypt/delete plaintext unless Rust confirms the
+                    // authoritative database has been checkpointed first.
+                    nativeCore.prepareForSeal()
+                    vault.sealAfterUse()
+                }
             }
+        } catch (error: Throwable) {
+            nativeCore.close()
+            throw error
         }
         dispatcher = BridgeRequestDispatcher(
             executor = requestExecutor,
@@ -48,7 +51,7 @@ class MedicineBridge(
     }
 
     fun setReferenceAvailable(available: Boolean, reason: String? = null) = synchronized(apiLock) {
-        api.callAttr("set_reference_available", available, reason)
+        nativeCore.setReferenceAvailable(available, reason)
     }
 
     @JavascriptInterface
@@ -71,17 +74,23 @@ class MedicineBridge(
     }
 
     fun close() {
-        responseHandler = null
-        dispatcher.close()
-        // Never interrupt an in-flight personal write: it must reach the vault
-        // reseal boundary even after the Activity stops accepting responses.
-        requestExecutor.shutdown()
+        synchronized(closeLock) {
+            if (closed) return
+            closed = true
+            responseHandler = null
+            dispatcher.close()
+            // Queue native teardown after the dispatch drain. This preserves the
+            // existing invariant that an in-flight personal write reaches the
+            // vault reseal boundary before native state is released.
+            requestExecutor.execute { synchronized(apiLock) { nativeCore.close() } }
+            requestExecutor.shutdown()
+        }
     }
 
     private fun processRequest(request: BridgeRequest): String {
         val access = try {
             synchronized(apiLock) {
-                api.callAttr("request_access", request.method, request.path).toString()
+                nativeCore.requestAccess(request.method, request.path)
             }
         } catch (error: Throwable) {
             Log.e(TAG, "Native API bridge access classification failed", error)
@@ -110,7 +119,7 @@ class MedicineBridge(
             try {
                 val discardedReadOnlySnapshot = readOnly && vault.finishReadOnlyUse(openOrigin)
                 if (!discardedReadOnlySnapshot) {
-                    synchronized(apiLock) { api.callAttr("prepare_for_seal") }
+                    synchronized(apiLock) { nativeCore.prepareForSeal() }
                     vault.sealAfterUse()
                 }
             } catch (error: Throwable) {
@@ -122,7 +131,7 @@ class MedicineBridge(
 
     private fun callApi(request: BridgeRequest): String = try {
         synchronized(apiLock) {
-            api.callAttr("request", request.method, request.path, request.body).toString()
+            nativeCore.request(request.method, request.path, request.body)
         }
     } catch (error: Throwable) {
         Log.e(TAG, "Native API bridge request failed", error)

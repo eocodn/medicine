@@ -2,7 +2,9 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.artifacts.dsl.LockMode
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import java.io.File
@@ -29,9 +31,27 @@ abstract class PrepareOcrAssets : DefaultTask() {
     }
 }
 
+abstract class PrepareRustJniLibs : DefaultTask() {
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
+    @get:InputFile
+    abstract val libraryFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun prepare() {
+        fileSystemOperations.sync {
+            from(libraryFile)
+            into(outputDirectory.dir("arm64-v8a"))
+        }
+    }
+}
+
 plugins {
     id("com.android.application")
-    id("com.chaquo.python")
 }
 
 val releaseVersionPropertiesFile = rootProject.file("release.properties")
@@ -153,9 +173,35 @@ val prepareOcrAssets = tasks.register<PrepareOcrAssets>("prepareOcrAssets") {
     outputDirectory.set(layout.buildDirectory.dir("generated/ocrAssets"))
 }
 
+val rustNdkVersion = "29.0.14206865"
+val rustTargetDirectory = layout.buildDirectory.dir("rust-target")
+val rustLibrary = rustTargetDirectory.map {
+    it.file("aarch64-linux-android/release/libmedicine_core.so")
+}
+val rustJniLibsDirectory = layout.buildDirectory.dir("generated/rustJniLibs")
+val buildRustNative = tasks.register<Exec>("buildRustNative") {
+    group = "build"
+    description = "Builds the arm64 Rust application core for Android."
+    workingDir(rootProject.file(".."))
+    inputs.file(rootProject.file("../rust-toolchain.toml"))
+    inputs.file(rootProject.file("../rust/medicine_core/Cargo.toml"))
+    inputs.file(rootProject.file("../rust/medicine_core/Cargo.lock"))
+    inputs.dir(rootProject.file("../rust/medicine_core/src"))
+    outputs.file(rustLibrary)
+    environment("MEDICINE_ANDROID_NDK_VERSION", rustNdkVersion)
+    environment("MEDICINE_RUST_TARGET_DIR", rustTargetDirectory.get().asFile.absolutePath)
+    commandLine("bash", rootProject.file("../scripts/build_android_rust.sh").absolutePath)
+}
+val prepareRustJniLibs = tasks.register<PrepareRustJniLibs>("prepareRustJniLibs") {
+    dependsOn(buildRustNative)
+    libraryFile.set(rustLibrary)
+    outputDirectory.set(rustJniLibsDirectory)
+}
+
 android {
     namespace = "com.medicine.android"
     compileSdk = 36
+    ndkVersion = rustNdkVersion
 
     defaultConfig {
         applicationId = "com.medicine.android"
@@ -218,20 +264,10 @@ androidComponents {
         }
         assets.addStaticSourceDirectory(rootProject.file("../medicine_app/static").absolutePath)
         assets.addGeneratedSourceDirectory(prepareOcrAssets, PrepareOcrAssets::outputDirectory)
-    }
-}
-
-chaquopy {
-    defaultConfig {
-        version = "3.12"
-        buildPython("python3.12")
-    }
-    sourceSets.getByName("main") {
-        srcDir(rootProject.file(".."))
-        include("medicine_app/**/*.py")
-        exclude("medicine_app/cli.py")
-        include("medicine_canonical/__init__.py")
-        include("medicine_canonical/release.py")
+        val jniLibs = checkNotNull(variant.sources.jniLibs) {
+            "Android JNI source API is unavailable for ${variant.name}"
+        }
+        jniLibs.addGeneratedSourceDirectory(prepareRustJniLibs, PrepareRustJniLibs::outputDirectory)
     }
 }
 

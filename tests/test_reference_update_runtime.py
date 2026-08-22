@@ -4,14 +4,14 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
 from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.mobile import REFERENCE_CONTRACT_MAJOR as BUILDER_CONTRACT_MAJOR, build_mobile_database
-from tests.test_safety_coverage import make_canonical_db
+from tests.canonical_fixture_support import make_canonical_db
 
 
 class ReferenceUpdateRuntimeTest(unittest.TestCase):
@@ -46,7 +46,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
             )
 
     def test_runtime_verifier_does_not_bind_acceptance_to_source_snapshot_metadata(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute(
                 "UPDATE source_snapshots SET sha256=? "
                 "WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'",
@@ -61,7 +61,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
         self.assertEqual(result["status"], "verified")
 
     def test_runtime_verifier_requires_materialized_contract_semantics_table(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute("DROP TABLE reference_criterion_semantics")
             con.commit()
 
@@ -73,7 +73,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
             )
 
     def test_runtime_verifier_requires_semantic_expectation_table(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute("DROP TABLE reference_semantic_expectations")
             con.commit()
 
@@ -85,7 +85,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
             )
 
     def test_runtime_verifier_rejects_missing_runtime_required_product_column(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute("ALTER TABLE products DROP COLUMN manufacturer")
             con.commit()
 
@@ -97,7 +97,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
             )
 
     def test_runtime_verifier_ignores_non_runtime_source_snapshot_provenance_columns(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute("ALTER TABLE source_snapshots DROP COLUMN source_locator")
             con.commit()
 
@@ -109,7 +109,7 @@ class ReferenceUpdateRuntimeTest(unittest.TestCase):
         self.assertEqual(result["status"], "verified")
 
     def test_runtime_verifier_rejects_malformed_known_semantic_payload(self) -> None:
-        with sqlite3.connect(self.mobile) as con:
+        with closing(sqlite3.connect(self.mobile)) as con, con:
             criterion_rule_id = con.execute(
                 "SELECT id FROM ingredient_rules ORDER BY id LIMIT 1"
             ).fetchone()[0]

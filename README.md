@@ -84,9 +84,10 @@ docker compose down
   - 복용 완료 / 건너뜀 상태 추적 및 잘못 누른 기록 되돌리기
   - PRN 약은 고정 일정과 분리하고 실제 복용 시점만 별도로 기록
 - 복용 종료 처리 / 최근 복용 기록 조회
-- JSON API와 동일 코어를 사용하는 headless CLI
+- Android, 로컬 개발 웹, Agent Control CLI가 공유하는 Rust `MedicineEngine` 코어
+- 로컬 개발용 standalone web은 Rust HTTP 어댑터로 정적 UI와 JSON API를 제공하며 기본적으로 `127.0.0.1`에만 공개
 - 서버 없는 Android 패키징
-  - WebView UI와 Python 앱 코어는 APK에 포함하고 reference DB는 signed hosted channel에서 first-launch bootstrap
+  - WebView UI는 APK에 포함하고 앱 도메인/API는 JNI를 통해 동일한 Rust `MedicineEngine`을 사용하며, reference DB는 signed hosted channel에서 first-launch bootstrap
   - `INTERNET` 권한은 native reference downloader에만 사용하며 WebView 외부 HTTP/HTTPS 요청은 차단
   - 개인 복약 DB는 Android Keystore AES-GCM 키로 요청 사이에 암호화해 보관하고, SQLite 처리 중에만 앱 전용 저장소의 임시 평문 DB를 사용
   - 비정상 종료로 임시 평문 DB가 남으면 다음 시작 시 이를 최신 상태로 복구·checkpoint한 뒤 즉시 다시 암호화
@@ -193,9 +194,12 @@ R2 bucket은 public 개발 URL을 켜기 전에 `medicine-canonical r2-public-au
 
 `canonical verify`가 실패하면 앱은 데이터셋을 verified로 취급하지 않습니다. Reference publish workflow는
 `canonical mobile-build`로 `mobile.sqlite`와 manifest를 생성해 signed hosted release로 배포하지만, Android
-APK 자체에는 해당 DB나 manifest를 포함하지 않습니다. APK에는 DB를 검증하는 동일한 Python runtime core만 패키징합니다.
+APK 자체에는 해당 DB나 manifest를 포함하지 않습니다. APK에는 reference 계약·서명·DB를 검증하고 앱 API를 실행하는 Rust 코어만 패키징하며 Python/Chaquopy runtime은 포함하지 않습니다.
 
 ## 앱 제어 CLI
+
+`app` 서비스의 Python 코드는 CLI 인자와 출력 형식만 담당하며, 개인 DB 초기화와 모든 앱 도메인 요청은
+동일 이미지의 Rust `medicine-core` Agent Control CLI로 전달합니다.
 
 ```bash
 # 사람 목록
@@ -309,7 +313,7 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 review UI는 없으며, learned parser runtime도 아직 연결되지 않았으므로 detector/recognizer가 구조화 약 행을 가장하지 않고
 parser unavailable 상태를 명시적으로 반환합니다.
 
-learned parser는 `medicine_app.intake`와 동일한 구조의 medication row를 출력합니다. 각 행은 `product_query`, 정규화 가능한
+learned parser는 `browser_ocr/document_parsing/contract.py`가 정의하는 구조의 medication row를 출력합니다. 각 행은 `product_query`, 정규화 가능한
 medication draft, 명시적 uncertainty code만 가지며 canonical 제품 identity를 확정하지 않습니다. `product_query`는 별도 OCR
 검색 모드 없이 일반 제품 검색으로 바로 전달되고, 선택된 제품과 draft/uncertainty는 최종 복용정보 편집 화면에서 한 번만
 확인·수정한 뒤 저장합니다. 이미지 URI, 파일 경로, OCR 원문 같은 raw source artifact는 이 구조화 경계를 통과하지 않습니다.
@@ -331,7 +335,7 @@ docker build -f browser_ocr/Dockerfile --target runtime \
 
 Android 앱은 WebView를 UI 셸로 사용하지만 외부 웹 서버에는 연결하지 않습니다. 정적 UI는 AndroidX WebKit의
 `https://appassets.androidplatform.net` 로컬 asset origin에서 제공하고, 앱의 `/api/...` 호출은
-`MedicineNative` 브리지를 통해 APK에 포함된 Python `MedicationApp` 코어를 직접 호출합니다. WebView의 다른
+`MedicineNative` 브리지를 통해 APK의 Rust `MedicineEngine`을 직접 호출합니다. WebView의 다른
 HTTP/HTTPS 요청은 차단합니다. Android manifest의 `INTERNET` 권한은 native reference downloader에만 사용됩니다.
 
 배포용 reference DB는 검증된 `canonical.sqlite`에서 런타임 테이블과 view만 추린 `mobile.sqlite`입니다.

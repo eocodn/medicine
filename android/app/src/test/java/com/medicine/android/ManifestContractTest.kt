@@ -12,19 +12,23 @@ class ManifestContractTest {
         val index = java.io.File("../../medicine_app/static/index.html").readText()
         assertTrue(manifest.contains("android.permission.INTERNET"))
         assertFalse(manifest.contains("usesCleartextTraffic"))
-        assertTrue(manifest.contains("com.chaquo.python.android.PyApplication"))
+        assertFalse(manifest.contains("com.chaquo.python"))
         assertTrue(activity.contains("blocked external request"))
         assertTrue(activity.contains("BuildConfig.REFERENCE_UPDATE_BASE_URL"))
         assertTrue(index.contains("connect-src 'self'"))
     }
 
     @Test
-    fun androidShellUsesLocalAssetsAndPythonApiBridge() {
+    fun androidShellUsesLocalAssetsAndRustApiBridge() {
         val build = java.io.File("build.gradle.kts").readText()
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
+        val nativeCore = java.io.File("src/main/java/com/medicine/android/MedicineNativeCore.kt")
+        val proguard = java.io.File("proguard-rules.pro").readText()
         assertFalse(build.contains("mlkit", ignoreCase = true))
-        assertTrue(build.contains("com.chaquo.python"))
+        assertFalse(build.contains("com.chaquo.python"))
         assertTrue(build.contains("androidx.webkit:webkit"))
+        assertTrue(build.contains("buildRustNative"))
         assertFalse(build.contains("medicineWebUrl"))
         assertFalse(activity.contains("MEDICINE_WEB_URL"))
         assertTrue(activity.contains("WebViewAssetLoader"))
@@ -37,6 +41,17 @@ class ManifestContractTest {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
         assertTrue(manifest.contains("androidx.core.content.FileProvider"))
         assertTrue(manifest.contains("@xml/file_paths"))
+        assertTrue(nativeCore.isFile)
+        assertTrue(bridge.contains("MedicineNativeCore"))
+        assertTrue(bridge.contains("MedicineNativeCore(referenceDatabase, personalDatabase)"))
+        assertTrue(bridge.contains("nativeCore.requestAccess"))
+        assertTrue(bridge.contains("nativeCore.request"))
+        assertFalse(bridge.contains("callAttr"))
+        assertFalse(bridge.contains("Python"))
+        assertTrue(proguard.contains("-keep class com.medicine.android.MedicineNativeCore"))
+        assertTrue(
+            proguard.contains("-keep interface com.medicine.android.NativeReferenceArtifactObserver")
+        )
     }
 
     @Test
@@ -82,7 +97,17 @@ class ManifestContractTest {
         assertTrue(build.contains("MEDICINE_REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("pub-539f06de795a469c85ab40570a8634a2.r2.dev"))
-        assertTrue(build.contains("include(\"medicine_canonical/release.py\")"))
+        assertFalse(build.contains("medicine_canonical"))
+        assertTrue(bootstrapper.contains("RustReferenceDatabaseVerifier()"))
+        assertTrue(activity.contains("RustReferenceArtifactRebuilder()"))
+        assertTrue(activity.contains("name.startsWith(\"rebuild-\")"))
+        val nativeReference = java.io.File(
+            "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
+        ).readText()
+        assertTrue(nativeReference.contains("nativeVerifyManifest"))
+        assertTrue(nativeReference.contains("nativeParseReleaseRoot"))
+        assertTrue(nativeReference.contains("nativeVerifyDatabase"))
+        assertTrue(nativeReference.contains("nativeRebuildArtifact"))
         assertTrue(updater.contains("ReferenceUpdateStatus.STAGED"))
         assertTrue(updater.contains(".artifact-"))
         assertTrue(bootstrapper.contains("ReferenceOperationCoordinator.exclusive"))
@@ -103,19 +128,41 @@ class ManifestContractTest {
         assertTrue(activity.contains("personal.sqlite.enc"))
         assertTrue(activity.contains("AndroidKeyStore"))
         assertTrue(bridge.contains("openForUse"))
-        assertTrue(bridge.contains("prepare_for_seal"))
+        assertTrue(bridge.contains("nativeCore.prepareForSeal()"))
         assertTrue(bridge.contains("sealAfterUse"))
         assertTrue(vault.contains("AES/GCM/NoPadding"))
     }
 
     @Test
-    fun pythonBridgeUsesCurrentTwoArgumentContractAndResealsOnInitFailure() {
+    fun personalSchemaAndCheckpointUseRustInsideTheVaultCoordinator() {
         val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
-        assertFalse(
-            bridge.contains(
-                "personalDatabase.absolutePath,\n                referenceDatabase.absolutePath"
-            )
-        )
+        val nativeCore = java.io.File("src/main/java/com/medicine/android/MedicineNativeCore.kt").readText()
+
+        assertTrue(nativeCore.contains("fun initializePersonalDatabase"))
+        assertTrue(nativeCore.contains("fun prepareForSeal"))
+        assertTrue(nativeCore.contains("nativeInitializePersonalDatabase"))
+        assertTrue(nativeCore.contains("nativePrepareForSeal"))
+        assertFalse(bridge.contains("prepare_for_seal"))
+
+        val nativeCalls = listOf("nativeCore", "createdNativeCore")
+        for (method in listOf("initializePersonalDatabase", "prepareForSeal")) {
+            val call = nativeCalls
+                .map { "$it.$method()" }
+                .firstOrNull { bridge.contains(it) }
+            assertTrue("MedicineBridge must call native $method", call != null)
+            val callIndex = bridge.indexOf(call!!)
+            val vaultOpen = bridge.lastIndexOf("vault.openForUse()", callIndex)
+            val vaultSeal = bridge.indexOf("vault.sealAfterUse()", callIndex)
+            assertTrue("$method must be inside the vault coordinator", vaultOpen >= 0)
+            assertTrue("$method must run before vault reseal", vaultSeal > callIndex)
+        }
+    }
+
+    @Test
+    fun nativeBridgeHasNoPythonFallbackAndResealsOnInitFailure() {
+        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
+        assertFalse(bridge.contains("Python"))
+        assertFalse(bridge.contains("callAttr"))
         assertTrue(bridge.contains("finally"))
         assertTrue(bridge.contains("vault.sealAfterUse()"))
     }

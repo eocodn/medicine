@@ -130,9 +130,11 @@ interface ReferenceReleaseSource {
 interface ReferenceArtifactRebuilder {
     fun rebuild(
         current: InstalledReferenceVersion?,
+        target: ReferenceVersion,
         artifact: ReferenceReleaseArtifact,
         downloaded: File,
         output: File,
+        observer: ReferenceUpdateObserver,
     )
 }
 
@@ -352,7 +354,14 @@ class ReferenceUpdater(
                 observer.progress("download", completed, total)
             }
             observer.phase("rebuild")
-            rebuilder.rebuild(current, artifact, downloaded, candidate)
+            rebuilder.rebuild(
+                current,
+                targetVersion(release),
+                artifact,
+                downloaded,
+                candidate,
+                observer,
+            )
             return PreparedArtifactFiles(downloaded, candidate)
         } catch (error: Exception) {
             if (candidate.exists()) {

@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -149,6 +150,37 @@ class ReferenceStoreTest {
             assertEquals(initial, installed.version)
             assertEquals(14, store.snapshot().highestActivatedSequence)
             assertEquals(initial, store.snapshot().active)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun initialInstallEqualSequenceIsIdempotentOnlyForTheSameIdentity() {
+        val root = Files.createTempDirectory("reference-store-sequence-collision").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val verifier = FakeDatabaseVerifier()
+            val currentBytes = "sequence-seven-current".toByteArray()
+            val current = version(currentBytes, 7, "current")
+            val store = ReferenceStore(root, storage, verifier)
+            store.installInitial(
+                current,
+                File(root, ".current.sqlite").apply { writeBytes(currentBytes) },
+            )
+            val before = store.snapshot()
+            val collisionBytes = "sequence-seven-collision".toByteArray()
+            val collision = version(collisionBytes, 7, "collision")
+            val collisionCandidate = File(root, ".collision.sqlite").apply {
+                writeBytes(collisionBytes)
+            }
+
+            assertThrows(IllegalArgumentException::class.java) {
+                store.installInitial(collision, collisionCandidate)
+            }
+            assertEquals(before, store.snapshot())
+            assertTrue(collisionCandidate.exists())
+            assertEquals(current, store.installInitial(current, candidate = null).version)
         } finally {
             root.deleteRecursively()
         }

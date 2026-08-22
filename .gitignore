@@ -28,3 +28,6 @@ browser_ocr/detection/results/
 browser_ocr/mobile/work/
 android/.kotlin/
 .android-gradle-cache/
+
+# Rust build outputs are worktree-local and reproducible.
+rust/**/target/

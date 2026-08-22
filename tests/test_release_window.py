@@ -10,6 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
 from medicine_canonical.release import sha256_file
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.reference_contracts.registry import VerifiedContractArtifact
@@ -207,6 +210,41 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             self.verified_root()["manifest"]["contracts"]["1"]["target"]["sha256"],
             sha256_file(second.database),
         )
+
+    def test_window_rotation_reads_previous_root_with_explicit_overlap_trust_set(self) -> None:
+        first = self.candidate(1, "rotation-old", b"A" * 500_000, "sha256:" + "a" * 64)
+        self.publish([first], current=1, minimum=1, sequence=100, suffix="rotation-old")
+
+        new_private = ec.generate_private_key(ec.SECP256R1())
+        new_private_pem = new_private.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        new_signer = ReleaseSigner.from_private_pem("test-2027", new_private_pem)
+        second = self.candidate(1, "rotation-new", b"B" * 500_000, "sha256:" + "b" * 64)
+
+        result = publish_contract_window(
+            self.client,
+            self.bucket,
+            [second],
+            self.root / "dist-rotation-new",
+            signer=new_signer,
+            release_sequence=101,
+            current_contract_major=1,
+            minimum_supported_contract_major=1,
+            trusted_public_keys={
+                "test-2026": TEST_PUBLIC_KEY_PEM,
+                "test-2027": new_signer.public_key_pem(),
+            },
+        )
+
+        self.assertEqual(result["status"], "published")
+        verified = verify_signed_envelope(
+            self.client.objects[(self.bucket, ROOT_KEY)]["Body"],
+            {"test-2027": new_signer.public_key_pem()},
+        )
+        self.assertEqual(verified["key_id"], "test-2027")
 
     def test_unchanged_exact_targets_and_window_do_not_advance_root(self) -> None:
         c1 = self.candidate(1, "same", b"A" * 500_000, "sha256:" + "b" * 64)
@@ -413,6 +451,10 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             ),
             mock.patch("medicine_canonical.release_window.client_from_env", return_value=self.client),
             mock.patch("medicine_canonical.release_window.release_signer_from_env", return_value=self.signer),
+            mock.patch(
+                "medicine_canonical.release_window.trusted_public_keys_from_env",
+                return_value={"test-2026": TEST_PUBLIC_KEY_PEM},
+            ),
             mock.patch("medicine_canonical.release_window.release_sequence_from_env", return_value=201),
             mock.patch("medicine_canonical.release_window.publish_contract_window", return_value={"status": "published"}) as publish,
         ):
@@ -444,6 +486,10 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             ),
             mock.patch("medicine_canonical.release_window.client_from_env", return_value=self.client),
             mock.patch("medicine_canonical.release_window.release_signer_from_env", return_value=self.signer),
+            mock.patch(
+                "medicine_canonical.release_window.trusted_public_keys_from_env",
+                return_value={"test-2026": TEST_PUBLIC_KEY_PEM},
+            ),
             mock.patch("medicine_canonical.release_window.release_sequence_from_env", return_value=202),
             mock.patch(
                 "medicine_canonical.release_window._read_root",
@@ -493,6 +539,10 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             ),
             mock.patch("medicine_canonical.release_window.client_from_env", return_value=self.client),
             mock.patch("medicine_canonical.release_window.release_signer_from_env", return_value=self.signer),
+            mock.patch(
+                "medicine_canonical.release_window.trusted_public_keys_from_env",
+                return_value={"test-2026": TEST_PUBLIC_KEY_PEM},
+            ),
             mock.patch("medicine_canonical.release_window.release_sequence_from_env", return_value=202),
             mock.patch(
                 "medicine_canonical.release_window.publish_contract_window",
@@ -569,6 +619,10 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             mock.patch(
                 "medicine_canonical.release_window.release_sequence_from_env",
                 return_value=123,
+            ),
+            mock.patch(
+                "medicine_canonical.release_window.trusted_public_keys_from_env",
+                return_value={"test-2026": TEST_PUBLIC_KEY_PEM},
             ),
             mock.patch(
                 "medicine_canonical.release_window.publish_verified_contract_window",

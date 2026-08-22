@@ -88,9 +88,11 @@ class ReferenceUpdaterTest {
         val usedArtifacts = mutableListOf<ReferenceReleaseArtifact>()
         override fun rebuild(
             current: InstalledReferenceVersion?,
+            target: ReferenceVersion,
             artifact: ReferenceReleaseArtifact,
             downloaded: File,
             output: File,
+            observer: ReferenceUpdateObserver,
         ) {
             usedArtifact = artifact
             usedArtifacts += artifact

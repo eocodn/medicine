@@ -29,6 +29,11 @@ jobs:
           cache: npm
           cache-dependency-path: browser_ocr/package-lock.json
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: aarch64-linux-android
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -69,7 +74,11 @@ jobs:
           license_status=${PIPESTATUS[1]}
           set -o pipefail
           test "${license_status}" -eq 0
-          "${sdkmanager}" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          "${sdkmanager}" \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;29.0.14206865"
 
       - name: Prepare OCR runtime assets
         shell: bash

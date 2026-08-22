@@ -18,7 +18,12 @@ from .release_signing import (
     ReleaseSigner,
     encode_signed_envelope,
 )
-from .release_signing_runtime import release_sequence_from_env, release_signer_from_env
+from .release_signing_runtime import (
+    release_sequence_from_env,
+    release_signer_from_env,
+    trusted_public_keys_from_env,
+    validate_trusted_public_keys,
+)
 from .release_window_artifacts import (
     CandidateMetadata as _CandidateMetadata,
     ContractReleaseCandidate,
@@ -171,6 +176,7 @@ def _publish_loaded_contract_window(
     minimum_supported_contract_major: int,
     created_at: str | None = None,
     allow_early_retirement: bool = False,
+    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     if not str(bucket).strip():
         raise ValueError("R2 bucket is required")
@@ -181,7 +187,12 @@ def _publish_loaded_contract_window(
         minimum_supported_contract_major=minimum_supported_contract_major,
         allow_early_retirement=allow_early_retirement,
     )
-    trusted_public_keys = {signer.key_id: signer.public_key_pem()}
+    trusted_public_keys = validate_trusted_public_keys(
+        signer=signer,
+        trusted_public_keys=trusted_public_keys
+        if trusted_public_keys is not None
+        else {signer.key_id: signer.public_key_pem()},
+    )
     initial_raw, initial_etag, previous_root, previous_sequence = _read_root(
         client,
         bucket,
@@ -287,6 +298,7 @@ def publish_contract_window(
     minimum_supported_contract_major: int,
     created_at: str | None = None,
     allow_early_retirement: bool = False,
+    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
@@ -299,6 +311,7 @@ def publish_contract_window(
         minimum_supported_contract_major=minimum_supported_contract_major,
         created_at=created_at,
         allow_early_retirement=allow_early_retirement,
+        trusted_public_keys=trusted_public_keys,
     )
 
 
@@ -314,6 +327,7 @@ def publish_verified_contract_window(
     minimum_supported_contract_major: int,
     created_at: str | None = None,
     allow_early_retirement: bool = False,
+    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
@@ -326,6 +340,7 @@ def publish_verified_contract_window(
         minimum_supported_contract_major=minimum_supported_contract_major,
         created_at=created_at,
         allow_early_retirement=allow_early_retirement,
+        trusted_public_keys=trusted_public_keys,
     )
 
 
@@ -351,6 +366,7 @@ def publish_contract_window_from_env(
     # Contract 1 has no predecessor.  When contract 2 is introduced the publish
     # workflow must supply both exporters through `publish_contract_window` so a
     # supported predecessor is never silently dropped.
+    signer = release_signer_from_env()
     return publish_contract_window(
         client_from_env(),
         bucket,
@@ -363,8 +379,9 @@ def publish_contract_window_from_env(
             )
         ],
         output_dir,
-        signer=release_signer_from_env(),
+        signer=signer,
         release_sequence=release_sequence_from_env(),
+        trusted_public_keys=trusted_public_keys_from_env(signer=signer),
         current_contract_major=major,
         minimum_supported_contract_major=major,
         created_at=created_at,
@@ -400,6 +417,7 @@ def publish_contract_directory_from_env(
         output_dir,
         signer=signer,
         release_sequence=release_sequence_from_env(),
+        trusted_public_keys=trusted_public_keys_from_env(signer=signer),
         current_contract_major=majors[-1],
         minimum_supported_contract_major=minimum_supported,
         created_at=created_at,
@@ -414,12 +432,13 @@ def _publication_context_from_env(retire_previous_contract: bool):
     majors = supported_contract_majors()
     client = client_from_env()
     signer = release_signer_from_env()
+    trusted_public_keys = trusted_public_keys_from_env(signer=signer)
     retirement_active = False
     if not retire_previous_contract and len(majors) == 2:
         _, _, published_root, _ = _read_root(
             client,
             bucket,
-            trusted_public_keys={signer.key_id: signer.public_key_pem()},
+            trusted_public_keys=trusted_public_keys,
         )
         retirement_active = bool(
             published_root
@@ -477,6 +496,7 @@ def build_and_publish_contract_window_from_env(
         output_dir,
         signer=signer,
         release_sequence=release_sequence,
+        trusted_public_keys=trusted_public_keys_from_env(signer=signer),
         current_contract_major=majors[-1],
         minimum_supported_contract_major=minimum_supported,
         created_at=created_at,

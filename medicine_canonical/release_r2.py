@@ -14,7 +14,12 @@ from .release_signing import (
     encode_signed_envelope,
     verify_signed_envelope,
 )
-from .release_signing_runtime import release_sequence_from_env, release_signer_from_env
+from .release_signing_runtime import (
+    release_sequence_from_env,
+    release_signer_from_env,
+    trusted_public_keys_from_env,
+    validate_trusted_public_keys,
+)
 
 LATEST_KEY = f"{RELEASE_PREFIX}/latest.json"
 LATEST_CACHE_CONTROL = "no-store"
@@ -328,6 +333,7 @@ def publish_release(
     release_sequence: int,
     created_at: str | None = None,
     latest_key: str = LATEST_KEY,
+    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     if not bucket:
         raise ValueError("R2 bucket is required")
@@ -345,7 +351,12 @@ def publish_release(
     ):
         raise ValueError("release_sequence must be a positive signed 64-bit integer")
 
-    trusted_public_keys = {signer.key_id: signer.public_key_pem()}
+    trusted_public_keys = validate_trusted_public_keys(
+        signer=signer,
+        trusted_public_keys=trusted_public_keys
+        if trusted_public_keys is not None
+        else {signer.key_id: signer.public_key_pem()},
+    )
 
     initial_raw, initial_etag, previous_latest, previous_sequence, previous_signed = _read_latest(
         client,
@@ -548,15 +559,17 @@ def publish_release_from_env(
     bucket = os.environ.get("R2_BUCKET", "").strip()
     if not bucket:
         raise RuntimeError("R2_BUCKET is required")
+    signer = release_signer_from_env()
     return publish_release(
         client_from_env(),
         bucket,
         target_db,
         mobile_manifest_path,
         output_dir,
-        signer=release_signer_from_env(),
+        signer=signer,
         release_sequence=release_sequence_from_env(),
         created_at=created_at,
+        trusted_public_keys=trusted_public_keys_from_env(signer=signer),
     )
 
 
@@ -571,4 +584,5 @@ __all__ = [
     "publish_release_from_env",
     "release_sequence_from_env",
     "release_signer_from_env",
+    "trusted_public_keys_from_env",
 ]
