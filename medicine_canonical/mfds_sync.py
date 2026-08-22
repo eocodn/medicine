@@ -161,15 +161,17 @@ def sync_paginated_jsonl(
         rows, reported = fetch_page(page, page_size)
         return page, rows, reported
 
+    total_count_change: tuple[int, int] | None = None
     if missing:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(get_page, page): page for page in missing}
             for future in as_completed(futures):
                 page, rows, reported = future.result()
                 if total and reported and reported != total:
-                    raise RuntimeError(
-                        f"{dataset_key} totalCount changed during sync: {total} -> {reported}"
-                    )
+                    total_count_change = (total, reported)
+                    for pending in futures:
+                        pending.cancel()
+                    break
                 _write_page(pages_dir / f"{page:06d}.jsonl", rows)
                 completed += 1
                 if progress and (completed == total_pages or completed % 25 == 0):
@@ -178,6 +180,17 @@ def sync_paginated_jsonl(
                         file=sys.stderr,
                         flush=True,
                     )
+    if total_count_change is not None:
+        previous_total, reported_total = total_count_change
+        # A count change proves the saved pages no longer belong to one
+        # authoritative source snapshot. Do not let an outer workflow retry
+        # resume this stale checkpoint; transient transport failures still keep
+        # their partial pages and resume normally.
+        shutil.rmtree(pages_dir, ignore_errors=True)
+        raise RuntimeError(
+            f"{dataset_key} totalCount changed during sync: "
+            f"{previous_total} -> {reported_total}"
+        )
 
     temp_output = output.with_name(output.name + ".write")
     row_count = 0
