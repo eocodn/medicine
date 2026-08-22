@@ -298,3 +298,32 @@ fn profile_risks_command_uses_the_same_profile_safety_core() {
     assert_eq!(value["body"]["risks"], serde_json::json!([]));
     fs::remove_file(canonical).ok();
 }
+
+#[test]
+fn interaction_risks_command_uses_the_same_interaction_core() {
+    let canonical = temp_canonical_db();
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+        .args([
+            "interaction-risks",
+            "--canonical-db",
+            canonical.to_str().expect("canonical path"),
+            "--product-ref",
+            "P-CLI",
+            "--current",
+            "[]",
+            "--course",
+            r#"{"start_date":"2026-08-22"}"#,
+            "--json",
+        ])
+        .output()
+        .expect("run interaction-risks command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("interaction risks json");
+    assert_eq!(value["status"], 200);
+    assert_eq!(value["body"]["risks"], serde_json::json!([]));
+    fs::remove_file(canonical).ok();
+}

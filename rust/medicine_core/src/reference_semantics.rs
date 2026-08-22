@@ -3,6 +3,15 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
 const SUPPORTED_RUNTIME_EVALUATORS: [&str; 2] = ["minimum_separation", "excluded_route"];
+const SUPPORTED_EXCLUDED_ROUTES: [&str; 7] = [
+    "oral",
+    "injection",
+    "ophthalmic",
+    "otic",
+    "nasal",
+    "inhaled",
+    "topical",
+];
 
 pub(crate) fn qualifiers(con: &Connection, row: &Map<String, Value>) -> Result<Vec<Value>, ()> {
     let semantics = semantics(con, row)?;
@@ -37,6 +46,13 @@ pub(crate) fn criterion_note_requires_review(
 
 pub(crate) fn has_semantics(con: &Connection, row: &Map<String, Value>) -> Result<bool, ()> {
     Ok(!semantics(con, row)?.is_empty())
+}
+
+pub(crate) fn semantic_records(
+    con: &Connection,
+    row: &Map<String, Value>,
+) -> Result<Vec<Map<String, Value>>, ()> {
+    semantics(con, row)
 }
 
 pub(crate) fn dedupe_qualifiers(values: Vec<Value>) -> Vec<Value> {
@@ -122,6 +138,21 @@ fn semantics(con: &Connection, row: &Map<String, Value>) -> Result<Vec<Map<Strin
                 continue;
             }
         };
+        if !semantic_record_is_valid(
+            &semantic_role,
+            &evaluation_mode,
+            &evaluator_kind,
+            &fallback_action,
+            &structured_payload,
+        ) {
+            result.push(review_required_semantic(
+                &qualifier_type,
+                &display_text,
+                &source_remark,
+                None,
+            ));
+            continue;
+        }
         let mut semantic = Map::new();
         semantic.insert("semantic_role".to_owned(), Value::String(semantic_role));
         semantic.insert("evaluation_mode".to_owned(), Value::String(evaluation_mode));
@@ -134,6 +165,54 @@ fn semantics(con: &Connection, row: &Map<String, Value>) -> Result<Vec<Map<Strin
         result.push(semantic);
     }
     Ok(result)
+}
+
+fn semantic_record_is_valid(
+    role: &str,
+    mode: &str,
+    evaluator: &str,
+    fallback: &str,
+    payload: &Value,
+) -> bool {
+    let expected = match evaluator {
+        "display_only" => Some(("informational", "resolved_at_build", "none")),
+        "opaque_condition" => Some((
+            "applicability_condition",
+            "review_required",
+            "review_required",
+        )),
+        "minimum_separation" | "excluded_route" => Some((
+            "applicability_condition",
+            "runtime_evaluable",
+            "review_required",
+        )),
+        _ => None,
+    };
+    if let Some(expected) = expected {
+        if (role, mode, fallback) != expected {
+            return false;
+        }
+    } else if !(role == "applicability_condition"
+        && mode == "runtime_evaluable"
+        && fallback == "review_required")
+    {
+        return false;
+    }
+
+    match evaluator {
+        "minimum_separation" => {
+            payload
+                .get("hours")
+                .and_then(Value::as_i64)
+                .is_some_and(|hours| hours > 0)
+                && payload.get("direction").and_then(Value::as_str) == Some("symmetric")
+        }
+        "excluded_route" => payload
+            .get("route")
+            .and_then(Value::as_str)
+            .is_some_and(|route| SUPPORTED_EXCLUDED_ROUTES.contains(&route)),
+        _ => true,
+    }
 }
 
 fn legacy_dev_semantics(row: &Map<String, Value>) -> Vec<Map<String, Value>> {

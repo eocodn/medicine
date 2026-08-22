@@ -299,7 +299,7 @@ fn product_flags(con: &Connection, item_seq: &str) -> Result<Vec<Value>, Product
         .collect()
 }
 
-fn infer_administration_route(forms: &[String]) -> &'static str {
+pub(crate) fn infer_administration_route(forms: &[String]) -> &'static str {
     let mut resolved = BTreeSet::new();
     let mut saw_form = false;
     for form in forms {

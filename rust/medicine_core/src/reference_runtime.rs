@@ -164,6 +164,41 @@ pub(crate) fn resolved_product_rows(
     Ok(rows)
 }
 
+pub(crate) fn combination_rows(
+    con: &Connection,
+    left: &str,
+    right: &str,
+) -> Result<Vec<Map<String, Value>>, ()> {
+    query_maps(
+        con,
+        "SELECT * FROM product_rule_criteria
+         WHERE category='combination_contraindication'
+           AND ((item_seq=?1 AND paired_item_seq=?2) OR (item_seq=?2 AND paired_item_seq=?1))",
+        params![left, right],
+    )
+}
+
+pub(crate) fn unlinked_combination_exists(
+    con: &Connection,
+    left: &str,
+    right: &str,
+) -> Result<bool, ()> {
+    con.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM product_rules r
+             LEFT JOIN product_criterion_links l ON l.product_rule_id=r.id
+             WHERE r.category='combination_contraindication'
+               AND ((r.item_seq=?1 AND r.paired_item_seq=?2)
+                    OR (r.item_seq=?2 AND r.paired_item_seq=?1))
+             GROUP BY r.id HAVING COUNT(l.criterion_rule_id)=0 LIMIT 1
+         )",
+        params![left, right],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|value| value != 0)
+    .map_err(|_| ())
+}
+
 pub(crate) fn unlinked_product_rules(
     con: &Connection,
     item_seq: &str,

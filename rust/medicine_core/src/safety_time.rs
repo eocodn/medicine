@@ -2,10 +2,10 @@ use chrono::{Datelike, FixedOffset, NaiveDate, TimeZone, Utc};
 use serde_json::{Map, Value};
 
 #[derive(Clone, Copy)]
-struct Course {
-    start: NaiveDate,
-    end: Option<NaiveDate>,
-    empty: bool,
+pub(crate) struct Course {
+    pub(crate) start: NaiveDate,
+    pub(crate) end: Option<NaiveDate>,
+    pub(crate) empty: bool,
 }
 
 pub(crate) fn age_years(birth_date: &str, as_of: Option<NaiveDate>) -> Result<i32, ()> {
@@ -40,7 +40,7 @@ pub(crate) fn parse_optional_date(value: Option<&str>) -> Result<Option<NaiveDat
     value.map(parse_date).transpose()
 }
 
-fn course(value: &Map<String, Value>) -> Option<Course> {
+pub(crate) fn course(value: &Map<String, Value>) -> Option<Course> {
     let start = parse_date(value.get("start_date")?.as_str()?).ok()?;
     let mut end = value
         .get("end_date")

@@ -7,6 +7,8 @@ mod dur_display_support;
 mod dur_product_flags;
 mod dur_quantitative_display;
 mod engine;
+mod interaction_safety;
+mod interaction_timing;
 mod jni_bridge;
 mod medication_records;
 mod medications;
@@ -68,6 +70,21 @@ pub fn inspect_profile_risks(
         person_json,
         candidate_course_json,
         as_of,
+    );
+    serde_json::json!({"status": status, "body": body}).to_string()
+}
+
+pub fn inspect_interaction_risks(
+    canonical_db: Option<&std::path::Path>,
+    product_ref: &str,
+    current_json: &str,
+    candidate_course_json: &str,
+) -> String {
+    let (status, body) = interaction_safety::inspect(
+        canonical_db,
+        product_ref,
+        current_json,
+        candidate_course_json,
     );
     serde_json::json!({"status": status, "body": body}).to_string()
 }

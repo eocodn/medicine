@@ -1,6 +1,6 @@
 use medicine_core::{
-    assemble_dur_display, inspect_product, inspect_profile_risks, inspect_safety_basis,
-    normalize_prescription_draft, MedicineEngine,
+    assemble_dur_display, inspect_interaction_risks, inspect_product, inspect_profile_risks,
+    inspect_safety_basis, normalize_prescription_draft, MedicineEngine,
 };
 use serde_json::json;
 use std::path::Path;
@@ -25,6 +25,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "safety-basis" => safety_basis(&args[1..]),
         "dur-display" => dur_display(&args[1..]),
         "profile-risks" => profile_risks(&args[1..]),
+        "interaction-risks" => interaction_risks(&args[1..]),
         _ => Err(usage()),
     }
 }
@@ -307,6 +308,51 @@ fn profile_risks(args: &[String]) -> Result<(), String> {
     )
 }
 
+fn interaction_risks(args: &[String]) -> Result<(), String> {
+    let mut canonical_db: Option<String> = None;
+    let mut product_ref: Option<String> = None;
+    let mut current: Option<String> = None;
+    let mut course: Option<String> = None;
+    let mut json_output = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--canonical-db" => {
+                index += 1;
+                canonical_db = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--product-ref" => {
+                index += 1;
+                product_ref = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--current" => {
+                index += 1;
+                current = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--course" => {
+                index += 1;
+                course = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--json" => json_output = true,
+            _ => return Err(usage()),
+        }
+        index += 1;
+    }
+    let canonical_db = canonical_db.ok_or_else(usage)?;
+    let product_ref = product_ref.ok_or_else(usage)?;
+    let current = current.ok_or_else(usage)?;
+    let course = course.ok_or_else(usage)?;
+    print_response(
+        &inspect_interaction_risks(
+            Some(Path::new(&canonical_db)),
+            &product_ref,
+            &current,
+            &course,
+        ),
+        json_output,
+    )
+}
+
 fn print_response(response: &str, json_output: bool) -> Result<(), String> {
     if json_output {
         println!("{response}");
@@ -319,5 +365,5 @@ fn print_response(response: &str, json_output: bool) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-core product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-core draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]\n       medicine-core safety-basis --canonical-db <PATH> --product-ref <REF> --person <JSON> --draft <JSON> [--json]\n       medicine-core dur-display --input <JSON> [--json]\n       medicine-core profile-risks --canonical-db <PATH> --product-ref <REF> --person <JSON> --course <JSON> [--as-of <YYYY-MM-DD>] [--json]".to_owned()
+    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-core product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-core draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]\n       medicine-core safety-basis --canonical-db <PATH> --product-ref <REF> --person <JSON> --draft <JSON> [--json]\n       medicine-core dur-display --input <JSON> [--json]\n       medicine-core profile-risks --canonical-db <PATH> --product-ref <REF> --person <JSON> --course <JSON> [--as-of <YYYY-MM-DD>] [--json]\n       medicine-core interaction-risks --canonical-db <PATH> --product-ref <REF> --current <JSON> --course <JSON> [--json]".to_owned()
 }
