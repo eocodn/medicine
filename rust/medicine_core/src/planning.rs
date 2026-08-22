@@ -79,10 +79,7 @@ fn daily_plan(
     person_id: &str,
     raw_path: &str,
 ) -> Result<Value, PlanningError> {
-    let target = match query_parameter(raw_path, "date")? {
-        Some(value) => parse_date(&value)?,
-        None => today_kst(),
-    };
+    let target = target_date(raw_path)?;
     let mut con = open_write(personal_db_path)?;
     let transaction = con
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -94,6 +91,22 @@ fn daily_plan(
     let plan = materialize(&transaction, person_id, &medications, target)?;
     transaction.commit().map_err(|_| PlanningError::Internal)?;
     Ok(plan)
+}
+
+pub(crate) fn materialize_for_dashboard(
+    con: &Connection,
+    person_id: &str,
+    medications: &[Medication],
+    target: NaiveDate,
+) -> Result<Value, PlanningError> {
+    materialize(con, person_id, medications, target)
+}
+
+pub(crate) fn target_date(raw_path: &str) -> Result<NaiveDate, PlanningError> {
+    match query_parameter(raw_path, "date")? {
+        Some(value) => parse_date(&value),
+        None => Ok(today_kst()),
+    }
 }
 
 fn open_write(personal_db_path: Option<&Path>) -> Result<Connection, PlanningError> {
@@ -396,9 +409,7 @@ fn query_parameter(raw_path: &str, key: &str) -> Result<Option<String>, Planning
             continue;
         }
         let value = percent_decode(raw_value)?;
-        if !value.is_empty() {
-            result = Some(value);
-        }
+        result = Some(value);
     }
     Ok(result)
 }

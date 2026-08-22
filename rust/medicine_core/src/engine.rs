@@ -2,7 +2,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-use crate::{doses, medications, people, planning, preview, prn};
+use crate::{dashboard, doses, medications, people, planning, preview, prn, product_search};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccessClass {
@@ -90,7 +90,9 @@ impl MedicineEngine {
     pub fn handles_request(&self, method: &str, raw_path: &str) -> bool {
         let path = request_path(raw_path);
         (normalized_method(method) == "GET" && path == "/api/health")
+            || product_search::handles_request(method, raw_path)
             || people::handles_request(method, path)
+            || dashboard::handles_request(method, path)
             || planning::handles_request(method, path)
             || preview::handles_request(method, path)
             || medications::handles_request(method, path)
@@ -117,9 +119,25 @@ impl MedicineEngine {
         if normalized_method(method) == "GET" && path == "/api/health" {
             return self.health_response();
         }
+        if let Some((status, body)) = product_search::handle_request(method, raw_path) {
+            return json!({"status": status, "body": body}).to_string();
+        }
         if let Some((status, body)) =
             people::handle_request(self.personal_db.as_deref(), method, path, body_json)
         {
+            return json!({"status": status, "body": body}).to_string();
+        }
+        let dashboard_reference = self
+            .reference_available
+            .then_some(self.canonical_db.as_deref())
+            .flatten();
+        if let Some((status, body)) = dashboard::handle_request(
+            dashboard_reference,
+            self.personal_db.as_deref(),
+            method,
+            raw_path,
+            path,
+        ) {
             return json!({"status": status, "body": body}).to_string();
         }
         if let Some((status, body)) =

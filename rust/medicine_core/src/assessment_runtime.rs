@@ -39,6 +39,12 @@ pub(crate) struct AssessmentBundle {
     pub(crate) payload_hash: String,
 }
 
+pub(crate) struct AssessmentScope<'a> {
+    pub(crate) exclude_medication_id: Option<&'a str>,
+    pub(crate) as_of: Option<NaiveDate>,
+    pub(crate) bind_confirmation_token: bool,
+}
+
 pub(crate) fn evaluate(
     canonical: &Connection,
     personal: &Connection,
@@ -67,6 +73,30 @@ pub(crate) fn evaluate_excluding_medication(
     acknowledged: bool,
     exclude_medication_id: Option<&str>,
 ) -> Result<AssessmentBundle, AssessmentError> {
+    evaluate_scoped(
+        canonical,
+        personal,
+        person_id,
+        product,
+        draft,
+        acknowledged,
+        AssessmentScope {
+            exclude_medication_id,
+            as_of: None,
+            bind_confirmation_token: true,
+        },
+    )
+}
+
+pub(crate) fn evaluate_scoped(
+    canonical: &Connection,
+    personal: &Connection,
+    person_id: &str,
+    product: &Value,
+    draft: &Value,
+    acknowledged: bool,
+    scope: AssessmentScope<'_>,
+) -> Result<AssessmentBundle, AssessmentError> {
     let product_object = product.as_object().ok_or(AssessmentError::Internal)?;
     let draft_object = draft.as_object().ok_or(AssessmentError::Internal)?;
     let person = people::load_person(personal, person_id).map_err(AssessmentError::from)?;
@@ -75,13 +105,13 @@ pub(crate) fn evaluate_excluding_medication(
         personal,
         canonical,
         person_id,
-        exclude_medication_id,
+        scope.exclude_medication_id,
     )
     .map_err(AssessmentError::from)?;
 
     let review_items = regimen_review::duplicate_review_items(&current, product, draft_object)
         .map_err(|_| AssessmentError::Internal)?;
-    let (first_profile_date, last_profile_date) = profile_dates(draft_object)?;
+    let (first_profile_date, last_profile_date) = profile_dates(draft_object, scope.as_of)?;
 
     let target_item_seq = item_seq(product_object);
     let mut risks = if target_item_seq.is_some() {
@@ -190,8 +220,12 @@ pub(crate) fn evaluate_excluding_medication(
     assessment.insert("dose".to_owned(), dose.clone());
     assessment.insert("requires_review".to_owned(), Value::Bool(requires_review));
     assessment.insert("acknowledged".to_owned(), Value::Bool(acknowledged));
-    let warning_token = assessment_token::bind(&mut assessment, &payload_hash)
-        .map_err(|_| AssessmentError::Internal)?;
+    let warning_token = if scope.bind_confirmation_token {
+        assessment_token::bind(&mut assessment, &payload_hash)
+            .map_err(|_| AssessmentError::Internal)?
+    } else {
+        None
+    };
 
     Ok(AssessmentBundle {
         person,
@@ -208,17 +242,27 @@ pub(crate) fn evaluate_excluding_medication(
     })
 }
 
-fn profile_dates(draft: &Map<String, Value>) -> Result<(NaiveDate, NaiveDate), AssessmentError> {
+fn profile_dates(
+    draft: &Map<String, Value>,
+    as_of: Option<NaiveDate>,
+) -> Result<(NaiveDate, NaiveDate), AssessmentError> {
     let start = draft
         .get("start_date")
         .and_then(Value::as_str)
-        .ok_or(AssessmentError::Internal)
-        .and_then(parse_date)?;
+        .map(parse_date)
+        .transpose()?;
     let end = match draft.get("end_date").and_then(Value::as_str) {
-        Some(value) => parse_date(value)?,
-        None => start,
+        Some(value) => Some(parse_date(value)?),
+        None => None,
     };
-    Ok((start, end.max(start)))
+    let first = match (start, as_of) {
+        (Some(start), Some(target)) => start.max(target),
+        (Some(start), None) => start,
+        (None, Some(target)) => target,
+        (None, None) => return Err(AssessmentError::Internal),
+    };
+    let last = end.filter(|end| *end >= first).unwrap_or(first);
+    Ok((first, last))
 }
 
 fn apply_pediatric_review(

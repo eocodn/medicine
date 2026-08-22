@@ -142,11 +142,13 @@ fn health_reports_reference_and_catalog_state() {
 fn migrated_runtime_routes_are_owned_by_rust() {
     let engine = MedicineEngine::new(None, None, None);
     assert!(engine.handles_request("GET", "/api/health"));
+    assert!(engine.handles_request("GET", "/api/products?q=example"));
     assert!(engine.handles_request("GET", "/api/people"));
     assert!(engine.handles_request("POST", "/api/people"));
     assert!(engine.handles_request("PATCH", "/api/people/example"));
     assert!(engine.handles_request("DELETE", "/api/people/example"));
     assert!(engine.handles_request("GET", "/api/people/example/daily-plan?date=2026-08-20"));
+    assert!(engine.handles_request("GET", "/api/people/example/dashboard?date=2026-08-20"));
     assert!(engine.handles_request("GET", "/api/medications/example/history"));
     assert!(engine.handles_request("DELETE", "/api/medications/example?expected_revision=1"));
     assert!(engine.handles_request("POST", "/api/people/example/medications/preview"));
