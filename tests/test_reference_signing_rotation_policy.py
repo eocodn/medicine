@@ -4,6 +4,7 @@ import importlib.util
 import hashlib
 import inspect
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,26 +23,47 @@ class ReferenceSigningRotationPolicyTest(unittest.TestCase):
             parameter = inspect.signature(publisher).parameters["trusted_public_keys"]
             self.assertIs(parameter.default, inspect.Parameter.empty)
 
-    def test_android_trust_parser_accepts_multiple_reviewed_keys(self) -> None:
+    def test_release_gate_loads_trust_from_manifest_not_kotlin_source(self) -> None:
         script = Path("scripts/verify-reference-contract-root.py")
+        self.assertNotIn("ReferenceTrust.kt", script.read_text())
         spec = importlib.util.spec_from_file_location("verify_reference_contract_root", script)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        source = '''
-            private val productionKeys = listOf(
-                ReviewedKey("old-key", "aa", "bceef655b5a034911f1c3718ce056531b45ef03b4c7b1f15629e867294011a7d"),
-                ReviewedKey("new-key", "bb", "cbecda1c7d37d4c0aa5466243bb4a0018c31bf06d74fa7338290dd3068db4fed"),
-            )
-        '''
-        self.assertEqual(
-            module._parse_android_trust_source(source),
-            {
-                "old-key": ("aa", hashlib.sha256(bytes.fromhex("aa")).hexdigest()),
-                "new-key": ("bb", hashlib.sha256(bytes.fromhex("bb")).hexdigest()),
-            },
+        old_signer = ReleaseSigner.from_private_pem("old-key", TEST_PRIVATE_KEY_PEM)
+        new_private = ec.generate_private_key(ec.SECP256R1())
+        new_private_pem = new_private.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
         )
+        new_signer = ReleaseSigner.from_private_pem("new-key", new_private_pem)
+
+        def entry(signer: ReleaseSigner) -> dict:
+            public_key = serialization.load_pem_public_key(signer.public_key_pem())
+            der = public_key.public_bytes(
+                serialization.Encoding.DER,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            return {
+                "key_id": signer.key_id,
+                "public_key_pem": signer.public_key_pem().decode("ascii"),
+                "spki_sha256": hashlib.sha256(der).hexdigest(),
+            }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as manifest:
+            json.dump(
+                {
+                    "active_key_id": "old-key",
+                    "keys": [entry(old_signer), entry(new_signer)],
+                },
+                manifest,
+            )
+            manifest.flush()
+            trusted = module._trusted_public_keys_from_manifest(Path(manifest.name))
+
+        self.assertEqual(set(trusted), {"old-key", "new-key"})
 
     def test_release_gate_accepts_either_key_during_overlap_and_rejects_unknown_key(self) -> None:
         script = Path("scripts/verify-reference-contract-root.py")

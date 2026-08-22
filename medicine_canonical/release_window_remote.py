@@ -37,12 +37,12 @@ def read_root(
     bucket: str,
     *,
     trusted_public_keys: dict[str, bytes],
-) -> tuple[bytes | None, str | None, dict | None, int | None]:
+) -> tuple[bytes | None, str | None, dict | None, int | None, dict | None]:
     try:
         response = client.get_object(Bucket=bucket, Key=ROOT_KEY)
     except Exception as exc:
         if _not_found(exc):
-            return None, None, None, None
+            return None, None, None, None, None
         raise
     raw = _read_body_bytes(response["Body"])
     verified = verify_signed_envelope(raw, trusted_public_keys)
@@ -50,7 +50,7 @@ def read_root(
     if not isinstance(root, dict) or root.get("protocol_version") != PROTOCOL_VERSION:
         raise ValueError("remote reference root protocol is unsupported")
     validate_root_shape(root)
-    return raw, response.get("ETag"), root, verified["release_sequence"]
+    return raw, response.get("ETag"), root, verified["release_sequence"], verified
 
 
 def target_identity(entry: dict) -> tuple[str, str, int]:
@@ -198,7 +198,7 @@ def cleanup_active_contracts(
     expected_root_raw: bytes,
     trusted_public_keys: dict[str, bytes],
 ) -> dict[int, list[str]]:
-    current_raw, _, current_root, _ = read_root(
+    current_raw, _, current_root, _, _ = read_root(
         client,
         bucket,
         trusted_public_keys=trusted_public_keys,
@@ -280,7 +280,7 @@ def assert_root_unchanged(
     initial_etag: str | None,
     trusted_public_keys: dict[str, bytes],
 ) -> None:
-    current_raw, current_etag, _, _ = read_root(
+    current_raw, current_etag, _, _, _ = read_root(
         client,
         bucket,
         trusted_public_keys=trusted_public_keys,

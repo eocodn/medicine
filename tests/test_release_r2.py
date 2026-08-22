@@ -8,6 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
 from medicine_canonical.release import prepare_release, sha256_file
 from medicine_canonical.release_r2 import _read_latest, publish_release as publish_release_to_r2
 from medicine_canonical.release_signing import (
@@ -297,6 +300,65 @@ class R2ReleasePublisherTest(unittest.TestCase):
         self.assertEqual(result["status"], "unchanged")
         self.assertEqual(self.verify_latest()["release_sequence"], 60)
         self.assertEqual(self.client.put_order, [])
+
+    def test_signer_rotation_resigns_unchanged_release_with_new_key(self) -> None:
+        db, manifest = self.mobile("rotation-same", b"A" * 500_000, "sha256:rotation-same")
+        self.publish_release(
+            self.client,
+            self.bucket,
+            db,
+            manifest,
+            self.root / "dist-rotation-same-old",
+            created_at="2026-08-17T10:00:00Z",
+            release_sequence=60,
+        )
+        previous = self.verify_latest()
+
+        new_private = ec.generate_private_key(ec.SECP256R1())
+        new_private_pem = new_private.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        new_signer = ReleaseSigner.from_private_pem("test-2027", new_private_pem)
+        overlap = {
+            "test-2026": TEST_PUBLIC_KEY_PEM,
+            "test-2027": new_signer.public_key_pem(),
+        }
+
+        with self.assertRaisesRegex(ValueError, "release_sequence"):
+            publish_release_to_r2(
+                self.client,
+                self.bucket,
+                db,
+                manifest,
+                self.root / "dist-rotation-same-stale",
+                signer=new_signer,
+                release_sequence=60,
+                trusted_public_keys=overlap,
+            )
+
+        self.client.put_order.clear()
+        result = publish_release_to_r2(
+            self.client,
+            self.bucket,
+            db,
+            manifest,
+            self.root / "dist-rotation-same-new",
+            signer=new_signer,
+            release_sequence=61,
+            trusted_public_keys=overlap,
+        )
+
+        verified = verify_signed_envelope(
+            self.client.objects[(self.bucket, "reference/v1/latest.json")]["Body"],
+            {"test-2027": new_signer.public_key_pem()},
+        )
+        self.assertEqual(result["status"], "resigned")
+        self.assertEqual(verified["key_id"], "test-2027")
+        self.assertEqual(verified["release_sequence"], 61)
+        self.assertEqual(verified["manifest"], previous["manifest"])
+        self.assertEqual(self.client.put_order, ["reference/v1/latest.json"])
 
     def test_first_publish_uploads_full_before_latest_and_round_trips_remote_state(self) -> None:
         db, manifest = self.mobile("one", b"A" * 500_000, "sha256:one")
