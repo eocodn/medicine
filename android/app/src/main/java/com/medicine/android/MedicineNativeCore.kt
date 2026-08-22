@@ -18,10 +18,6 @@ class MedicineNativeCore(
         nativeRequestAccess(requireOpen(), method, path)
     }
 
-    fun handlesRequest(method: String, path: String): Boolean = synchronized(lock) {
-        nativeHandlesRequest(requireOpen(), method, path)
-    }
-
     fun request(method: String, path: String, body: String): String = synchronized(lock) {
         nativeRequest(requireOpen(), method, path, body)
     }
@@ -57,8 +53,6 @@ class MedicineNativeCore(
     private external fun nativeDestroy(handle: Long)
 
     private external fun nativeRequestAccess(handle: Long, method: String, path: String): String
-
-    private external fun nativeHandlesRequest(handle: Long, method: String, path: String): Boolean
 
     private external fun nativeRequest(handle: Long, method: String, path: String, body: String): String
 

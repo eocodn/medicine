@@ -52,7 +52,6 @@ abstract class PrepareRustJniLibs : DefaultTask() {
 
 plugins {
     id("com.android.application")
-    id("com.chaquo.python")
 }
 
 val releaseVersionPropertiesFile = rootProject.file("release.properties")
@@ -269,20 +268,6 @@ androidComponents {
             "Android JNI source API is unavailable for ${variant.name}"
         }
         jniLibs.addGeneratedSourceDirectory(prepareRustJniLibs, PrepareRustJniLibs::outputDirectory)
-    }
-}
-
-chaquopy {
-    defaultConfig {
-        version = "3.12"
-        buildPython("python3.12")
-    }
-    sourceSets.getByName("main") {
-        srcDir(rootProject.file(".."))
-        include("medicine_app/**/*.py")
-        exclude("medicine_app/cli.py")
-        include("medicine_canonical/__init__.py")
-        include("medicine_canonical/release.py")
     }
 }
 

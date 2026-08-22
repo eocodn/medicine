@@ -12,7 +12,7 @@ class ManifestContractTest {
         val index = java.io.File("../../medicine_app/static/index.html").readText()
         assertTrue(manifest.contains("android.permission.INTERNET"))
         assertFalse(manifest.contains("usesCleartextTraffic"))
-        assertTrue(manifest.contains("com.chaquo.python.android.PyApplication"))
+        assertFalse(manifest.contains("com.chaquo.python"))
         assertTrue(activity.contains("blocked external request"))
         assertTrue(activity.contains("BuildConfig.REFERENCE_UPDATE_BASE_URL"))
         assertTrue(index.contains("connect-src 'self'"))
@@ -26,7 +26,7 @@ class ManifestContractTest {
         val nativeCore = java.io.File("src/main/java/com/medicine/android/MedicineNativeCore.kt")
         val proguard = java.io.File("proguard-rules.pro").readText()
         assertFalse(build.contains("mlkit", ignoreCase = true))
-        assertTrue(build.contains("com.chaquo.python"))
+        assertFalse(build.contains("com.chaquo.python"))
         assertTrue(build.contains("androidx.webkit:webkit"))
         assertTrue(build.contains("buildRustNative"))
         assertFalse(build.contains("medicineWebUrl"))
@@ -45,10 +45,13 @@ class ManifestContractTest {
         assertTrue(bridge.contains("MedicineNativeCore"))
         assertTrue(bridge.contains("MedicineNativeCore(referenceDatabase, personalDatabase)"))
         assertTrue(bridge.contains("nativeCore.requestAccess"))
-        assertTrue(bridge.contains("nativeCore.handlesRequest"))
         assertTrue(bridge.contains("nativeCore.request"))
-        assertFalse(bridge.contains("api.callAttr(\"request_access\""))
+        assertFalse(bridge.contains("callAttr"))
+        assertFalse(bridge.contains("Python"))
         assertTrue(proguard.contains("-keep class com.medicine.android.MedicineNativeCore"))
+        assertTrue(
+            proguard.contains("-keep interface com.medicine.android.NativeReferenceArtifactObserver")
+        )
     }
 
     @Test
@@ -94,7 +97,17 @@ class ManifestContractTest {
         assertTrue(build.contains("MEDICINE_REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("pub-539f06de795a469c85ab40570a8634a2.r2.dev"))
-        assertTrue(build.contains("include(\"medicine_canonical/release.py\")"))
+        assertFalse(build.contains("medicine_canonical"))
+        assertTrue(bootstrapper.contains("RustReferenceDatabaseVerifier()"))
+        assertTrue(activity.contains("RustReferenceArtifactRebuilder()"))
+        assertTrue(activity.contains("name.startsWith(\"rebuild-\")"))
+        val nativeReference = java.io.File(
+            "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
+        ).readText()
+        assertTrue(nativeReference.contains("nativeVerifyManifest"))
+        assertTrue(nativeReference.contains("nativeParseReleaseRoot"))
+        assertTrue(nativeReference.contains("nativeVerifyDatabase"))
+        assertTrue(nativeReference.contains("nativeRebuildArtifact"))
         assertTrue(updater.contains("ReferenceUpdateStatus.STAGED"))
         assertTrue(updater.contains(".artifact-"))
         assertTrue(bootstrapper.contains("ReferenceOperationCoordinator.exclusive"))
@@ -146,13 +159,10 @@ class ManifestContractTest {
     }
 
     @Test
-    fun pythonBridgeUsesCurrentTwoArgumentContractAndResealsOnInitFailure() {
+    fun nativeBridgeHasNoPythonFallbackAndResealsOnInitFailure() {
         val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
-        assertFalse(
-            bridge.contains(
-                "personalDatabase.absolutePath,\n                referenceDatabase.absolutePath"
-            )
-        )
+        assertFalse(bridge.contains("Python"))
+        assertFalse(bridge.contains("callAttr"))
         assertTrue(bridge.contains("finally"))
         assertTrue(bridge.contains("vault.sealAfterUse()"))
     }

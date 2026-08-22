@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -26,6 +29,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertNotIn("REFERENCE_SIGNING_PRIVATE_KEY_PEM", workflow)
         self.assertIn("REFERENCE_SIGNING_KEY_ID", workflow)
         self.assertIn("REFERENCE_SIGNING_KMS_KEY_VERSION", workflow)
+        self.assertIn("REFERENCE_SIGNING_TRUSTED_KEYS_FILE", workflow)
         self.assertIn("REFERENCE_RELEASE_SEQUENCE", workflow)
         self.assertIn("github.run_number", workflow)
         self.assertIn("id-token: write", workflow)
@@ -69,6 +73,23 @@ class DeploymentConfigTest(unittest.TestCase):
             workflow.index("r2-public-audit"),
             workflow.index("reference-build-publish-r2"),
         )
+
+    def test_release_trust_configuration_matches_android_production_key(self) -> None:
+        trust = json.loads(Path("deploy/reference-signing-trusted-keys.json").read_text())
+        kotlin = Path(
+            "android/app/src/main/java/com/medicine/android/ReferenceTrust.kt"
+        ).read_text()
+        key_id = re.search(r'PRODUCTION_KEY_ID = "([^"]+)"', kotlin).group(1)
+        fingerprint = re.search(r'PRODUCTION_SPKI_SHA256 = "([0-9a-f]{64})"', kotlin).group(1)
+        self.assertEqual(trust["active_key_id"], key_id)
+        pem = trust["keys"][key_id]
+        der = base64.b64decode(
+            pem.replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replace("\n", ""),
+            validate=True,
+        )
+        self.assertEqual(hashlib.sha256(der).hexdigest(), fingerprint)
 
     def test_scheduled_reference_publish_manages_one_github_failure_incident(self) -> None:
         workflow = Path(".github/workflows/reference-publish.yml").read_text()
@@ -327,13 +348,14 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertTrue(any(call.startswith("aapt:dump badging ") for call in calls))
         self.assertTrue(any(call.startswith("apksigner:verify --verbose --print-certs ") for call in calls))
 
-    def test_android_package_excludes_agent_control_cli_but_repo_cli_remains(self) -> None:
+    def test_android_package_excludes_python_runtime_but_repo_cli_remains(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
         rust_build = Path("scripts/build_android_rust.sh").read_text()
 
-        self.assertIn('include("medicine_app/**/*.py")', gradle)
-        self.assertIn('exclude("medicine_app/cli.py")', gradle)
+        self.assertNotIn("chaquopy", gradle.lower())
+        self.assertNotIn('include("medicine_app/**/*.py")', gradle)
+        self.assertNotIn("medicine_canonical", gradle)
         self.assertTrue(Path("medicine_app/cli.py").is_file())
         self.assertTrue(Path("rust/medicine_core/src/bin/medicine_core.rs").is_file())
         self.assertIn("--lib", rust_build)
@@ -402,7 +424,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertNotIn("assets.srcDirs", gradle)
         self.assertNotIn("project.copy", gradle)
         runtime = Path("medicine_app/canonical_runtime.py").read_text()
-        self.assertIn('include("medicine_app/**/*.py")', gradle)
+        self.assertNotIn('include("medicine_app/**/*.py")', gradle)
         self.assertNotIn("from medicine_canonical", runtime)
         self.assertNotIn("import medicine_canonical", runtime)
 

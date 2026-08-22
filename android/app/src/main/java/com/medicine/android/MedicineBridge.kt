@@ -2,8 +2,6 @@ package com.medicine.android
 
 import android.util.Log
 import android.webkit.JavascriptInterface
-import com.chaquo.python.PyObject
-import com.chaquo.python.Python
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ExecutorService
@@ -16,7 +14,6 @@ class MedicineBridge(
 ) {
     private val apiLock = Any()
     private val nativeCore: MedicineNativeCore
-    private val pythonApi: PyObject
     private val requestExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     @Volatile private var responseHandler: ((String, String) -> Unit)? = null
     private val dispatcher: BridgeRequestDispatcher
@@ -26,18 +23,10 @@ class MedicineBridge(
     init {
         nativeCore = MedicineNativeCore(referenceDatabase, personalDatabase)
         try {
-            pythonApi = PersonalDatabaseOperationCoordinator.exclusive {
+            PersonalDatabaseOperationCoordinator.exclusive {
                 vault.openForUse()
                 try {
                     nativeCore.initializePersonalDatabase()
-                    val createdPythonApi = Python.getInstance()
-                        .getModule("medicine_app.mobile_api")
-                        .callAttr(
-                            "create_bridge",
-                            referenceDatabase?.absolutePath,
-                            personalDatabase.absolutePath,
-                        )
-                    createdPythonApi
                 } finally {
                     // A failed initialization may still leave a recoverable WAL.
                     // Never encrypt/delete plaintext unless Rust confirms the
@@ -62,7 +51,6 @@ class MedicineBridge(
     }
 
     fun setReferenceAvailable(available: Boolean, reason: String? = null) = synchronized(apiLock) {
-        pythonApi.callAttr("set_reference_available", available, reason)
         nativeCore.setReferenceAvailable(available, reason)
     }
 
@@ -143,11 +131,7 @@ class MedicineBridge(
 
     private fun callApi(request: BridgeRequest): String = try {
         synchronized(apiLock) {
-            if (nativeCore.handlesRequest(request.method, request.path)) {
-                nativeCore.request(request.method, request.path, request.body)
-            } else {
-                pythonApi.callAttr("request", request.method, request.path, request.body).toString()
-            }
+            nativeCore.request(request.method, request.path, request.body)
         }
     } catch (error: Throwable) {
         Log.e(TAG, "Native API bridge request failed", error)

@@ -96,9 +96,11 @@ class ReferenceBootstrapperTest {
         var currentWasNull = false
         override fun rebuild(
             current: InstalledReferenceVersion?,
+            target: ReferenceVersion,
             artifact: ReferenceReleaseArtifact,
             downloaded: File,
             output: File,
+            observer: ReferenceUpdateObserver,
         ) {
             currentWasNull = current == null
             assertEquals(ReferenceArtifactKind.FULL_GZIP, artifact.kind)

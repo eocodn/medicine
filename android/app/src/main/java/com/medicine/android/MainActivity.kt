@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
                                 "manifest" -> "안전 데이터 확인 중…"
                                 "full-download" -> "안전 데이터 다운로드 중…"
                                 "rebuild" -> "안전 데이터 설치 중…"
+                                "rebuild-checkpoint" -> "안전 데이터 설치 중…"
                                 "verify-and-install" -> "안전 데이터 검증 중…"
                                 else -> return
                             }
@@ -117,11 +118,16 @@ class MainActivity : ComponentActivity() {
                         }
 
                         override fun progress(name: String, completedBytes: Long, totalBytes: Long) {
-                            if (name != "download" || totalBytes <= 0) return
+                            if (totalBytes <= 0) return
+                            val message = when {
+                                name == "download" -> "안전 데이터 다운로드 중…"
+                                name.startsWith("rebuild-") -> "안전 데이터 설치 중…"
+                                else -> return
+                            }
                             val percent = ((completedBytes * 100L) / totalBytes).coerceIn(0L, 100L).toInt()
                             runOnUiThread {
                                 if (!isFinishing && !isDestroyed) {
-                                    showStartupView("안전 데이터 다운로드 중…", progressPercent = percent)
+                                    showStartupView(message, progressPercent = percent)
                                 }
                             }
                         }
@@ -206,7 +212,7 @@ class MainActivity : ComponentActivity() {
                         reference.referenceDir,
                         reference.store,
                         source,
-                        PythonReferenceArtifactRebuilder(),
+                        RustReferenceArtifactRebuilder(),
                         ReferenceUpdateLogObserver(),
                     ).checkForUpdate(InstalledReferenceVersion(installedVersion, installedDatabase))
                 }.getOrElse { error ->

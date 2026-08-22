@@ -257,6 +257,11 @@ class ReferenceStore(
         require(version.releaseSequence >= state.highestActivatedSequence) {
             "reference rollback is not allowed"
         }
+        require(
+            version.releaseSequence != state.highestActivatedSequence || state.active == version
+        ) {
+            "reference release sequence identity conflict"
+        }
         val target = fileFor(version)
         if (!isDatabaseVerified(target, version)) {
             if (target.exists()) check(target.delete()) {
