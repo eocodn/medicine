@@ -104,6 +104,12 @@ docker compose run --rm ocr-parser-synthetic-runtime \
 
 The output keeps raw runtime OCR snapshots under `runtime/<document-id>/` and strict parser datasets under `datasets/{train,val,test}/`. Reusing the output with a changed corpus, truth file, detector/recognizer producer, or mutated completed runtime result fails rather than mixing observation distributions.
 
+## Sparse document graph for the learned parser
+
+`document_graph.py` converts any strict parser document into the model-facing full-document graph without introducing document-template rules. Every OCR node keeps its recognized text, confidence and polygon; the input feature vector combines bounded normalized geometry/character composition with a fixed-size signed hash of Korean/ASCII character 1–3-grams, so new drug names do not require a vocabulary lookup. Each OCR node receives at most `K` nearest spatial neighbors with relative `dx/dy`, distance, row/column overlap and relative-size edge features. A dedicated page token is connected in both directions to every OCR node so the subsequent encoder can exchange global context without quadratic all-node attention. Ambiguous OCR merges remain graph nodes and therefore remain available as context, but their node targets are masked; unmatched OCR boxes remain supervised `other` hard negatives.
+
+The initial mobile encoder design budget is explicit in `GraphEncoderSpec`: hidden size 96, two message-passing layers, 12 local neighbors and a 64-unit pair head. `graph_encoder_parameter_count()` counts the planned input projection, shared self/neighbor/edge message projections, role head and product↔field association head. The default design is intentionally far below one million learned parameters; model size is allowed to grow only after held-out evidence demonstrates a need. Original-page pixel features are deliberately outside this graph contract and remain the separate visual-feature research axis.
+
 Use the dataset Agent Control service directly when needed. Writable OCR/parser services mount host `~/dev/artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
 
 ```sh
