@@ -36,6 +36,8 @@ def _producer() -> dict[str, object]:
             "full_document": "b" * 64,
             "full_document_cli": "c" * 64,
             "crop_refinement": "d" * 64,
+            "orientation": "1" * 64,
+            "orientation_runtime": "2" * 64,
             "detector_runtime": "e" * 64,
             "detector_benchmark": "f" * 64,
         },
@@ -151,7 +153,15 @@ class SyntheticParserDataCliTest(unittest.TestCase):
                     "schema_version": 2,
                     "status": "ok",
                     "profile": profile,
-                    "image": {"path": full_args.image, "sha256": sample["image_sha256"], "width": 1280, "height": 1600},
+                    "image": {
+                        "path": full_args.image,
+                        "sha256": sample["image_sha256"],
+                        "width": 1280,
+                        "height": 1600,
+                        "source_width": 1280,
+                        "source_height": 1600,
+                    },
+                    "stages": {"orientation": {"applied_rotation_degrees": 0}},
                     "regions": [
                         {"index": index, "text": node["text"], "recognition_score": 0.98, "polygon": node.get("natural_text_polygon") or node["polygon"]}
                         for index, node in enumerate(sample["nodes"], start=1)

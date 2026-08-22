@@ -65,6 +65,8 @@ class ParserDatasetCliTest(unittest.TestCase):
                 "full_document": "6" * 64,
                 "full_document_cli": "7" * 64,
                 "crop_refinement": "8" * 64,
+                "orientation": "1" * 64,
+                "orientation_runtime": "2" * 64,
                 "detector_runtime": "b" * 64,
                 "detector_benchmark": "c" * 64,
             },
@@ -72,7 +74,9 @@ class ParserDatasetCliTest(unittest.TestCase):
         (results / "result.json").write_text(json.dumps({
             "status": "ok",
             "profile": profile,
-            "image": {"sha256": image_sha, "width": 1200, "height": 1600},
+            "image": {"sha256": image_sha, "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+            "stages": {"orientation": {"applied_rotation_degrees": 0}},
             "regions": [{
                 "index": 1,
                 "text": "가나다정",

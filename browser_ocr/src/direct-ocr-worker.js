@@ -2,14 +2,18 @@
 
 const ort = require("onnxruntime-web/wasm");
 const {
+  canonicalizeBoxes,
   decodeCtc,
   decodeDetectionMap,
   distance,
   foregroundColumnInk,
   horizontalSubpolygon,
+  orientationCandidates,
+  orientationProbeIndices,
   recognitionTargetWidth,
   resizeWithin,
   rgbaToChw,
+  selectOrientation,
   splitHorizontalInkRanges,
 } = require("./direct-ocr-core.js");
 
@@ -62,6 +66,20 @@ function drawScaled(source, width, height) {
   context.fillStyle = "#fff";
   context.fillRect(0, 0, width, height);
   context.drawImage(source, 0, 0, width, height);
+  return canvas;
+}
+
+function rotateCanvasRightAngle(source, degrees) {
+  if (degrees === 0) return source;
+  if (![90, 180, 270].includes(degrees)) throw new Error(`Unsupported page rotation: ${degrees}`);
+  const swap = degrees === 90 || degrees === 270;
+  const canvas = createCanvas(swap ? source.height : source.width, swap ? source.width : source.height);
+  const context = context2d(canvas);
+  if (degrees === 90) context.setTransform(0, 1, -1, 0, source.height, 0);
+  else if (degrees === 180) context.setTransform(-1, 0, 0, -1, source.width, source.height);
+  else context.setTransform(0, -1, 1, 0, 0, source.width);
+  context.drawImage(source, 0, 0);
+  context.resetTransform();
   return canvas;
 }
 
@@ -244,7 +262,7 @@ async function detect(sourceCanvas) {
   );
 }
 
-async function recognizeBoxes(refinedBoxes, dictionary) {
+async function recognizeBoxes(refinedBoxes, dictionary, { reportProgress = true } = {}) {
   const ordered = refinedBoxes.map((box, inputIndex) => ({
     inputIndex,
     width: recognitionTargetWidth(
@@ -265,14 +283,72 @@ async function recognizeBoxes(refinedBoxes, dictionary) {
         output.data, output.dims, dictionary, index,
       ) });
     }
-    progress(60 + Math.round(30 * Math.min(ordered.length, start + batch.length)
-      / Math.max(1, ordered.length)));
+    if (reportProgress) {
+      progress(60 + Math.round(30 * Math.min(ordered.length, start + batch.length)
+        / Math.max(1, ordered.length)));
+    }
   }
   decoded.sort((a, b) => a.inputIndex - b.inputIndex);
   return decoded.map(({ inputIndex, ...result }) => ({
     ...result,
     poly: refinedBoxes[inputIndex].poly,
   })).filter((item) => item.text && item.score >= 0.0);
+}
+
+function orientationProbeQuality(decoded, expectedCount) {
+  if (!expectedCount) return 0;
+  let total = 0;
+  for (const item of decoded) {
+    const compact = String(item.text || "").replace(/\s+/g, "");
+    total += Number(item.score || 0) * Math.min(compact.length / 3, 1);
+  }
+  return Math.max(0, Math.min(1, total / expectedCount));
+}
+
+async function canonicalizePageOrientation(sourceCanvas, boxes, dictionary) {
+  const candidates = orientationCandidates(boxes);
+  if (!boxes.length) {
+    return {
+      canvas: sourceCanvas,
+      boxes,
+      orientation: {
+        method: "detector_axis_recognizer_probe_v1",
+        candidates,
+        probe_scores: {},
+        probe_regions: 0,
+        applied_rotation_degrees: 0,
+      },
+    };
+  }
+  const selected = orientationProbeIndices(boxes, 6).map((index) => boxes[index]);
+  const scores = {};
+  let probeRegions = 0;
+  for (const rotation of candidates) {
+    const rotated = rotateCanvasRightAngle(sourceCanvas, rotation);
+    const canonical = canonicalizeBoxes(selected, sourceCanvas.width, sourceCanvas.height, rotation);
+    const refined = refineDetectedBoxes(rotated, canonical.boxes);
+    const decoded = await recognizeBoxes(refined, dictionary, { reportProgress: false });
+    scores[rotation] = orientationProbeQuality(decoded, refined.length);
+    probeRegions += refined.length;
+    if (rotated !== sourceCanvas) {
+      rotated.width = 1;
+      rotated.height = 1;
+    }
+  }
+  const rotation = selectOrientation(scores);
+  const canonical = canonicalizeBoxes(boxes, sourceCanvas.width, sourceCanvas.height, rotation);
+  const canvas = rotateCanvasRightAngle(sourceCanvas, rotation);
+  return {
+    canvas,
+    boxes: canonical.boxes,
+    orientation: {
+      method: "detector_axis_recognizer_probe_v1",
+      candidates,
+      probe_scores: Object.fromEntries(candidates.map((candidate) => [candidate, Number(scores[candidate].toFixed(6))])),
+      probe_regions: probeRegions,
+      applied_rotation_degrees: rotation,
+    },
+  };
 }
 
 async function dispose() {
@@ -286,16 +362,23 @@ async function recognize(image, includeItems = false) {
   progress(5);
   const bitmap = await createImageBitmap(image);
   const sourceDimensions = resizeWithin(bitmap.width, bitmap.height, MAX_SOURCE_EDGE);
-  const sourceCanvas = drawScaled(bitmap, sourceDimensions.width, sourceDimensions.height);
+  let sourceCanvas = drawScaled(bitmap, sourceDimensions.width, sourceDimensions.height);
   bitmap.close();
   progress(10);
   const dictionary = await initializeDetection();
   progress(35);
-  const boxes = await detect(sourceCanvas);
-  const refinedBoxes = refineDetectedBoxes(sourceCanvas, boxes);
+  let boxes = await detect(sourceCanvas);
   await detectionSession.release();
   detectionSession = null;
   await initializeRecognition();
+  const canonical = await canonicalizePageOrientation(sourceCanvas, boxes, dictionary);
+  if (canonical.canvas !== sourceCanvas) {
+    sourceCanvas.width = 1;
+    sourceCanvas.height = 1;
+    sourceCanvas = canonical.canvas;
+  }
+  boxes = canonical.boxes;
+  const refinedBoxes = refineDetectedBoxes(sourceCanvas, boxes);
   progress(60);
   const items = (await recognizeBoxes(refinedBoxes, dictionary)).map((item, index) => ({
     ...item,
@@ -309,6 +392,7 @@ async function recognize(image, includeItems = false) {
     type: "result",
     parser_status: "unavailable",
     region_count: items.length,
+    orientation: canonical.orientation,
     ...(includeItems ? { items } : {}),
   });
 }

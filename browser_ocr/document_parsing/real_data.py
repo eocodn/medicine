@@ -284,10 +284,24 @@ def prepare_real_annotation(sample: Mapping[str, Any], runtime_result: Mapping[s
         raise ParserDatasetError("runtime OCR result image SHA-256 does not match real source")
     width = image.get("width")
     height = image.get("height")
+    source_width = image.get("source_width")
+    source_height = image.get("source_height")
     if isinstance(width, bool) or not isinstance(width, int) or width <= 0:
         raise ParserDatasetError("runtime OCR image width is invalid")
     if isinstance(height, bool) or not isinstance(height, int) or height <= 0:
         raise ParserDatasetError("runtime OCR image height is invalid")
+    if isinstance(source_width, bool) or not isinstance(source_width, int) or source_width <= 0:
+        raise ParserDatasetError("runtime OCR source image width is invalid")
+    if isinstance(source_height, bool) or not isinstance(source_height, int) or source_height <= 0:
+        raise ParserDatasetError("runtime OCR source image height is invalid")
+    stages = runtime_result.get("stages")
+    orientation = stages.get("orientation") if isinstance(stages, Mapping) else None
+    rotation = orientation.get("applied_rotation_degrees") if isinstance(orientation, Mapping) else None
+    if isinstance(rotation, bool) or not isinstance(rotation, int) or rotation not in {0, 90, 180, 270}:
+        raise ParserDatasetError("runtime OCR orientation metadata is invalid")
+    expected = (source_height, source_width) if rotation in {90, 270} else (source_width, source_height)
+    if (width, height) != expected:
+        raise ParserDatasetError("runtime OCR canonical dimensions disagree with orientation")
     profile = runtime_result.get("profile")
     if not isinstance(profile, Mapping):
         raise ParserDatasetError("runtime OCR result profile must be an object")

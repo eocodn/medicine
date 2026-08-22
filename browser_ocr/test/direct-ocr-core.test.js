@@ -3,15 +3,20 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  canonicalizeBoxes,
   decodeCtc,
   decodeDetectionMap,
   foregroundColumnInk,
   horizontalSubpolygon,
+  orientationCandidates,
+  orientationProbeIndices,
   recognitionTargetWidth,
   resizeWithin,
   rgbaToChw,
+  selectOrientation,
   splitHorizontalInkRanges,
   sortReadingOrder,
+  transformPolygonRightAngle,
 } = require("../src/direct-ocr-core.js");
 
 test("resizes the longest image edge while preserving aspect ratio", () => {
@@ -65,6 +70,34 @@ test("orders boxes by line then left-to-right", () => {
     { poly: [[5, 40], [15, 40], [15, 50], [5, 50]] },
   ];
   assert.deepEqual(sortReadingOrder(boxes).map((box) => box.poly[0][0]), [10, 80, 5]);
+});
+
+test("right-angle orientation uses detector geometry then recognizer probe scores", () => {
+  const horizontal = Array.from({ length: 5 }, (_, index) => ({
+    poly: [[10, 10 + index * 30], [190, 10 + index * 30], [190, 30 + index * 30], [10, 30 + index * 30]],
+    score: 0.95,
+  }));
+  const vertical = Array.from({ length: 5 }, (_, index) => ({
+    poly: [[10 + index * 30, 10], [30 + index * 30, 10], [30 + index * 30, 190], [10 + index * 30, 190]],
+    score: 0.95,
+  }));
+  assert.deepEqual(orientationCandidates(horizontal), [0, 180]);
+  assert.deepEqual(orientationCandidates(vertical), [90, 270]);
+  assert.equal(selectOrientation({ 90: 0.25, 270: 0.81 }), 270);
+  assert.equal(selectOrientation({ 0: 0.61, 180: 0.58 }), 0);
+  assert.equal(orientationProbeIndices([...horizontal, ...vertical], 3).length, 3);
+});
+
+test("right-angle canonicalization transforms polygons and dimensions", () => {
+  const polygon = [[10, 20], [110, 20], [110, 50], [10, 50]];
+  assert.deepEqual(
+    transformPolygonRightAngle(polygon, 200, 100, 90),
+    [[50, 10], [80, 10], [80, 110], [50, 110]],
+  );
+  const canonical = canonicalizeBoxes([{ poly: polygon, score: 0.9 }], 200, 100, 90);
+  assert.equal(canonical.width, 100);
+  assert.equal(canonical.height, 200);
+  assert.deepEqual(canonical.boxes[0].poly, [[50, 10], [80, 10], [80, 110], [50, 110]]);
 });
 
 test("splits a detector crop only across a large internal blank gap", () => {

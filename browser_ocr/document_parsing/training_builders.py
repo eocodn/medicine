@@ -6,12 +6,70 @@ import random
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from browser_ocr.finetune.orientation import transform_polygon_right_angle
+
 from .observation_profile import runtime_observation_producer, runtime_observation_profile
 from .training_alignment import align_observation_nodes, build_relation_labels, normalize_semantic_role
 from .training_dataset import ParserDatasetError, write_parser_dataset
 
 
 _SYNTHETIC_OBSERVATION_REVISION = 1
+
+
+def _runtime_orientation(result: Mapping[str, Any], *, document_id: str) -> tuple[int, int, int]:
+    image = result.get("image")
+    stages = result.get("stages")
+    orientation = stages.get("orientation") if isinstance(stages, Mapping) else None
+    if not isinstance(image, Mapping) or not isinstance(orientation, Mapping):
+        raise ParserDatasetError(f"runtime OCR result orientation metadata is missing: {document_id}")
+    rotation = orientation.get("applied_rotation_degrees")
+    if isinstance(rotation, bool) or not isinstance(rotation, int) or rotation not in {0, 90, 180, 270}:
+        raise ParserDatasetError(f"runtime OCR result orientation rotation is invalid: {document_id}")
+    source_width = image.get("source_width")
+    source_height = image.get("source_height")
+    width = image.get("width")
+    height = image.get("height")
+    for value, label in ((source_width, "source width"), (source_height, "source height"), (width, "width"), (height, "height")):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ParserDatasetError(f"runtime OCR result image {label} is invalid: {document_id}")
+    expected = (source_height, source_width) if rotation in {90, 270} else (source_width, source_height)
+    if (width, height) != expected:
+        raise ParserDatasetError(f"runtime OCR result canonical dimensions disagree with orientation: {document_id}")
+    return rotation, width, height
+
+
+def _canonical_truth_sample(sample: Mapping[str, Any], result: Mapping[str, Any]) -> dict[str, Any]:
+    document_id = str(sample["document_id"])
+    rotation, width, height = _runtime_orientation(result, document_id=document_id)
+    source_width = int(sample["width"])
+    source_height = int(sample["height"])
+    image = result["image"]
+    if int(image["source_width"]) != source_width or int(image["source_height"]) != source_height:
+        raise ParserDatasetError(f"runtime OCR result source dimensions do not match truth: {document_id}")
+    canonical = dict(sample)
+    canonical["width"] = width
+    canonical["height"] = height
+    nodes: list[dict[str, Any]] = []
+    for raw in sample["nodes"]:
+        if not isinstance(raw, Mapping):
+            raise ParserDatasetError(f"{document_id}.nodes contains non-object")
+        node = dict(raw)
+        node["polygon"] = transform_polygon_right_angle(
+            raw.get("polygon"),
+            width=source_width,
+            height=source_height,
+            degrees=rotation,
+        )
+        natural = raw.get("natural_text_polygon") or raw.get("polygon")
+        node["natural_text_polygon"] = transform_polygon_right_angle(
+            natural,
+            width=source_width,
+            height=source_height,
+            degrees=rotation,
+        )
+        nodes.append(node)
+    canonical["nodes"] = nodes
+    return canonical
 
 
 def _sha256_file(path: Path) -> str:
@@ -355,7 +413,8 @@ def build_runtime_dataset(
         observed_regions = result.get("regions")
         if not isinstance(observed_regions, list):
             raise ParserDatasetError(f"runtime OCR result regions are missing: {document_id}")
-        nodes = align_observation_nodes(_truth_regions(sample), observed_regions)
+        canonical_sample = _canonical_truth_sample(sample, result)
+        nodes = align_observation_nodes(_truth_regions(canonical_sample), observed_regions)
         observation_profile = runtime_observation_profile(
             result.get("profile"),
             expected_image_sha256=str(sample["image_sha256"]),
@@ -370,7 +429,7 @@ def build_runtime_dataset(
             raise ParserDatasetError("runtime parser dataset inputs mix different runtime OCR producers")
         documents.append(
             _base_document(
-                sample,
+                canonical_sample,
                 observation_kind="runtime_ocr",
                 observation_profile=observation_profile,
                 nodes=nodes,

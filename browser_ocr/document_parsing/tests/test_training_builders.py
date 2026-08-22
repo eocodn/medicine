@@ -39,6 +39,8 @@ def _runtime_profile() -> dict:
             "full_document": "5" * 64,
             "full_document_cli": "6" * 64,
             "crop_refinement": "d" * 64,
+            "orientation": "1" * 64,
+            "orientation_runtime": "2" * 64,
             "detector_runtime": "8" * 64,
             "detector_benchmark": "9" * 64,
         },
@@ -147,7 +149,8 @@ class ParserTrainingBuildersTest(unittest.TestCase):
             result_root.joinpath("result.json").write_text(json.dumps({
                 "status": "ok",
                 "profile": _runtime_profile(),
-                "image": {"sha256": "a" * 64, "width": 1280, "height": 1600},
+                "image": {"sha256": "a" * 64, "width": 1280, "height": 1600, "source_width": 1280, "source_height": 1600},
+                "stages": {"orientation": {"applied_rotation_degrees": 0}},
                 "regions": [
                     {"index": 1, "text": "가나다정", "recognition_score": 0.99, "polygon": _poly(10, 10)},
                     {"index": 2, "text": "1정", "recognition_score": 0.98, "polygon": _poly(120, 10)},
@@ -168,6 +171,51 @@ class ParserTrainingBuildersTest(unittest.TestCase):
             })
             self.assertEqual(document["observation"]["nodes"][0]["semantic_role"], "product")
 
+    def test_runtime_builder_aligns_canonicalized_right_angle_observations(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            truth = _write_truth(root)
+            result_root = root / "results" / "synthetic-000001"
+            result_root.mkdir(parents=True)
+            result_root.joinpath("result.json").write_text(json.dumps({
+                "status": "ok",
+                "profile": _runtime_profile(),
+                "image": {
+                    "sha256": "a" * 64,
+                    "width": 1600,
+                    "height": 1280,
+                    "source_width": 1280,
+                    "source_height": 1600,
+                },
+                "stages": {"orientation": {"applied_rotation_degrees": 90}},
+                "regions": [
+                    {
+                        "index": 1,
+                        "text": "가나다정",
+                        "recognition_score": 0.99,
+                        "polygon": [[1566, 10], [1590, 10], [1590, 90], [1566, 90]],
+                    },
+                    {
+                        "index": 2,
+                        "text": "1정",
+                        "recognition_score": 0.98,
+                        "polygon": [[1566, 120], [1590, 120], [1590, 200], [1566, 200]],
+                    },
+                ],
+            }), encoding="utf-8")
+            manifest = build_runtime_dataset(
+                truth_samples_path=truth,
+                results_root=root / "results",
+                output_dir=root / "runtime-rotated",
+                dataset_id="runtime-rotated-fixture",
+                split="val",
+            )
+            document = load_parser_dataset(manifest).documents[0]
+            self.assertEqual((document["width"], document["height"]), (1600, 1280))
+            product = document["observation"]["nodes"][0]
+            self.assertEqual(product["semantic_role"], "product")
+            self.assertEqual(product["polygon"], [[1566.0, 10.0], [1590.0, 10.0], [1590.0, 90.0], [1566.0, 90.0]])
+
     def test_runtime_builder_rejects_unpinned_ocr_profile(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -177,7 +225,8 @@ class ParserTrainingBuildersTest(unittest.TestCase):
             result_root.joinpath("result.json").write_text(json.dumps({
                 "status": "ok",
                 "profile": {},
-                "image": {"sha256": "a" * 64, "width": 1280, "height": 1600},
+                "image": {"sha256": "a" * 64, "width": 1280, "height": 1600, "source_width": 1280, "source_height": 1600},
+                "stages": {"orientation": {"applied_rotation_degrees": 0}},
                 "regions": [],
             }), encoding="utf-8")
             with self.assertRaisesRegex(ParserDatasetError, "runtime.*profile"):
@@ -210,7 +259,8 @@ class ParserTrainingBuildersTest(unittest.TestCase):
                 result_root.joinpath("result.json").write_text(json.dumps({
                     "status": "ok",
                     "profile": profile,
-                    "image": {"sha256": sample["image_sha256"], "width": 1280, "height": 1600},
+                    "image": {"sha256": sample["image_sha256"], "width": 1280, "height": 1600, "source_width": 1280, "source_height": 1600},
+                    "stages": {"orientation": {"applied_rotation_degrees": 0}},
                     "regions": [],
                 }), encoding="utf-8")
 

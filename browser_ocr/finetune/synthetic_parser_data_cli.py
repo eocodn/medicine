@@ -207,8 +207,17 @@ def _validate_runtime_result(
     image = result.get("image")
     if not isinstance(image, Mapping) or str(image.get("sha256") or "") != str(sample["image_sha256"]):
         raise ParserDatasetError(f"runtime OCR image binding differs for {sample['document_id']}")
-    if int(image.get("width") or 0) != int(sample["width"]) or int(image.get("height") or 0) != int(sample["height"]):
-        raise ParserDatasetError(f"runtime OCR image dimensions differ for {sample['document_id']}")
+    if int(image.get("source_width") or 0) != int(sample["width"]) or int(image.get("source_height") or 0) != int(sample["height"]):
+        raise ParserDatasetError(f"runtime OCR source image dimensions differ for {sample['document_id']}")
+    stages = result.get("stages")
+    orientation = stages.get("orientation") if isinstance(stages, Mapping) else None
+    rotation = orientation.get("applied_rotation_degrees") if isinstance(orientation, Mapping) else None
+    if isinstance(rotation, bool) or not isinstance(rotation, int) or rotation not in {0, 90, 180, 270}:
+        raise ParserDatasetError(f"runtime OCR orientation is invalid for {sample['document_id']}")
+    expected_width = int(sample["height"]) if rotation in {90, 270} else int(sample["width"])
+    expected_height = int(sample["width"]) if rotation in {90, 270} else int(sample["height"])
+    if int(image.get("width") or 0) != expected_width or int(image.get("height") or 0) != expected_height:
+        raise ParserDatasetError(f"runtime OCR canonical image dimensions differ for {sample['document_id']}")
     if not isinstance(result.get("regions"), list):
         raise ParserDatasetError(f"runtime OCR result regions are missing for {sample['document_id']}")
     return result
