@@ -192,6 +192,7 @@ class R2ReleasePublisherTest(unittest.TestCase):
         if release_sequence is None:
             release_sequence = self.next_release_sequence
             self.next_release_sequence += 1
+        kwargs.setdefault("trusted_public_keys", {"test-2026": TEST_PUBLIC_KEY_PEM})
         return publish_release_to_r2(
             *args,
             signer=self.signer,

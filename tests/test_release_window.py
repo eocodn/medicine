@@ -89,6 +89,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             release_sequence=sequence,
             current_contract_major=current,
             minimum_supported_contract_major=minimum,
+            trusted_public_keys={"test-2026": TEST_PUBLIC_KEY_PEM},
             created_at=f"2026-08-20T00:{sequence % 60:02d}:00Z",
             allow_early_retirement=allow_early_retirement,
         )
@@ -155,6 +156,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             release_sequence=100,
             current_contract_major=1,
             minimum_supported_contract_major=1,
+            trusted_public_keys={"test-2026": TEST_PUBLIC_KEY_PEM},
             created_at="2026-08-20T00:00:00Z",
         )
 
@@ -188,6 +190,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
                 release_sequence=100,
                 current_contract_major=1,
                 minimum_supported_contract_major=1,
+                trusted_public_keys={"test-2026": TEST_PUBLIC_KEY_PEM},
                 created_at="2026-08-20T00:00:00Z",
             )
         self.assertEqual(self.client.put_order, [])

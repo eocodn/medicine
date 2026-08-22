@@ -331,9 +331,9 @@ def publish_release(
     *,
     signer: ReleaseSigner | KmsReleaseSigner,
     release_sequence: int,
+    trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     latest_key: str = LATEST_KEY,
-    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     if not bucket:
         raise ValueError("R2 bucket is required")
@@ -353,9 +353,7 @@ def publish_release(
 
     trusted_public_keys = validate_trusted_public_keys(
         signer=signer,
-        trusted_public_keys=trusted_public_keys
-        if trusted_public_keys is not None
-        else {signer.key_id: signer.public_key_pem()},
+        trusted_public_keys=trusted_public_keys,
     )
 
     initial_raw, initial_etag, previous_latest, previous_sequence, previous_signed = _read_latest(

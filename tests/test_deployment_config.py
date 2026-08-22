@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -74,22 +75,30 @@ class DeploymentConfigTest(unittest.TestCase):
             workflow.index("reference-build-publish-r2"),
         )
 
-    def test_release_trust_configuration_matches_android_production_key(self) -> None:
+    def test_release_trust_configuration_matches_android_production_keys(self) -> None:
         trust = json.loads(Path("deploy/reference-signing-trusted-keys.json").read_text())
-        kotlin = Path(
-            "android/app/src/main/java/com/medicine/android/ReferenceTrust.kt"
-        ).read_text()
-        key_id = re.search(r'PRODUCTION_KEY_ID = "([^"]+)"', kotlin).group(1)
-        fingerprint = re.search(r'PRODUCTION_SPKI_SHA256 = "([0-9a-f]{64})"', kotlin).group(1)
-        self.assertEqual(trust["active_key_id"], key_id)
-        pem = trust["keys"][key_id]
-        der = base64.b64decode(
-            pem.replace("-----BEGIN PUBLIC KEY-----", "")
-            .replace("-----END PUBLIC KEY-----", "")
-            .replace("\n", ""),
-            validate=True,
+        spec = importlib.util.spec_from_file_location(
+            "verify_reference_contract_root", "scripts/verify-reference-contract-root.py"
         )
-        self.assertEqual(hashlib.sha256(der).hexdigest(), fingerprint)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        android = module._android_trust()
+        workflow = Path(".github/workflows/reference-publish.yml").read_text()
+        workflow_key_id = re.search(r"REFERENCE_SIGNING_KEY_ID:\s*([A-Za-z0-9._-]+)", workflow).group(1)
+        self.assertEqual(trust["active_key_id"], workflow_key_id)
+        self.assertIn(trust["active_key_id"], trust["keys"])
+        self.assertEqual(set(trust["keys"]), set(android))
+        for key_id, pem in trust["keys"].items():
+            der = base64.b64decode(
+                pem.replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replace("\n", ""),
+                validate=True,
+            )
+            spki_hex, fingerprint = android[key_id]
+            self.assertEqual(der.hex(), spki_hex)
+            self.assertEqual(hashlib.sha256(der).hexdigest(), fingerprint)
 
     def test_scheduled_reference_publish_manages_one_github_failure_incident(self) -> None:
         workflow = Path(".github/workflows/reference-publish.yml").read_text()

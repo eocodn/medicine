@@ -174,9 +174,9 @@ def _publish_loaded_contract_window(
     release_sequence: int,
     current_contract_major: int,
     minimum_supported_contract_major: int,
+    trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
-    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     if not str(bucket).strip():
         raise ValueError("R2 bucket is required")
@@ -189,9 +189,7 @@ def _publish_loaded_contract_window(
     )
     trusted_public_keys = validate_trusted_public_keys(
         signer=signer,
-        trusted_public_keys=trusted_public_keys
-        if trusted_public_keys is not None
-        else {signer.key_id: signer.public_key_pem()},
+        trusted_public_keys=trusted_public_keys,
     )
     initial_raw, initial_etag, previous_root, previous_sequence = _read_root(
         client,
@@ -296,9 +294,9 @@ def publish_contract_window(
     release_sequence: int,
     current_contract_major: int,
     minimum_supported_contract_major: int,
+    trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
-    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
@@ -325,9 +323,9 @@ def publish_verified_contract_window(
     release_sequence: int,
     current_contract_major: int,
     minimum_supported_contract_major: int,
+    trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
-    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
