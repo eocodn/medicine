@@ -1,7 +1,8 @@
 use medicine_core::{
     assemble_dur_display, checkpoint_personal_db, initialize_personal_db,
     inspect_interaction_risks, inspect_product, inspect_profile_risks, inspect_safety_basis,
-    normalize_prescription_draft, MedicineEngine, PERSONAL_SCHEMA_VERSION,
+    normalize_prescription_draft, verify_reference_database, MedicineEngine,
+    PERSONAL_SCHEMA_VERSION,
 };
 use serde_json::json;
 use std::path::Path;
@@ -23,6 +24,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "health" => health(&args[1..]),
         "personal-schema" => personal_maintenance(&args[1..], false),
         "personal-checkpoint" => personal_maintenance(&args[1..], true),
+        "reference-verify" => reference_verify(&args[1..]),
         "product" => product(&args[1..]),
         "draft-normalize" => draft_normalize(&args[1..]),
         "safety-basis" => safety_basis(&args[1..]),
@@ -31,6 +33,57 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "interaction-risks" => interaction_risks(&args[1..]),
         _ => Err(usage()),
     }
+}
+
+fn reference_verify(args: &[String]) -> Result<(), String> {
+    let mut reference_db: Option<String> = None;
+    let mut contract_major: Option<u64> = None;
+    let mut dataset_id: Option<String> = None;
+    let mut json_output = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--reference-db" => {
+                index += 1;
+                reference_db = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--contract-major" => {
+                index += 1;
+                contract_major = Some(
+                    args.get(index)
+                        .ok_or_else(usage)?
+                        .parse()
+                        .map_err(|_| "contract major must be a positive integer".to_owned())?,
+                );
+            }
+            "--dataset-id" => {
+                index += 1;
+                dataset_id = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--json" => json_output = true,
+            _ => return Err(usage()),
+        }
+        index += 1;
+    }
+    let report = verify_reference_database(
+        Path::new(&reference_db.ok_or_else(usage)?),
+        contract_major.ok_or_else(usage)?,
+        &dataset_id.ok_or_else(usage)?,
+    )
+    .map_err(|error| error.to_string())?;
+    print_response(
+        &json!({
+            "status": 200,
+            "body": {
+                "status": report.status,
+                "contract_major": report.contract_major,
+                "dataset_id": report.dataset_id,
+                "size_bytes": report.size_bytes,
+            }
+        })
+        .to_string(),
+        json_output,
+    )
 }
 
 fn personal_maintenance(args: &[String], checkpoint: bool) -> Result<(), String> {
@@ -398,5 +451,5 @@ fn print_response(response: &str, json_output: bool) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-core personal-schema --personal-db <PATH> [--json]\n       medicine-core personal-checkpoint --personal-db <PATH> [--json]\n       medicine-core product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-core draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]\n       medicine-core safety-basis --canonical-db <PATH> --product-ref <REF> --person <JSON> --draft <JSON> [--json]\n       medicine-core dur-display --input <JSON> [--json]\n       medicine-core profile-risks --canonical-db <PATH> --product-ref <REF> --person <JSON> --course <JSON> [--as-of <YYYY-MM-DD>] [--json]\n       medicine-core interaction-risks --canonical-db <PATH> --product-ref <REF> --current <JSON> --course <JSON> [--json]".to_owned()
+    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-core personal-schema --personal-db <PATH> [--json]\n       medicine-core personal-checkpoint --personal-db <PATH> [--json]\n       medicine-core reference-verify --reference-db <PATH> --contract-major <N> --dataset-id <SHA256> [--json]\n       medicine-core product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-core draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]\n       medicine-core safety-basis --canonical-db <PATH> --product-ref <REF> --person <JSON> --draft <JSON> [--json]\n       medicine-core dur-display --input <JSON> [--json]\n       medicine-core profile-risks --canonical-db <PATH> --product-ref <REF> --person <JSON> --course <JSON> [--as-of <YYYY-MM-DD>] [--json]\n       medicine-core interaction-risks --canonical-db <PATH> --product-ref <REF> --current <JSON> --course <JSON> [--json]".to_owned()
 }

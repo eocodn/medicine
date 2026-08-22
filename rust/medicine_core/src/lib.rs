@@ -30,13 +30,25 @@ mod product_search;
 mod profile_age;
 mod profile_safety;
 mod quantitative_safety;
+pub mod reference_artifacts;
+mod reference_db_verifier;
 mod reference_runtime;
 mod reference_semantics;
+mod reference_signature;
+pub mod reference_state;
 mod regimen_review;
 mod safety_basis;
 mod safety_time;
 
 pub use engine::{AccessClass, MedicineEngine};
+pub use reference_db_verifier::{
+    verify_reference_database, ReferenceVerificationError, ReferenceVerificationReport,
+};
+pub use reference_signature::{
+    ReferenceArtifactKind, ReferenceManifestVerifier, ReferenceReleaseArtifact,
+    ReferenceReleaseProtocolV2, ReferenceSignatureError, TrustedSigningKey,
+    VerifiedReferenceManifestSignature, VerifiedReferenceRelease,
+};
 pub const PERSONAL_SCHEMA_VERSION: i64 = personal_schema::SCHEMA_VERSION;
 
 pub fn initialize_personal_db(path: &std::path::Path) -> Result<(), String> {
