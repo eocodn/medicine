@@ -112,6 +112,16 @@ The initial mobile encoder design budget is explicit in `GraphEncoderSpec`: hidd
 
 `graph_encoder_paddle.py` implements that contract as a trainable sparse message-passing network. Each layer projects the target state, neighboring node state and relative edge feature separately, mean-aggregates incoming sparse messages (including the page-token links), and produces a contextual hidden state. Separate heads predict the nine parser node roles and `same_medication` product↔field association logits. The default 96×2 configuration has 61,930 learned parameters by both the static budget formula and the Paddle parameter inventory. A dedicated Paddle-backed test service verifies forward/backward behavior and, critically, a toy case where the exact same `"30"` node at the exact same coordinates must be classified as medication duration vs receipt noise solely from different neighboring OCR context.
 
+`ocr-parser-train` trains this model document-at-a-time rather than padding many page graphs into one large batch, which keeps peak memory bounded and makes OOM behavior easier to reason about. Every epoch writes an atomic model+optimizer checkpoint and validation metrics before advancing the authoritative training state; an interrupted run resumes from the last complete checkpoint and rejects dataset, implementation, architecture, or hyperparameter drift. Validation model selection uses a precision-favoring association F0.5 score together with role macro-F1 so a degenerate model that simply suppresses all medication associations cannot win. Relation positive weighting is derived from the training graph and capped explicitly.
+
+```sh
+docker compose run --rm ocr-parser-train \
+  --train-manifest /artifacts/parser/synthetic-runtime-v6/datasets/train/manifest.json \
+  --val-manifest /artifacts/parser/synthetic-runtime-v6/datasets/val/manifest.json \
+  --run-dir /artifacts/parser/models/sparse-graph-v1 \
+  --json
+```
+
 Use the dataset Agent Control service directly when needed. Writable OCR/parser services mount host `~/dev/artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
 
 ```sh

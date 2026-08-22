@@ -151,6 +151,26 @@ services:
     shm_size: "4gb"
     entrypoint: ["python", "-m", "unittest", "discover", "-s", "browser_ocr/document_parsing/tests_paddle", "-v"]
 
+  ocr-parser-train:
+    build:
+      context: .
+      dockerfile: browser_ocr/finetune/Dockerfile.train
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      CUDA_VISIBLE_DEVICES: "${OCR_FINETUNE_GPU:-0}"
+    volumes:
+      - .:/workspace:ro
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
+    gpus: all
+    shm_size: "4gb"
+    entrypoint: ["python", "-m", "browser_ocr.document_parsing.graph_training_cli"]
+
   ocr-parser-data:
     image: python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
