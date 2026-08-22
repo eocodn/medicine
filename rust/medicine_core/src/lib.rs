@@ -20,6 +20,7 @@ mod medication_update;
 mod medications;
 mod people;
 mod personal_db;
+mod personal_schema;
 mod planning;
 mod planning_medications;
 mod prescriptions;
@@ -36,6 +37,15 @@ mod safety_basis;
 mod safety_time;
 
 pub use engine::{AccessClass, MedicineEngine};
+pub const PERSONAL_SCHEMA_VERSION: i64 = personal_schema::SCHEMA_VERSION;
+
+pub fn initialize_personal_db(path: &std::path::Path) -> Result<(), String> {
+    personal_schema::initialize(path).map_err(|error| error.to_string())
+}
+
+pub fn checkpoint_personal_db(path: &std::path::Path) -> Result<(), String> {
+    personal_schema::checkpoint(path).map_err(|error| error.to_string())
+}
 
 pub fn inspect_product(canonical_db: Option<&std::path::Path>, product_ref: &str) -> String {
     let (status, body) = canonical_products::inspect(canonical_db, product_ref);

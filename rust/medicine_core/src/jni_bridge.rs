@@ -168,6 +168,36 @@ pub extern "system" fn Java_com_medicine_android_MedicineNativeCore_nativeReques
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_medicine_android_MedicineNativeCore_nativeInitializePersonalDatabase(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+) {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_engine(handle, |engine| engine.initialize_personal_database())
+    }))
+    .unwrap_or_else(|_| Err("native personal database initialization panicked".to_owned()));
+    if let Err(error) = result {
+        throw(&mut env, &error);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_medicine_android_MedicineNativeCore_nativePrepareForSeal(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+) {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_engine(handle, |engine| engine.prepare_personal_database_for_seal())
+    }))
+    .unwrap_or_else(|_| Err("native personal database checkpoint panicked".to_owned()));
+    if let Err(error) = result {
+        throw(&mut env, &error);
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_medicine_android_MedicineNativeCore_nativeSetReferenceAvailable(
     mut env: JNIEnv<'_>,
     _this: JObject<'_>,

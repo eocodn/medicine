@@ -24,28 +24,32 @@ class MedicineBridge(
     private var closed = false
 
     init {
-        val createdNativeCore = MedicineNativeCore(referenceDatabase, personalDatabase)
+        nativeCore = MedicineNativeCore(referenceDatabase, personalDatabase)
         try {
             pythonApi = PersonalDatabaseOperationCoordinator.exclusive {
                 vault.openForUse()
                 try {
-                    Python.getInstance()
+                    nativeCore.initializePersonalDatabase()
+                    val createdPythonApi = Python.getInstance()
                         .getModule("medicine_app.mobile_api")
                         .callAttr(
                             "create_bridge",
                             referenceDatabase?.absolutePath,
                             personalDatabase.absolutePath,
                         )
-                        .also { created -> synchronized(apiLock) { created.callAttr("prepare_for_seal") } }
+                    createdPythonApi
                 } finally {
+                    // A failed initialization may still leave a recoverable WAL.
+                    // Never encrypt/delete plaintext unless Rust confirms the
+                    // authoritative database has been checkpointed first.
+                    nativeCore.prepareForSeal()
                     vault.sealAfterUse()
                 }
             }
         } catch (error: Throwable) {
-            createdNativeCore.close()
+            nativeCore.close()
             throw error
         }
-        nativeCore = createdNativeCore
         dispatcher = BridgeRequestDispatcher(
             executor = requestExecutor,
             processor = ::processRequest,
@@ -127,7 +131,7 @@ class MedicineBridge(
             try {
                 val discardedReadOnlySnapshot = readOnly && vault.finishReadOnlyUse(openOrigin)
                 if (!discardedReadOnlySnapshot) {
-                    synchronized(apiLock) { pythonApi.callAttr("prepare_for_seal") }
+                    synchronized(apiLock) { nativeCore.prepareForSeal() }
                     vault.sealAfterUse()
                 }
             } catch (error: Throwable) {

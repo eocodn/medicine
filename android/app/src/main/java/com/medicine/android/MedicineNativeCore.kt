@@ -26,6 +26,14 @@ class MedicineNativeCore(
         nativeRequest(requireOpen(), method, path, body)
     }
 
+    fun initializePersonalDatabase() = synchronized(lock) {
+        nativeInitializePersonalDatabase(requireOpen())
+    }
+
+    fun prepareForSeal() = synchronized(lock) {
+        nativePrepareForSeal(requireOpen())
+    }
+
     fun setReferenceAvailable(available: Boolean, reason: String? = null) = synchronized(lock) {
         nativeSetReferenceAvailable(requireOpen(), available, reason)
     }
@@ -53,6 +61,10 @@ class MedicineNativeCore(
     private external fun nativeHandlesRequest(handle: Long, method: String, path: String): Boolean
 
     private external fun nativeRequest(handle: Long, method: String, path: String, body: String): String
+
+    private external fun nativeInitializePersonalDatabase(handle: Long)
+
+    private external fun nativePrepareForSeal(handle: Long)
 
     private external fun nativeSetReferenceAvailable(handle: Long, available: Boolean, reason: String?)
 

@@ -340,6 +340,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "jni",
+ "libc",
  "regex",
  "rusqlite",
  "serde_json",

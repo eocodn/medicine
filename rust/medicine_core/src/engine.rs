@@ -2,7 +2,9 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-use crate::{dashboard, doses, medications, people, planning, preview, prn, product_search};
+use crate::{
+    dashboard, doses, medications, people, personal_schema, planning, preview, prn, product_search,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccessClass {
@@ -81,6 +83,22 @@ impl MedicineEngine {
             Some(reason.unwrap_or("unavailable").to_owned())
         };
         Ok(())
+    }
+
+    pub fn initialize_personal_database(&self) -> Result<(), String> {
+        let path = self
+            .personal_db
+            .as_deref()
+            .ok_or_else(|| "personal database is unavailable".to_owned())?;
+        personal_schema::initialize(path).map_err(|error| error.to_string())
+    }
+
+    pub fn prepare_personal_database_for_seal(&self) -> Result<(), String> {
+        let path = self
+            .personal_db
+            .as_deref()
+            .ok_or_else(|| "personal database is unavailable".to_owned())?;
+        personal_schema::checkpoint(path).map_err(|error| error.to_string())
     }
 
     pub fn request_access(&self, method: &str, raw_path: &str) -> AccessClass {

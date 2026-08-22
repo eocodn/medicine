@@ -139,8 +139,8 @@ fn parse_python_limit(value: &str) -> Result<u32, String> {
             previous_was_digit = false;
             continue;
         }
-        let digit = decimal_digit(character)
-            .ok_or_else(|| "limit must be an integer".to_owned())?;
+        let digit =
+            decimal_digit(character).ok_or_else(|| "limit must be an integer".to_owned())?;
         digits.push(char::from(b'0' + digit));
         previous_was_digit = true;
     }

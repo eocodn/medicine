@@ -115,9 +115,34 @@ class ManifestContractTest {
         assertTrue(activity.contains("personal.sqlite.enc"))
         assertTrue(activity.contains("AndroidKeyStore"))
         assertTrue(bridge.contains("openForUse"))
-        assertTrue(bridge.contains("prepare_for_seal"))
+        assertTrue(bridge.contains("nativeCore.prepareForSeal()"))
         assertTrue(bridge.contains("sealAfterUse"))
         assertTrue(vault.contains("AES/GCM/NoPadding"))
+    }
+
+    @Test
+    fun personalSchemaAndCheckpointUseRustInsideTheVaultCoordinator() {
+        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
+        val nativeCore = java.io.File("src/main/java/com/medicine/android/MedicineNativeCore.kt").readText()
+
+        assertTrue(nativeCore.contains("fun initializePersonalDatabase"))
+        assertTrue(nativeCore.contains("fun prepareForSeal"))
+        assertTrue(nativeCore.contains("nativeInitializePersonalDatabase"))
+        assertTrue(nativeCore.contains("nativePrepareForSeal"))
+        assertFalse(bridge.contains("prepare_for_seal"))
+
+        val nativeCalls = listOf("nativeCore", "createdNativeCore")
+        for (method in listOf("initializePersonalDatabase", "prepareForSeal")) {
+            val call = nativeCalls
+                .map { "$it.$method()" }
+                .firstOrNull { bridge.contains(it) }
+            assertTrue("MedicineBridge must call native $method", call != null)
+            val callIndex = bridge.indexOf(call!!)
+            val vaultOpen = bridge.lastIndexOf("vault.openForUse()", callIndex)
+            val vaultSeal = bridge.indexOf("vault.sealAfterUse()", callIndex)
+            assertTrue("$method must be inside the vault coordinator", vaultOpen >= 0)
+            assertTrue("$method must run before vault reseal", vaultSeal > callIndex)
+        }
     }
 
     @Test

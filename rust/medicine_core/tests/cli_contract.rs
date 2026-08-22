@@ -26,6 +26,10 @@ fn temp_personal_db() -> PathBuf {
     path
 }
 
+fn temp_personal_db_path() -> PathBuf {
+    common::temp_sqlite_path("cli-personal-schema")
+}
+
 fn temp_canonical_db() -> PathBuf {
     let path = common::temp_sqlite_path("cli-canonical");
     let con = Connection::open(&path).expect("create CLI canonical fixture");
@@ -102,6 +106,111 @@ fn health_supports_json_for_agent_control() {
     assert_eq!(value["status"], 200);
     assert_eq!(value["body"]["reference_available"], false);
     assert_eq!(value["body"]["reference_status"], "fixture");
+}
+
+#[test]
+fn personal_schema_command_initializes_the_shared_rust_schema() {
+    let personal = temp_personal_db_path();
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+        .args([
+            "personal-schema",
+            "--personal-db",
+            personal.to_str().expect("personal path"),
+            "--json",
+        ])
+        .output()
+        .expect("run personal-schema command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("personal schema json");
+    assert_eq!(value["status"], 200);
+    assert_eq!(value["body"]["schema_version"], 1);
+    assert_eq!(value["body"]["initialized"], true);
+
+    let connection = Connection::open(&personal).expect("open initialized personal database");
+    for table in [
+        "people",
+        "medications",
+        "medication_schedules",
+        "dose_logs",
+        "dose_instances",
+        "medication_revisions",
+        "medication_requests",
+        "prn_requests",
+    ] {
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [table],
+                |row| row.get(0),
+            )
+            .expect("inspect initialized schema");
+        assert!(exists, "missing shared Rust table {table}");
+    }
+    drop(connection);
+
+    let second = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+        .args([
+            "personal-schema",
+            "--personal-db",
+            personal.to_str().expect("personal path"),
+            "--json",
+        ])
+        .output()
+        .expect("rerun personal-schema command");
+    assert!(second.status.success());
+    let second_value: Value = serde_json::from_slice(&second.stdout).expect("second schema json");
+    assert_eq!(second_value["status"], 200);
+    assert_eq!(second_value["body"]["schema_version"], 1);
+    assert_eq!(second_value["body"]["initialized"], true);
+    fs::remove_file(&personal).ok();
+    fs::remove_file(format!("{}.schema.lock", personal.display())).ok();
+}
+
+#[test]
+fn personal_checkpoint_command_exposes_structured_success_and_usage_failure() {
+    let personal = temp_personal_db_path();
+    let initialize = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+        .args([
+            "personal-schema",
+            "--personal-db",
+            personal.to_str().expect("personal path"),
+            "--json",
+        ])
+        .output()
+        .expect("initialize personal database");
+    assert!(initialize.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+        .args([
+            "personal-checkpoint",
+            "--personal-db",
+            personal.to_str().expect("personal path"),
+            "--json",
+        ])
+        .output()
+        .expect("run personal-checkpoint command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("checkpoint json");
+    assert_eq!(value["status"], 200);
+    assert_eq!(value["body"]["checkpointed"], true);
+
+    let missing_path = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+        .args(["personal-checkpoint", "--json"])
+        .output()
+        .expect("run checkpoint usage failure");
+    assert!(!missing_path.status.success());
+    assert!(String::from_utf8_lossy(&missing_path.stderr).contains("personal-checkpoint"));
+
+    fs::remove_file(&personal).ok();
+    fs::remove_file(format!("{}.schema.lock", personal.display())).ok();
 }
 
 #[test]

@@ -306,8 +306,7 @@ fn dashboard_rejects_blank_date_and_uses_the_last_query_value() {
         let response = get(&engine, path);
         assert_eq!(response["status"], 400, "{path}: {response}");
         assert_eq!(
-            response["body"]["detail"],
-            "Invalid isoformat string: ''",
+            response["body"]["detail"], "Invalid isoformat string: ''",
             "{path}: {response}"
         );
     }
