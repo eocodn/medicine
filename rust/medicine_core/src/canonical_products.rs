@@ -28,13 +28,20 @@ pub(crate) fn resolve(
     canonical_db: Option<&Path>,
     product_ref: &str,
 ) -> Result<Value, ProductError> {
+    let con = open(canonical_db)?;
+    resolve_from_connection(&con, product_ref)
+}
+
+pub(crate) fn resolve_from_connection(
+    con: &Connection,
+    product_ref: &str,
+) -> Result<Value, ProductError> {
     let product_ref = product_ref.trim();
     if product_ref.is_empty() {
         return Err(ProductError::BadRequest(
             "product_ref is required".to_owned(),
         ));
     }
-    let con = open(canonical_db)?;
     let row = con
         .query_row(
             "SELECT item_seq,product_name,manufacturer,ingredient_text,dosage_form,
@@ -70,10 +77,10 @@ pub(crate) fn resolve(
         permit_status,
     ) = row;
 
-    let dosage_forms = canonical_dosage_forms(&con, &item_seq, dosage_form.as_deref())?;
-    let edi_codes = edi_codes(&con, &item_seq)?;
-    let linked = linked_categories(&con, &item_seq)?;
-    let issues = resolution_issue_counts(&con, &item_seq)?;
+    let dosage_forms = canonical_dosage_forms(con, &item_seq, dosage_form.as_deref())?;
+    let edi_codes = edi_codes(con, &item_seq)?;
+    let linked = linked_categories(con, &item_seq)?;
+    let issues = resolution_issue_counts(con, &item_seq)?;
     let coverage_status = if !issues.is_empty() {
         "partial"
     } else if !linked.is_empty() {
@@ -81,7 +88,7 @@ pub(crate) fn resolve(
     } else {
         "limited"
     };
-    let flags = product_flags(&con, &item_seq)?;
+    let flags = product_flags(con, &item_seq)?;
     let suggested_route = infer_administration_route(&dosage_forms);
 
     Ok(json!({
@@ -120,7 +127,7 @@ pub(crate) fn resolve(
     }))
 }
 
-fn open(canonical_db: Option<&Path>) -> Result<Connection, ProductError> {
+pub(crate) fn open(canonical_db: Option<&Path>) -> Result<Connection, ProductError> {
     let path = canonical_db.ok_or(ProductError::Unavailable)?;
     let con = Connection::open_with_flags(
         path,

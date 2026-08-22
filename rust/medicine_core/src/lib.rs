@@ -1,5 +1,6 @@
 mod canonical_products;
 mod dose_logs;
+mod dose_quantity;
 mod doses;
 mod engine;
 mod jni_bridge;
@@ -11,6 +12,10 @@ mod planning;
 mod planning_medications;
 mod prescriptions;
 mod prn;
+mod quantitative_safety;
+mod reference_runtime;
+mod reference_semantics;
+mod safety_basis;
 
 pub use engine::{AccessClass, MedicineEngine};
 
@@ -25,5 +30,15 @@ pub fn normalize_prescription_draft(
     product_ref: Option<&str>,
 ) -> String {
     let (status, body) = prescriptions::inspect(body_json, person_id, product_ref);
+    serde_json::json!({"status": status, "body": body}).to_string()
+}
+
+pub fn inspect_safety_basis(
+    canonical_db: Option<&std::path::Path>,
+    product_ref: &str,
+    person_json: &str,
+    draft_json: &str,
+) -> String {
+    let (status, body) = safety_basis::inspect(canonical_db, product_ref, person_json, draft_json);
     serde_json::json!({"status": status, "body": body}).to_string()
 }

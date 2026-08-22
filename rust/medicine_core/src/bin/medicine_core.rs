@@ -1,4 +1,6 @@
-use medicine_core::{inspect_product, normalize_prescription_draft, MedicineEngine};
+use medicine_core::{
+    inspect_product, inspect_safety_basis, normalize_prescription_draft, MedicineEngine,
+};
 use serde_json::json;
 use std::path::Path;
 
@@ -19,6 +21,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "health" => health(&args[1..]),
         "product" => product(&args[1..]),
         "draft-normalize" => draft_normalize(&args[1..]),
+        "safety-basis" => safety_basis(&args[1..]),
         _ => Err(usage()),
     }
 }
@@ -186,6 +189,51 @@ fn draft_normalize(args: &[String]) -> Result<(), String> {
     )
 }
 
+fn safety_basis(args: &[String]) -> Result<(), String> {
+    let mut canonical_db: Option<String> = None;
+    let mut product_ref: Option<String> = None;
+    let mut person: Option<String> = None;
+    let mut draft: Option<String> = None;
+    let mut json_output = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--canonical-db" => {
+                index += 1;
+                canonical_db = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--product-ref" => {
+                index += 1;
+                product_ref = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--person" => {
+                index += 1;
+                person = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--draft" => {
+                index += 1;
+                draft = Some(args.get(index).ok_or_else(usage)?.to_owned());
+            }
+            "--json" => json_output = true,
+            _ => return Err(usage()),
+        }
+        index += 1;
+    }
+    let canonical_db = canonical_db.ok_or_else(usage)?;
+    let product_ref = product_ref.ok_or_else(usage)?;
+    let person = person.ok_or_else(usage)?;
+    let draft = draft.ok_or_else(usage)?;
+    print_response(
+        &inspect_safety_basis(
+            Some(Path::new(&canonical_db)),
+            &product_ref,
+            &person,
+            &draft,
+        ),
+        json_output,
+    )
+}
+
 fn print_response(response: &str, json_output: bool) -> Result<(), String> {
     if json_output {
         println!("{response}");
@@ -198,5 +246,5 @@ fn print_response(response: &str, json_output: bool) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-core product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-core draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]".to_owned()
+    "usage: medicine-core request-access <METHOD> <PATH> [--json]\n       medicine-core request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-core health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-core product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-core draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]\n       medicine-core safety-basis --canonical-db <PATH> --product-ref <REF> --person <JSON> --draft <JSON> [--json]".to_owned()
 }

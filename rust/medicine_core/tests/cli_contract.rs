@@ -37,7 +37,12 @@ fn temp_canonical_db() -> PathBuf {
     let path = std::env::temp_dir().join(format!("medicine-cli-canonical-{nonce}.sqlite"));
     let con = Connection::open(&path).expect("create CLI canonical fixture");
     con.execute_batch(
-        "CREATE TABLE products(
+        "CREATE TABLE canonical_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+         CREATE TABLE source_snapshots(
+             dataset_key TEXT PRIMARY KEY,source_family TEXT NOT NULL,sha256 TEXT NOT NULL,
+             row_count INTEGER NOT NULL,fetched_at TEXT,effective_date TEXT
+         );
+         CREATE TABLE products(
              item_seq TEXT PRIMARY KEY,
              product_name TEXT NOT NULL,
              manufacturer TEXT,
@@ -59,7 +64,15 @@ fn temp_canonical_db() -> PathBuf {
              source_row INTEGER,flag_ordinal INTEGER
          );
          CREATE TABLE product_criterion_links(product_rule_id INTEGER,criterion_rule_id INTEGER);
-         CREATE TABLE product_rule_criteria(item_seq TEXT,category TEXT);
+         CREATE TABLE product_rule_criteria(
+             product_source_dataset_key TEXT,product_source_row INTEGER,
+             criterion_source_dataset_key TEXT,criterion_source_row INTEGER,
+             item_seq TEXT,category TEXT
+         );
+         INSERT INTO canonical_meta(key,value) VALUES
+             ('schema_version','10'),('build_stage','complete'),('built_at','2026-08-13T15:00:00+09:00');
+         INSERT INTO source_snapshots(dataset_key,source_family,sha256,row_count)
+         VALUES('fixture','mfds_permit_api','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1);
          INSERT INTO products(
              item_seq,product_name,manufacturer,ingredient_text,dosage_form,permit_status
          ) VALUES('P-CLI','CLI 약','제약','Drug','정제','active');",
@@ -180,4 +193,42 @@ fn draft_normalize_command_exposes_python_compatible_hash() {
         value["body"]["draft_hash"],
         "538f7291c8f1d65e3e88b9e4b6db3a32572859b8c18616b2ffb0aa0a3e612de9"
     );
+}
+
+#[test]
+fn safety_basis_command_exposes_reference_and_quantitative_core() {
+    let canonical = temp_canonical_db();
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+        .args([
+            "safety-basis",
+            "--canonical-db",
+            canonical.to_str().expect("canonical path"),
+            "--product-ref",
+            "P-CLI",
+            "--person",
+            r#"{"birth_date":"1990-01-01","sex":"male","pregnancy_status":"not_applicable"}"#,
+            "--draft",
+            r#"{"long_term":true}"#,
+            "--json",
+        ])
+        .output()
+        .expect("run safety-basis command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("safety basis json");
+    assert_eq!(value["status"], 200);
+    assert_eq!(value["body"]["dataset"]["status"], "verified");
+    assert_eq!(value["body"]["coverage"]["status"], "complete");
+    assert_eq!(
+        value["body"]["quantitative_checks"]["duration"]["result"],
+        "not_applicable"
+    );
+    assert_eq!(
+        value["body"]["quantitative_checks"]["dose"]["result"],
+        "not_applicable"
+    );
+    fs::remove_file(canonical).ok();
 }
