@@ -117,6 +117,8 @@ The initial mobile encoder design budget is explicit in `GraphEncoderSpec`: hidd
 
 Every epoch writes an atomic model+optimizer checkpoint and validation metrics before advancing the authoritative training state; an interrupted run resumes from the last complete checkpoint and rejects dataset, implementation, architecture, hyperparameter, or view-weight drift. Validation model selection uses a precision-favoring association F0.5 score together with role macro-F1 so a degenerate model that simply suppresses all medication associations cannot win. Relation positive weighting is derived from the training graph and capped explicitly.
 
+`graph_decode.py` is the fail-closed boundary from learned graph scores to medication rows. A row is emitted only for a product node that clears both a probability threshold and a role margin. A field is attached only when its learned role is confident and the learned product↔field association clears both an absolute threshold and a best-vs-second-product margin; otherwise the field remains unresolved rather than being borrowed from the nearest plausible medication. Deterministic code after that boundary only normalizes typed dose/frequency/duration/instruction values and enforces cross-field invariants such as PRN vs fixed schedules. Every exact value keeps the OCR node id that proved it. `evaluate_parser_document()` adapts strict parser gold to the existing evidence-aware safety metrics, so a high-confidence wrong-row association remains visible as `cross_medication_associations` even when the copied numeric value happens to match.
+
 ```sh
 docker compose run --rm ocr-parser-train \
   --train-manifest /workspace/path/to/views/parsing/datasets/train-oracle/manifest.json \
