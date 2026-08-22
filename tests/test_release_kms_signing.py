@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import tempfile
@@ -21,6 +22,19 @@ from medicine_canonical.release_signing import (
 from medicine_canonical.release_signing_runtime import trusted_public_keys_from_env
 
 from tests.test_release_signing import TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM
+
+
+def trust_entry(key_id: str, public_key_pem: bytes) -> dict:
+    public_key = serialization.load_pem_public_key(public_key_pem)
+    der = public_key.public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return {
+        "key_id": key_id,
+        "public_key_pem": public_key_pem.decode("ascii"),
+        "spki_sha256": hashlib.sha256(der).hexdigest(),
+    }
 
 
 class FakeKmsClient:
@@ -131,10 +145,10 @@ class KmsReleaseSigningTest(unittest.TestCase):
             json.dump(
                 {
                     "active_key_id": "test-2027",
-                    "keys": {
-                        "test-2026": TEST_PUBLIC_KEY_PEM.decode("ascii"),
-                        "test-2027": new_signer.public_key_pem().decode("ascii"),
-                    },
+                    "keys": [
+                        trust_entry("test-2026", TEST_PUBLIC_KEY_PEM),
+                        trust_entry("test-2027", new_signer.public_key_pem()),
+                    ],
                 },
                 config,
             )
@@ -164,7 +178,7 @@ class KmsReleaseSigningTest(unittest.TestCase):
             json.dump(
                 {
                     "active_key_id": "test-2027",
-                    "keys": {"test-2027": new_signer.public_key_pem().decode("ascii")},
+                    "keys": [trust_entry("test-2027", new_signer.public_key_pem())],
                 },
                 config,
             )
@@ -205,7 +219,7 @@ class KmsReleaseSigningTest(unittest.TestCase):
                 "REFERENCE_SIGNING_TRUSTED_KEYS_FILE": write_config(
                     {
                         "active_key_id": "test-2026",
-                        "keys": {"test-2026": TEST_PUBLIC_KEY_PEM.decode("ascii")},
+                        "keys": [trust_entry("test-2026", TEST_PUBLIC_KEY_PEM)],
                     }
                 )
             },
@@ -220,13 +234,54 @@ class KmsReleaseSigningTest(unittest.TestCase):
                 "REFERENCE_SIGNING_TRUSTED_KEYS_FILE": write_config(
                     {
                         "active_key_id": "test-2026",
-                        "keys": {"test-2026": new_signer.public_key_pem().decode("ascii")},
+                        "keys": [trust_entry("test-2026", new_signer.public_key_pem())],
                     }
                 )
             },
             clear=True,
         ):
             with self.assertRaisesRegex(RuntimeError, "public key"):
+                trusted_public_keys_from_env(signer=self.old_signer)
+
+    def test_trusted_key_file_rejects_duplicate_ids_and_bad_reviewed_fingerprint(self) -> None:
+        def write_config(data: dict) -> str:
+            config = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+            self.addCleanup(lambda: os.unlink(config.name))
+            with config:
+                json.dump(data, config)
+            return config.name
+
+        duplicate = trust_entry("test-2026", TEST_PUBLIC_KEY_PEM)
+        with patch.dict(
+            os.environ,
+            {
+                "REFERENCE_SIGNING_TRUSTED_KEYS_FILE": write_config(
+                    {
+                        "active_key_id": "test-2026",
+                        "keys": [duplicate, dict(duplicate)],
+                    }
+                )
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "duplicate"):
+                trusted_public_keys_from_env(signer=self.old_signer)
+
+        bad_fingerprint = trust_entry("test-2026", TEST_PUBLIC_KEY_PEM)
+        bad_fingerprint["spki_sha256"] = "0" * 64
+        with patch.dict(
+            os.environ,
+            {
+                "REFERENCE_SIGNING_TRUSTED_KEYS_FILE": write_config(
+                    {
+                        "active_key_id": "test-2026",
+                        "keys": [bad_fingerprint],
+                    }
+                )
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "fingerprint"):
                 trusted_public_keys_from_env(signer=self.old_signer)
 
 

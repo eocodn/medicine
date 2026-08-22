@@ -89,6 +89,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             release_sequence=sequence,
             current_contract_major=current,
             minimum_supported_contract_major=minimum,
+            trusted_public_keys={"test-2026": TEST_PUBLIC_KEY_PEM},
             created_at=f"2026-08-20T00:{sequence % 60:02d}:00Z",
             allow_early_retirement=allow_early_retirement,
         )
@@ -155,6 +156,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             release_sequence=100,
             current_contract_major=1,
             minimum_supported_contract_major=1,
+            trusted_public_keys={"test-2026": TEST_PUBLIC_KEY_PEM},
             created_at="2026-08-20T00:00:00Z",
         )
 
@@ -188,6 +190,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
                 release_sequence=100,
                 current_contract_major=1,
                 minimum_supported_contract_major=1,
+                trusted_public_keys={"test-2026": TEST_PUBLIC_KEY_PEM},
                 created_at="2026-08-20T00:00:00Z",
             )
         self.assertEqual(self.client.put_order, [])
@@ -245,6 +248,59 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             {"test-2027": new_signer.public_key_pem()},
         )
         self.assertEqual(verified["key_id"], "test-2027")
+
+    def test_window_rotation_resigns_unchanged_root_with_new_signer(self) -> None:
+        candidate = self.candidate(1, "rotation-same", b"A" * 500_000, "sha256:" + "a" * 64)
+        self.publish([candidate], current=1, minimum=1, sequence=100, suffix="rotation-same-old")
+        previous = self.verified_root()
+
+        new_private = ec.generate_private_key(ec.SECP256R1())
+        new_private_pem = new_private.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        new_signer = ReleaseSigner.from_private_pem("test-2027", new_private_pem)
+        overlap = {
+            "test-2026": TEST_PUBLIC_KEY_PEM,
+            "test-2027": new_signer.public_key_pem(),
+        }
+
+        with self.assertRaisesRegex(ValueError, "release_sequence"):
+            publish_contract_window(
+                self.client,
+                self.bucket,
+                [candidate],
+                self.root / "dist-rotation-same-stale",
+                signer=new_signer,
+                release_sequence=100,
+                trusted_public_keys=overlap,
+                current_contract_major=1,
+                minimum_supported_contract_major=1,
+            )
+
+        self.client.put_order.clear()
+        result = publish_contract_window(
+            self.client,
+            self.bucket,
+            [candidate],
+            self.root / "dist-rotation-same-new",
+            signer=new_signer,
+            release_sequence=101,
+            trusted_public_keys=overlap,
+            current_contract_major=1,
+            minimum_supported_contract_major=1,
+        )
+
+        verified = verify_signed_envelope(
+            self.client.objects[(self.bucket, ROOT_KEY)]["Body"],
+            {"test-2027": new_signer.public_key_pem()},
+        )
+        self.assertEqual(result["status"], "resigned")
+        self.assertEqual(verified["key_id"], "test-2027")
+        self.assertEqual(verified["release_sequence"], 101)
+        self.assertEqual(verified["manifest"], previous["manifest"])
+        self.assertEqual(self.client.put_order, [ROOT_KEY])
 
     def test_unchanged_exact_targets_and_window_do_not_advance_root(self) -> None:
         c1 = self.candidate(1, "same", b"A" * 500_000, "sha256:" + "b" * 64)
@@ -493,7 +549,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             mock.patch("medicine_canonical.release_window.release_sequence_from_env", return_value=202),
             mock.patch(
                 "medicine_canonical.release_window._read_root",
-                return_value=(b"root", '"etag"', published_root, 201),
+                return_value=(b"root", '"etag"', published_root, 201, {"key_id": "test-2026"}),
             ),
             mock.patch("medicine_canonical.release_window.publish_contract_window", return_value={"status": "published"}) as publish,
         ):

@@ -6,6 +6,7 @@ import base64
 import json
 import re
 import struct
+import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -13,6 +14,11 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from medicine_canonical.release_trust import load_trusted_signing_manifest
+
+
 SIGNATURE_MAGIC = b"MEDREFSIG1"
 ENVELOPE_VERSION = 1
 ALGORITHM = "ECDSA_P256_SHA256"
@@ -31,20 +37,8 @@ def _android_contract_major() -> int:
     return int(match.group(1))
 
 
-def _android_trust() -> tuple[str, str]:
-    source = (ROOT / "android/app/src/main/java/com/medicine/android/ReferenceTrust.kt").read_text()
-    key_id = re.search(r'PRODUCTION_KEY_ID\s*=\s*"([A-Za-z0-9._-]+)"', source)
-    block = re.search(
-        r"PRODUCTION_SPKI_HEX\s*=\s*(.*?)\n\s*val trustedPublicKeys",
-        source,
-        re.DOTALL,
-    )
-    if key_id is None or block is None:
-        raise RuntimeError("cannot resolve Android reference trust anchor")
-    fragments = re.findall(r'"([0-9a-fA-F]+)"', block.group(1))
-    if not fragments:
-        raise RuntimeError("Android reference trust anchor has no SPKI bytes")
-    return key_id.group(1), "".join(fragments).lower()
+def _trusted_public_keys_from_manifest(path: Path) -> dict[str, str]:
+    return load_trusted_signing_manifest(path).public_keys_spki_hex()
 
 
 def _decode_base64(value: object, label: str) -> bytes:
@@ -126,8 +120,7 @@ def verify_root(
     raw: bytes,
     *,
     contract_major: int,
-    key_id: str,
-    public_key_der_hex: str,
+    trusted_public_keys: dict[str, str],
 ) -> dict:
     try:
         envelope = json.loads(raw.decode("utf-8"))
@@ -139,7 +132,11 @@ def verify_root(
         raise ValueError("signed reference root envelope version is unsupported")
     if envelope.get("algorithm") != ALGORITHM:
         raise ValueError("signed reference root algorithm is unsupported")
-    if envelope.get("key_id") != key_id:
+    key_id = envelope.get("key_id")
+    if not isinstance(key_id, str):
+        raise ValueError("signed reference root key ID is invalid")
+    public_key_der_hex = trusted_public_keys.get(key_id)
+    if public_key_der_hex is None:
         raise ValueError("signed reference root uses an untrusted key")
     sequence = envelope.get("release_sequence")
     sequence = _positive_int(sequence, "sequence")
@@ -194,12 +191,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--key-id")
     parser.add_argument("--public-key-der-hex")
     args = parser.parse_args(argv)
-    default_key_id, default_hex = _android_trust()
+    if (args.key_id is None) != (args.public_key_der_hex is None):
+        parser.error("--key-id and --public-key-der-hex must be supplied together")
+    if args.key_id is not None:
+        trusted_public_keys = {args.key_id: args.public_key_der_hex}
+    else:
+        trusted_public_keys = _trusted_public_keys_from_manifest(
+            ROOT / "deploy/reference-signing-trusted-keys.json"
+        )
     result = verify_root(
         args.root.read_bytes(),
         contract_major=args.contract_major or _android_contract_major(),
-        key_id=args.key_id or default_key_id,
-        public_key_der_hex=args.public_key_der_hex or default_hex,
+        trusted_public_keys=trusted_public_keys,
     )
     print(
         "signed reference root supports Android contract "

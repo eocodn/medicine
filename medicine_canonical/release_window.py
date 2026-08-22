@@ -49,6 +49,7 @@ from .release_window_remote import (
     ensure_window_full_artifacts as _ensure_window_full_artifacts,
     put_root as _put_root,
     read_root as _read_root,
+    root_matches_candidates as _root_matches_candidates,
     target_identity as _target_identity,
     unchanged_publication_result as _unchanged_publication_result,
     validate_support_window_progression as _validate_support_window_progression,
@@ -174,9 +175,9 @@ def _publish_loaded_contract_window(
     release_sequence: int,
     current_contract_major: int,
     minimum_supported_contract_major: int,
+    trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
-    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     if not str(bucket).strip():
         raise ValueError("R2 bucket is required")
@@ -189,11 +190,9 @@ def _publish_loaded_contract_window(
     )
     trusted_public_keys = validate_trusted_public_keys(
         signer=signer,
-        trusted_public_keys=trusted_public_keys
-        if trusted_public_keys is not None
-        else {signer.key_id: signer.public_key_pem()},
+        trusted_public_keys=trusted_public_keys,
     )
-    initial_raw, initial_etag, previous_root, previous_sequence = _read_root(
+    initial_raw, initial_etag, previous_root, previous_sequence, previous_verified = _read_root(
         client,
         bucket,
         trusted_public_keys=trusted_public_keys,
@@ -209,6 +208,61 @@ def _publish_loaded_contract_window(
     }
     root_dir = Path(output_dir)
     root_dir.mkdir(parents=True, exist_ok=True)
+
+    if (
+        previous_verified is not None
+        and previous_verified["key_id"] != signer.key_id
+        and _root_matches_candidates(
+            previous_root,
+            by_major,
+            current_contract_major=current_contract_major,
+            minimum_supported_contract_major=minimum_supported_contract_major,
+        )
+    ):
+        if previous_sequence is None or release_sequence <= previous_sequence:
+            raise ValueError(
+                "release_sequence must be greater than the published reference root sequence"
+            )
+        assert previous_root is not None
+        entries = {
+            major: previous_root["contracts"][str(major)]
+            for major in by_major
+        }
+        _ensure_window_full_artifacts(
+            client,
+            bucket,
+            candidates=by_major,
+            entries=entries,
+            output_dir=root_dir,
+        )
+        _assert_root_unchanged(
+            client,
+            bucket,
+            initial_raw=initial_raw,
+            initial_etag=initial_etag,
+            trusted_public_keys=trusted_public_keys,
+        )
+        body = encode_signed_envelope(
+            signer.sign_payload(
+                previous_verified["payload_bytes"],
+                release_sequence=release_sequence,
+            )
+        )
+        _put_root(client, bucket, body, previous_etag=initial_etag)
+        cleanup = _cleanup_active_contracts(
+            client,
+            bucket,
+            root=previous_root,
+            initial_inventory=initial_inventory,
+            expected_root_raw=body,
+            trusted_public_keys=trusted_public_keys,
+        )
+        return {
+            "status": "resigned",
+            "release_sequence": release_sequence,
+            "root": previous_root,
+            "cleanup": cleanup,
+        }
 
     unchanged = _unchanged_publication_result(
         client,
@@ -296,9 +350,9 @@ def publish_contract_window(
     release_sequence: int,
     current_contract_major: int,
     minimum_supported_contract_major: int,
+    trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
-    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
@@ -325,9 +379,9 @@ def publish_verified_contract_window(
     release_sequence: int,
     current_contract_major: int,
     minimum_supported_contract_major: int,
+    trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
-    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
@@ -435,7 +489,7 @@ def _publication_context_from_env(retire_previous_contract: bool):
     trusted_public_keys = trusted_public_keys_from_env(signer=signer)
     retirement_active = False
     if not retire_previous_contract and len(majors) == 2:
-        _, _, published_root, _ = _read_root(
+        _, _, published_root, _, _ = _read_root(
             client,
             bucket,
             trusted_public_keys=trusted_public_keys,

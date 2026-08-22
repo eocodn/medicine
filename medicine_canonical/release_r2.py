@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .release import RELEASE_PREFIX, decompress_snapshot, prepare_release, sha256_file
+from .release_r2_history import MAX_PATCH_BASES, recent_release_bases as _recent_release_bases
 from .release_signing import (
     KmsReleaseSigner,
     ReleaseSigner,
@@ -24,7 +25,6 @@ from .release_signing_runtime import (
 LATEST_KEY = f"{RELEASE_PREFIX}/latest.json"
 LATEST_CACHE_CONTROL = "no-store"
 IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
-MAX_PATCH_BASES = 3
 # Current full + at most two history fulls. Older clients fall back to the current full gzip.
 FULL_SNAPSHOT_RETENTION = 3
 FULL_PREFIX = f"{RELEASE_PREFIX}/full/"
@@ -59,12 +59,12 @@ def _read_latest(
     latest_key: str,
     *,
     trusted_public_keys: dict[str, bytes],
-) -> tuple[bytes | None, str | None, dict | None, int | None, bool]:
+) -> tuple[bytes | None, str | None, dict | None, int | None, dict | None]:
     try:
         response = client.get_object(Bucket=bucket, Key=latest_key)
     except Exception as exc:
         if _not_found(exc):
-            return None, None, None, None, False
+            return None, None, None, None, None
         raise
     raw = _read_body_bytes(response["Body"])
     try:
@@ -81,11 +81,11 @@ def _read_latest(
             response.get("ETag"),
             manifest,
             verified["release_sequence"],
-            True,
+            verified,
         )
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("remote latest manifest schema is unsupported")
-    return raw, response.get("ETag"), payload, None, False
+    return raw, response.get("ETag"), payload, None, None
 
 
 def _download_to_file(client, bucket: str, key: str, output: Path) -> dict:
@@ -300,28 +300,6 @@ def _cleanup_release_artifacts(
     }
 
 
-def _history_entry(release: dict) -> dict:
-    return {
-        "dataset_id": release["dataset_id"],
-        "target": dict(release["target"]),
-        "full": dict(release["full"]),
-    }
-
-
-def _recent_release_bases(latest: dict) -> list[dict]:
-    bases = [_history_entry(latest)]
-    history = latest.get("history") or []
-    if not isinstance(history, list):
-        raise ValueError("remote latest manifest history must be a list")
-    for entry in history:
-        if not isinstance(entry, dict):
-            raise ValueError("remote latest manifest history entry is invalid")
-        bases.append(_history_entry(entry))
-        if len(bases) >= MAX_PATCH_BASES:
-            break
-    return bases
-
-
 def publish_release(
     client,
     bucket: str,
@@ -331,9 +309,9 @@ def publish_release(
     *,
     signer: ReleaseSigner | KmsReleaseSigner,
     release_sequence: int,
+    trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     latest_key: str = LATEST_KEY,
-    trusted_public_keys: dict[str, bytes] | None = None,
 ) -> dict:
     if not bucket:
         raise ValueError("R2 bucket is required")
@@ -353,12 +331,10 @@ def publish_release(
 
     trusted_public_keys = validate_trusted_public_keys(
         signer=signer,
-        trusted_public_keys=trusted_public_keys
-        if trusted_public_keys is not None
-        else {signer.key_id: signer.public_key_pem()},
+        trusted_public_keys=trusted_public_keys,
     )
 
-    initial_raw, initial_etag, previous_latest, previous_sequence, previous_signed = _read_latest(
+    initial_raw, initial_etag, previous_latest, previous_sequence, previous_verified = _read_latest(
         client,
         bucket,
         latest_key,
@@ -368,7 +344,7 @@ def publish_release(
     # concurrently after this publisher began.
     initial_inventory = _release_artifact_inventory(client, bucket)
     if previous_latest is not None and previous_latest.get("dataset_id") == dataset_id:
-        if not previous_signed:
+        if previous_verified is None:
             signed_body = encode_signed_envelope(
                 signer.sign_payload(initial_raw, release_sequence=release_sequence)
             )
@@ -395,6 +371,40 @@ def publish_release(
                 "manifest": previous_latest,
                 "cleanup": cleanup,
             }
+        if previous_verified["key_id"] != signer.key_id:
+            if previous_sequence is None or release_sequence <= previous_sequence:
+                raise ValueError(
+                    "release_sequence must be greater than the currently published release sequence"
+                )
+            signed_body = encode_signed_envelope(
+                signer.sign_payload(
+                    previous_verified["payload_bytes"],
+                    release_sequence=release_sequence,
+                )
+            )
+            _put_latest(
+                client,
+                bucket,
+                latest_key,
+                signed_body,
+                previous_etag=initial_etag,
+            )
+            cleanup = _cleanup_release_artifacts(
+                client,
+                bucket,
+                manifest=previous_latest,
+                initial_inventory=initial_inventory,
+                expected_latest_raw=signed_body,
+                latest_key=latest_key,
+                trusted_public_keys=trusted_public_keys,
+            )
+            return {
+                "status": "resigned",
+                "dataset_id": dataset_id,
+                "release_sequence": release_sequence,
+                "manifest": previous_latest,
+                "cleanup": cleanup,
+            }
         cleanup = _cleanup_release_artifacts(
             client,
             bucket,
@@ -411,7 +421,7 @@ def publish_release(
             "manifest": previous_latest,
             "cleanup": cleanup,
         }
-    if previous_signed and previous_sequence is not None and release_sequence <= previous_sequence:
+    if previous_verified is not None and previous_sequence is not None and release_sequence <= previous_sequence:
         raise ValueError(
             "release_sequence must be greater than the currently published release sequence"
         )

@@ -7,8 +7,12 @@ import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 import java.io.File
 import java.net.URI
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.Properties
 import javax.inject.Inject
 
@@ -67,6 +71,74 @@ val releaseVersionCode = releaseVersionProperties.getProperty("versionCode")
     ?.toIntOrNull()
     ?.takeIf { it > 0 }
     ?: error("android/release.properties must define a positive integer versionCode")
+
+val referenceTrustManifestFile = rootProject.file("../deploy/reference-signing-trusted-keys.json")
+
+fun decodeReviewedPublicKeyPem(pem: String, keyId: String): ByteArray {
+    require(pem.startsWith("-----BEGIN PUBLIC KEY-----\n")) {
+        "reference signing public key must use PUBLIC KEY PEM: $keyId"
+    }
+    require(pem.endsWith("-----END PUBLIC KEY-----\n")) {
+        "reference signing public key must end with a newline: $keyId"
+    }
+    val body = pem
+        .removePrefix("-----BEGIN PUBLIC KEY-----\n")
+        .removeSuffix("-----END PUBLIC KEY-----\n")
+        .replace("\n", "")
+    return try {
+        Base64.getDecoder().decode(body)
+    } catch (error: IllegalArgumentException) {
+        throw GradleException("reference signing public key is invalid base64: $keyId", error)
+    }
+}
+
+fun referenceTrustedKeysJson(file: File): String {
+    require(file.isFile) { "reference signing trust manifest is missing: $file" }
+    val document = JsonSlurper().parse(file)
+    require(document is Map<*, *> && document.keys == setOf("active_key_id", "keys")) {
+        "reference signing trust manifest shape is invalid"
+    }
+    val activeKeyId = document["active_key_id"] as? String
+        ?: error("reference signing trust manifest active_key_id is invalid")
+    val rawKeys = document["keys"] as? List<*>
+        ?: error("reference signing trust manifest keys must be a list")
+    require(rawKeys.isNotEmpty()) { "reference signing trust manifest keys must not be empty" }
+
+    val trusted = linkedMapOf<String, String>()
+    rawKeys.forEach { rawKey ->
+        require(
+            rawKey is Map<*, *> &&
+                rawKey.keys == setOf("key_id", "public_key_pem", "spki_sha256")
+        ) { "reference signing trust entry shape is invalid" }
+        val keyId = rawKey["key_id"] as? String
+            ?: error("reference signing trust key ID is invalid")
+        require(Regex("[A-Za-z0-9._-]{1,64}").matches(keyId)) {
+            "reference signing trust key ID is invalid: $keyId"
+        }
+        require(!trusted.containsKey(keyId)) { "duplicate reference signing trust key ID: $keyId" }
+        val pem = rawKey["public_key_pem"] as? String
+            ?: error("reference signing public key is invalid: $keyId")
+        val reviewedFingerprint = rawKey["spki_sha256"] as? String
+            ?: error("reference signing fingerprint is invalid: $keyId")
+        require(Regex("[0-9a-f]{64}").matches(reviewedFingerprint)) {
+            "reference signing fingerprint is invalid: $keyId"
+        }
+        val spki = decodeReviewedPublicKeyPem(pem, keyId)
+        val actualFingerprint = MessageDigest.getInstance("SHA-256")
+            .digest(spki)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        require(actualFingerprint == reviewedFingerprint) {
+            "reference signing fingerprint does not match reviewed key: $keyId"
+        }
+        trusted[keyId] = spki.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+    require(activeKeyId in trusted) {
+        "reference signing active key ID is missing from trusted keys"
+    }
+    return JsonOutput.toJson(trusted)
+}
+
+val referenceSigningTrustedKeysJson = referenceTrustedKeysJson(referenceTrustManifestFile)
 
 data class AndroidReleaseEnvironment(
     val versionCode: Int,
@@ -209,6 +281,11 @@ android {
         targetSdk = 35
         versionCode = releaseEnvironment?.versionCode ?: releaseVersionCode
         versionName = releaseEnvironment?.versionName ?: releaseVersionName
+        buildConfigField(
+            "String",
+            "REFERENCE_TRUSTED_KEYS_JSON",
+            JsonOutput.toJson(referenceSigningTrustedKeysJson),
+        )
 
         ndk {
             abiFilters += listOf("arm64-v8a")

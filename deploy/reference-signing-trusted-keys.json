@@ -1,6 +1,10 @@
 {
   "active_key_id": "reference-prod-2026-01",
-  "keys": {
-    "reference-prod-2026-01": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEL+hD0Dm14S2PuBUmu4YBpUj/jSwg\nRJOFaQXSXLPTMy3Fb2ohRLuPJAaEdQWiYE5iUBVhztzbNBW7BX9KFNOGbw==\n-----END PUBLIC KEY-----\n"
-  }
+  "keys": [
+    {
+      "key_id": "reference-prod-2026-01",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEL+hD0Dm14S2PuBUmu4YBpUj/jSwg\nRJOFaQXSXLPTMy3Fb2ohRLuPJAaEdQWiYE5iUBVhztzbNBW7BX9KFNOGbw==\n-----END PUBLIC KEY-----\n",
+      "spki_sha256": "96de63a5e5cb2d1233dc09d13f2e1da8148b97a2cb15e69346a01514287969ea"
+    }
+  ]
 }

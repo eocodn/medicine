@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import os
-import json
-from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 
 from .release_signing import KmsReleaseSigner, _load_p256_public_key, _validate_key_id
-
-_MAX_TRUSTED_KEYS_FILE_BYTES = 64 * 1024
+from .release_trust import load_trusted_signing_manifest
 
 
 def _canonical_public_key(public_key_pem: bytes) -> bytes:
@@ -50,37 +47,13 @@ def trusted_public_keys_from_env(*, signer) -> dict[str, bytes]:
     path_value = os.environ.get("REFERENCE_SIGNING_TRUSTED_KEYS_FILE", "").strip()
     if not path_value:
         raise RuntimeError("REFERENCE_SIGNING_TRUSTED_KEYS_FILE is required")
-    path = Path(path_value)
-    try:
-        if not path.is_file():
-            raise RuntimeError("trusted release signing key file is not a regular file")
-        if path.stat().st_size > _MAX_TRUSTED_KEYS_FILE_BYTES:
-            raise RuntimeError("trusted release signing key file is too large")
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except RuntimeError:
-        raise
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("trusted release signing key file is invalid") from exc
-    if not isinstance(document, dict) or set(document) != {"active_key_id", "keys"}:
-        raise RuntimeError("trusted release signing key file shape is invalid")
-    active_key_id = document.get("active_key_id")
-    keys = document.get("keys")
-    if active_key_id != signer.key_id:
+    manifest = load_trusted_signing_manifest(path_value)
+    if manifest.active_key_id != signer.key_id:
         raise RuntimeError("active signer key ID does not match trusted release signing configuration")
-    if not isinstance(keys, dict):
-        raise RuntimeError("trusted release signing keys must be an object")
-    parsed: dict[str, bytes] = {}
-    for key_id, public_key_pem in keys.items():
-        if not isinstance(public_key_pem, str):
-            raise RuntimeError(f"trusted release signing public key is invalid: {key_id}")
-        try:
-            parsed[key_id] = public_key_pem.encode("ascii")
-        except UnicodeEncodeError as exc:
-            raise RuntimeError(f"trusted release signing public key is invalid: {key_id}") from exc
-    try:
-        return validate_trusted_public_keys(signer=signer, trusted_public_keys=parsed)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("trusted release signing key file contains invalid key IDs") from exc
+    return validate_trusted_public_keys(
+        signer=signer,
+        trusted_public_keys=manifest.public_keys_pem(),
+    )
 
 
 def release_signer_from_env(*, kms_client=None) -> KmsReleaseSigner:
