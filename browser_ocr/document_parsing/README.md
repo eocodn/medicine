@@ -91,6 +91,19 @@ Unified corpus materialization creates these parser datasets automatically:
 
 The deterministic synthetic-OCR producer starts from canonical tight `natural_text_polygon` geometry, perturbs OCR observations (drop/split/merge/jitter/text/confidence/order/noise), and then labels them through the same tight-geometry alignment used for runtime OCR. It does not copy truth labels onto corrupted boxes blindly.
 
+After a detector/recognizer candidate is explicitly frozen, use `ocr-parser-synthetic-runtime` to create the primary noisy parser view. This heavy batch is intentionally separate from ordinary corpus materialization: it runs every unified synthetic page through the exact selected full-document detector/crop/recognizer producer, checkpoints each persisted `result.json`, verifies image/source/producer hashes on resume, and then builds GT-aligned `runtime_ocr` datasets independently for every present train/val/test split. OCR text and boxes are observations only; authoritative semantic roles, associations, and `gold_rows` still come from the synthetic truth file, so OCR mistakes are not promoted to labels.
+
+```sh
+docker compose run --rm ocr-parser-synthetic-runtime \
+  --corpus-manifest /artifacts/ocr/corpora/unified-v6/manifest.json \
+  --truth-samples /artifacts/ocr/corpora/unified-v6/views/parsing/samples.jsonl \
+  --baseline-result /artifacts/ocr/training/selected/baseline-result.json \
+  --output-dir /artifacts/parser/synthetic-runtime-v6 \
+  --json
+```
+
+The output keeps raw runtime OCR snapshots under `runtime/<document-id>/` and strict parser datasets under `datasets/{train,val,test}/`. Reusing the output with a changed corpus, truth file, detector/recognizer producer, or mutated completed runtime result fails rather than mixing observation distributions.
+
 Use the dataset Agent Control service directly when needed. Writable OCR/parser services mount host `~/dev/artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
 
 ```sh
