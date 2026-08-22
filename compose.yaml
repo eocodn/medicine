@@ -87,6 +87,11 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     command: ["node", "browser_ocr/detection/cli.mjs", "benchmark", "--json"]
 
@@ -97,6 +102,11 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     entrypoint: ["node", "browser_ocr/corpus/cli.mjs"]
 
@@ -134,6 +144,11 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - .:/workspace
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
     entrypoint: ["python", "-m", "browser_ocr.document_parsing.dataset_cli"]
 
   ocr-finetune:
@@ -146,6 +161,11 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - .:/workspace
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
     entrypoint: ["python", "-m", "browser_ocr.finetune.cli"]
 
   ocr-finetune-test:
@@ -171,6 +191,11 @@ services:
       CUDA_VISIBLE_DEVICES: "${OCR_FINETUNE_GPU:-0}"
     volumes:
       - .:/workspace
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
     gpus: all
     shm_size: "4gb"
     entrypoint: ["python", "-m", "browser_ocr.finetune.train_cli"]
@@ -186,6 +211,11 @@ services:
       CUDA_VISIBLE_DEVICES: "${OCR_FINETUNE_GPU:-0}"
     volumes:
       - .:/workspace
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
     gpus: all
     shm_size: "4gb"
     entrypoint: ["python", "-m", "browser_ocr.finetune.full_document_cli"]
@@ -201,6 +231,11 @@ services:
       CUDA_VISIBLE_DEVICES: "${OCR_FINETUNE_GPU:-0}"
     volumes:
       - .:/workspace
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
     gpus: all
     shm_size: "4gb"
     entrypoint: ["python", "-m", "browser_ocr.finetune.real_parser_data_cli"]

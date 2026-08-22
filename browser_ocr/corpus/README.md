@@ -49,12 +49,12 @@ Recognition metadata also records the fixed `severe-motion-downscale-jpeg-v1` OO
 
 ## Agent Control CLI
 
-Use the Compose service so generation and local validation stay inside the pinned Docker environment:
+Use the Compose service so generation and local validation stay inside the pinned Docker environment. The writable OCR services mount host `~/dev/artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root while keeping the same container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
 
 ```sh
 COMPOSE_PROJECT_NAME=medicine_ocr_corpus \
   docker compose run --rm ocr-corpus generate \
-  --output /workspace/browser_ocr/finetune/work/unified-360 \
+  --output /artifacts/ocr/corpora/unified-360 \
   --canonical-db /data/canonical.sqlite \
   --historical-drug-exposure /workspace/browser_ocr/finetune/results/selected-100k-training-drug-exposure.json \
   --drug-split-seed 161 \
@@ -79,9 +79,9 @@ The builder reads product-tagged samples from the **train membership only**, rem
 The other commands are:
 
 ```sh
-docker compose run --rm ocr-corpus validate --corpus /workspace/path/manifest.json --json
-docker compose run --rm ocr-corpus materialize --corpus /workspace/path/manifest.json --output /workspace/path/views --json
-docker compose run --rm ocr-corpus audit --corpus /workspace/path/manifest.json --json
+docker compose run --rm ocr-corpus validate --corpus /artifacts/ocr/corpora/unified-360/manifest.json --json
+docker compose run --rm ocr-corpus materialize --corpus /artifacts/ocr/corpora/unified-360/manifest.json --output /artifacts/ocr/corpora/unified-360/views --json
+docker compose run --rm ocr-corpus audit --corpus /artifacts/ocr/corpora/unified-360/manifest.json --json
 ```
 
 Generation and materialization use exclusive locks, atomic state files, content hashes, resumable checkpoints, and explicit progress on stderr. Materializer v13 uses a kernel advisory lock held by a helper process, so a dead process cannot strand an existence-based lock file; the lock file itself may persist harmlessly. Completed reuse revalidates the report SHA, a fixed set of stage/parser artifact hashes, recognition image hashes through the recognition dataset core, and all emitted parser datasets before returning success. Reusing an output directory with a different generator/materializer profile fails rather than mixing artifacts.

@@ -109,7 +109,7 @@ async function main(argv) {
   } else if (command === "benchmark") {
     const corpusPath = option(args, "--corpus", "browser_ocr/detection/corpus/manifest.json");
     const cacheDir = option(args, "--cache", "browser_ocr/detection/.cache/models");
-    const outputDir = option(args, "--output", "browser_ocr/detection/results/zero-shot");
+    const outputDir = option(args, "--output", "/artifacts/ocr/evaluations/detection/zero-shot");
     const model = option(args, "--model");
     const edge = option(args, "--edge");
     result = await runDetectorBenchmarkMatrix({

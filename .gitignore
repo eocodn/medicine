@@ -17,14 +17,11 @@ android/app/build/
 android/**/*.jks
 android/**/*.keystore
 
-# OCR fine-tuning private corpora, exports, and checkpoints.
-browser_ocr/finetune/work/
+# OCR local private inputs must stay out of Git.
 browser_ocr/finetune/private/
-browser_ocr/finetune/checkpoints/
 
-# Detector benchmark model/result caches are reproducible from pinned manifests.
+# Detector model caches are reproducible from pinned manifests.
 browser_ocr/detection/.cache/
-browser_ocr/detection/results/
 browser_ocr/mobile/work/
 android/.kotlin/
 .android-gradle-cache/

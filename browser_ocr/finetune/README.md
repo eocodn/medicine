@@ -24,7 +24,7 @@ Do not put private real-photo corpora in this repository. Keep them outside Git 
 
 ## Real-photo parser holdout path
 
-The learned-parser data pipeline has a separate full-document path for already de-identified prescription photos. Private images stay outside this repository and are mounted read-only. `ocr-parser-real` reuses the selected `ocr-full-document` detector/crop/recognizer implementation, stores per-document runtime OCR snapshots under an ignored work directory, and emits human-annotation drafts whose immutable source/OCR content is SHA-256-bound separately from editable labels. The batch checkpoint pins one resolved OCR producer identity including exact detector ONNX/config bytes, the actual PaddleOCR inference source tree, the dictionary selected by the recognizer config, the installed Python environment, installed Debian package versions/native shared libraries, and the actual native payload bytes installed by inference-critical Python wheels (PaddlePaddle, ONNX Runtime, OpenCV, NumPy, and NVIDIA runtime packages when present). GPU runs additionally bind the runtime-visible GPU selector and Paddle-reported CUDA/cuDNN/device/capability identity, with NVIDIA driver identity when exposed by the runtime. Matching crash-window artifacts are adopted instead of overwritten. The detector runtime rejects extracted assets that no longer match the pinned archive, and completed full-document state binds `result.json` by SHA-256 before cache reuse. Finalized parser samples retain a lowercase-ASCII pseudonymous source id and the allowlisted real-source license id `private-deidentified`, use strict allowlisted runtime and dataset-manifest metadata, and require explicitly reviewed, type-valid image-level `gold_rows`. Real parser sources are val/test-only; training on real patient-derived images is intentionally not enabled by this contract. See `browser_ocr/document_parsing/README.md` for the source manifest and finalization workflow.
+The learned-parser data pipeline has a separate full-document path for already de-identified prescription photos. Private images stay outside this repository and are mounted read-only. `ocr-parser-real` reuses the selected `ocr-full-document` detector/crop/recognizer implementation, stores per-document runtime OCR snapshots under the durable `/artifacts/parser/` tree, and emits human-annotation drafts whose immutable source/OCR content is SHA-256-bound separately from editable labels. The batch checkpoint pins one resolved OCR producer identity including exact detector ONNX/config bytes, the actual PaddleOCR inference source tree, the dictionary selected by the recognizer config, the installed Python environment, installed Debian package versions/native shared libraries, and the actual native payload bytes installed by inference-critical Python wheels (PaddlePaddle, ONNX Runtime, OpenCV, NumPy, and NVIDIA runtime packages when present). GPU runs additionally bind the runtime-visible GPU selector and Paddle-reported CUDA/cuDNN/device/capability identity, with NVIDIA driver identity when exposed by the runtime. Matching crash-window artifacts are adopted instead of overwritten. The detector runtime rejects extracted assets that no longer match the pinned archive, and completed full-document state binds `result.json` by SHA-256 before cache reuse. Finalized parser samples retain a lowercase-ASCII pseudonymous source id and the allowlisted real-source license id `private-deidentified`, use strict allowlisted runtime and dataset-manifest metadata, and require explicitly reviewed, type-valid image-level `gold_rows`. Real parser sources are val/test-only; training on real patient-derived images is intentionally not enabled by this contract. See `browser_ocr/document_parsing/README.md` for the source manifest and finalization workflow.
 
 ## Why split is graph-based
 
@@ -52,12 +52,12 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning docker compose run --rm ocr-finetun
 COMPOSE_PROJECT_NAME=medicine_ocr_finetuning docker compose run --rm ocr-finetune \
   split --manifest /workspace/path/to/manifest.json \
   --group-by layout_family --seed 112 \
-  --output /workspace/path/to/layout-split.json --json
+  --output /artifacts/ocr/recognition/layout-split.json --json
 
 COMPOSE_PROJECT_NAME=medicine_ocr_finetuning docker compose run --rm ocr-finetune \
   export-paddle --manifest /workspace/path/to/manifest.json \
-  --split /workspace/path/to/layout-split.json \
-  --output-dir /workspace/path/to/paddle-layout --json
+  --split /artifacts/ocr/recognition/layout-split.json \
+  --output-dir /artifacts/ocr/recognition/paddle-layout --json
 ```
 
 The Paddle export contains `train.txt`, `val.txt`, `test.txt`, `split.json`, `export.json`, and `observed-characters.txt`. `data_dir` remains the original dataset root; images are not duplicated.
@@ -82,18 +82,18 @@ The bounded smoke profile uses 128 training samples, 64 validation samples, batc
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
 COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
   docker compose run --rm ocr-finetune-train smoke \
-  --pretrained-model /workspace/browser_ocr/finetune/work/upstream/korean_PP-OCRv5_mobile_rec_pretrained.pdparams \
-  --manifest /workspace/browser_ocr/finetune/work/synth-5k/manifest.json \
-  --export-dir /workspace/browser_ocr/finetune/work/synth-5k/paddle-drug \
-  --run-dir /workspace/browser_ocr/finetune/work/training/smoke \
+  --pretrained-model /artifacts/ocr/checkpoints/upstream/korean_PP-OCRv5_mobile_rec_pretrained.pdparams \
+  --manifest /artifacts/ocr/recognition/synth-5k/manifest.json \
+  --export-dir /artifacts/ocr/recognition/synth-5k/paddle-drug \
+  --run-dir /artifacts/ocr/training/smoke \
   --train-samples 128 --val-samples 64 --batch-size 16 --json
 ```
 
-Generated datasets, downloaded weights, training logs, and checkpoints stay under the ignored `browser_ocr/finetune/work/` tree. Do not generate a dictionary from only the training labels and silently replace the model dictionary; `audit-model` must remain green against the pinned upstream Korean dictionary before training.
+Generated datasets, downloaded weights, training logs, checkpoints, and large evaluation artifacts belong under `/artifacts`, which the writable OCR Compose services bind to host `~/dev/artifacts/medicine` by default. Create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`); Compose refuses to auto-create it so Docker cannot leave a root-owned artifact directory. Override the host location with `MEDICINE_ARTIFACTS_DIR=/absolute/path` when needed; the in-container path remains `/artifacts`. Do not generate a dictionary from only the training labels and silently replace the model dictionary; `audit-model` must remain green against the pinned upstream Korean dictionary before training.
 
 ## Deterministic synthetic recognition crops
 
-`generate-synthetic` builds patient-data-free recognition crops from the canonical MFDS product-name corpus plus deterministic medicine-domain dosage and hard-negative templates. The canonical database is an input only and should be mounted read-only. Generated corpora belong under the ignored `browser_ocr/finetune/work/` tree, not in Git.
+`generate-synthetic` builds patient-data-free recognition crops from the canonical MFDS product-name corpus plus deterministic medicine-domain dosage and hard-negative templates. The canonical database is an input only and should be mounted read-only. Generated corpora belong under `/artifacts/ocr/recognition/`, not in the Git worktree.
 
 The renderer uses the Noto CJK font installed in the dedicated fine-tune image. The generation report pins the canonical database SHA-256, canonical source-snapshot SHA-256, font SHA-256, generator version, seed, and sample count. Re-running the same completed configuration validates and returns the existing dataset; changing any pinned input fails rather than silently overwriting it. Interrupted generation keeps `.generation-state.json` plus `samples.partial.jsonl` and resumes from its checkpoint.
 
@@ -104,7 +104,7 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
   -v /absolute/path/to/canonical.sqlite:/reference/canonical.sqlite:ro \
   ocr-finetune generate-synthetic \
   --canonical-db /reference/canonical.sqlite \
-  --output-dir /workspace/browser_ocr/finetune/work/synth-5k \
+  --output-dir /artifacts/ocr/recognition/synth-5k \
   --count 5000 --seed 112 --json
 ```
 
@@ -115,7 +115,7 @@ Run the plan gate after generation. A non-zero exit code means at least one requ
 ```bash
 COMPOSE_PROJECT_NAME=medicine_ocr_finetuning docker compose run --rm ocr-finetune \
   audit-coverage \
-  --manifest /workspace/browser_ocr/finetune/work/synth-5k/manifest.json \
+  --manifest /artifacts/ocr/recognition/synth-5k/manifest.json \
   --minimum-per-stratum 300 --json
 ```
 
@@ -129,10 +129,10 @@ The first complete baseline uses the synthetic 5k corpus with a `drug_family` gr
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
 COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
   docker compose run --rm ocr-finetune-train baseline \
-  --pretrained-model /workspace/browser_ocr/finetune/work/upstream/korean_PP-OCRv5_mobile_rec_pretrained.pdparams \
-  --manifest /workspace/browser_ocr/finetune/work/synth-5k/manifest.json \
-  --export-dir /workspace/browser_ocr/finetune/work/synth-5k/paddle-drug \
-  --run-dir /workspace/browser_ocr/finetune/work/training/baseline-5k-e10-b32 \
+  --pretrained-model /artifacts/ocr/checkpoints/upstream/korean_PP-OCRv5_mobile_rec_pretrained.pdparams \
+  --manifest /artifacts/ocr/recognition/synth-5k/manifest.json \
+  --export-dir /artifacts/ocr/recognition/synth-5k/paddle-drug \
+  --run-dir /artifacts/ocr/training/baseline-5k-e10-b32 \
   --epochs 10 --batch-size 32 --json
 ```
 
@@ -156,20 +156,20 @@ COMPOSE_PROJECT_NAME=medicine_ocr_fixed_eval \
   --baseline-result /workspace/path/to/baseline-result.json \
   --expected-checkpoint-sha256 <sha256> \
   --manifest /workspace/path/to/views/recognition/manifest.json \
-  --run-dir /workspace/browser_ocr/finetune/work/fixed-eval/run-1 \
+  --run-dir /artifacts/ocr/evaluations/recognition/fixed-eval/run-1 \
   --minimum-required-count 32 --device gpu --json
 ```
 
 ## Selected-checkpoint full-document training views
 
-Full-document fine-tuning does not train directly from the raw materialized recognition view. `prepare-training-view` first derives a model-compatible, immutable training view using the pinned recognizer dictionary and `max_text_length`. Model-incompatible references are excluded from every split, while the explicit `degradation-hard-ood` signature is excluded from **train only** and may remain in validation/test for diagnostics. Train/validation/test membership is inherited from the parent document split and is never re-randomized. Retained images are hard-linked inside the current workspace, and the derived manifest records the source fingerprint, source split SHA-256, dictionary/model contract, filtering policy, exclusion counts, and resulting dataset fingerprint.
+Full-document fine-tuning does not train directly from the raw materialized recognition view. `prepare-training-view` first derives a model-compatible, immutable training view using the pinned recognizer dictionary and `max_text_length`. Model-incompatible references are excluded from every split, while the explicit `degradation-hard-ood` signature is excluded from **train only** and may remain in validation/test for diagnostics. Train/validation/test membership is inherited from the parent document split and is never re-randomized. Retained images are hard-linked when the source and derived view share the durable artifact filesystem, and the derived manifest records the source fingerprint, source split SHA-256, dictionary/model contract, filtering policy, exclusion counts, and resulting dataset fingerprint.
 
 ```bash
 COMPOSE_PROJECT_NAME=medicine_ocr_training_view \
   docker compose run --rm ocr-finetune-train prepare-training-view \
   --manifest /workspace/path/to/views/recognition/manifest.json \
   --split /workspace/path/to/views/recognition/document-split.json \
-  --output-dir /workspace/path/to/training-view \
+  --output-dir /artifacts/ocr/recognition/training-view \
   --json
 ```
 
@@ -178,17 +178,17 @@ The full-document-only experiment uses `selected-finetune`, which initializes `G
 ```bash
 COMPOSE_PROJECT_NAME=medicine_ocr_selected_finetune \
   docker compose run --rm \
-  -v /absolute/path/to/historical/training:/workspace/browser_ocr/finetune/work/training:ro \
+  -v /absolute/path/to/historical/training:/historical-training:ro \
   ocr-finetune-train selected-finetune \
-  --initial-baseline-result /workspace/browser_ocr/finetune/work/training/baseline-v5-100k-source-stable-e10-b32-lr1e4-w1/baseline-result.json \
+  --initial-baseline-result /historical-training/baseline-v5-100k-source-stable-e10-b32-lr1e4-w1/baseline-result.json \
   --expected-initial-checkpoint-sha256 <selected-100k-sha256> \
-  --manifest /workspace/path/to/training-view/manifest.json \
-  --export-dir /workspace/path/to/training-view/paddle \
-  --run-dir /workspace/path/to/full-document-only-run \
+  --manifest /artifacts/ocr/recognition/training-view/manifest.json \
+  --export-dir /artifacts/ocr/recognition/training-view/paddle \
+  --run-dir /artifacts/ocr/training/full-document-only \
   --epochs 4 --batch-size 32 --learning-rate 0.00005 --warmup-epochs 1 --json
 ```
 
-For the mixed experiment, `prepare-mixed-training-view` adds **only the exact historical 100k train split** to the new full-document train split. Validation and test remain exclusively from the new full-document corpus. The command fails unless the new corpus's `historical_exposure` metadata matches the supplied historical dataset fingerprint, train-split SHA-256, and train count. Historical images are copied because the authoritative corpus is normally a read-only Docker bind mount on a separate mount where hard-linking is not possible; new unified images are hard-linked from the current workspace. All ids, documents, and grouping keys are namespaced before combination.
+For the mixed experiment, `prepare-mixed-training-view` adds **only the exact historical 100k train split** to the new full-document train split. Validation and test remain exclusively from the new full-document corpus. The command fails unless the new corpus's `historical_exposure` metadata matches the supplied historical dataset fingerprint, train-split SHA-256, and train count. Historical images are copied because the authoritative corpus is normally a read-only Docker bind mount on a separate mount where hard-linking is not possible; new unified images are hard-linked within the durable artifact filesystem. All ids, documents, and grouping keys are namespaced before combination.
 
 ```bash
 COMPOSE_PROJECT_NAME=medicine_ocr_mixed_view \
@@ -197,9 +197,9 @@ COMPOSE_PROJECT_NAME=medicine_ocr_mixed_view \
   ocr-finetune-train prepare-mixed-training-view \
   --historical-manifest /historical/manifest.json \
   --historical-split /historical/paddle-source-stable-v1/split.json \
-  --unified-manifest /workspace/path/to/training-view/manifest.json \
-  --unified-export-dir /workspace/path/to/training-view/paddle \
-  --output-dir /workspace/path/to/mixed-training-view \
+  --unified-manifest /artifacts/ocr/recognition/training-view/manifest.json \
+  --unified-export-dir /artifacts/ocr/recognition/training-view/paddle \
+  --output-dir /artifacts/ocr/recognition/mixed-training-view \
   --json
 ```
 
@@ -211,15 +211,15 @@ The mixed output is passed to the same `selected-finetune` runner. This keeps th
 
 The command performs full-document detection, perspective-normalizes each quadrilateral into a recognition crop, and runs the selected Korean recognizer. The schema-v2 result contains raw OCR `regions` and `text_lines` only. Structured medication rows are the responsibility of the learned parser model, which is deliberately outside this OCR producer. The output profile pins detector, recognizer, cropper, runtime, and orchestration implementation hashes so parser experiments can reuse an unchanged OCR observation set without coupling to a parser implementation.
 
-Detector assets must already be present under the detection cache (the detection pipeline's `assets` command populates that cache). Generated crops, logs, state, and results should remain under ignored `browser_ocr/finetune/work/` paths.
+Detector assets must already be present under the detection cache (the detection pipeline's `assets` command populates that cache). Generated crops, logs, state, and results belong under `/artifacts/ocr/`, outside the Git worktree.
 
 ```bash
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
 COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
   docker compose run --rm ocr-full-document \
   --image /workspace/browser_ocr/detection/corpus/images/synthetic-000001.jpg \
-  --baseline-result /workspace/browser_ocr/finetune/work/training/baseline-v5-100k-source-stable-e10-b32-lr1e4-w1/baseline-result.json \
-  --output-dir /workspace/browser_ocr/finetune/work/full-document/synthetic-000001 \
+  --baseline-result /artifacts/ocr/training/baseline-v5-100k-source-stable-e10-b32-lr1e4-w1/baseline-result.json \
+  --output-dir /artifacts/ocr/runtime/full-document/synthetic-000001 \
   --json
 ```
 

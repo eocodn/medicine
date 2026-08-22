@@ -37,15 +37,15 @@ For detector fine-tuning, unified materialization also writes PaddleOCR-compatib
 
 ## Agent Control CLI
 
-All commands support machine-readable JSON output.
+All commands support machine-readable JSON output. Writable OCR Compose services mount host `~/dev/artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose deliberately refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory.
 
 ```sh
-docker compose run --rm ocr-corpus generate --output /tmp/ocr-corpus --count 360 --seed 153 --materialize --json
+docker compose run --rm ocr-corpus generate --output /artifacts/ocr/corpora/unified-360 --count 360 --seed 153 --materialize --json
 node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json
 node browser_ocr/detection/cli.mjs audit --corpus browser_ocr/detection/corpus/manifest.json --json
 node browser_ocr/detection/cli.mjs matrix --json
 node browser_ocr/detection/cli.mjs assets --output browser_ocr/detection/.cache/models --json
-node browser_ocr/detection/cli.mjs benchmark --output browser_ocr/detection/results/zero-shot --threads 1 --json
+docker compose run --rm ocr-detection-benchmark
 node browser_ocr/detection/cli.mjs evaluate --corpus /path/to/manifest.json --predictions /path/to/predictions.json --json
 ```
 

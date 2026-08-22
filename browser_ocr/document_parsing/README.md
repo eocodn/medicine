@@ -91,7 +91,7 @@ Unified corpus materialization creates these parser datasets automatically:
 
 The deterministic synthetic-OCR producer starts from canonical tight `natural_text_polygon` geometry, perturbs OCR observations (drop/split/merge/jitter/text/confidence/order/noise), and then labels them through the same tight-geometry alignment used for runtime OCR. It does not copy truth labels onto corrupted boxes blindly.
 
-Use the dataset Agent Control service directly when needed:
+Use the dataset Agent Control service directly when needed. Writable OCR/parser services mount host `~/dev/artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
 
 ```sh
 docker compose run --rm ocr-parser-data validate \
@@ -99,8 +99,8 @@ docker compose run --rm ocr-parser-data validate \
 
 docker compose run --rm ocr-parser-data build-runtime \
   --truth-samples /workspace/path/to/views/parsing/samples.jsonl \
-  --results-root /workspace/path/to/full-document-results \
-  --output-dir /workspace/path/to/parser-runtime-val \
+  --results-root /artifacts/ocr/runtime/full-document-results \
+  --output-dir /artifacts/parser/datasets/runtime-val \
   --dataset-id parser-runtime-val --split val --json
 ```
 
@@ -115,8 +115,8 @@ docker compose run --rm \
   -v /absolute/deidentified-corpus:/real:ro \
   ocr-parser-real \
   --source-manifest /real/manifest.json \
-  --baseline-result /workspace/path/to/baseline-result.json \
-  --output-dir /workspace/browser_ocr/finetune/work/parser-real-holdout \
+  --baseline-result /artifacts/ocr/training/selected/baseline-result.json \
+  --output-dir /artifacts/parser/real-holdout \
   --json
 ```
 
@@ -124,9 +124,9 @@ Human annotation assigns node roles/groups and image-level `gold_rows`, then exp
 
 ```sh
 docker compose run --rm ocr-parser-data finalize-real \
-  --annotations-dir /workspace/browser_ocr/finetune/work/parser-real-holdout/annotations \
+  --annotations-dir /artifacts/parser/real-holdout/annotations \
   --dataset-id parser-real-holdout-v1 \
-  --output-dir /workspace/browser_ocr/finetune/work/parser-real-final \
+  --output-dir /artifacts/parser/real-final \
   --json
 ```
 
