@@ -21,6 +21,7 @@ class ReferenceUpdaterTest {
 
     private class FakeDatabaseVerifier : ReferenceDatabaseVerifier {
         override fun verify(file: File, version: ReferenceVersion) = Unit
+        override fun verifyRuntimeCapabilities(file: File, version: ReferenceVersion) = Unit
     }
 
     private class FakeSource(

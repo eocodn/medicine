@@ -23,8 +23,46 @@ fn reference_db(label: &str) -> PathBuf {
     let path = common::temp_sqlite_path(label);
     let con = Connection::open(&path).expect("open reference fixture");
     con.execute_batch(
-        "CREATE TABLE products(item_seq TEXT PRIMARY KEY);\n\
-         INSERT INTO products(item_seq) VALUES('fixture');",
+        "CREATE TABLE products(
+             item_seq TEXT PRIMARY KEY,
+             product_name TEXT NOT NULL,
+             manufacturer TEXT,
+             ingredient_text TEXT,
+             dosage_form TEXT,
+             permit_date TEXT,
+             cancel_date TEXT,
+             cancel_name TEXT,
+             permit_status TEXT NOT NULL
+         );
+         CREATE TABLE product_search_documents(
+             item_seq TEXT PRIMARY KEY,
+             normalized_product_name TEXT NOT NULL,
+             normalized_manufacturer TEXT NOT NULL,
+             normalized_ingredient_names TEXT NOT NULL
+         );
+         CREATE VIRTUAL TABLE product_search_fts USING fts5(
+             searchable_text, tokenize='trigram', content=''
+         );
+         CREATE TABLE product_rules(
+             id INTEGER PRIMARY KEY,
+             item_seq TEXT NOT NULL,
+             category TEXT NOT NULL,
+             effect_name TEXT
+         );
+         CREATE TABLE product_criterion_links(
+             product_rule_id INTEGER NOT NULL,
+             criterion_rule_id INTEGER NOT NULL
+         );
+         INSERT INTO products VALUES(
+             'fixture','Fixture medicine','Fixture manufacturer','fixture','tablet',
+             '2020-01-01',NULL,NULL,'active'
+         );
+         INSERT INTO product_search_documents VALUES(
+             'fixture','fixture medicine','fixture manufacturer',char(10)||'fixture'||char(10)
+         );
+         INSERT INTO product_search_fts(rowid,searchable_text)
+         SELECT rowid,normalized_product_name||char(10)||normalized_manufacturer||normalized_ingredient_names
+         FROM product_search_documents;",
     )
     .expect("create products fixture");
     drop(con);
@@ -201,7 +239,7 @@ async fn local_http_adapter_serves_ui_and_routes_api_through_medicine_engine() {
         assert_eq!(response_json(response).await["detail"], "route not found");
     }
 
-    let unavailable_search = app
+    let search = app
         .oneshot(
             Request::builder()
                 .uri("/api/products?q=fixture")
@@ -210,11 +248,10 @@ async fn local_http_adapter_serves_ui_and_routes_api_through_medicine_engine() {
         )
         .await
         .expect("product response");
-    assert_eq!(unavailable_search.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(
-        response_json(unavailable_search).await["detail"],
-        "product search engine is not implemented"
-    );
+    assert_eq!(search.status(), StatusCode::OK);
+    let search_body = response_json(search).await;
+    assert_eq!(search_body["items"][0]["product_ref"], "fixture");
+    assert_eq!(search_body["has_more"], false);
 
     let con = Connection::open(&personal_db).expect("open initialized personal DB");
     assert_eq!(

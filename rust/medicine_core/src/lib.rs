@@ -32,6 +32,7 @@ mod profile_age;
 mod profile_safety;
 mod quantitative_safety;
 pub mod reference_artifacts;
+mod reference_capabilities;
 mod reference_db_verifier;
 mod reference_runtime;
 mod reference_semantics;
@@ -44,6 +45,9 @@ mod safety_time;
 pub mod web;
 
 pub use engine::{AccessClass, MedicineEngine};
+pub use reference_capabilities::{
+    verify_reference_runtime_capabilities, ReferenceRuntimeCapabilityError,
+};
 pub use reference_db_verifier::{
     verify_reference_database, ReferenceVerificationError, ReferenceVerificationReport,
 };

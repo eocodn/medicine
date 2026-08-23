@@ -21,13 +21,38 @@ fn temp_reference_db(label: &str) -> PathBuf {
              cancel_name TEXT,
              permit_status TEXT NOT NULL
          );
+         CREATE TABLE product_search_documents(
+             item_seq TEXT PRIMARY KEY,
+             normalized_product_name TEXT NOT NULL,
+             normalized_manufacturer TEXT NOT NULL,
+             normalized_ingredient_names TEXT NOT NULL
+         );
+         CREATE VIRTUAL TABLE product_search_fts USING fts5(
+             searchable_text, tokenize='trigram', content=''
+         );
+         CREATE TABLE product_rules(
+             id INTEGER PRIMARY KEY,
+             item_seq TEXT NOT NULL,
+             category TEXT NOT NULL,
+             effect_name TEXT
+         );
+         CREATE TABLE product_criterion_links(
+             product_rule_id INTEGER NOT NULL,
+             criterion_rule_id INTEGER NOT NULL
+         );
          INSERT INTO products(
              item_seq, product_name, manufacturer, ingredient_text, dosage_form,
              permit_date, cancel_date, cancel_name, permit_status
          ) VALUES(
              'fixture', 'Fixture medicine', 'Fixture manufacturer', 'fixture', 'tablet',
              '2020-01-01', NULL, NULL, 'active'
-         );",
+         );
+         INSERT INTO product_search_documents VALUES(
+             'fixture','fixture medicine','fixture manufacturer',char(10)||'fixture'||char(10)
+         );
+         INSERT INTO product_search_fts(rowid,searchable_text)
+         SELECT rowid,normalized_product_name||char(10)||normalized_manufacturer||normalized_ingredient_names
+         FROM product_search_documents;",
     )
     .expect("create reference fixture schema");
     drop(con);
@@ -98,11 +123,7 @@ fn product_search_parses_include_inactive_boolean_values() {
             &engine,
             &format!("/api/products?q=fixture&include_inactive={raw}"),
         );
-        assert_eq!(parsed["status"], 503, "boolean form {raw} should parse");
-        assert_eq!(
-            parsed["body"]["detail"],
-            "product search engine is not implemented"
-        );
+        assert_eq!(parsed["status"], 200, "boolean form {raw} should parse");
     }
 
     let invalid = response(&engine, "/api/products?q=fixture&include_inactive=maybe");
@@ -130,7 +151,7 @@ fn product_search_matches_python_query_decoding_and_integer_forms() {
         "/api/products?q=fixture&limit=%D9%A1",
     ] {
         let parsed = response(&engine, path);
-        assert_eq!(parsed["status"], 503, "{path}: {parsed}");
+        assert_eq!(parsed["status"], 200, "{path}: {parsed}");
     }
 
     let huge = response(
@@ -144,15 +165,33 @@ fn product_search_matches_python_query_decoding_and_integer_forms() {
 }
 
 #[test]
-fn valid_search_keeps_the_intentional_unavailable_engine_envelope() {
-    let reference = temp_reference_db("product-search-unavailable");
+fn valid_search_returns_paginated_results() {
+    let reference = temp_reference_db("product-search-results");
     let engine = MedicineEngine::new(Some(reference.as_path()), None, None);
 
     let result = response(&engine, "/api/products?q=fixture&limit=30");
-    assert_eq!(result["status"], 503);
+    assert_eq!(result["status"], 200, "{result}");
+    assert_eq!(result["body"]["items"][0]["product_ref"], "fixture");
+    assert_eq!(result["body"]["has_more"], false);
+    assert!(result["body"]["next_offset"].is_null());
+
+    fs::remove_file(reference).ok();
+}
+
+#[test]
+fn product_search_accepts_one_character_queries_and_offset() {
+    let reference = temp_reference_db("product-search-offset");
+    let engine = MedicineEngine::new(Some(reference.as_path()), None, None);
+
+    let one_char = response(&engine, "/api/products?q=f&limit=1&offset=0");
+    assert_eq!(one_char["status"], 200, "{one_char}");
+    assert_eq!(one_char["body"]["items"][0]["product_ref"], "fixture");
+
+    let invalid_offset = response(&engine, "/api/products?q=f&offset=-1");
+    assert_eq!(invalid_offset["status"], 400, "{invalid_offset}");
     assert_eq!(
-        result["body"]["detail"],
-        "product search engine is not implemented"
+        invalid_offset["body"]["detail"],
+        "offset must be a non-negative integer"
     );
 
     fs::remove_file(reference).ok();

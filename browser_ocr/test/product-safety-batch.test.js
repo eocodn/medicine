@@ -7,6 +7,7 @@ const assert = require("node:assert/strict");
 
 const index = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/index.html"), "utf8");
 const app = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/app.js"), "utf8");
+const productSearch = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/product-search.js"), "utf8");
 const prescription = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/prescription.js"), "utf8");
 const doseActions = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/dose-actions.js"), "utf8");
 const dialog = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/dialog.js"), "utf8");
@@ -64,8 +65,8 @@ test("bottom sheets implement modal focus and escape handling", () => {
 
 
 test("search result copy has a partial DUR coverage state", () => {
-  assert.match(app, /dur_coverage_status/);
-  assert.match(app, /DUR 일부 기준 확인 필요/);
+  assert.match(productSearch, /dur_coverage_status/);
+  assert.match(productSearch, /DUR 일부 기준 확인 필요/);
 });
 
 

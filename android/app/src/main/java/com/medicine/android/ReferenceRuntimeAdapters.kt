@@ -10,6 +10,11 @@ object ReferenceRuntimePolicy {
 class RustReferenceDatabaseVerifier : ReferenceDatabaseVerifier {
     override fun verify(file: File, version: ReferenceVersion) {
         ReferenceNativeCore.verifyDatabase(file, version)
+        ReferenceNativeCore.verifyRuntimeMaterialization(file)
+    }
+
+    override fun verifyRuntimeCapabilities(file: File, version: ReferenceVersion) {
+        ReferenceNativeCore.verifyRuntimeCapabilities(file)
     }
 }
 

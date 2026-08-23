@@ -9,6 +9,7 @@ from medicine_reference.mfds_sources import (
 )
 
 from medicine_canonical.dose_criteria import parse_daily_dose_threshold
+from medicine_canonical.product_search_documents import materialize_product_search_documents
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
 from medicine_canonical.source_policy import CANONICAL_SOURCE_POLICY
 from medicine_canonical.sources import DUR_ENDPOINTS, PERMIT_DATASET_KEY
@@ -320,6 +321,7 @@ def make_canonical_db(path: Path) -> None:
            ) VALUES(?,'duration_caution','','D-MFDS-Z','mfds_ingredient_code','fixture')""",
         (criterion_id,),
     )
+    materialize_product_search_documents(con, None)
     con.commit()
     con.close()
 

@@ -44,6 +44,7 @@ function productSearchContext() {
   vm.createContext(context);
   vm.runInContext(source("app-state.js"), context);
   vm.runInContext(source("app.js"), context);
+  vm.runInContext(source("product-search.js"), context);
   return { context, query, status, results };
 }
 
@@ -152,8 +153,39 @@ test("editing a query rejects an already in-flight search response", async () =>
 
   query.value = "씬지록신 25 ";
   vm.runInContext("invalidateProductSearch();", context);
-  resolveRequest([{ product_ref: "stale", product_name: "stale" }]);
+  resolveRequest({ items: [{ product_ref: "stale", product_name: "stale" }], has_more: false, next_offset: null });
 
   assert.equal(await pending, false);
   assert.equal(results.innerHTML, "");
+});
+
+test("product search appends the next offset page without reranking prior cards", async () => {
+  const { context, query, results } = productSearchContext();
+  const paths = [];
+  context.window.MedicineLocalApi = {
+    request(path) {
+      paths.push(path);
+      if (path.includes("offset=0")) {
+        return Promise.resolve({
+          items: [{ product_ref: "P1", product_name: "첫 제품", permit_status: "active" }],
+          has_more: true,
+          next_offset: 30,
+        });
+      }
+      return Promise.resolve({
+        items: [{ product_ref: "P2", product_name: "둘째 제품", permit_status: "active" }],
+        has_more: false,
+        next_offset: null,
+      });
+    },
+  };
+
+  assert.equal(await vm.runInContext("runDrugSearch()", context), true);
+  const requestId = vm.runInContext("state.searchRequestId", context);
+  assert.equal(await vm.runInContext(`loadMoreProductSearch(${JSON.stringify(query.value)}, ${requestId})`, context), true);
+  assert.match(results.innerHTML, /첫 제품/);
+  assert.match(results.innerHTML, /둘째 제품/);
+  assert.match(paths[0], /limit=30&offset=0/);
+  assert.match(paths[1], /limit=30&offset=30/);
+  assert.equal(vm.runInContext("state.searchHasMore", context), false);
 });

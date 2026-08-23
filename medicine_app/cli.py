@@ -163,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     search = sub.add_parser("drug-search")
     search.add_argument("term")
     search.add_argument("--limit", type=int, default=20)
+    search.add_argument("--offset", type=int, default=0)
     search.add_argument("--include-inactive", action="store_true")
     search.add_argument("--explain-matches", action="store_true")
     search.add_argument("--json", action="store_true")
@@ -358,7 +359,9 @@ def _dispatch_native(args) -> tuple[dict, bool]:
         query = urlencode({
             "q": args.term,
             "limit": args.limit,
+            "offset": args.offset,
             "include_inactive": "true" if args.include_inactive else "false",
+            "explain_matches": "true" if args.explain_matches else "false",
         })
         return _native_request(args, "GET", f"/api/products?{query}"), False
     if args.command == "meds":

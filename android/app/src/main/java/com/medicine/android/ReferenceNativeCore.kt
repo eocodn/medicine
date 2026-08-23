@@ -97,6 +97,14 @@ object ReferenceNativeCore {
         )
     }
 
+    fun verifyRuntimeCapabilities(file: File) {
+        nativeVerifyRuntimeCapabilities(file.absolutePath)
+    }
+
+    fun verifyRuntimeMaterialization(file: File) {
+        nativeVerifyRuntimeMaterialization(file.absolutePath)
+    }
+
     fun rebuildArtifact(
         current: InstalledReferenceVersion?,
         target: ReferenceVersion,
@@ -124,6 +132,9 @@ object ReferenceNativeCore {
         contractMajor: Long,
         datasetId: String,
     )
+
+    private external fun nativeVerifyRuntimeCapabilities(databasePath: String)
+    private external fun nativeVerifyRuntimeMaterialization(databasePath: String)
 
     private external fun nativeRebuildArtifact(
         sourcePath: String?,

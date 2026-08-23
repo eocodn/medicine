@@ -326,6 +326,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .camera-placeholder span { margin-right: 6px; }
 .search-status { padding: 14px 4px 8px; min-height: 40px; }
+.search-more-sentinel { min-height: 1px; }
 .result-card { padding: 15px 16px; }
 .result-card[data-product-select] { cursor: pointer; overflow: hidden; }
 .result-card[data-product-select]:focus-visible { outline: 3px solid rgba(33, 76, 53, .24); outline-offset: 2px; }
