@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     dashboard, doses, medication_list, medications, people, personal_schema, planning, preview,
-    prn, product_search,
+    prn, product_search, reference_capabilities,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -230,11 +230,13 @@ impl MedicineEngine {
         let Ok(con) = Connection::open_with_flags(path, flags) else {
             return false;
         };
-        con.query_row("SELECT EXISTS(SELECT 1 FROM products LIMIT 1)", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .map(|value| value != 0)
-        .unwrap_or(false)
+        let has_products = con
+            .query_row("SELECT EXISTS(SELECT 1 FROM products LIMIT 1)", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|value| value != 0)
+            .unwrap_or(false);
+        has_products && reference_capabilities::verify_product_search_schema(&con).is_ok()
     }
 }
 

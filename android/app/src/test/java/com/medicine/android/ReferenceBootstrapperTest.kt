@@ -24,6 +24,7 @@ class ReferenceBootstrapperTest {
         override fun verify(file: File, version: ReferenceVersion) {
             require(file.readBytes().contentEquals(TARGET_BYTES)) { "unexpected target bytes" }
         }
+        override fun verifyRuntimeCapabilities(file: File, version: ReferenceVersion) = Unit
     }
 
     private class FakeSource(

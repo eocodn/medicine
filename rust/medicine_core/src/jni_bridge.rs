@@ -155,6 +155,46 @@ pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeVerif
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeVerifyRuntimeCapabilities(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    database_path: JString<'_>,
+) {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let database_path = required_string(&mut env, database_path)?;
+        crate::verify_reference_runtime_capabilities(Path::new(&database_path))
+            .map_err(|error| error.to_string())
+    }))
+    .unwrap_or_else(|_| {
+        Err("native reference runtime capability verification panicked".to_owned())
+    });
+    if let Err(error) = result {
+        throw(&mut env, &error);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeVerifyRuntimeMaterialization(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    database_path: JString<'_>,
+) {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let database_path = required_string(&mut env, database_path)?;
+        crate::reference_capabilities::verify_reference_runtime_materialization(Path::new(
+            &database_path,
+        ))
+        .map_err(|error| error.to_string())
+    }))
+    .unwrap_or_else(|_| {
+        Err("native reference runtime materialization verification panicked".to_owned())
+    });
+    if let Err(error) = result {
+        throw(&mut env, &error);
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeVerifyManifest(
     mut env: JNIEnv<'_>,
     _this: JObject<'_>,

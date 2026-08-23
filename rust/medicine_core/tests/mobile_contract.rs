@@ -9,12 +9,46 @@ use std::path::PathBuf;
 fn temp_db(name: &str, with_product: bool) -> PathBuf {
     let path = common::temp_sqlite_path(name);
     let con = Connection::open(&path).expect("create sqlite fixture");
-    con.execute_batch("CREATE TABLE products(item_seq TEXT PRIMARY KEY);")
-        .expect("create products table");
+    con.execute_batch(
+        "CREATE TABLE products(item_seq TEXT PRIMARY KEY);
+         CREATE TABLE product_search_documents(
+             item_seq TEXT PRIMARY KEY,
+             normalized_product_name TEXT NOT NULL,
+             normalized_manufacturer TEXT NOT NULL,
+             normalized_ingredient_names TEXT NOT NULL
+         );
+         CREATE VIRTUAL TABLE product_search_fts USING fts5(
+             searchable_text, tokenize='trigram', content=''
+         );",
+    )
+    .expect("create products table");
     if with_product {
         con.execute("INSERT INTO products(item_seq) VALUES ('fixture')", [])
             .expect("insert product");
+        con.execute(
+            "INSERT INTO product_search_documents VALUES ('fixture','fixture','','')",
+            [],
+        )
+        .expect("insert search document");
+        con.execute(
+            "INSERT INTO product_search_fts(rowid,searchable_text)
+             SELECT rowid,normalized_product_name FROM product_search_documents",
+            [],
+        )
+        .expect("insert search accelerator row");
     }
+    drop(con);
+    path
+}
+
+fn legacy_temp_db(name: &str) -> PathBuf {
+    let path = common::temp_sqlite_path(name);
+    let con = Connection::open(&path).expect("create legacy sqlite fixture");
+    con.execute_batch(
+        "CREATE TABLE products(item_seq TEXT PRIMARY KEY);
+         INSERT INTO products(item_seq) VALUES ('fixture');",
+    )
+    .expect("create legacy products table");
     drop(con);
     path
 }
@@ -114,6 +148,7 @@ fn request_policy_matches_existing_mobile_contract() {
 fn health_reports_reference_and_catalog_state() {
     let populated = temp_db("populated", true);
     let empty = temp_db("empty", false);
+    let legacy = legacy_temp_db("legacy");
 
     let mut available = MedicineEngine::new(Some(populated.as_path()), None, None);
     let response: Value = serde_json::from_str(&available.request("GET", "/api/health", ""))
@@ -138,8 +173,15 @@ fn health_reports_reference_and_catalog_state() {
         .expect("empty health response json");
     assert_eq!(response["body"]["full_catalog"], false);
 
+    let legacy_engine = MedicineEngine::new(Some(legacy.as_path()), None, None);
+    let response: Value = serde_json::from_str(&legacy_engine.request("GET", "/api/health", ""))
+        .expect("legacy health response json");
+    assert_eq!(response["body"]["reference_available"], true);
+    assert_eq!(response["body"]["full_catalog"], false);
+
     fs::remove_file(populated).ok();
     fs::remove_file(empty).ok();
+    fs::remove_file(legacy).ok();
 }
 
 #[test]

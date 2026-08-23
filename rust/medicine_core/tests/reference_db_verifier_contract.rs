@@ -1,6 +1,8 @@
 mod common;
 
-use medicine_core::{verify_reference_database, ReferenceVerificationError};
+use medicine_core::{
+    verify_reference_database, verify_reference_runtime_capabilities, ReferenceVerificationError,
+};
 use rusqlite::Connection;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -103,6 +105,30 @@ fn reference_db(label: &str) -> PathBuf {
     path
 }
 
+fn add_product_search_capability(path: &Path) {
+    let con = Connection::open(path).expect("open reference search capability fixture");
+    con.execute_batch(
+        r#"
+        CREATE TABLE product_search_documents(
+            item_seq TEXT PRIMARY KEY,
+            normalized_product_name TEXT NOT NULL,
+            normalized_manufacturer TEXT NOT NULL,
+            normalized_ingredient_names TEXT NOT NULL
+        );
+        CREATE VIRTUAL TABLE product_search_fts USING fts5(
+            searchable_text, tokenize='trigram', content=''
+        );
+        INSERT INTO product_search_documents VALUES(
+            'P-1','fixture product','',char(10)||char(10)
+        );
+        INSERT INTO product_search_fts(rowid,searchable_text)
+        SELECT rowid,normalized_product_name||char(10)||normalized_manufacturer||normalized_ingredient_names
+        FROM product_search_documents;
+        "#,
+    )
+    .expect("add product search capability");
+}
+
 fn verify(
     path: &Path,
 ) -> Result<medicine_core::ReferenceVerificationReport, ReferenceVerificationError> {
@@ -117,6 +143,29 @@ fn verifier_returns_structured_verified_report_for_contract_v1_database() {
     assert_eq!(report.contract_major, CONTRACT_MAJOR);
     assert_eq!(report.dataset_id, DATASET_ID);
     assert!(report.size_bytes > 0);
+    fs::remove_file(path).ok();
+}
+
+#[test]
+fn runtime_capability_verifier_rejects_legacy_v1_without_product_search() {
+    let path = reference_db("reference-runtime-capability-legacy");
+    verify(&path).expect("legacy fixture remains valid contract v1");
+
+    let error = verify_reference_runtime_capabilities(&path)
+        .expect_err("current runtime must reject a reference without product search capability");
+    assert!(error.to_string().contains("product_search_documents"));
+
+    fs::remove_file(path).ok();
+}
+
+#[test]
+fn runtime_capability_verifier_accepts_current_product_search_layout() {
+    let path = reference_db("reference-runtime-capability-current");
+    add_product_search_capability(&path);
+
+    verify_reference_runtime_capabilities(&path)
+        .expect("current product search physical layout is runtime-capable");
+
     fs::remove_file(path).ok();
 }
 

@@ -131,6 +131,7 @@ class AtomicFileReferenceStateStorage(file: File) : ReferenceStateStorage {
 
 interface ReferenceDatabaseVerifier {
     fun verify(file: File, version: ReferenceVersion)
+    fun verifyRuntimeCapabilities(file: File, version: ReferenceVersion)
 }
 
 class ReferenceStore(
@@ -439,6 +440,10 @@ class ReferenceStore(
         if (version.contractMajor != expectedContractMajor) return StartupVerification(false)
         val file = fileFor(version)
         if (!file.isFile || file.length() != version.sizeBytes) return StartupVerification(false)
+        // A file seal proves that immutable bytes are unchanged, not that a newer
+        // APK still supports the old physical layout. Re-check the cheap runtime
+        // capability boundary on every startup before trusting the seal shortcut.
+        if (!isRuntimeCapabilityVerified(file, version)) return StartupVerification(false)
         val provider = fileSealProvider
         if (provider == null) return StartupVerification(isContentVerified(file, version))
 
@@ -475,6 +480,9 @@ class ReferenceStore(
         if (!isContentVerified(file, version)) return false
         return runCatching { databaseVerifier.verify(file, version) }.isSuccess
     }
+
+    private fun isRuntimeCapabilityVerified(file: File, version: ReferenceVersion): Boolean =
+        runCatching { databaseVerifier.verifyRuntimeCapabilities(file, version) }.isSuccess
 
     private fun writeState(state: ReferenceStoreState) {
         stateStorage.write(ReferenceStateCodec.encode(state))

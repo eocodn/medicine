@@ -210,6 +210,16 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         with closing(sqlite3.connect(self.mobile)) as con, con:
             self.assertEqual(logical_dataset_id(con), logical_dataset_id_oracle(con))
 
+    def test_default_physical_policy_uses_fast_logical_identity_when_layout_is_valid(self) -> None:
+        events: list[dict] = []
+        with closing(sqlite3.connect(self.mobile)) as con, con:
+            self.assertEqual(logical_dataset_id(con, progress=events.append), logical_dataset_id_oracle(con))
+
+        self.assertTrue(
+            any(event.get("phase") == "logical_identity_fast_setup" for event in events),
+            events,
+        )
+
     def test_fast_logical_dataset_identity_preserves_caller_transaction(self) -> None:
         with closing(sqlite3.connect(self.mobile)) as con, con:
             original = con.execute(

@@ -1,4 +1,5 @@
 use crate::canonical_products;
+use crate::reference_capabilities;
 use regex::Regex;
 use rusqlite::params;
 use serde_json::{json, Value};
@@ -172,17 +173,8 @@ fn fts_anchor(tokens: &[String]) -> Option<String> {
 
 fn search(canonical_db: Option<&Path>, query: &ParsedSearchQuery) -> Result<Value, SearchError> {
     let con = canonical_products::open(canonical_db).map_err(|_| SearchError::Unavailable)?;
-    let search_objects = con
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master \
-             WHERE type='table' AND name IN ('product_search_documents','product_search_fts')",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(|_| SearchError::Internal)?;
-    if search_objects != 2 {
-        return Err(SearchError::Unavailable);
-    }
+    reference_capabilities::verify_product_search_schema(&con)
+        .map_err(|_| SearchError::Unavailable)?;
 
     let tokens_json = serde_json::to_string(&query.tokens).map_err(|_| SearchError::Internal)?;
     let fts_query = fts_anchor(&query.tokens);

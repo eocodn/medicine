@@ -231,16 +231,6 @@ def logical_dataset_id_oracle(
     return f"sha256:{digest.hexdigest()}"
 
 
-def _physical_policy(database: sqlite3.Connection) -> str | None:
-    try:
-        row = database.execute(
-            "SELECT value FROM reference_build_meta WHERE key='physical_policy_version'"
-        ).fetchone()
-    except sqlite3.DatabaseError:
-        return None
-    return str(row[0]) if row else None
-
-
 def _fast_layout_is_valid(database: sqlite3.Connection) -> bool:
     required = {
         "mobile_product_rules",
@@ -256,8 +246,9 @@ def _fast_layout_is_valid(database: sqlite3.Connection) -> bool:
     }
     if names != required:
         return False
-    # Physical policy 8 assigns dictionary IDs in SQLite BINARY text order.
-    # Verify that invariant once before using integer IDs as exact text sort keys.
+    # Compact mobile layouts assign dictionary IDs in SQLite BINARY text order.
+    # Verify that invariant directly before using integer IDs as exact text sort
+    # keys instead of coupling the executor to a physical-policy version number.
     mismatch = database.execute(
         """SELECT 1 FROM (
                SELECT id,ROW_NUMBER() OVER (ORDER BY value) AS expected_id
@@ -275,9 +266,9 @@ def _decode(texts: dict[int, str], value: int | None) -> str | None:
     return None if value is None else texts[int(value)]
 
 
-# Policy 8 inserts mobile_rule_texts in SQLite BINARY order, so each non-NULL
-# dictionary ID is already the exact sort rank of its decoded text.  Keep the
-# fast executor read-only: logical_dataset_id() is valid inside caller-owned
+# Valid compact layouts insert mobile_rule_texts in SQLite BINARY order, so each
+# non-NULL dictionary ID is already the exact sort rank of its decoded text.
+# Keep the fast executor read-only: logical_dataset_id() is valid inside caller-owned
 # transactions and on PRAGMA query_only connections, so rank TEMP tables (and
 # especially executescript(), which commits pending work) are forbidden here.
 def _fast_product_rules(database: sqlite3.Connection, texts: dict[int, str]) -> Iterator[tuple]:
@@ -425,8 +416,11 @@ def logical_dataset_id(
     physical_policy_version: str | None = None,
     progress: Progress | None = None,
 ) -> str:
-    policy = physical_policy_version or _physical_policy(database)
-    if policy == "8" and _fast_layout_is_valid(database):
+    # physical_policy_version remains part of the exporter/build diagnostic API,
+    # but executor safety is a property of the database layout itself. A new
+    # policy may add unrelated physical objects without invalidating this layout.
+    _ = physical_policy_version
+    if _fast_layout_is_valid(database):
         return logical_dataset_id_fast(database, progress=progress)
     return logical_dataset_id_oracle(database, progress=progress)
 

@@ -34,9 +34,16 @@ class ReferenceStoreTest {
 
     private class FakeDatabaseVerifier : ReferenceDatabaseVerifier {
         var calls = 0
+        var runtimeCapabilityCalls = 0
+        var runtimeCapable = true
         override fun verify(file: File, version: ReferenceVersion) {
             calls += 1
             require(!file.readText().startsWith("invalid")) { "runtime database invalid" }
+        }
+
+        override fun verifyRuntimeCapabilities(file: File, version: ReferenceVersion) {
+            runtimeCapabilityCalls += 1
+            require(runtimeCapable) { "runtime capability unavailable" }
         }
     }
 
@@ -276,7 +283,7 @@ class ReferenceStoreTest {
     }
 
     @Test
-    fun establishedLkgUsesContentVerificationWithoutRepeatingRuntimeCheck() {
+    fun establishedLkgSkipsFullVerificationButChecksCurrentRuntimeCapability() {
         val root = Files.createTempDirectory("reference-store-lkg-fast").toFile()
         try {
             val storage = MemoryStateStorage()
@@ -288,10 +295,12 @@ class ReferenceStoreTest {
                 File(root, ".one.sqlite").apply { writeBytes(bytes) },
             )
             val callsAfterInstall = verifier.calls
+            val capabilityCallsAfterInstall = verifier.runtimeCapabilityCalls
 
             ReferenceStore(root, storage, verifier).openForStartup(1)
 
             assertEquals(callsAfterInstall, verifier.calls)
+            assertTrue(verifier.runtimeCapabilityCalls > capabilityCallsAfterInstall)
         } finally {
             root.deleteRecursively()
         }
@@ -316,6 +325,7 @@ class ReferenceStoreTest {
             store.installInitial(current, File(root, ".sealed.sqlite").apply { writeBytes(bytes) })
             val hashesAfterInstall = hasher.calls
             val verifierCallsAfterInstall = verifier.calls
+            val capabilityCallsAfterInstall = verifier.runtimeCapabilityCalls
 
             val reopened = ReferenceStore(
                 root,
@@ -326,6 +336,47 @@ class ReferenceStoreTest {
             ).openForStartup(1)
 
             assertEquals(current, reopened!!.version)
+            assertEquals(hashesAfterInstall, hasher.calls)
+            assertEquals(verifierCallsAfterInstall, verifier.calls)
+            assertTrue(verifier.runtimeCapabilityCalls > capabilityCallsAfterInstall)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun matchingVerifiedFileSealCannotBypassNewRuntimeCapabilityRequirement() {
+        val root = Files.createTempDirectory("reference-store-sealed-capability").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val verifier = FakeDatabaseVerifier()
+            val hasher = CountingContentHasher()
+            val bytes = "legacy-but-contract-valid".toByteArray()
+            val current = version(bytes, 3, "legacy-capability", contractMajor = 1)
+            val store = ReferenceStore(
+                root,
+                storage,
+                verifier,
+                fileSealProvider = TestFileSealProvider(),
+                contentHasher = hasher,
+            )
+            store.installInitial(
+                current,
+                File(root, ".legacy.sqlite").apply { writeBytes(bytes) },
+            )
+            val hashesAfterInstall = hasher.calls
+            val verifierCallsAfterInstall = verifier.calls
+            verifier.runtimeCapable = false
+
+            val reopened = ReferenceStore(
+                root,
+                storage,
+                verifier,
+                fileSealProvider = TestFileSealProvider(),
+                contentHasher = hasher,
+            ).openForStartup(1)
+
+            assertNull(reopened)
             assertEquals(hashesAfterInstall, hasher.calls)
             assertEquals(verifierCallsAfterInstall, verifier.calls)
         } finally {
