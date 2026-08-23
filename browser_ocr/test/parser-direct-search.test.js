@@ -94,7 +94,10 @@ test("parser result bypasses review and enters the generic product-search flow",
   assert.match(prescription, /pendingParserUncertaintyCodes/);
 });
 
-test("direct OCR worker no longer embeds a rule parser", () => {
+test("direct OCR worker delegates medication parsing to the learned graph runtime", () => {
   const worker = source("browser_ocr/src/direct-ocr-worker.js");
-  assert.match(worker, /parser_status:\s*"unavailable"/);
+  assert.match(worker, /runParserModel/);
+  assert.match(worker, /PARSER_ENABLED/);
+  assert.match(worker, /parser_status:\s*parserStatus/);
+  assert.doesNotMatch(worker, /function\s+(?:parseMedication|parsePrescription|inferMedicationRows)/);
 });

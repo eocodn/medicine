@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 
 from browser_ocr.document_parsing.document_graph import (
     PAGE_NODE_ID,
     GraphEncoderSpec,
     build_document_graph,
     graph_encoder_parameter_count,
+    relation_pair_features,
 )
 
 
@@ -60,6 +63,52 @@ def _document(nodes: list[dict[str, object]], relations: list[dict[str, str]] | 
 
 
 class DocumentGraphTest(unittest.TestCase):
+    def test_shared_js_graph_contract_fixture_matches_python_features(self) -> None:
+        fixture = json.loads(
+            (Path(__file__).parent / "fixtures" / "parser_graph_contract.json").read_text(encoding="utf-8")
+        )
+        nodes = [
+            {
+                "node_id": item["id"],
+                "text": item["text"],
+                "confidence": item["score"],
+                "polygon": item["poly"],
+                "target_region_ids": [],
+                "label_status": "unlabeled",
+                "semantic_role": None,
+                "association_group": None,
+            }
+            for item in fixture["items"]
+        ]
+        document = _document(nodes)
+        document["width"] = fixture["width"]
+        document["height"] = fixture["height"]
+        graph = build_document_graph(document, neighbor_count=fixture["neighbor_count"])
+
+        self.assertEqual([node.node_id for node in graph.nodes], fixture["node_ids"])
+        for actual, expected in zip(
+            [value for node in graph.nodes for value in node.features],
+            [value for node in fixture["node_features"] for value in node],
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual, expected, places=12)
+        self.assertEqual([[edge.source, edge.target] for edge in graph.edges], fixture["edge_index"])
+        for actual, expected in zip(
+            [value for edge in graph.edges for value in edge.features],
+            [value for edge in fixture["edge_features"] for value in edge],
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual, expected, places=12)
+        for pair in fixture["relation_pairs"]:
+            product_index = graph.node_index[pair["ids"][0]]
+            field_index = graph.node_index[pair["ids"][1]]
+            for actual, expected in zip(
+                relation_pair_features(graph, product_index, field_index),
+                pair["features"],
+                strict=True,
+            ):
+                self.assertAlmostEqual(actual, expected, places=12)
+
     def test_sparse_graph_is_bounded_and_every_ocr_node_has_page_context(self) -> None:
         nodes = [_node(f"n{index}", f"텍스트{index}", (index % 5) * 150, (index // 5) * 80) for index in range(20)]
         graph = build_document_graph(_document(nodes), neighbor_count=4)

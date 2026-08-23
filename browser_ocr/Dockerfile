@@ -6,6 +6,7 @@ COPY browser_ocr/package.json browser_ocr/package-lock.json ./
 COPY browser_ocr/THIRD_PARTY_NOTICES.md ./
 COPY browser_ocr/model-manifest.json ./
 COPY browser_ocr/runtime-layout.mjs ./
+COPY browser_ocr/parser-export-package.mjs ./
 COPY browser_ocr/fetch_assets.mjs ./
 COPY browser_ocr/export_runtime.mjs ./
 COPY browser_ocr/src ./src

@@ -157,6 +157,8 @@ docker compose run --rm ocr-parser-export-model \
   --json
 ```
 
+The shared browser/Android OCR worker already contains the learned-parser runtime contract, but parser activation is explicit at packaging time. `export_runtime.mjs` and `mobile/export_runtime.mjs` accept the verified parser export directory as an optional third argument. If it is omitted, the runtime manifest records `parser.enabled=false` and no parser model/manifest is packaged. If it is supplied, packaging verifies the export/model hashes and mobile architecture budget, copies `parser.onnx`, and derives a minimal deployment manifest containing only the graph/decoder/IO contract plus cryptographic source bindings. The absolute training-result path from the research export is deliberately not shipped. At inference time the worker releases the recognizer before loading the parser, verifies the parser ONNX SHA-256 with Web Crypto, runs one role pass and only then a second pass for confident product↔field candidate pairs, and fails closed instead of falling back to layout rules.
+
 Use the dataset Agent Control service directly when needed. Writable OCR/parser services mount host `~/dev/artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
 
 ```sh

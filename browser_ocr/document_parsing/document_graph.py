@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import math
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -13,6 +13,9 @@ TEXT_HASH_DIM = 64
 NODE_SCALAR_DIM = 17
 NODE_FEATURE_DIM = TEXT_HASH_DIM + NODE_SCALAR_DIM
 EDGE_FEATURE_DIM = 13
+_TEXT_HASH_PREFIX = b"med-graph\0"
+_FNV1A32_OFFSET = 2166136261
+_FNV1A32_PRIME = 16777619
 ROLE_LABELS = (
     "product",
     "product_label",
@@ -128,8 +131,10 @@ def _hash_text(text: str) -> list[float]:
     if not grams:
         return features
     for gram in grams:
-        digest = hashlib.blake2b(gram.encode("utf-8"), digest_size=8, person=b"med-graph").digest()
-        raw = int.from_bytes(digest, "big")
+        raw = _FNV1A32_OFFSET
+        for byte in _TEXT_HASH_PREFIX + gram.encode("utf-8"):
+            raw ^= byte
+            raw = (raw * _FNV1A32_PRIME) & 0xFFFFFFFF
         bucket = raw % TEXT_HASH_DIM
         features[bucket] += -1.0 if raw & (1 << 8) else 1.0
     norm = math.sqrt(sum(value * value for value in features)) or 1.0
@@ -187,7 +192,7 @@ def _node_features(
         min(width / max(height, 1e-9), 16.0) / 16.0,
         confidence,
         min(length / 64.0, 1.0),
-        _fraction(text, str.isdigit),
+        _fraction(text, lambda char: unicodedata.category(char) == "Nd"),
         _fraction(text, lambda char: "가" <= char <= "힣"),
         _fraction(text, str.isalpha),
         _fraction(text, str.isspace),

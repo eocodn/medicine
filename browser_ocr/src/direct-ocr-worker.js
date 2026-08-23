@@ -16,10 +16,19 @@ const {
   selectOrientation,
   splitHorizontalInkRanges,
 } = require("./direct-ocr-core.js");
-
 const DETECTION_MODEL = "/ocr-assets/models/detection.onnx";
 const RECOGNITION_MODEL = "/ocr-assets/models/korean-recognition.onnx";
 const RECOGNITION_DICTIONARY = "/ocr-assets/models/korean-recognition-dictionary.json";
+const PARSER_MODEL = "/ocr-assets/models/parser.onnx";
+const PARSER_MANIFEST = "/ocr-assets/models/parser-manifest.json";
+const PARSER_ENABLED = typeof __MEDICINE_PARSER_ENABLED__ !== "undefined"
+  && __MEDICINE_PARSER_ENABLED__ === true;
+let validateParserManifest = null;
+let runParserModel = null;
+if (PARSER_ENABLED) {
+  ({ validateParserManifest } = require("./parser-graph-core.js"));
+  ({ runParserModel } = require("./parser-runtime-core.js"));
+}
 const MAX_SOURCE_EDGE = 1280;
 const DETECTION_EDGE = 640;
 const RECOGNITION_HEIGHT = 48;
@@ -42,6 +51,7 @@ ort.env.wasm.proxy = false;
 let running = false;
 let detectionSession = null;
 let recognitionSession = null;
+let parserSession = null;
 
 function progress(value) {
   self.postMessage({ type: "progress", progress: value });
@@ -237,6 +247,34 @@ async function initializeRecognition() {
   });
 }
 
+async function initializeParser() {
+  if (!PARSER_ENABLED) return null;
+  const [manifestResponse, modelResponse] = await Promise.all([
+    fetch(PARSER_MANIFEST),
+    fetch(PARSER_MODEL),
+  ]);
+  if (!manifestResponse.ok) throw new Error(`Parser manifest HTTP ${manifestResponse.status}`);
+  if (!modelResponse.ok) throw new Error(`Parser model HTTP ${modelResponse.status}`);
+  const contract = validateParserManifest(await manifestResponse.json());
+  const modelBytes = await modelResponse.arrayBuffer();
+  if (!self.crypto?.subtle) throw new Error("Web Crypto is required to verify the parser model");
+  const digest = Array.from(new Uint8Array(await self.crypto.subtle.digest("SHA-256", modelBytes)))
+    .map((value) => value.toString(16).padStart(2, "0")).join("");
+  if (digest !== contract.modelSha256) throw new Error("Parser model SHA-256 differs from export manifest");
+  parserSession = await ort.InferenceSession.create(modelBytes, {
+    executionProviders: ["wasm"], graphOptimizationLevel: "all",
+  });
+  const expectedInputs = [
+    "node_features", "edge_index", "edge_features", "relation_index", "relation_features",
+  ];
+  const expectedOutputs = ["role_logits", "relation_logits"];
+  if (JSON.stringify(parserSession.inputNames) !== JSON.stringify(expectedInputs)
+      || JSON.stringify(parserSession.outputNames) !== JSON.stringify(expectedOutputs)) {
+    throw new Error("Parser ONNX session IO differs from the export manifest contract");
+  }
+  return contract;
+}
+
 async function detect(sourceCanvas) {
   const dimensions = detectionDimensions(sourceCanvas.width, sourceCanvas.height);
   const canvas = drawScaled(sourceCanvas, dimensions.width, dimensions.height);
@@ -352,9 +390,10 @@ async function canonicalizePageOrientation(sourceCanvas, boxes, dictionary) {
 }
 
 async function dispose() {
-  const sessions = [detectionSession, recognitionSession];
+  const sessions = [detectionSession, recognitionSession, parserSession];
   detectionSession = null;
   recognitionSession = null;
+  parserSession = null;
   await Promise.all(sessions.map((session) => session?.release()));
 }
 
@@ -384,15 +423,38 @@ async function recognize(image, includeItems = false) {
     ...item,
     id: `region-${String(index + 1).padStart(4, "0")}`,
   }));
+  const canonicalWidth = sourceCanvas.width;
+  const canonicalHeight = sourceCanvas.height;
+  await recognitionSession.release();
+  recognitionSession = null;
   sourceCanvas.width = 1;
   sourceCanvas.height = 1;
+  let parserStatus = "unavailable";
+  let rows;
+  if (PARSER_ENABLED) {
+    progress(94);
+    const parserContract = await initializeParser();
+    rows = await runParserModel(
+      parserSession,
+      ort,
+      parserContract,
+      items,
+      canonicalWidth,
+      canonicalHeight,
+    );
+    parserStatus = "ok";
+    await parserSession.release();
+    parserSession = null;
+    progress(98);
+  }
   await dispose();
   progress(100);
   self.postMessage({
     type: "result",
-    parser_status: "unavailable",
+    parser_status: parserStatus,
     region_count: items.length,
     orientation: canonical.orientation,
+    ...(rows ? { rows } : {}),
     ...(includeItems ? { items } : {}),
   });
 }

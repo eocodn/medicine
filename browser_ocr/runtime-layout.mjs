@@ -13,3 +13,22 @@ export const RUNTIME_FILES = Object.freeze([
 export const RUNTIME_PAYLOAD_FILES = Object.freeze(
   RUNTIME_FILES.filter((name) => name !== "runtime-manifest.json"),
 );
+
+export const PARSER_RUNTIME_FILES = Object.freeze([
+  "models/parser-manifest.json",
+  "models/parser.onnx",
+]);
+
+export function runtimePayloadFiles(includeParser = false) {
+  return Object.freeze([
+    ...RUNTIME_PAYLOAD_FILES,
+    ...(includeParser ? PARSER_RUNTIME_FILES : []),
+  ]);
+}
+
+export function runtimeFiles(includeParser = false) {
+  return Object.freeze([
+    ...runtimePayloadFiles(includeParser),
+    "runtime-manifest.json",
+  ]);
+}

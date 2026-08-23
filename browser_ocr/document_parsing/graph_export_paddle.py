@@ -15,6 +15,7 @@ import paddle
 from onnx import TensorProto, helper, numpy_helper
 
 from .document_graph import EDGE_FEATURE_DIM, NODE_FEATURE_DIM, ROLE_LABELS
+from .graph_decode import DecodeConfig
 from .graph_inference_paddle import load_graph_model
 
 
@@ -64,6 +65,7 @@ def _implementation_sha256() -> str:
     digest = hashlib.sha256()
     for source in (
         root / "document_graph.py",
+        root / "graph_decode.py",
         root / "graph_encoder_paddle.py",
         root / "graph_inference_paddle.py",
         Path(__file__).resolve(),
@@ -84,6 +86,18 @@ def _toolchain() -> dict[str, str | int]:
         "paddle": paddle.__version__,
         "ir_version": ONNX_IR_VERSION,
         "opset_version": OPSET_VERSION,
+    }
+
+
+def _decode_config() -> dict[str, float]:
+    config = DecodeConfig()
+    return {
+        "product_threshold": config.product_threshold,
+        "product_margin": config.product_margin,
+        "field_threshold": config.field_threshold,
+        "field_margin": config.field_margin,
+        "relation_threshold": config.relation_threshold,
+        "relation_margin": config.relation_margin,
     }
 
 
@@ -475,6 +489,8 @@ def _validate_completed(output: Path, expected_source_sha256: str) -> dict[str, 
         raise ValueError("parser export implementation differs from the completed artifact")
     if manifest.get("toolchain") != _toolchain():
         raise ValueError("parser export toolchain differs from the completed artifact")
+    if manifest.get("decode_config") != _decode_config():
+        raise ValueError("parser export decoder configuration differs from the completed artifact")
     model_path = output / str(manifest.get("model_file") or "")
     if not model_path.is_file() or manifest.get("model_sha256") != _sha256_file(model_path):
         raise ValueError("parser export model SHA-256 mismatch")
@@ -521,6 +537,7 @@ def export_graph_model(*, model_result: str | Path, output_dir: str | Path) -> d
                 "implementation_sha256": _implementation_sha256(),
                 "toolchain": _toolchain(),
                 "architecture": dict(architecture),
+                "decode_config": _decode_config(),
                 "parameter_count": int(result.get("parameter_count") or 0),
                 "inputs": io["inputs"],
                 "outputs": io["outputs"],

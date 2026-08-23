@@ -39,6 +39,7 @@ async function inspectSource() {
     recognizer_sha256_valid: sha256(recognizerBytes) === manifest.selected_recognizer.onnx_sha256
       && recognizerInfo.size === manifest.selected_recognizer.onnx_size_bytes,
     dictionary_sha256_valid: sha256(dictionaryBytes) === manifest.selected_recognizer.dictionary_sha256,
+    parser: { enabled: false },
     fixed_eval_critical_exact: manifest.selected_recognizer.fixed_eval_critical_exact,
     fixed_eval_product_unseen_exact: manifest.selected_recognizer.fixed_eval_product_unseen_exact,
   };
@@ -61,6 +62,7 @@ async function inspectRuntime(root) {
     scope: "runtime",
     model_id: manifest.model_id,
     selected_checkpoint_sha256: manifest.selected_checkpoint_sha256,
+    parser: manifest.parser ?? { enabled: false },
     runtime_files_valid: valid,
     file_count: Object.keys(files).length,
     files,

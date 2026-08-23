@@ -7,18 +7,23 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import yaml from "js-yaml";
-import { RUNTIME_FILES, RUNTIME_PAYLOAD_FILES } from "./runtime-layout.mjs";
+import { disabledParserBinding, loadParserExport } from "./parser-export-package.mjs";
+import { runtimeFiles, runtimePayloadFiles } from "./runtime-layout.mjs";
 
 const run = promisify(execFile);
-const [downloadDirectory, outputDirectory] = process.argv.slice(2);
+const [downloadDirectory, outputDirectory, parserExportDirectory] = process.argv.slice(2);
 if (!downloadDirectory || !outputDirectory) {
-  throw new Error("usage: node export_runtime.mjs DOWNLOAD_DIR OUTPUT_DIR");
+  throw new Error("usage: node export_runtime.mjs DOWNLOAD_DIR OUTPUT_DIR [PARSER_EXPORT_DIR]");
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
 const modelManifestPath = join(here, "model-manifest.json");
 const modelManifestBytes = await readFile(modelManifestPath);
 const modelManifest = JSON.parse(modelManifestBytes.toString("utf8"));
+const parserExport = await loadParserExport(parserExportDirectory);
+const parserEnabled = parserExport !== null;
+const payloadFiles = runtimePayloadFiles(parserEnabled);
+const finalFiles = runtimeFiles(parserEnabled);
 const detectionArchive = modelManifest.sources?.detection?.archive;
 const recognitionArchive = modelManifest.sources?.recognition?.archive;
 if (!detectionArchive || !recognitionArchive) {
@@ -81,6 +86,16 @@ try {
       { flag: "wx" },
     ),
   ]);
+  if (parserExport) {
+    await Promise.all([
+      writeFile(join(outputDirectory, "models/parser.onnx"), parserExport.modelBytes, { flag: "wx" }),
+      writeFile(
+        join(outputDirectory, "models/parser-manifest.json"),
+        parserExport.runtimeManifestBytes,
+        { flag: "wx" },
+      ),
+    ]);
+  }
 
   await build({
     entryPoints: [join(here, "src/direct-ocr-worker.js")],
@@ -89,11 +104,12 @@ try {
     platform: "browser",
     outfile: join(outputDirectory, "direct/ocr-worker.js"),
     logLevel: "silent",
+    define: { __MEDICINE_PARSER_ENABLED__: parserEnabled ? "true" : "false" },
   });
 
-  assertLayout(await listFiles(outputDirectory), RUNTIME_PAYLOAD_FILES, "payload");
+  assertLayout(await listFiles(outputDirectory), payloadFiles, "payload");
   const files = {};
-  for (const name of RUNTIME_PAYLOAD_FILES) {
+  for (const name of payloadFiles) {
     const absolute = join(outputDirectory, name);
     const bytes = await readFile(absolute);
     files[name] = { sha256: sha256(bytes), size_bytes: (await stat(absolute)).size };
@@ -103,6 +119,7 @@ try {
     model_id: modelManifest.model_id,
     source_manifest_sha256: sha256(modelManifestBytes),
     runtime: modelManifest.runtime,
+    parser: parserExport?.binding ?? disabledParserBinding(),
     files,
   };
   await writeFile(
@@ -110,7 +127,7 @@ try {
     `${JSON.stringify(runtimeManifest, null, 2)}\n`,
     { flag: "wx" },
   );
-  assertLayout(await listFiles(outputDirectory), RUNTIME_FILES, "final");
+  assertLayout(await listFiles(outputDirectory), finalFiles, "final");
   process.stdout.write(`${JSON.stringify(runtimeManifest)}\n`);
 } finally {
   await rm(unpackRoot, { recursive: true, force: true });

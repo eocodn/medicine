@@ -44,8 +44,19 @@ test("deployment export is an explicit runtime allowlist and excludes evaluation
     "runtime-manifest.json",
   ]);
   for (const name of layout.RUNTIME_FILES) assert.doesNotMatch(name, /(?:eval|corpus|report|fetch|package|test)/i);
+  assert.deepEqual([...layout.PARSER_RUNTIME_FILES].sort(), [
+    "models/parser-manifest.json",
+    "models/parser.onnx",
+  ]);
+  assert.deepEqual([...layout.runtimeFiles(true)].sort(), [
+    ...layout.RUNTIME_FILES.filter((name) => name !== "runtime-manifest.json"),
+    ...layout.PARSER_RUNTIME_FILES,
+    "runtime-manifest.json",
+  ].sort());
   const exporter = fs.readFileSync(path.join(OCR, "export_runtime.mjs"), "utf8");
-  assert.match(exporter, /RUNTIME_FILES/);
+  assert.match(exporter, /runtimeFiles/);
+  assert.match(exporter, /PARSER_EXPORT_DIR/);
+  assert.match(exporter, /__MEDICINE_PARSER_ENABLED__/);
 });
 
 test("checked-in model corpus has no patient data and declares model-level release gates", () => {
@@ -90,6 +101,7 @@ test("independent OCR Docker pipeline exposes separate eval and trimmed runtime 
   assert.match(dockerfile, /AS model-build/);
   assert.match(dockerfile, /AS eval/);
   assert.match(dockerfile, /FROM scratch AS runtime/);
+  assert.match(dockerfile, /COPY browser_ocr\/parser-export-package\.mjs/);
   assert.match(dockerfile, /COPY --from=model-build \/out \/ocr-assets/);
   const compose = fs.readFileSync(path.join(ROOT, "compose.yaml"), "utf8");
   assert.match(compose, /ocr-eval:/);
@@ -103,10 +115,12 @@ test("base product builder stays detached while local web and Android package th
   assert.doesNotMatch(baseDockerfile, /browser_ocr|browser-ocr|medicine-browser-ocr|export_runtime/);
   const webDockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile.web"), "utf8");
   assert.match(webDockerfile, /mobile\/export_runtime\.mjs \/downloads \/out/);
+  assert.match(webDockerfile, /COPY browser_ocr\/parser-export-package\.mjs/);
   assert.match(webDockerfile, /COPY --from=ocr-assets \/out \/opt\/medicine-ocr-assets/);
   assert.doesNotMatch(webDockerfile, /browser_ocr\/eval|finetune\/work|ocr-eval/);
   const androidDockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile.android"), "utf8");
   assert.match(androidDockerfile, /mobile\/export_runtime\.mjs/);
+  assert.match(androidDockerfile, /COPY browser_ocr\/parser-export-package\.mjs/);
   assert.match(androidDockerfile, /COPY --from=ocr-assets \/out \/opt\/medicine-ocr-assets/);
   assert.doesNotMatch(androidDockerfile, /browser_ocr\/eval|finetune\/work|ocr-eval/);
   const compose = fs.readFileSync(path.join(ROOT, "compose.yaml"), "utf8");
