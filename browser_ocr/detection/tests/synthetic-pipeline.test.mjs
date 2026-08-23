@@ -19,6 +19,7 @@ import {
 import { generateSyntheticCorpus } from "../synthetic.mjs";
 import { generationCheckpointInterval } from "../../corpus/generator.mjs";
 import { estimateRenderedTextBox } from "../synthetic_layouts.mjs";
+import { foregroundClutterArgs } from "../synthetic_raster.mjs";
 import { testDrugCatalog, testHistoricalDrugExposure } from "../../corpus/tests/fixtures.mjs";
 
 const TEST_DRUG_CATALOG = testDrugCatalog();
@@ -72,6 +73,15 @@ test("synthetic GT tracks rendered text extents rather than layout slot widths",
   const mixed = estimateRenderedTextBox("1회 투약량", 34);
   assert.ok(mixed.width > korean.width);
   assert.ok(mixed.width < 210);
+});
+
+test("foreground clutter is composed from recognizable margin-safe capture objects", () => {
+  const args = foregroundClutterArgs(12345, 1280, 1600);
+  const draws = args.flatMap((value, index) => args[index - 1] === "-draw" ? [value] : []);
+  assert.ok(draws.some((draw) => draw.startsWith("ellipse ")), "finger/nail clutter missing");
+  assert.ok(draws.some((draw) => draw.startsWith("polygon ")), "pen/card clutter missing");
+  assert.ok(draws.some((draw) => draw.startsWith("line ")), "receipt detail missing");
+  assert.ok(draws.every((draw) => !draw.startsWith("roundrectangle 0,")), "legacy abstract black bar returned");
 });
 
 test("legacy bag labels share the regimen association group with their values", async () => {

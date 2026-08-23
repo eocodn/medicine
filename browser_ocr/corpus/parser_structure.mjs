@@ -1,7 +1,7 @@
 import { DOCUMENT_HEIGHT, DOCUMENT_WIDTH, estimateRenderedTextBox } from "../detection/synthetic_layouts.mjs";
 import { LAYOUT_FAMILIES } from "../detection/synthetic_catalog.mjs";
 
-export const PARSER_STRUCTURE_REVISION = 3;
+export const PARSER_STRUCTURE_REVISION = 5;
 
 const TRAIN_VARIANTS = [
   "complete",
@@ -163,7 +163,29 @@ function ambiguousSpacing(regions) {
   const y1 = productY.get(groups[0]);
   const y2 = productY.get(groups[1]);
   if (!Number.isFinite(y1) || !Number.isFinite(y2)) return regions;
-  const targetY = (y1 + y2) / 2;
+  const moving = regions.filter((region) => (
+    region.association_group === first
+    && ["dose", "frequency", "duration"].includes(region.semantic_role)
+  ));
+  const otherMedication = regions.filter((region) => (
+    region.association_group !== "document"
+    && region.association_group !== first
+  ));
+  let targetY = y1 + (y2 - y1) * 0.48;
+  for (const source of moving) {
+    const sourceLeft = source.natural_text_box[0][0];
+    const sourceRight = source.natural_text_box[2][0];
+    const sourceHeight = source.natural_text_box[2][1] - source.natural_text_box[0][1];
+    const sourceTopOffset = source.natural_text_box[0][1] - source.text_origin[1];
+    for (const candidate of otherMedication) {
+      const candidateLeft = candidate.natural_text_box[0][0];
+      const candidateRight = candidate.natural_text_box[2][0];
+      if (sourceRight <= candidateLeft || sourceLeft >= candidateRight) continue;
+      const candidateTop = candidate.natural_text_box[0][1];
+      targetY = Math.min(targetY, candidateTop - sourceHeight - sourceTopOffset - 4);
+    }
+  }
+  targetY = Math.max(y1, targetY);
   return regions.map((region) => {
     if (region.association_group !== first || !["dose", "frequency", "duration"].includes(region.semantic_role)) return region;
     return moveRegion(region, 0, targetY - region.text_origin[1]);
@@ -175,6 +197,15 @@ function headerOnly(regions) {
     ["product", "product_label", "dose", "frequency", "duration", "instruction", "schedule"].includes(region.semantic_role)
     && region.association_group !== "document"
   ));
+}
+
+function reconcileDecorationState(layout, regions) {
+  const headerBand = layout.decoration_adaptations?.header_band;
+  if (!headerBand || regions.some((region) => region.semantic_role === "header")) return layout.decorations;
+  if (!layout.decorations.includes(headerBand.full)) {
+    throw new Error("header-band decoration adaptation does not match rendered layout");
+  }
+  return layout.decorations.replace(headerBand.full, headerBand.empty);
 }
 
 export function parserStructureVariantForSample(index, split, splitOrdinal = index) {
@@ -211,6 +242,7 @@ export function applyParserStructureVariant(layout, { index, split, splitOrdinal
   return {
     ...layout,
     regions,
+    decorations: reconcileDecorationState(layout, regions),
     parser_structure_variant: variant,
     scenario_tags: [...new Set([...layout.scenario_tags, `parser_structure_${variant}`])],
     risk_tags: [...new Set([

@@ -52,14 +52,113 @@ function perspectiveSpec(capture) {
   }).join(" ");
 }
 
-function overlayArgs(capture, appearance, width, height) {
-  const args = [];
-  if (appearance.background_profile === "pharmacy_counter") {
+function sceneRandom(seed) {
+  let state = seed >>> 0 || 1;
+  return () => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return (state >>> 0) / 0x100000000;
+  };
+}
+
+function backgroundArgs(appearance, width, height) {
+  const profile = appearance.background_profile;
+  const seed = appearance.texture_seed >>> 0;
+  const args = ["-size", `${width}x${height}`, `xc:${backgroundColor(profile)}`];
+  const noise = profile === "stone_speckle" ? 0.075 : profile === "wood_warm" ? 0.035 : 0.018;
+  args.push("-seed", String(seed), "-attenuate", String(noise), "+noise", "Gaussian");
+
+  if (profile === "wood_warm") {
+    const random = sceneRandom(seed ^ 0x6a09e667);
+    for (let row = 0; row < 18; row += 1) {
+      const y = Math.round((row + 0.4) * height / 18 + (random() * 2 - 1) * 22);
+      const bend1 = Math.round((random() * 2 - 1) * 26);
+      const bend2 = Math.round((random() * 2 - 1) * 24);
+      args.push(
+        "-stroke", row % 3 === 0 ? "rgba(55,31,19,0.24)" : "rgba(72,43,27,0.15)",
+        "-strokewidth", row % 4 === 0 ? "3" : "1.5",
+        "-fill", "none",
+        "-draw", `bezier 0,${y} ${Math.round(width * 0.34)},${y + bend1} ${Math.round(width * 0.68)},${y + bend2} ${width},${y + Math.round((random() * 2 - 1) * 15)}`,
+      );
+    }
     args.push(
-      "-fill", "rgba(255,255,255,0.16)", "-draw", `roundrectangle 20,55 ${Math.round(width * 0.24)},${Math.round(height * 0.18)} 24,24`,
-      "-fill", "rgba(30,70,90,0.12)", "-draw", `rectangle ${Math.round(width * 0.78)},35 ${width - 10},${Math.round(height * 0.13)}`,
+      "-stroke", "none", "-fill", "rgba(255,244,220,0.08)",
+      "-draw", `ellipse ${Math.round(width * 0.54)},${Math.round(height * 0.06)} ${Math.round(width * 0.45)},${Math.round(height * 0.13)} 0,360`,
+    );
+  } else if (profile === "stone_speckle") {
+    const random = sceneRandom(seed ^ 0xbb67ae85);
+    for (let dot = 0; dot < 95; dot += 1) {
+      const x = Math.round(random() * width);
+      const y = Math.round(random() * height);
+      const radius = 1 + Math.round(random() * 3);
+      const alpha = 0.12 + random() * 0.18;
+      args.push(
+        "-stroke", "none",
+        "-fill", random() < 0.58 ? `rgba(46,45,43,${alpha})` : `rgba(225,222,214,${alpha * 0.75})`,
+        "-draw", `circle ${x},${y} ${x + radius},${y}`,
+      );
+    }
+  } else if (profile === "pharmacy_counter") {
+    args.push(
+      "-stroke", "rgba(92,121,118,0.10)", "-strokewidth", "2", "-fill", "none",
+      "-draw", `line 0,${Math.round(height * 0.72)} ${width},${Math.round(height * 0.7)}`,
+      "-stroke", "none", "-fill", "rgba(255,255,255,0.09)",
+      "-draw", `ellipse ${Math.round(width * 0.18)},${Math.round(height * 0.08)} ${Math.round(width * 0.28)},${Math.round(height * 0.11)} 0,360`,
+    );
+  } else if (profile === "desk_dark") {
+    args.push(
+      "-stroke", "none", "-fill", "rgba(255,255,255,0.045)",
+      "-draw", `ellipse ${Math.round(width * 0.56)},${Math.round(height * 0.12)} ${Math.round(width * 0.6)},${Math.round(height * 0.18)} 0,360`,
     );
   }
+  return args;
+}
+
+export function foregroundClutterArgs(seed, width, height) {
+  const skinPalettes = [
+    ["#c99c7d", "#ddb69a", "#ead0ba"],
+    ["#b98266", "#d09d7f", "#e3bea5"],
+    ["#d2aa88", "#e2bea0", "#efd2bb"],
+  ];
+  const palette = skinPalettes[(seed >>> 0) % skinPalettes.length];
+  const fingerX = width + 22;
+  const fingerY = height - 82;
+  const cardLeft = width - 38;
+  const penTipY = Math.round(height * 0.39);
+  return [
+    // A partial receipt/card edge is a common camera-frame artifact. Keep it in
+    // the outermost margin so annotated medication text remains unobstructed.
+    "-fill", "rgba(25,28,31,0.18)", "-stroke", "none",
+    "-draw", `polygon ${cardLeft - 5},54 ${width},47 ${width},378 ${cardLeft + 2},388`,
+    "-fill", "rgba(242,239,228,0.94)", "-stroke", "rgba(130,126,117,0.48)", "-strokewidth", "1",
+    "-draw", `polygon ${cardLeft},49 ${width},42 ${width},370 ${cardLeft + 6},380`,
+    "-stroke", "rgba(105,105,100,0.34)", "-strokewidth", "1", "-fill", "none",
+    "-draw", `line ${cardLeft + 8},105 ${width},101`,
+    "-draw", `line ${cardLeft + 10},137 ${width},133`,
+    "-draw", `line ${cardLeft + 12},169 ${width},165`,
+    // A narrow pen entering from the left reads as an actual foreground object
+    // rather than the previous abstract vertical bar.
+    "-fill", "rgba(34,42,50,0.92)", "-stroke", "rgba(20,24,28,0.56)", "-strokewidth", "1",
+    "-draw", `polygon 0,${penTipY - 180} 12,${penTipY - 186} 42,${penTipY - 20} 28,${penTipY - 14}`,
+    "-fill", "rgba(185,190,194,0.92)", "-stroke", "none",
+    "-draw", `polygon 28,${penTipY - 14} 42,${penTipY - 20} 38,${penTipY + 9}`,
+    "-fill", "rgba(50,54,58,0.88)",
+    "-draw", `polygon 38,${penTipY + 9} 42,${penTipY - 20} 47,${penTipY + 4}`,
+    // Fingertip + nail/highlight: only the outer ~65 px enter the frame.
+    "-fill", palette[0], "-stroke", "rgba(110,76,60,0.24)", "-strokewidth", "1",
+    "-draw", `ellipse ${fingerX},${fingerY} 86,154 0,360`,
+    "-fill", palette[1], "-stroke", "none",
+    "-draw", `ellipse ${width - 19},${height - 112} 31,48 0,360`,
+    "-fill", palette[2],
+    "-draw", `ellipse ${width - 22},${height - 122} 19,31 0,360`,
+    "-fill", "rgba(255,245,235,0.16)",
+    "-draw", `ellipse ${width - 44},${height - 175} 24,62 0,360`,
+  ];
+}
+
+function overlayArgs(capture, appearance, width, height) {
+  const args = [];
   if (capture.shadow_opacity > 0) {
     const alpha = Math.round(capture.shadow_opacity * 255);
     args.push(
@@ -78,16 +177,7 @@ function overlayArgs(capture, appearance, width, height) {
     );
   }
   if (capture.profile === "cropped_clutter") {
-    // Foreground objects stay on document margins. Covering annotated medication text
-    // would turn detector misses into ambiguous labels rather than useful stress cases.
-    args.push(
-      "-fill", "rgba(205,165,135,0.88)",
-      "-draw", `ellipse ${width - 45},${height - 70} 145,230 0,360`,
-      "-fill", "rgba(45,48,52,0.9)",
-      "-draw", `roundrectangle 0,${Math.round(height * 0.18)} 42,${Math.round(height * 0.62)} 16,16`,
-      "-fill", "rgba(70,85,105,0.84)",
-      "-draw", `polygon ${width - 35},85 ${width},72 ${width},420 ${width - 18},430`,
-    );
+    args.push(...foregroundClutterArgs(appearance.texture_seed, width, height));
   }
   return args;
 }
@@ -101,8 +191,7 @@ export async function renderRasterJpeg({ sourceSvg, outputPath, capture, appeara
     const brightness = Math.round((capture.brightness - 1) * 100);
     const contrast = Math.round((capture.contrast - 1) * 100);
     const args = [
-      "-size", `${width}x${height}`,
-      `xc:${backgroundColor(appearance.background_profile)}`,
+      ...backgroundArgs(appearance, width, height),
       "(", sourcePath,
       "-alpha", "set",
       "-background", "none",

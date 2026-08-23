@@ -9,7 +9,7 @@ const MEDICATION_COUNT_RANGES = {
   classic_medication_bag: [2, 4],
   counseling_medication_bag: [3, 6],
   pharmacy_information_sheet: [6, 11],
-  pharmacy_guide_receipt_sidecar: [1, 1],
+  pharmacy_guide_receipt_sidecar: [1, 5],
 };
 
 function pick(values, random) {
@@ -59,13 +59,18 @@ function medicationSurface(index, position, product, layoutFamily) {
 function receiptEntries(index) {
   const amount = 4500 + (index % 4) * 1200;
   const total = amount + 12600;
+  const dispenseFee = 2200 + (index % 3) * 400;
+  const guidanceFee = 700 + (index % 2) * 300;
   return [
     { id: "prescription-number", label: "영수증번호", value: `202608${String(1000 + index).padStart(4, "0")}` },
     { id: "dispense-date", label: "조제일자", value: isoDate(index) },
     { id: "dispense-days", label: "투약일수", value: String(index % 2 ? 30 : 60) },
     { id: "drug-cost", label: "약제비", value: total.toLocaleString("en-US") },
+    { id: "dispense-fee", label: "조제료", value: dispenseFee.toLocaleString("en-US") },
+    { id: "guidance-fee", label: "복약지도료", value: guidanceFee.toLocaleString("en-US") },
     { id: "insurance-cost", label: "보험자부담금", value: (total - amount).toLocaleString("en-US") },
     { id: "patient-cost", label: "본인부담금", value: amount.toLocaleString("en-US") },
+    { id: "non-covered", label: "비급여", value: index % 3 === 0 ? "0" : (500 + index % 5 * 100).toLocaleString("en-US") },
     { id: "claim-count", label: "청구횟수", value: String(1 + (index % 3)) },
     { id: "pharmacy-code", label: "요양기관번호", value: String(12345670 + (index % 10)) },
   ];

@@ -4,7 +4,11 @@ import test from "node:test";
 import { LAYOUT_FAMILIES, PAGE_ROTATIONS } from "../synthetic_catalog.mjs";
 import { captureForSample } from "../synthetic_capture.mjs";
 import { buildDocumentTruth } from "../synthetic_document.mjs";
-import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH } from "../synthetic_layouts.mjs";
+import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH, renderLayoutRegions } from "../synthetic_layouts.mjs";
+import {
+  PHARMACY_GUIDE_STYLE_IDS,
+  pharmacyGuideStyleForIndex,
+} from "../synthetic_pharmacy_guide_styles.mjs";
 
 function seeded(seed) {
   let state = seed >>> 0 || 1;
@@ -72,6 +76,35 @@ test("receipt-sidecar layout derives medication truth and keeps accounting numer
   assert.ok(receiptRegions.every((region) => region.region_class === "distractor"));
   assert.ok(receiptRegions.some((region) => /^\d{1,3}(?:,\d{3})*$/u.test(region.text)));
   assert.ok(receiptRegions.some((region) => /^\d+$/u.test(region.text)));
+});
+
+test("receipt-sidecar cycles distinct real-print style families and medication-row densities", () => {
+  assert.equal(PHARMACY_GUIDE_STYLE_IDS.length, 5);
+  const observedStyles = new Set();
+  const observedMedicationCounts = new Set();
+  for (let index = 0; index < 35; index += 1) {
+    const random = seeded(900 + index);
+    const document = buildDocumentTruth(index, random, {
+      products: PRODUCTS,
+      layoutFamily: "pharmacy_guide_receipt_sidecar",
+    });
+    const layout = buildLayout(index, random, { document });
+    observedStyles.add(layout.visual_style);
+    observedMedicationCounts.add(document.medications.length);
+    assert.equal(layout.visual_style, pharmacyGuideStyleForIndex(index).id);
+    assert.ok(layout.scenario_tags.includes(`print_style_${layout.visual_style}`));
+    assert.match(layout.decorations, /medication-thumbnail/u);
+    assert.match(layout.decorations, /receipt-perforation/u);
+    assert.match(layout.decorations, /qr-distractor/u);
+    const headers = layout.regions.filter((region) => region.region_id.startsWith("guide-") && region.semantic_role === "header");
+    if (["blue_striped", "navy_dense_guide"].includes(layout.visual_style)) {
+      assert.ok(headers.length > 0);
+      assert.ok(headers.every((region) => region.text_fill === "#f7f9fb"));
+      assert.match(renderLayoutRegions(headers), /fill="#f7f9fb"/u);
+    }
+  }
+  assert.deepEqual(observedStyles, new Set(PHARMACY_GUIDE_STYLE_IDS));
+  assert.deepEqual(observedMedicationCounts, new Set([1, 2, 3, 4, 5]));
 });
 
 test("v6 capture cycle includes metadata-free right-angle full-page rotations", () => {

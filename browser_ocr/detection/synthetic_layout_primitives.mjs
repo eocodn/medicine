@@ -39,6 +39,7 @@ export function region(regionId, text, x, y, width, height, {
   semanticRole = "context",
   regionClass = "context",
   fontSize = 38,
+  textFill = null,
 } = {}) {
   const rendered = estimateRenderedTextBox(text, fontSize);
   const paddingX = Math.round(fontSize * 0.45);
@@ -59,6 +60,7 @@ export function region(regionId, text, x, y, width, height, {
     semantic_role: semanticRole,
     region_class: regionClass,
     font_size_px: fontSize,
+    ...(textFill ? { text_fill: textFill } : {}),
   };
 }
 
@@ -90,8 +92,9 @@ export function renderLayoutRegions(regions, printer = { profile: "laser_clean" 
   return regions.map((item) => {
     const [x, y] = item.text_origin || item.polygon[0];
     const baseline = y + Math.round(item.font_size_px * 0.82);
-    const primary = `<text x="${x}" y="${baseline}" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="${fill}">${escapeXml(item.text)}</text>`;
+    const itemFill = item.text_fill || fill;
+    const primary = `<text x="${x}" y="${baseline}" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="${itemFill}">${escapeXml(item.text)}</text>`;
     if (printer.profile !== "ink_bleed") return primary;
-    return `${primary}\n<text x="${x + 1.2}" y="${baseline + 0.7}" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="#303030" opacity="0.24">${escapeXml(item.text)}</text>`;
+    return `${primary}\n<text x="${x + 1.2}" y="${baseline + 0.7}" font-family="${fontFamily}" font-size="${item.font_size_px}" fill="${itemFill}" opacity="0.24">${escapeXml(item.text)}</text>`;
   }).join("\n");
 }

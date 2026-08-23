@@ -28,6 +28,12 @@ function semanticLayout(index, random, layoutFamily) {
   return buildLayout(index, random, { document });
 }
 
+function boxOverlap(a, b) {
+  const [a0, , a2] = a;
+  const [b0, , b2] = b;
+  return a0[0] < b2[0] && a2[0] > b0[0] && a0[1] < b2[1] && a2[1] > b0[1];
+}
+
 test("parser structure recipes are split-specific and train covers its recipe pool", () => {
   const train = new Set(PARSER_STRUCTURE_VARIANTS.train);
   const val = new Set(PARSER_STRUCTURE_VARIANTS.val);
@@ -66,6 +72,39 @@ test("product-only and numeric recipes alter document truth rather than parser p
   const numeric = applyParserStructureVariant(numericBase, { index: 13, split: "train", splitOrdinal: 7, random: numericRandom });
   assert.equal(numeric.parser_structure_variant, "numeric_cells");
   assert.ok(numeric.regions.filter((region) => ["dose", "frequency", "duration"].includes(region.semantic_role)).every((region) => /^\d+(?:\.\d+)?$/.test(region.text)));
+});
+
+test("ambiguous spacing stays association-hard without literal medication glyph collisions", () => {
+  const random = () => 0.99;
+  const base = semanticLayout(7, random, "pharmacy_guide_receipt_sidecar");
+  assert.ok(new Set(base.regions.filter((region) => region.semantic_role === "product").map((region) => region.association_group)).size >= 2);
+  const stressed = applyParserStructureVariant(base, { index: 7, split: "train", splitOrdinal: 9, random });
+  assert.equal(stressed.parser_structure_variant, "ambiguous_spacing");
+
+  const medication = stressed.regions.filter((region) => region.association_group !== "document" && [
+    "product", "dose", "frequency", "duration", "instruction",
+  ].includes(region.semantic_role));
+  for (let left = 0; left < medication.length; left += 1) {
+    for (let right = left + 1; right < medication.length; right += 1) {
+      if (medication[left].association_group === medication[right].association_group) continue;
+      assert.equal(
+        boxOverlap(medication[left].natural_text_box, medication[right].natural_text_box),
+        false,
+        `${medication[left].region_id} overlaps ${medication[right].region_id}`,
+      );
+    }
+  }
+});
+
+test("sidecar no-header stress removes the saturated header band with the text", () => {
+  const random = rng(61);
+  const base = semanticLayout(7, random, "pharmacy_guide_receipt_sidecar");
+  assert.match(base.decorations, /class="guide-header-band"/u);
+  const stressed = applyParserStructureVariant(base, { index: 7, split: "train", splitOrdinal: 6, random });
+  assert.equal(stressed.parser_structure_variant, "no_headers");
+  assert.equal(stressed.regions.some((region) => region.semantic_role === "header"), false);
+  assert.doesNotMatch(stressed.decorations, /class="guide-header-band"/u);
+  assert.match(stressed.decorations, /class="guide-header-band-empty"/u);
 });
 
 test("held-out recipes include fraction/partial-header and header-only negatives", () => {

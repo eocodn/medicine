@@ -4,6 +4,7 @@ import {
   region,
   scaledFont,
 } from "./synthetic_layout_primitives.mjs";
+import { buildPharmacyGuideReceiptSidecar } from "./synthetic_pharmacy_guide_styles.mjs";
 
 function instructionRegions(prefix, medication, x, y, fontSize, wrap) {
   if (!wrap) {
@@ -309,77 +310,6 @@ ${lines}`,
   };
 }
 
-function receiptSidecarRegions(document) {
-  const startX = 1010;
-  const labelX = 1025;
-  const valueX = 1160;
-  const startY = 190;
-  const rowGap = 68;
-  const regions = [
-    region("receipt-title", "약제비 계산서·영수증", 1025, 90, 225, 38, { semanticRole: "receipt", regionClass: "distractor", fontSize: 22 }),
-    region("receipt-patient", `성명 ${document.context.patient}`, 1025, 135, 220, 32, { semanticRole: "receipt", regionClass: "distractor", fontSize: 18 }),
-  ];
-  document.receipt.entries.forEach((entry, row) => {
-    const y = startY + row * rowGap;
-    regions.push(
-      region(`receipt-${entry.id}-label`, entry.label, labelX, y, 125, 30, { semanticRole: "receipt", regionClass: "distractor", fontSize: 17 }),
-      region(`receipt-${entry.id}-value`, entry.value, valueX, y, 105, 30, { semanticRole: "receipt", regionClass: "distractor", fontSize: 17 }),
-    );
-  });
-  return { regions, startX, startY, rowGap };
-}
-
-function pharmacyGuideReceiptSidecar(_index, random, document) {
-  const medication = document.medications[0];
-  const { context } = document;
-  const productFont = fittedFontSize(medication.product, scaledFont(random, 28, 0.1, 23), 340);
-  const sidecar = receiptSidecarRegions(document);
-  const regions = [
-    region("guide-brand", context.pharmacy, 55, 55, 350, 48, { semanticRole: "pharmacy", fontSize: 34 }),
-    region("guide-title", "복약안내", 710, 55, 220, 48, { semanticRole: "document_title", fontSize: 36 }),
-    region("guide-patient", `복약자 ${context.patient}`, 55, 130, 280, 34, { semanticRole: "patient", fontSize: 25 }),
-    region("guide-clinic", `처방 ${context.clinic}`, 360, 130, 320, 34, { semanticRole: "clinic", fontSize: 25 }),
-    region("guide-date", `조제 ${context.dispense_date}`, 700, 130, 260, 34, { semanticRole: "date", regionClass: "distractor", fontSize: 24 }),
-    region("guide-dose-label", "1회량", 545, 245, 90, 30, { semanticRole: "header", fontSize: 21 }),
-    region("guide-frequency-label", "횟수", 665, 245, 80, 30, { semanticRole: "header", fontSize: 21 }),
-    region("guide-duration-label", "일수", 785, 245, 80, 30, { semanticRole: "header", fontSize: 21 }),
-    region("guide-product-label", "처방약품명", 55, 245, 130, 30, { associationGroup: medication.id, semanticRole: "product_label", fontSize: 21 }),
-    region("guide-product", medication.product, 185, 245, 340, 38, { critical: true, associationGroup: medication.id, semanticRole: "product", regionClass: "medication", fontSize: productFont }),
-    region("guide-dose", medication.dose_text, 555, 245, 70, 34, { critical: true, associationGroup: medication.id, semanticRole: "dose", regionClass: "medication", fontSize: 24 }),
-    region("guide-frequency", medication.frequency_text, 680, 245, 60, 34, { critical: true, associationGroup: medication.id, semanticRole: "frequency", regionClass: "medication", fontSize: 24 }),
-    region("guide-duration", medication.duration_text, 800, 245, 60, 34, { critical: true, associationGroup: medication.id, semanticRole: "duration", regionClass: "medication", fontSize: 24 }),
-    region("guide-instruction", medication.instruction_text, 55, 340, 520, 36, { associationGroup: medication.id, semanticRole: "instruction", regionClass: "context", fontSize: 25 }),
-    region("guide-caution", "정해진 용법과 용량을 지켜 복용하세요. 이상반응이 있으면 약사와 상의하세요.", 55, 455, 800, 34, { semanticRole: "instruction", regionClass: "distractor", fontSize: 21 }),
-    region("guide-storage", "보관: 실온 · 직사광선을 피하여 보관", 55, 520, 500, 32, { semanticRole: "storage", regionClass: "distractor", fontSize: 20 }),
-    ...sidecar.regions,
-  ];
-  const ruledLines = Array.from({ length: 7 }, (_, row) => {
-    const y = 670 + row * 105;
-    return `<line x1="55" y1="${y}" x2="965" y2="${y}" stroke="#c9d3db" stroke-width="1"/>`;
-  }).join("\n");
-  const receiptRows = document.receipt.entries.map((_, row) => {
-    const y = sidecar.startY - 22 + row * sidecar.rowGap;
-    return `<line x1="1010" y1="${y}" x2="1260" y2="${y}" stroke="#9da6ad" stroke-width="1"/>`;
-  }).join("\n");
-  return {
-    layout_family: document.layout_family,
-    scenario_tags: ["medication_bag", "pharmacy_guide", "receipt_sidecar", "single_medication", "large_blank_body"],
-    risk_tags: ["small_text", "row_association", "column_association", "distractor_text", "numeric_distractor", "receipt_sidecar", "pictogram"],
-    regions,
-    decorations: `<rect x="30" y="25" width="1230" height="1535" rx="14" fill="#ffffff" stroke="#d4d9dd" stroke-width="2"/>
-<rect x="40" y="35" width="945" height="545" fill="#f9fbfc" stroke="#dce4e8"/>
-<rect x="1000" y="40" width="270" height="1490" fill="#f5f7f8" stroke="#79838b" stroke-width="1.5"/>
-<line x1="1135" y1="160" x2="1135" y2="760" stroke="#9da6ad" stroke-width="1"/>
-${receiptRows}
-${ruledLines}
-<g opacity="0.42">
-  <circle cx="165" cy="590" r="24" fill="#90a4ae"/><circle cx="230" cy="590" r="24" fill="#b0bec5"/>
-  <rect x="290" y="568" width="82" height="44" rx="22" fill="#90a4ae"/>
-  <path d="M410 612 q24 -50 48 0" stroke="#78909c" stroke-width="8" fill="none"/>
-</g>`,
-  };
-}
-
 const BUILDERS = {
   prescription_table: prescriptionTable,
   compact_prescription_form: compactPrescriptionForm,
@@ -387,7 +317,7 @@ const BUILDERS = {
   classic_medication_bag: classicMedicationBag,
   counseling_medication_bag: counselingMedicationBag,
   pharmacy_information_sheet: pharmacyInformationSheet,
-  pharmacy_guide_receipt_sidecar: pharmacyGuideReceiptSidecar,
+  pharmacy_guide_receipt_sidecar: buildPharmacyGuideReceiptSidecar,
 };
 
 export function buildLayoutFamily(index, random, document) {

@@ -51,6 +51,7 @@ export const REQUIRED_V6_AUGMENTATION_COMPONENTS = [
 export const MATERIAL_PROFILES = [
   "paper_plain",
   "paper_folded",
+  "paper_wrinkled",
   "plastic_wrinkled",
 ];
 
@@ -64,6 +65,8 @@ export const BACKGROUND_PROFILES = [
   "desk_light",
   "desk_dark",
   "pharmacy_counter",
+  "wood_warm",
+  "stone_speckle",
 ];
 
 export const REQUIRED_RISK_TAGS = [

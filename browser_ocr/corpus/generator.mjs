@@ -26,12 +26,13 @@ import {
 } from "../detection/synthetic_catalog.mjs";
 import { buildDocumentTruth, SYNTHETIC_DOCUMENT_MODEL_VERSION } from "../detection/synthetic_document.mjs";
 import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH, renderLayoutRegions } from "../detection/synthetic_layouts.mjs";
+import { PHARMACY_GUIDE_STYLE_IDS } from "../detection/synthetic_pharmacy_guide_styles.mjs";
 import { rasterizerIdentity, renderRasterJpeg } from "../detection/synthetic_raster.mjs";
 import { PARSER_STRUCTURE_REVISION, applyParserStructureVariant } from "./parser_structure.mjs";
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 6;
-const GENERATOR_REVISION = 2;
+const GENERATOR_REVISION = 5;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -98,6 +99,7 @@ async function configurationFingerprint({ seed, count, drugNamePolicy }) {
       material_profiles: MATERIAL_PROFILES,
       printer_profiles: PRINTER_PROFILES,
       background_profiles: BACKGROUND_PROFILES,
+      pharmacy_guide_styles: PHARMACY_GUIDE_STYLE_IDS,
       document_model_version: SYNTHETIC_DOCUMENT_MODEL_VERSION,
       tasks: TASKS,
       split_policy: { id: SPLIT_POLICY_ID, ratios: SPLIT_RATIOS },
@@ -120,7 +122,12 @@ async function fileDigest(path) {
 
 function renderSourceSvg(layout, appearance) {
   const regions = renderLayoutRegions(layout.regions, printerDescriptor(appearance.printer_profile));
-  const materialOverlay = renderMaterialOverlay(appearance.material_profile, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
+  const materialOverlay = renderMaterialOverlay(
+    appearance.material_profile,
+    DOCUMENT_WIDTH,
+    DOCUMENT_HEIGHT,
+    appearance.texture_seed,
+  );
   const printerOverlay = renderPrinterOverlay(appearance.printer_profile, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${DOCUMENT_WIDTH}" height="${DOCUMENT_HEIGHT}" viewBox="0 0 ${DOCUMENT_WIDTH} ${DOCUMENT_HEIGHT}">
 ${layout.decorations}
@@ -190,6 +197,7 @@ function buildSamplePlan(index, seed, drugAssignment) {
       drug_name_exposure: drugExposure(split),
       document_type: document.document_type,
       layout_family: layout.layout_family,
+      ...(layout.visual_style ? { visual_style: layout.visual_style } : {}),
       parser_structure_variant: layout.parser_structure_variant,
       capture_profile: capture.profile,
       augmentation_difficulty: capture.difficulty,
