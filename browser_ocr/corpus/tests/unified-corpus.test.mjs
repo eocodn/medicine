@@ -72,6 +72,10 @@ test("parallel unified rendering preserves the serial corpus and image hashes", 
       historicalDrugExposure: exposure, drugCatalog: catalog, renderConcurrency: 3,
     });
     assert.deepEqual(parallel, serial);
+    const cloned = validateUnifiedCorpus(serial);
+    assert.notStrictEqual(cloned, serial);
+    assert.deepEqual(cloned, serial);
+    assert.strictEqual(validateUnifiedCorpus(serial, { clone: false }), serial);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

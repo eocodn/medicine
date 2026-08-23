@@ -275,7 +275,7 @@ function buildCorpus({ seed, count, fingerprint, rasterizer, drugNamePolicy, sam
       max_split_errors: 0,
     },
     samples,
-  });
+  }, { clone: false });
 }
 
 function stateFor({ seed, count, fingerprint, rasterizer, samples = [] }) {
@@ -451,7 +451,7 @@ export async function generateUnifiedCorpus({
       if (existingManifest.generator?.fingerprint !== fingerprint) {
         throw new Error("generation configuration mismatch with completed corpus");
       }
-      const corpus = validateCorpus(existingManifest);
+      const corpus = validateCorpus(existingManifest, { clone: false });
       await verifyCheckpointImages(outputDir, corpus.samples);
       return corpus;
     }

@@ -207,7 +207,8 @@ function validateCapture(
   }
 }
 
-export function validateUnifiedCorpus(input) {
+export function validateUnifiedCorpus(input, { clone = true } = {}) {
+  if (typeof clone !== "boolean") fail("validation clone option must be boolean");
   if (!input || typeof input !== "object" || Array.isArray(input)) fail("root must be an object");
   if (![1, 2, 3].includes(input.schema_version)) fail("schema_version must be 1, 2 or 3");
   const enhancedSynthetic = input.schema_version >= 2;
@@ -311,7 +312,7 @@ export function validateUnifiedCorpus(input) {
     const leakage = observedDrugLeakageReport(input.samples);
     if (leakage.status !== "pass") fail(leakage.failures[0] || "drug-name leakage detected");
   }
-  return structuredClone(input);
+  return clone ? structuredClone(input) : input;
 }
 
 export const validateCorpus = validateUnifiedCorpus;

@@ -212,7 +212,10 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
   const corpusRoot = dirname(manifestPath);
   const output = resolve(outputDir);
   const corpusRaw = await readFile(manifestPath, "utf8");
-  const corpus = validateUnifiedCorpus(JSON.parse(corpusRaw));
+  // The materializer owns this freshly parsed object and never exposes it to callers.
+  // Avoid deep-cloning scale manifests here: a 4,200-document v6 corpus is hundreds
+  // of MiB on disk and the structuredClone copy can exceed Node's default V8 heap.
+  const corpus = validateUnifiedCorpus(JSON.parse(corpusRaw), { clone: false });
   if (corpus.schema_version !== 3) throw new Error("unified view materialization requires OCR corpus schema v3");
   const profile = {
     schema_version: 1,

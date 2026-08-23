@@ -29,7 +29,7 @@ function safePath(root, relativePath) {
 }
 
 async function loadCorpus(path) {
-  return validateUnifiedCorpus(JSON.parse(await readFile(path, "utf8")));
+  return validateUnifiedCorpus(JSON.parse(await readFile(path, "utf8")), { clone: false });
 }
 
 async function validateFiles(corpus, corpusPath) {
