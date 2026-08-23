@@ -2,6 +2,7 @@ import {
   BACKGROUND_PROFILES,
   MATERIAL_PROFILES,
   PRINTER_PROFILES,
+  SCENE_PROP_PROFILES,
 } from "./synthetic_catalog.mjs";
 
 export function appearanceForIndex(index) {
@@ -11,13 +12,15 @@ export function appearanceForIndex(index) {
   // strata. A small corpus must see every real-photo background family instead
   // of waiting for the full Cartesian product to roll over.
   const background_profile = BACKGROUND_PROFILES[Math.floor(index / 2) % BACKGROUND_PROFILES.length];
+  const scene_prop_profile = SCENE_PROP_PROFILES[Math.floor(index / 3) % SCENE_PROP_PROFILES.length];
   const texture_seed = Math.imul(index + 1, 2654435761) >>> 0;
   const risk_tags = [];
   if (material_profile === "paper_folded") risk_tags.push("material_fold");
   if (material_profile === "paper_wrinkled") risk_tags.push("material_wrinkle");
   if (material_profile === "plastic_wrinkled") risk_tags.push("plastic_reflection");
   if (printer_profile !== "laser_clean") risk_tags.push("printer_degradation");
-  return { material_profile, printer_profile, background_profile, texture_seed, risk_tags };
+  if (scene_prop_profile !== "none") risk_tags.push("scene_layering");
+  return { material_profile, printer_profile, background_profile, scene_prop_profile, texture_seed, risk_tags };
 }
 
 export function printerDescriptor(profile) {
@@ -35,7 +38,13 @@ export function renderMaterialOverlay(profile, width, height, seed = 0) {
     const firstY = Math.round(height * 0.36) + seededOffset(seed, 11, 28);
     const secondY = Math.round(height * 0.64) + seededOffset(seed, 29, 35);
     const verticalX = Math.round(width * 0.55) + seededOffset(seed, 47, 55);
-    return `<g pointer-events="none">
+    return `<defs>
+<linearGradient id="fold-h-${seed}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.42" stop-color="#3b3934" stop-opacity="0.13"/><stop offset="0.54" stop-color="#fff" stop-opacity="0.2"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="fold-v-${seed}" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.46" stop-color="#47443f" stop-opacity="0.08"/><stop offset="0.56" stop-color="#fff" stop-opacity="0.12"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+</defs><g pointer-events="none">
+<rect x="26" y="${firstY - 30}" width="${width - 52}" height="65" fill="url(#fold-h-${seed})" opacity="0.72"/>
+<rect x="26" y="${secondY - 32}" width="${width - 52}" height="70" fill="url(#fold-h-${seed})" opacity="0.64"/>
+<rect x="${verticalX - 24}" y="26" width="58" height="${height - 52}" fill="url(#fold-v-${seed})" opacity="0.52"/>
 <path d="M35 ${firstY - 7} Q${Math.round(width * 0.48)} ${firstY + 12} ${width - 35} ${firstY - 3}" stroke="#4c4a45" stroke-width="18" opacity="0.055" fill="none"/>
 <path d="M35 ${firstY + 3} Q${Math.round(width * 0.5)} ${firstY + 19} ${width - 35} ${firstY + 8}" stroke="#fff" stroke-width="9" opacity="0.18" fill="none"/>
 <path d="M38 ${secondY - 8} Q${Math.round(width * 0.51)} ${secondY + 15} ${width - 38} ${secondY - 5}" stroke="#4c4a45" stroke-width="20" opacity="0.06" fill="none"/>

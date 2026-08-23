@@ -69,6 +69,13 @@ export const BACKGROUND_PROFILES = [
   "stone_speckle",
 ];
 
+export const SCENE_PROP_PROFILES = [
+  "none",
+  "backing_sheet",
+  "loose_receipt",
+  "paper_stack",
+];
+
 export const REQUIRED_RISK_TAGS = [
   "small_text",
   "row_association",

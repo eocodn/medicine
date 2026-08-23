@@ -23,6 +23,7 @@ import {
   MATERIAL_PROFILES,
   PAGE_ROTATIONS,
   PRINTER_PROFILES,
+  SCENE_PROP_PROFILES,
 } from "../detection/synthetic_catalog.mjs";
 import { buildDocumentTruth, SYNTHETIC_DOCUMENT_MODEL_VERSION } from "../detection/synthetic_document.mjs";
 import { buildLayout, DOCUMENT_HEIGHT, DOCUMENT_WIDTH, renderLayoutRegions } from "../detection/synthetic_layouts.mjs";
@@ -32,7 +33,7 @@ import { PARSER_STRUCTURE_REVISION, applyParserStructureVariant } from "./parser
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 6;
-const GENERATOR_REVISION = 5;
+const GENERATOR_REVISION = 7;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -99,6 +100,7 @@ async function configurationFingerprint({ seed, count, drugNamePolicy }) {
       material_profiles: MATERIAL_PROFILES,
       printer_profiles: PRINTER_PROFILES,
       background_profiles: BACKGROUND_PROFILES,
+      scene_prop_profiles: SCENE_PROP_PROFILES,
       pharmacy_guide_styles: PHARMACY_GUIDE_STYLE_IDS,
       document_model_version: SYNTHETIC_DOCUMENT_MODEL_VERSION,
       tasks: TASKS,
@@ -204,6 +206,7 @@ function buildSamplePlan(index, seed, drugAssignment) {
       material_profile: appearance.material_profile,
       printer_profile: appearance.printer_profile,
       background_profile: appearance.background_profile,
+      scene_prop_profile: appearance.scene_prop_profile,
       capture: structuredClone(capture),
       scenario_tags: [...new Set(layout.scenario_tags)],
       risk_tags: [...new Set([...layout.risk_tags, ...capture.risk_tags, ...appearance.risk_tags])],

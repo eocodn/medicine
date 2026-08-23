@@ -11,6 +11,7 @@ import {
   REQUIRED_RISK_TAGS,
   REQUIRED_V6_AUGMENTATION_COMPONENTS,
   REQUIRED_V6_RISK_TAGS,
+  SCENE_PROP_PROFILES,
 } from "./synthetic_catalog.mjs";
 
 function counts(values) {
@@ -37,6 +38,7 @@ export function auditCoverage(corpus, {
   const materialCounts = counts(corpus.samples.map((sample) => sample.material_profile));
   const printerCounts = counts(corpus.samples.map((sample) => sample.printer_profile));
   const backgroundCounts = counts(corpus.samples.map((sample) => sample.background_profile));
+  const scenePropCounts = counts(corpus.samples.map((sample) => sample.scene_prop_profile));
   const riskCounts = counts(corpus.samples.flatMap((sample) => sample.risk_tags));
   const semanticCounts = counts(corpus.samples.flatMap((sample) => sample.regions.map((region) => region.semantic_role)));
   const classCounts = counts(corpus.samples.flatMap((sample) => sample.regions.map((region) => region.region_class)));
@@ -71,6 +73,11 @@ export function auditCoverage(corpus, {
   for (const profile of BACKGROUND_PROFILES) {
     if ((backgroundCounts[profile] || 0) < 1) failures.push(`background profile ${profile} < 1`);
   }
+  if (corpus.generator?.version >= 6 && corpus.generator?.revision >= 6) {
+    for (const profile of SCENE_PROP_PROFILES) {
+      if ((scenePropCounts[profile] || 0) < 1) failures.push(`scene prop profile ${profile} < 1`);
+    }
+  }
   for (const risk of REQUIRED_RISK_TAGS) {
     if ((riskCounts[risk] || 0) < minimumPerRisk) failures.push(`risk tag ${risk} < ${minimumPerRisk}`);
   }
@@ -101,6 +108,7 @@ export function auditCoverage(corpus, {
     material_profiles: sortedEntries(materialCounts),
     printer_profiles: sortedEntries(printerCounts),
     background_profiles: sortedEntries(backgroundCounts),
+    scene_prop_profiles: sortedEntries(scenePropCounts),
     risk_tags: riskCounts,
     semantic_roles: semanticCounts,
     critical_semantic_roles: criticalSemanticCounts,

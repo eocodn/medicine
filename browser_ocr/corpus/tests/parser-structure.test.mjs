@@ -96,6 +96,20 @@ test("ambiguous spacing stays association-hard without literal medication glyph 
   }
 });
 
+test("sidecar regimen distractor is anchored with receipt numerics instead of floating in blank body", () => {
+  const random = rng(59);
+  const base = semanticLayout(48, random, "pharmacy_guide_receipt_sidecar");
+  const stressed = applyParserStructureVariant(base, { index: 48, split: "train", splitOrdinal: 8, random });
+  assert.equal(stressed.parser_structure_variant, "regimen_distractor");
+  const distractor = stressed.regions.find((region) => region.region_id.endsWith("-parser-distractor"));
+  assert.ok(distractor);
+  const receiptValues = base.regions.filter((region) => region.region_id.startsWith("receipt-") && region.region_id.endsWith("-value"));
+  assert.ok(receiptValues.length > 0);
+  const receiptX = receiptValues[0].text_origin[0];
+  assert.ok(Math.abs(distractor.text_origin[0] - receiptX) < 8);
+  assert.ok(distractor.text_origin[1] > Math.max(...base.regions.filter((region) => region.region_id.startsWith("receipt-")).map((region) => region.text_origin[1])));
+});
+
 test("sidecar no-header stress removes the saturated header band with the text", () => {
   const random = rng(61);
   const base = semanticLayout(7, random, "pharmacy_guide_receipt_sidecar");

@@ -94,13 +94,22 @@ test("receipt-sidecar cycles distinct real-print style families and medication-r
     assert.equal(layout.visual_style, pharmacyGuideStyleForIndex(index).id);
     assert.ok(layout.scenario_tags.includes(`print_style_${layout.visual_style}`));
     assert.match(layout.decorations, /medication-thumbnail/u);
+    assert.match(layout.decorations, /pill-shadow/u);
+    assert.match(layout.decorations, /thumbnail-grain/u);
     assert.match(layout.decorations, /receipt-perforation/u);
     assert.match(layout.decorations, /qr-distractor/u);
+    assert.match(layout.decorations, /guide-lower-(?:schedule|warning)-panel/u);
+    assert.ok(layout.regions.some((region) => region.region_id.startsWith("guide-lower-")));
     const headers = layout.regions.filter((region) => region.region_id.startsWith("guide-") && region.semantic_role === "header");
     if (["blue_striped", "navy_dense_guide"].includes(layout.visual_style)) {
       assert.ok(headers.length > 0);
       assert.ok(headers.every((region) => region.text_fill === "#f7f9fb"));
       assert.match(renderLayoutRegions(headers), /fill="#f7f9fb"/u);
+    }
+    if (layout.visual_style === "navy_dense_guide") {
+      const lowerTitle = layout.regions.find((region) => region.region_id === "guide-lower-title");
+      assert.equal(lowerTitle?.text_fill, "#f7f9fb");
+      assert.match(renderLayoutRegions([lowerTitle]), /fill="#f7f9fb"/u);
     }
   }
   assert.deepEqual(observedStyles, new Set(PHARMACY_GUIDE_STYLE_IDS));

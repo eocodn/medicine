@@ -115,6 +115,68 @@ function backgroundArgs(appearance, width, height) {
   return args;
 }
 
+export function scenePropArgs(appearance, width, height) {
+  const profile = appearance.scene_prop_profile || "none";
+  if (profile === "none") return [];
+  const random = sceneRandom((appearance.texture_seed ^ 0x3c6ef372) >>> 0);
+  const drift = () => Math.round((random() * 2 - 1) * 10);
+  const args = [];
+  const addPaper = (points, fill, shadowOffset = 7) => {
+    const shadow = points.map(([x, y]) => `${x + shadowOffset},${y + shadowOffset}`).join(" ");
+    const polygon = points.map(([x, y]) => `${x},${y}`).join(" ");
+    args.push(
+      "-stroke", "none", "-fill", "rgba(24,22,20,0.16)", "-draw", `polygon ${shadow}`,
+      "-stroke", "rgba(120,116,108,0.42)", "-strokewidth", "1", "-fill", fill, "-draw", `polygon ${polygon}`,
+    );
+  };
+  if (profile === "backing_sheet") {
+    addPaper([[12, 38], [width - 52, 20 + drift()], [width - 20, height - 56], [38, height - 20]], "rgba(238,237,231,0.96)");
+    for (let row = 0; row < 4; row += 1) {
+      const y = Math.round(height * 0.79) + row * 34 + drift();
+      args.push("-stroke", "rgba(115,118,118,0.18)", "-strokewidth", "1", "-fill", "none", "-draw", `line 70,${y} ${width - 80},${y + drift()}`);
+    }
+  } else if (profile === "loose_receipt") {
+    const left = Math.round(width * 0.76) + drift();
+    addPaper([[left, Math.round(height * 0.5)], [width - 8, Math.round(height * 0.47) + drift()], [width - 16, height - 28], [left - 32, height - 6]], "rgba(241,237,224,0.97)", 9);
+    for (let row = 0; row < 10; row += 1) {
+      const y = Math.round(height * 0.55) + row * 48;
+      args.push("-stroke", "rgba(80,78,72,0.26)", "-strokewidth", row % 4 === 0 ? "1.4" : "1", "-fill", "none", "-draw", `line ${left - 8},${y} ${width - 30},${y + drift()}`);
+    }
+  } else if (profile === "paper_stack") {
+    addPaper([[28, 46], [width - 88, 22], [width - 38, height - 82], [18, height - 46]], "rgba(225,226,222,0.95)", 10);
+    addPaper([[54, 28], [width - 34, 54], [width - 68, height - 30], [42, height - 74]], "rgba(247,244,236,0.97)", 6);
+    for (let row = 0; row < 5; row += 1) {
+      const y = 70 + row * 28;
+      args.push("-stroke", "rgba(104,110,116,0.16)", "-strokewidth", "1", "-fill", "none", "-draw", `line 82,${y} ${Math.round(width * 0.46)},${y + drift()}`);
+    }
+  } else {
+    throw new Error(`unsupported scene prop profile: ${profile}`);
+  }
+  return args;
+}
+
+export function documentCastShadowArgs(sourcePath, capture, appearance, width, height) {
+  const random = sceneRandom((appearance.texture_seed ^ 0xa54ff53a) >>> 0);
+  const opacity = 24 + Math.round(random() * 14);
+  const sigma = 5 + Math.round(random() * 5);
+  const offsetX = 3 + Math.round(random() * Math.max(4, width * 0.005));
+  const offsetY = 5 + Math.round(random() * Math.max(6, height * 0.005));
+  return [
+    "(", sourcePath,
+    "-alpha", "set",
+    "-background", "none",
+    "-virtual-pixel", "transparent",
+    "-distort", "Perspective", perspectiveSpec(capture),
+    "-background", "black",
+    "-shadow", `${opacity}x${sigma}+${offsetX}+${offsetY}`,
+    "+repage",
+    ")",
+    "-gravity", "northwest",
+    "-compose", "over",
+    "-composite",
+  ];
+}
+
 export function foregroundClutterArgs(seed, width, height) {
   const skinPalettes = [
     ["#c99c7d", "#ddb69a", "#ead0ba"],
@@ -157,17 +219,19 @@ export function foregroundClutterArgs(seed, width, height) {
   ];
 }
 
-function overlayArgs(capture, appearance, width, height) {
+export function cameraOverlayArgs(capture, appearance, width, height) {
   const args = [];
   if (capture.shadow_opacity > 0) {
     const alpha = Math.round(capture.shadow_opacity * 255);
     args.push(
+      "-stroke", "none",
       "-fill", `rgba(20,20,20,${alpha / 255})`,
       "-draw", `polygon 15,${height - 95} ${Math.round(width * 0.45)},${height - 35} ${width - 5},${height - 120} ${width - 5},${height} 15,${height}`,
     );
   }
   if (capture.glare_opacity > 0) {
     args.push(
+      "-stroke", "none",
       "-fill", `rgba(255,255,255,${capture.glare_opacity})`,
       "-draw", `ellipse ${Math.round(width * 0.73)},${Math.round(height * 0.34)} 300,125 0,360`,
       "-stroke", `rgba(255,255,255,${Math.min(0.22, capture.glare_opacity)})`,
@@ -192,6 +256,8 @@ export async function renderRasterJpeg({ sourceSvg, outputPath, capture, appeara
     const contrast = Math.round((capture.contrast - 1) * 100);
     const args = [
       ...backgroundArgs(appearance, width, height),
+      ...scenePropArgs(appearance, width, height),
+      ...documentCastShadowArgs(sourcePath, capture, appearance, width, height),
       "(", sourcePath,
       "-alpha", "set",
       "-background", "none",
@@ -202,7 +268,7 @@ export async function renderRasterJpeg({ sourceSvg, outputPath, capture, appeara
       "-compose", "over",
       "-composite",
     ];
-    args.push(...overlayArgs(capture, appearance, width, height));
+    args.push(...cameraOverlayArgs(capture, appearance, width, height));
     if (brightness !== 0 || contrast !== 0) args.push("-brightness-contrast", `${brightness}x${contrast}`);
     if (capture.red_gain !== 1) args.push("-channel", "R", "-evaluate", "multiply", String(capture.red_gain), "+channel");
     if (capture.blue_gain !== 1) args.push("-channel", "B", "-evaluate", "multiply", String(capture.blue_gain), "+channel");

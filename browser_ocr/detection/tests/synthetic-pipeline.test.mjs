@@ -15,11 +15,12 @@ import {
   MATERIAL_PROFILES,
   PRINTER_PROFILES,
   REQUIRED_AUGMENTATION_COMPONENTS,
+  SCENE_PROP_PROFILES,
 } from "../synthetic_catalog.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
 import { generationCheckpointInterval } from "../../corpus/generator.mjs";
 import { estimateRenderedTextBox } from "../synthetic_layouts.mjs";
-import { foregroundClutterArgs } from "../synthetic_raster.mjs";
+import { cameraOverlayArgs, documentCastShadowArgs, foregroundClutterArgs, scenePropArgs } from "../synthetic_raster.mjs";
 import { testDrugCatalog, testHistoricalDrugExposure } from "../../corpus/tests/fixtures.mjs";
 
 const TEST_DRUG_CATALOG = testDrugCatalog();
@@ -84,6 +85,32 @@ test("foreground clutter is composed from recognizable margin-safe capture objec
   assert.ok(draws.every((draw) => !draw.startsWith("roundrectangle 0,")), "legacy abstract black bar returned");
 });
 
+test("document scene adds source-shaped cast shadow and explicit layered paper props", () => {
+  const capture = {
+    source_corners: [[0, 0], [1280, 0], [1280, 1600], [0, 1600]],
+    destination_corners: [[36, 42], [1244, 18], [1258, 1560], [28, 1580]],
+  };
+  const shadow = documentCastShadowArgs("/tmp/source.svg", capture, { texture_seed: 12345 }, 1280, 1600);
+  assert.ok(shadow.includes("-shadow"));
+  assert.ok(shadow.some((value) => /^\d+x\d+(?:\.\d+)?[+-]\d+[+-]\d+$/u.test(value)), "shadow geometry is not explicit");
+
+  for (const profile of SCENE_PROP_PROFILES.filter((value) => value !== "none")) {
+    const args = scenePropArgs({ scene_prop_profile: profile, texture_seed: 98765 }, 1280, 1600);
+    const draws = args.flatMap((value, index) => args[index - 1] === "-draw" ? [value] : []);
+    assert.ok(draws.some((draw) => draw.startsWith("polygon ")), `${profile} lacks paper geometry`);
+    assert.ok(draws.some((draw) => draw.startsWith("line ")), `${profile} lacks printed/ruled paper detail`);
+  }
+});
+
+test("camera glare resets inherited scene stroke before drawing soft highlight", () => {
+  const args = cameraOverlayArgs({ profile: "glare_shadow", glare_opacity: 0.2, shadow_opacity: 0 }, { texture_seed: 7 }, 1280, 1600);
+  const ellipse = args.findIndex((value) => typeof value === "string" && value.startsWith("ellipse "));
+  assert.ok(ellipse > 0);
+  const prefix = args.slice(0, ellipse);
+  const none = prefix.lastIndexOf("none");
+  assert.ok(none >= 1 && prefix[none - 1] === "-stroke", "glare ellipse can inherit a prior stroke");
+});
+
 test("legacy bag labels share the regimen association group with their values", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-det-legacy-association-"));
   try {
@@ -120,6 +147,7 @@ test("scaled generator covers realistic layout/camera/material strata with raste
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.material_profile)), new Set(MATERIAL_PROFILES));
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.printer_profile)), new Set(PRINTER_PROFILES));
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.background_profile)), new Set(BACKGROUND_PROFILES));
+    assert.deepEqual(new Set(corpus.samples.map((sample) => sample.scene_prop_profile)), new Set(SCENE_PROP_PROFILES));
     assert.ok(corpus.samples.some((sample) => sample.risk_tags.includes("glare")));
     assert.ok(corpus.samples.some((sample) => sample.risk_tags.includes("blur")));
     assert.ok(corpus.samples.some((sample) => sample.risk_tags.includes("projective_geometry")));
@@ -210,6 +238,7 @@ test("coverage audit fails closed when a required synthetic stratum disappears",
     assert.equal(report.material_profiles.length, MATERIAL_PROFILES.length);
     assert.equal(report.printer_profiles.length, PRINTER_PROFILES.length);
     assert.equal(report.background_profiles.length, BACKGROUND_PROFILES.length);
+    assert.equal(report.scene_prop_profiles.length, SCENE_PROP_PROFILES.length);
     assert.ok(report.critical_semantic_roles.product > 0);
     assert.ok(report.critical_semantic_roles.dose > 0);
 

@@ -250,6 +250,9 @@ export function validateUnifiedCorpus(input) {
       if (typeof sample.material_profile !== "string" || !sample.material_profile.trim()) fail(`${sample.id}.material_profile is required`);
       if (typeof sample.printer_profile !== "string" || !sample.printer_profile.trim()) fail(`${sample.id}.printer_profile is required`);
       if (typeof sample.background_profile !== "string" || !sample.background_profile.trim()) fail(`${sample.id}.background_profile is required`);
+      if (unified && input.generator.version >= 6 && input.generator.revision >= 6) {
+        if (typeof sample.scene_prop_profile !== "string" || !sample.scene_prop_profile.trim()) fail(`${sample.id}.scene_prop_profile is required`);
+      }
       if (!Number.isInteger(sample.sample_index) || sample.sample_index < 0) fail(`${sample.id}.sample_index must be a non-negative integer`);
       validateCapture(
         sample.capture,

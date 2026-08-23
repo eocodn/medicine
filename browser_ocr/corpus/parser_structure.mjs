@@ -1,7 +1,7 @@
 import { DOCUMENT_HEIGHT, DOCUMENT_WIDTH, estimateRenderedTextBox } from "../detection/synthetic_layouts.mjs";
 import { LAYOUT_FAMILIES } from "../detection/synthetic_catalog.mjs";
 
-export const PARSER_STRUCTURE_REVISION = 5;
+export const PARSER_STRUCTURE_REVISION = 6;
 
 const TRAIN_VARIANTS = [
   "complete",
@@ -142,7 +142,23 @@ function fractionDose(regions, random) {
 function addRegimenDistractor(regions) {
   const source = regions.find((region) => ["dose", "frequency", "duration"].includes(region.semantic_role));
   if (!source) return regions;
-  const moved = moveRegion(source, 0, Math.min(420, DOCUMENT_HEIGHT - source.polygon[2][1] - 40), "-parser-distractor");
+  const receiptRegions = regions.filter((region) => region.region_id.startsWith("receipt-"));
+  const receiptValues = receiptRegions.filter((region) => region.region_id.endsWith("-value"));
+  let moved;
+  if (receiptValues.length > 0) {
+    const anchor = receiptValues[0];
+    const latestReceiptY = Math.max(...receiptRegions.map((region) => region.text_origin[1]));
+    const sourceHeight = source.natural_text_box[2][1] - source.natural_text_box[0][1];
+    const targetY = Math.min(DOCUMENT_HEIGHT - sourceHeight - 30, latestReceiptY + 42);
+    moved = moveRegion(
+      source,
+      anchor.text_origin[0] - source.text_origin[0],
+      targetY - source.text_origin[1],
+      "-parser-distractor",
+    );
+  } else {
+    moved = moveRegion(source, 0, Math.min(420, DOCUMENT_HEIGHT - source.polygon[2][1] - 40), "-parser-distractor");
+  }
   return [...regions, {
     ...moved,
     critical: false,
