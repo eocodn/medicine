@@ -231,6 +231,30 @@ test("evaluation distinguishes perfect detections, merges, and critical misses",
   assert.ok(badRecall.metrics.critical_box_recall < 1);
 });
 
+test("evaluation can gate only a held-out document split", () => {
+  const corpus = validateCorpus(tinyCorpus());
+  corpus.samples[0].split = "train";
+  const testSample = structuredClone(corpus.samples[0]);
+  testSample.id = "held-out";
+  testSample.split = "test";
+  corpus.samples.push(testSample);
+  const predictions = {
+    schema_version: 1,
+    corpus_id: corpus.corpus_id,
+    samples: [
+      { id: "sample", predictions: [] },
+      { id: "held-out", predictions: testSample.regions.map((region) => ({ polygon: region.polygon, score: 0.99 })) },
+    ],
+  };
+
+  assert.equal(evaluateDetections(corpus, predictions).status, "fail");
+  const heldOut = evaluateDetections(corpus, predictions, { split: "test" });
+  assert.equal(heldOut.status, "pass");
+  assert.deepEqual(heldOut.evaluation_scope, { split: "test" });
+  assert.deepEqual(heldOut.samples.map((sample) => sample.id), ["held-out"]);
+  assert.throws(() => evaluateDetections(corpus, predictions, { split: "val" }), /no samples/);
+});
+
 test("evaluation matches by visible text coverage while still rejecting merged regions", () => {
   const corpus = validateCorpus(tinyCorpus());
   const padded = {

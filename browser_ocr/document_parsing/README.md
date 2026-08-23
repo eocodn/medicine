@@ -85,13 +85,81 @@ Parser dataset schema v3 binds both `samples.jsonl` and manifest metadata by SHA
 Unified corpus materialization creates these parser datasets automatically:
 
 - `parsing/datasets/oracle/`
+- `parsing/datasets/train-oracle/`
 - `parsing/datasets/train-synthetic-ocr/`
 - `parsing/datasets/val-synthetic-ocr/`
 - `parsing/datasets/test-synthetic-ocr/`
 
 The deterministic synthetic-OCR producer starts from canonical tight `natural_text_polygon` geometry, perturbs OCR observations (drop/split/merge/jitter/text/confidence/order/noise), and then labels them through the same tight-geometry alignment used for runtime OCR. It does not copy truth labels onto corrupted boxes blindly.
 
-Use the dataset Agent Control service directly when needed. Writable OCR/parser services mount host `~/dev/artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
+After a detector/recognizer candidate is explicitly frozen, use `ocr-parser-synthetic-runtime` to create the primary noisy parser view. This heavy batch is intentionally separate from ordinary corpus materialization: it runs every unified synthetic page through the exact selected full-document detector/orientation/crop/recognizer producer, checkpoints each persisted `result.json`, verifies image/source/producer hashes on resume, and then builds GT-aligned `runtime_ocr` datasets independently for every present train/val/test split. Runtime OCR preserves the original image hash and raw dimensions for provenance but exposes upright canonical dimensions/polygons to the parser; synthetic truth polygons are transformed into that same coordinate frame before alignment. OCR text and boxes are observations only; authoritative semantic roles, associations, and `gold_rows` still come from the synthetic truth file, so OCR mistakes are not promoted to labels.
+
+```sh
+docker compose run --rm ocr-parser-synthetic-runtime \
+  --corpus-manifest /artifacts/ocr/corpora/unified-v6/manifest.json \
+  --truth-samples /artifacts/ocr/corpora/unified-v6/views/parsing/samples.jsonl \
+  --baseline-result /artifacts/ocr/training/selected/baseline-result.json \
+  --output-dir /artifacts/parser/synthetic-runtime-v6 \
+  --json
+```
+
+The output keeps raw runtime OCR snapshots under `runtime/<document-id>/` and strict parser datasets under `datasets/{train,val,test}/`. Reusing the output with a changed corpus, truth file, detector/recognizer producer, or mutated completed runtime result fails rather than mixing observation distributions.
+
+## Sparse document graph for the learned parser
+
+`document_graph.py` converts any strict parser document into the model-facing full-document graph without introducing document-template rules. Every OCR node keeps its recognized text, confidence and polygon; the input feature vector combines bounded normalized geometry/character composition with a fixed-size signed hash of Korean/ASCII character 1–3-grams, so new drug names do not require a vocabulary lookup. Each OCR node receives at most `K` nearest spatial neighbors with relative `dx/dy`, distance, row/column overlap and relative-size edge features. A dedicated page token is connected in both directions to every OCR node so the subsequent encoder can exchange global context without quadratic all-node attention. Ambiguous OCR merges remain graph nodes and therefore remain available as context, but their node targets are masked; unmatched OCR boxes remain supervised `other` hard negatives.
+
+The initial mobile encoder design budget is explicit in `GraphEncoderSpec`: hidden size 96, two message-passing layers, 12 local neighbors and a 64-unit pair head. `graph_encoder_parameter_count()` counts the planned input projection, shared self/neighbor/edge message projections, role head and product↔field association head. The default design is intentionally far below one million learned parameters; model size is allowed to grow only after held-out evidence demonstrates a need. Original-page pixel features are deliberately outside this graph contract and remain the separate visual-feature research axis.
+
+`graph_encoder_paddle.py` implements that contract as a trainable sparse message-passing network. Each layer projects the target state, neighboring node state and relative edge feature separately, mean-aggregates incoming sparse messages (including the page-token links), and produces a contextual hidden state. Separate heads predict the nine parser node roles and `same_medication` product↔field association logits. The default 96×2 configuration has 61,930 learned parameters by both the static budget formula and the Paddle parameter inventory. A dedicated Paddle-backed test service verifies forward/backward behavior and, critically, a toy case where the exact same `"30"` node at the exact same coordinates must be classified as medication duration vs receipt noise solely from different neighboring OCR context.
+
+`ocr-parser-train` trains this model document-at-a-time rather than padding many page graphs into one large batch, which keeps peak memory bounded and makes OOM behavior easier to reason about. Multiple training observation views are mixed only through explicit repeatable `--train-manifest`/`--train-weight` pairs. The sampler normalizes those weights, deterministically assigns a fixed number of document updates per epoch, and records each view's realized step count in the checkpoint so a nominal mix is auditable instead of being an accidental consequence of dataset size. The initial runtime-first recipe is 60% frozen runtime OCR, 20% deterministic synthetic OCR and 20% oracle observations; these are experiment defaults rather than hard-coded model behavior.
+
+Every epoch writes an atomic model+optimizer checkpoint and validation metrics before advancing the authoritative training state; an interrupted run resumes from the last complete checkpoint and rejects dataset, implementation, architecture, hyperparameter, or view-weight drift. Validation model selection uses a precision-favoring association F0.5 score together with role macro-F1 so a degenerate model that simply suppresses all medication associations cannot win. Relation positive weighting is derived from the training graph and capped explicitly.
+
+`graph_decode.py` is the fail-closed boundary from learned graph scores to medication rows. A row is emitted only for a product node that clears both a probability threshold and a role margin. A field is attached only when its learned role is confident and the learned product↔field association clears both an absolute threshold and a best-vs-second-product margin; otherwise the field remains unresolved rather than being borrowed from the nearest plausible medication. Deterministic code after that boundary only normalizes typed dose/frequency/duration/instruction values and enforces cross-field invariants such as PRN vs fixed schedules. Every exact value keeps the OCR node id that proved it. `evaluate_parser_document()` adapts strict parser gold to the existing evidence-aware safety metrics, so a high-confidence wrong-row association remains visible as `cross_medication_associations` even when the copied numeric value happens to match.
+
+`ocr-parser-eval-model` binds evaluation to the completed training state, selected checkpoint hash, strict dataset fingerprints, decoder thresholds and evaluation implementation. It evaluates one document at a time, atomically checkpoints each prediction+metric record, and resumes from the last verified document after interruption. Train documents are always rejected. Test documents are also rejected by default and require the explicit `--allow-test` flag, so routine validation cannot casually consume the locked holdout. Aggregation uses the same evidence-aware safety metrics as the parser contract; unresolved fields do not count as false exact claims, while invented values, unproven evidence and cross-medication associations remain release-blocking.
+
+`ocr-parser-export-model` converts the selected checkpoint into the mobile ONNX contract without depending on the legacy `paddle2onnx` converter. The exporter constructs the fixed sparse message-passing graph directly from the verified Paddle state dict, preserving dynamic node/edge/relation counts, exact GELU, mean neighbor aggregation, role logits and product↔field relation logits. The artifact manifest binds the training result/checkpoint, exporter implementation, ONNX/Paddle/ONNX Runtime toolchain, architecture, parameter count, IO shapes and model SHA-256. Export is accepted only after two different dynamic graph shapes agree with Paddle to `1e-5` maximum absolute error; completed exports are immutable and fail closed on model, implementation or toolchain drift.
+
+```sh
+docker compose run --rm ocr-parser-train \
+  --train-manifest /workspace/path/to/views/parsing/datasets/train-oracle/manifest.json \
+  --train-weight 0.2 \
+  --train-manifest /workspace/path/to/views/parsing/datasets/train-synthetic-ocr/manifest.json \
+  --train-weight 0.2 \
+  --train-manifest /artifacts/parser/synthetic-runtime-v6/datasets/train/manifest.json \
+  --train-weight 0.6 \
+  --val-manifest /artifacts/parser/synthetic-runtime-v6/datasets/val/manifest.json \
+  --run-dir /artifacts/parser/models/sparse-graph-v1 \
+  --json
+```
+
+After training, validation can be run without unlocking the test split:
+
+```sh
+docker compose run --rm ocr-parser-eval-model \
+  --model-result /artifacts/parser/models/sparse-graph-v1/result.json \
+  --dataset-manifest /artifacts/parser/synthetic-runtime-v6/datasets/val/manifest.json \
+  --output-dir /artifacts/parser/evaluations/sparse-graph-v1-runtime-val \
+  --json
+```
+
+Only after the candidate is frozen should a test manifest be evaluated, with `--allow-test` recorded in the evaluation profile.
+
+The frozen checkpoint can then be exported as a verified deployment artifact:
+
+```sh
+docker compose run --rm ocr-parser-export-model \
+  --model-result /artifacts/parser/models/sparse-graph-v1/result.json \
+  --output-dir /artifacts/parser/exports/sparse-graph-v1 \
+  --json
+```
+
+The shared browser/Android OCR worker already contains the learned-parser runtime contract, but parser activation is explicit at packaging time. `export_runtime.mjs` and `mobile/export_runtime.mjs` accept the verified parser export directory as an optional third argument. If it is omitted, the runtime manifest records `parser.enabled=false` and no parser model/manifest is packaged. If it is supplied, packaging verifies the export/model hashes and mobile architecture budget, copies `parser.onnx`, and derives a minimal deployment manifest containing only the graph/decoder/IO contract plus cryptographic source bindings. The absolute training-result path from the research export is deliberately not shipped. At inference time the worker releases the recognizer before loading the parser, verifies the parser ONNX SHA-256 with Web Crypto, runs one role pass and only then a second pass for confident product↔field candidate pairs, and fails closed instead of falling back to layout rules.
+
+Use the dataset Agent Control service directly when needed. Writable OCR/parser services mount host `~/dev/.artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/.artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
 
 ```sh
 docker compose run --rm ocr-parser-data validate \

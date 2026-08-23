@@ -101,7 +101,9 @@ class RealParserDataCliTest(unittest.TestCase):
         runtime_result = {
             "status": "ok",
             "profile": runtime_profile,
-            "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+            "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+            "stages": {"orientation": {"applied_rotation_degrees": 0}},
             "regions": [{
                 "index": 1,
                 "text": "가나다정",
@@ -287,7 +289,9 @@ class RealParserDataCliTest(unittest.TestCase):
             runtime_result = {
                 "status": "ok",
                 "profile": runtime_profile,
-                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+                "stages": {"orientation": {"applied_rotation_degrees": 0}},
                 "regions": [{
                     "index": 1,
                     "text": "가나다정",

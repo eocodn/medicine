@@ -7,7 +7,7 @@ import { validateUnifiedCorpus } from "./contract.mjs";
 import { RECOGNITION_EVAL_POLICY, recognitionOodTag } from "./evaluation_policy.mjs";
 import { buildOracleManifest, buildParsingItems, expectedRows } from "./parser_truth.mjs";
 
-const MATERIALIZER_VERSION = 13;
+const MATERIALIZER_VERSION = 14;
 const STAGES = ["detection", "recognition", "parsing", "e2e"];
 const STATE_FILE = ".materialize-state.json";
 const LOCK_FILE = ".materialize.lock";
@@ -18,7 +18,7 @@ const COMPLETED_ARTIFACTS = [
   "recognition/document-split.json", "recognition/paddle/export.json", "recognition/paddle/train.txt", "recognition/paddle/val.txt", "recognition/paddle/test.txt", "recognition/.crop-state.json",
   "parsing/manifest.json", "parsing/samples.jsonl", "parsing/train.jsonl", "parsing/val.jsonl", "parsing/test.jsonl",
   "parsing/oracle-manifest.json", "parsing/oracle-train.json", "parsing/oracle-val.json", "parsing/oracle-test.json",
-  ...["oracle", "train-synthetic-ocr", "val-synthetic-ocr", "test-synthetic-ocr"].flatMap((name) => [
+  ...["oracle", "train-oracle", "train-synthetic-ocr", "val-synthetic-ocr", "test-synthetic-ocr"].flatMap((name) => [
     `parsing/datasets/${name}/manifest.json`, `parsing/datasets/${name}/samples.jsonl`, `parsing/datasets/${name}/.dataset-state.json`,
   ]),
   "e2e/manifest.json", "e2e/samples.jsonl", "e2e/train.jsonl", "e2e/val.jsonl", "e2e/test.jsonl",
@@ -189,7 +189,7 @@ async function validateCompletedMaterialization({ output, state, reportPath, pyt
     "-m", "browser_ocr.corpus.materialize_helpers", "validate-recognition",
     "--manifest", join(output, "recognition", "manifest.json"),
   ], process.cwd());
-  for (const name of ["oracle", "train-synthetic-ocr", "val-synthetic-ocr", "test-synthetic-ocr"]) {
+  for (const name of ["oracle", "train-oracle", "train-synthetic-ocr", "val-synthetic-ocr", "test-synthetic-ocr"]) {
     await run(python, [
       "-m", "browser_ocr.document_parsing.dataset_cli", "validate",
       "--manifest", join(output, "parsing", "datasets", name, "manifest.json"), "--json",
@@ -440,6 +440,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       labels: ["semantic_role", "association_group", "same_medication"],
       training_datasets: {
         oracle: "datasets/oracle/manifest.json",
+        train_oracle: "datasets/train-oracle/manifest.json",
         train_synthetic_ocr: "datasets/train-synthetic-ocr/manifest.json",
         val_synthetic_ocr: "datasets/val-synthetic-ocr/manifest.json",
         test_synthetic_ocr: "datasets/test-synthetic-ocr/manifest.json",
@@ -447,6 +448,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
     });
     const parserDatasetSpecs = [
       { name: "oracle", observation: "oracle", split: null },
+      { name: "train-oracle", observation: "oracle", split: "train" },
       { name: "train-synthetic-ocr", observation: "synthetic_ocr", split: "train" },
       { name: "val-synthetic-ocr", observation: "synthetic_ocr", split: "val" },
       { name: "test-synthetic-ocr", observation: "synthetic_ocr", split: "test" },
@@ -523,6 +525,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
         oracle_splits: { train: "parsing/oracle-train.json", val: "parsing/oracle-val.json", test: "parsing/oracle-test.json" },
         training_datasets: {
           oracle: "parsing/datasets/oracle/manifest.json",
+          train_oracle: "parsing/datasets/train-oracle/manifest.json",
           train_synthetic_ocr: "parsing/datasets/train-synthetic-ocr/manifest.json",
           val_synthetic_ocr: "parsing/datasets/val-synthetic-ocr/manifest.json",
           test_synthetic_ocr: "parsing/datasets/test-synthetic-ocr/manifest.json",

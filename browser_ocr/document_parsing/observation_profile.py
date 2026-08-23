@@ -22,6 +22,8 @@ _IMPLEMENTATION_SHA_FIELDS = {
     "full_document",
     "full_document_cli",
     "crop_refinement",
+    "orientation",
+    "orientation_runtime",
     "detector_runtime",
     "detector_benchmark",
 }

@@ -187,12 +187,17 @@ function convexHull(points) {
 function orderQuad(points) {
   const sums = points.map((point) => point[0] + point[1]);
   const differences = points.map((point) => point[0] - point[1]);
-  return [
-    points[sums.indexOf(Math.min(...sums))],
-    points[differences.indexOf(Math.max(...differences))],
-    points[sums.indexOf(Math.max(...sums))],
-    points[differences.indexOf(Math.min(...differences))],
-  ].map((point) => [...point]);
+  const indices = [
+    sums.indexOf(Math.min(...sums)),
+    differences.indexOf(Math.max(...differences)),
+    sums.indexOf(Math.max(...sums)),
+    differences.indexOf(Math.min(...differences)),
+  ];
+  if (new Set(indices).size === 4) return indices.map((index) => [...points[index]]);
+  const ordered = points.slice().sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  const top = ordered.slice(0, 2).sort((a, b) => a[0] - b[0]);
+  const bottom = ordered.slice(2).sort((a, b) => a[0] - b[0]);
+  return [[...top[0]], [...top[1]], [...bottom[1]], [...bottom[0]]];
 }
 
 function minimumAreaBox(points) {
@@ -233,6 +238,86 @@ function minimumAreaBox(points) {
 
 function distance(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
+function orientationCandidates(boxes) {
+  let signed = 0;
+  let magnitude = 0;
+  let count = 0;
+  for (const box of boxes) {
+    const polygon = box?.poly;
+    if (!Array.isArray(polygon) || polygon.length !== 4) {
+      throw new Error("Orientation boxes must contain four-point polygons");
+    }
+    const width = Math.max(distance(polygon[0], polygon[1]), distance(polygon[2], polygon[3]), 1e-9);
+    const height = Math.max(distance(polygon[0], polygon[3]), distance(polygon[1], polygon[2]), 1e-9);
+    const aspect = Math.max(-3, Math.min(3, Math.log(width / height)));
+    if (Math.abs(aspect) < Math.log(1.35)) continue;
+    const score = box.score === undefined ? 1 : Number(box.score);
+    if (!Number.isFinite(score) || score < 0 || score > 1) {
+      throw new Error("Orientation box scores must be between 0 and 1");
+    }
+    const weight = Math.max(0.05, score) * Math.min(Math.sqrt(width * height), 240);
+    signed += weight * aspect;
+    magnitude += weight * Math.abs(aspect);
+    count += 1;
+  }
+  if (!count || magnitude <= 1e-9 || Math.abs(signed) / magnitude < 0.25) return [0, 90, 180, 270];
+  return signed > 0 ? [0, 180] : [90, 270];
+}
+
+function selectOrientation(scores, minimumMargin = 0.08) {
+  const entries = Object.entries(scores).map(([rawRotation, rawScore]) => {
+    const rotation = Number(rawRotation);
+    const score = Number(rawScore);
+    if (![0, 90, 180, 270].includes(rotation)) throw new Error("Unsupported orientation score rotation");
+    if (!Number.isFinite(score) || score < 0 || score > 1) {
+      throw new Error("Orientation probe scores must be between 0 and 1");
+    }
+    return [score, rotation];
+  });
+  if (!entries.length) return 0;
+  entries.sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  const [bestScore, bestRotation] = entries[0];
+  const secondScore = entries.length > 1 ? entries[1][0] : 0;
+  if (bestScore - secondScore < minimumMargin && Object.hasOwn(scores, "0")) return 0;
+  return bestRotation;
+}
+
+function transformPolygonRightAngle(polygon, width, height, degrees) {
+  if (!Array.isArray(polygon) || polygon.length !== 4) throw new Error("Polygon must contain four points");
+  if (![0, 90, 180, 270].includes(degrees)) throw new Error("Unsupported right-angle rotation");
+  const points = polygon.map(([x, y]) => {
+    if (degrees === 0) return [x, y];
+    if (degrees === 90) return [height - y, x];
+    if (degrees === 180) return [width - x, height - y];
+    return [y, width - x];
+  });
+  return orderQuad(points);
+}
+
+function canonicalizeBoxes(boxes, width, height, degrees) {
+  const transformed = boxes.map((box) => ({
+    ...box,
+    poly: transformPolygonRightAngle(box.poly, width, height, degrees),
+  }));
+  return {
+    boxes: sortReadingOrder(transformed),
+    width: degrees === 90 || degrees === 270 ? height : width,
+    height: degrees === 90 || degrees === 270 ? width : height,
+  };
+}
+
+function orientationProbeIndices(boxes, limit = 6) {
+  if (!Number.isInteger(limit) || limit <= 0) throw new Error("Orientation probe limit must be positive");
+  return boxes.map((box, index) => {
+    const width = Math.max(distance(box.poly[0], box.poly[1]), distance(box.poly[2], box.poly[3]), 1e-9);
+    const height = Math.max(distance(box.poly[0], box.poly[3]), distance(box.poly[1], box.poly[2]), 1e-9);
+    const score = box.score === undefined ? 1 : Number(box.score);
+    const elongation = Math.max(width, height) / Math.min(width, height);
+    return { index, quality: score * Math.min(elongation, 8) * Math.sqrt(width * height) };
+  }).sort((a, b) => b.quality - a.quality || a.index - b.index)
+    .slice(0, limit).map((item) => item.index);
 }
 
 function minimumSide(box) {
@@ -390,14 +475,19 @@ function decodeCtc(data, dimensions, dictionary, sampleIndex = 0) {
 }
 
 module.exports = {
+  canonicalizeBoxes,
   decodeCtc,
   decodeDetectionMap,
   distance,
   foregroundColumnInk,
   horizontalSubpolygon,
+  orientationCandidates,
+  orientationProbeIndices,
   recognitionTargetWidth,
   resizeWithin,
   rgbaToChw,
+  selectOrientation,
   splitHorizontalInkRanges,
   sortReadingOrder,
+  transformPolygonRightAngle,
 };

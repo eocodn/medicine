@@ -51,7 +51,7 @@ test("one document corpus materializes aligned detection recognition parsing and
 
     assert.equal(corpus.schema_version, 3);
     assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
-    assert.equal(corpus.generator.version, 5);
+    assert.equal(corpus.generator.version, 6);
     assert.equal(corpus.drug_name_policy.id, "canonical-product-family-historical-holdout-v2");
     assert.equal(corpus.drug_name_policy.historical_exposure.id, "selected-recognizer-training-exposure-v1");
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.augmentation_difficulty)), new Set(["clean", "medium", "hard"]));
@@ -181,12 +181,16 @@ test("one document corpus materializes aligned detection recognition parsing and
     const parserTrainManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "train-synthetic-ocr", "manifest.json"), "utf8"));
     const parserValManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "val-synthetic-ocr", "manifest.json"), "utf8"));
     const parserOracleManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "oracle", "manifest.json"), "utf8"));
+    const parserTrainOracleManifest = JSON.parse(await readFile(join(viewsRoot, "parsing", "datasets", "train-oracle", "manifest.json"), "utf8"));
     assert.equal(parserTrainManifest.task, "medication_document_parser");
     assert.equal(parserTrainManifest.schema_version, 3);
     assert.match(parserTrainManifest.metadata_sha256, /^[0-9a-f]{64}$/);
     assert.equal(parserTrainManifest.document_count, corpus.samples.filter((sample) => sample.split === "train").length);
     assert.equal(parserValManifest.document_count, corpus.samples.filter((sample) => sample.split === "val").length);
     assert.equal(parserOracleManifest.document_count, corpus.samples.length);
+    assert.equal(parserTrainOracleManifest.document_count, corpus.samples.filter((sample) => sample.split === "train").length);
+    assert.equal(parserTrainOracleManifest.metadata.observation_kind, "oracle");
+    assert.equal(parserTrainOracleManifest.metadata.split, "train");
     const parserTrainDocuments = lines(await readFile(join(viewsRoot, "parsing", "datasets", "train-synthetic-ocr", "samples.jsonl"), "utf8"));
     assert.ok(parserTrainDocuments.every((item) => item.split === "train" && item.source_kind === "synthetic"));
     assert.ok(parserTrainDocuments.every((item) => item.observation.kind === "synthetic_ocr"));

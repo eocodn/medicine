@@ -2,6 +2,7 @@ import {
   AUGMENTATION_DIFFICULTIES,
   CAPTURE_PROFILES,
   LAYOUT_FAMILIES,
+  PAGE_ROTATIONS,
 } from "./synthetic_catalog.mjs";
 
 function rounded(value) {
@@ -88,6 +89,15 @@ export function augmentationDifficultyForSample(sampleIndex, profileIndex) {
   return AUGMENTATION_DIFFICULTIES[(layoutIndex + profileIndex) % AUGMENTATION_DIFFICULTIES.length];
 }
 
+const ROTATION_CYCLE = [0, 0, 90, 0, 270, 180];
+
+export function pageRotationForSample(sampleIndex, profileIndex) {
+  const layoutIndex = sampleIndex % LAYOUT_FAMILIES.length;
+  const rotation = ROTATION_CYCLE[(layoutIndex + profileIndex) % ROTATION_CYCLE.length];
+  if (!PAGE_ROTATIONS.includes(rotation)) throw new Error(`unsupported page rotation: ${rotation}`);
+  return rotation;
+}
+
 function destinationFor({ perspective, partialCrop, difficulty, random, width, height }) {
   const severity = difficulty === "hard" ? 1 : difficulty === "medium" ? 0.68 : 0.35;
   if (partialCrop) {
@@ -118,6 +128,38 @@ function destinationFor({ perspective, partialCrop, difficulty, random, width, h
     [width - inset + jitter(random, 6), height - inset + jitter(random, 5)],
     [inset + jitter(random, 6), height - inset + jitter(random, 5)],
   ];
+}
+
+function pageFrame(rotation, width, height) {
+  if (rotation === 0 || rotation === 180) {
+    return { width, height, offsetX: 0, offsetY: 0 };
+  }
+  const scale = Math.min(width / height, height / width);
+  const rotatedWidth = height * scale;
+  const rotatedHeight = width * scale;
+  return {
+    width: rotatedWidth,
+    height: rotatedHeight,
+    offsetX: (width - rotatedWidth) / 2,
+    offsetY: (height - rotatedHeight) / 2,
+  };
+}
+
+function destinationForRotation({ rotation, perspective, partialCrop, difficulty, random, width, height }) {
+  const frame = pageFrame(rotation, width, height);
+  const local = destinationFor({
+    perspective,
+    partialCrop,
+    difficulty,
+    random,
+    width: frame.width,
+    height: frame.height,
+  }).map(([x, y]) => [x + frame.offsetX, y + frame.offsetY]);
+  if (rotation === 0) return local;
+  if (rotation === 90) return [local[1], local[2], local[3], local[0]];
+  if (rotation === 180) return [local[2], local[3], local[0], local[1]];
+  if (rotation === 270) return [local[3], local[0], local[1], local[2]];
+  throw new Error(`unsupported page rotation: ${rotation}`);
 }
 
 function addComponent(capture, component, riskTag = null) {
@@ -213,9 +255,11 @@ function applySharedDifficulty(capture, difficulty, random, sampleIndex) {
 export function captureForSample(sampleIndex, profileIndex, random, width, height) {
   const profile = CAPTURE_PROFILES[profileIndex % CAPTURE_PROFILES.length];
   const difficulty = augmentationDifficultyForSample(sampleIndex, profileIndex);
+  const pageRotation = pageRotationForSample(sampleIndex, profileIndex);
   const capture = {
     profile,
     difficulty,
+    page_rotation_degrees: pageRotation,
     geometry_model: "homography_affine",
     source_corners: [[0, 0], [width, 0], [width, height], [0, height]],
     destination_corners: [],
@@ -238,6 +282,8 @@ export function captureForSample(sampleIndex, profileIndex, random, width, heigh
     risk_tags: [],
   };
 
+  if (pageRotation !== 0) addComponent(capture, "right_angle_rotation", "page_rotation");
+
   applyAnchorProfile(capture, profile, difficulty, random);
   applySharedDifficulty(capture, difficulty, random, sampleIndex);
 
@@ -256,7 +302,15 @@ export function captureForSample(sampleIndex, profileIndex, random, width, heigh
     addComponent(capture, "partial_crop", "partial_crop");
   }
 
-  capture.destination_corners = destinationFor({ perspective, partialCrop, difficulty, random, width, height })
+  capture.destination_corners = destinationForRotation({
+    rotation: pageRotation,
+    perspective,
+    partialCrop,
+    difficulty,
+    random,
+    width,
+    height,
+  })
     .map(([x, y]) => [rounded(x), rounded(y)]);
   capture.homography = homographyFromQuads(capture.source_corners, capture.destination_corners);
   const projective = Math.abs(capture.homography[6]) > 1e-10 || Math.abs(capture.homography[7]) > 1e-10;

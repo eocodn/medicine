@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 from typing import Any, Iterable, Mapping
 
 from .contract import DRAFT_FIELDS, SCHEMA_VERSION, Corpus, CorpusError, normalize_rows, rows_as_dicts
@@ -126,6 +127,91 @@ def evaluate_case(expected_rows: object, predicted_rows: object) -> dict[str, An
     return _evaluate_normalized(expected, predicted)
 
 
+def _missing_evidence_id(document_id: str, group_id: str, field: str) -> str:
+    digest = hashlib.sha256(f"{document_id}:{group_id}:{field}".encode("utf-8")).hexdigest()[:16]
+    return f"missing-{digest}"
+
+
+def _parser_expected_rows(document: Mapping[str, Any]) -> list[dict[str, Any]]:
+    document_id = str(document.get("document_id") or "")
+    observation = document.get("observation")
+    if not document_id or not isinstance(observation, Mapping) or not isinstance(observation.get("nodes"), list):
+        raise ValueError("parser document must contain document_id and observation nodes")
+    nodes = [node for node in observation["nodes"] if isinstance(node, Mapping)]
+    by_group: dict[str, list[Mapping[str, Any]]] = {}
+    for node in nodes:
+        if node.get("label_status") != "labeled":
+            continue
+        group = str(node.get("association_group") or "")
+        if group and group != "document":
+            by_group.setdefault(group, []).append(node)
+    gold_rows = document.get("gold_rows")
+    if not isinstance(gold_rows, list):
+        raise ValueError("parser document gold_rows must be a list")
+    field_roles = {
+        "dosage_text": {"dose"},
+        "dose_amount": {"dose"},
+        "dose_unit": {"dose"},
+        "frequency_per_day": {"frequency"},
+        "prescription_days": {"duration"},
+        "schedule_times": {"schedule", "instruction"},
+        "meal_relation": {"instruction", "schedule"},
+        "administration_route": {"instruction", "schedule"},
+        "as_needed": {"instruction", "schedule"},
+        "start_date": set(),
+        "end_date": set(),
+    }
+    expected: list[dict[str, Any]] = []
+    for index, raw in enumerate(gold_rows):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{document_id}.gold_rows[{index}] must be an object")
+        group_id = str(raw.get("gold_row_id") or "")
+        group_nodes = by_group.get(group_id, [])
+        product_nodes = [node for node in group_nodes if node.get("semantic_role") == "product"]
+        product_labels = [node for node in group_nodes if node.get("semantic_role") == "product_label"]
+        product_ids = [str(node.get("node_id")) for node in [*product_nodes, *product_labels] if node.get("node_id")]
+        if product_ids:
+            row_id = product_ids[0]
+        else:
+            row_id = _missing_evidence_id(document_id, group_id, "product_query")
+            product_ids = [row_id]
+        draft = dict(raw.get("draft") or {})
+        evidence: dict[str, list[str]] = {"product_query": product_ids}
+        for field, value in draft.items():
+            if value is None:
+                continue
+            roles = field_roles.get(field, set())
+            ids = [
+                str(node.get("node_id"))
+                for node in group_nodes
+                if node.get("semantic_role") in roles and node.get("node_id")
+            ]
+            evidence[field] = ids or [_missing_evidence_id(document_id, group_id, field)]
+        expected.append({
+            "row_id": row_id,
+            "product_query": str(raw.get("product_query") or ""),
+            "draft": draft,
+            "uncertainty_codes": [],
+            "evidence": evidence,
+        })
+    return expected
+
+
+def evaluate_parser_document(
+    document: Mapping[str, Any],
+    predicted_rows: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Evaluate decoded rows against strict parser gold using the canonical safety metrics.
+
+    Image-level gold remains independent of OCR recall. When OCR missed the
+    evidence for a gold field, a deterministic non-observed sentinel keeps a
+    later exact claim from being treated as proven evidence.
+    """
+
+    predicted = [dict(row) for row in predicted_rows]
+    return _evaluate_normalized(_parser_expected_rows(document), predicted)
+
+
 def _prediction_rows_by_case(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise CorpusError("predictions must be an object")
@@ -215,4 +301,4 @@ def evaluate_corpus(corpus: Corpus, predictions: object) -> dict[str, Any]:
     }
 
 
-__all__ = ["evaluate_case", "evaluate_corpus"]
+__all__ = ["evaluate_case", "evaluate_corpus", "evaluate_parser_document"]

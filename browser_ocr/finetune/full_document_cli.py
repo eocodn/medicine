@@ -24,6 +24,7 @@ from .full_document import (
 )
 from .native_runtime import native_runtime_identity as _native_runtime_identity
 from .native_runtime import python_native_runtime_identity as _python_native_runtime_identity
+from .orientation_runtime import resolve_page_orientation
 
 
 def _sha256_file(path: Path) -> str:
@@ -40,6 +41,8 @@ def _implementation_profile() -> dict[str, str]:
         "full_document": browser_root / "finetune" / "full_document.py",
         "full_document_cli": Path(__file__).resolve(),
         "crop_refinement": browser_root / "finetune" / "crop_refinement.py",
+        "orientation": browser_root / "finetune" / "orientation.py",
+        "orientation_runtime": browser_root / "finetune" / "orientation_runtime.py",
         "detector_runtime": browser_root / "detection" / "runtime.py",
         "detector_benchmark": browser_root / "detection" / "detector_benchmark.py",
     }
@@ -364,6 +367,65 @@ def _recognize_crops(
     return parse_recognition_rows(output_path.read_text(encoding="utf-8"), expected)
 
 
+def _orientation_probe_quality(
+    recognized: dict[str, dict[str, object]],
+    paths: list[str],
+) -> float:
+    if not paths:
+        return 0.0
+    quality = 0.0
+    for path in paths:
+        item = recognized[path]
+        text = "".join(str(item.get("text") or "").split())
+        score = float(item.get("score") or 0.0)
+        # Upside-down crops can occasionally produce a high-confidence single
+        # glyph. Require a little decoded content without over-penalizing short
+        # numeric regimen fields.
+        content = min(len(text) / 3.0, 1.0)
+        quality += score * content
+    return max(0.0, min(1.0, quality / len(paths)))
+
+
+def _recognize_orientation_probes(
+    probes: dict[int, list[object]],
+    *,
+    paddleocr_root: Path,
+    config_path: Path,
+    checkpoint: Path,
+    output_dir: Path,
+    use_gpu: bool,
+) -> dict[int, float]:
+    import cv2
+
+    probe_dir = output_dir / "orientation-probes"
+    shutil.rmtree(probe_dir, ignore_errors=True)
+    probe_dir.mkdir(parents=True)
+    paths_by_rotation: dict[int, list[str]] = {rotation: [] for rotation in probes}
+    counter = 0
+    for rotation in probes:
+        for crop in probes[rotation]:
+            counter += 1
+            path = probe_dir / f"region-{counter:04d}.png"
+            if not cv2.imwrite(str(path), crop):
+                raise DatasetError(f"failed to write orientation probe crop: {path}")
+            paths_by_rotation[rotation].append(str(path.resolve()))
+    if counter == 0:
+        return {rotation: 0.0 for rotation in probes}
+    recognized = _recognize_crops(
+        paddleocr_root=paddleocr_root,
+        config_path=config_path,
+        checkpoint=checkpoint,
+        crop_dir=probe_dir,
+        output_path=output_dir / "orientation-recognition.txt",
+        log_path=output_dir / "orientation-recognition.log",
+        use_gpu=use_gpu,
+    )
+    return {
+        rotation: _orientation_probe_quality(recognized, paths_by_rotation[rotation])
+        for rotation in probes
+    }
+
+
 def run_full_document(args: argparse.Namespace) -> dict[str, object]:
     image_path = Path(args.image).resolve()
     if not image_path.is_file():
@@ -409,6 +471,7 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
             image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
             if image is None:
                 raise DatasetError(f"failed to decode input image: {image_path}")
+            source_height, source_width = image.shape[:2]
             detector_started = time.perf_counter()
             detector = load_detector_runtime(
                 model_manifest_path=Path(args.detector_manifest),
@@ -420,9 +483,24 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
             if detector.onnx_sha256 != profile["detector_onnx_sha256"] or detector.config_sha256 != profile["detector_config_sha256"]:
                 raise DatasetError("loaded detector assets changed after OCR producer profile resolution")
             predictions = sort_text_predictions(detector.predict(image))
+            detector_ms = (time.perf_counter() - detector_started) * 1000.0
+
+            orientation_started = time.perf_counter()
+            image, predictions, orientation = resolve_page_orientation(
+                image,
+                predictions,
+                probe_scorer=lambda probes: _recognize_orientation_probes(
+                    dict(probes),
+                    paddleocr_root=Path(args.paddleocr_root).resolve(),
+                    config_path=recognizer["config"],
+                    checkpoint=recognizer["checkpoint"],
+                    output_dir=output_dir,
+                    use_gpu=args.recognizer_device == "gpu",
+                ),
+            )
+            orientation_ms = (time.perf_counter() - orientation_started) * 1000.0
             prediction_crops = refine_prediction_crops(image, predictions)
             predictions = [prediction for prediction, _ in prediction_crops]
-            detector_ms = (time.perf_counter() - detector_started) * 1000.0
 
             crop_paths: list[str] = []
             for index, (_, crop) in enumerate(prediction_crops, start=1):
@@ -460,6 +538,8 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
                     "sha256": profile["image_sha256"],
                     "width": width,
                     "height": height,
+                    "source_width": source_width,
+                    "source_height": source_height,
                 },
                 "stages": {
                     "detection": {
@@ -469,6 +549,11 @@ def run_full_document(args: argparse.Namespace) -> dict[str, object]:
                         "boxes": len(predictions),
                         "latency_ms": round(detector_ms, 3),
                         "model_bytes": detector.model_bytes,
+                    },
+                    "orientation": {
+                        "status": "ok",
+                        **orientation,
+                        "latency_ms": round(orientation_ms, 3),
                     },
                     "recognition": {
                         "status": recognition_status,

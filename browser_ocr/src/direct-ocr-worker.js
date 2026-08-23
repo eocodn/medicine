@@ -2,20 +2,33 @@
 
 const ort = require("onnxruntime-web/wasm");
 const {
+  canonicalizeBoxes,
   decodeCtc,
   decodeDetectionMap,
   distance,
   foregroundColumnInk,
   horizontalSubpolygon,
+  orientationCandidates,
+  orientationProbeIndices,
   recognitionTargetWidth,
   resizeWithin,
   rgbaToChw,
+  selectOrientation,
   splitHorizontalInkRanges,
 } = require("./direct-ocr-core.js");
-
 const DETECTION_MODEL = "/ocr-assets/models/detection.onnx";
 const RECOGNITION_MODEL = "/ocr-assets/models/korean-recognition.onnx";
 const RECOGNITION_DICTIONARY = "/ocr-assets/models/korean-recognition-dictionary.json";
+const PARSER_MODEL = "/ocr-assets/models/parser.onnx";
+const PARSER_MANIFEST = "/ocr-assets/models/parser-manifest.json";
+const PARSER_ENABLED = typeof __MEDICINE_PARSER_ENABLED__ !== "undefined"
+  && __MEDICINE_PARSER_ENABLED__ === true;
+let validateParserManifest = null;
+let runParserModel = null;
+if (PARSER_ENABLED) {
+  ({ validateParserManifest } = require("./parser-graph-core.js"));
+  ({ runParserModel } = require("./parser-runtime-core.js"));
+}
 const MAX_SOURCE_EDGE = 1280;
 const DETECTION_EDGE = 640;
 const RECOGNITION_HEIGHT = 48;
@@ -38,6 +51,7 @@ ort.env.wasm.proxy = false;
 let running = false;
 let detectionSession = null;
 let recognitionSession = null;
+let parserSession = null;
 
 function progress(value) {
   self.postMessage({ type: "progress", progress: value });
@@ -62,6 +76,20 @@ function drawScaled(source, width, height) {
   context.fillStyle = "#fff";
   context.fillRect(0, 0, width, height);
   context.drawImage(source, 0, 0, width, height);
+  return canvas;
+}
+
+function rotateCanvasRightAngle(source, degrees) {
+  if (degrees === 0) return source;
+  if (![90, 180, 270].includes(degrees)) throw new Error(`Unsupported page rotation: ${degrees}`);
+  const swap = degrees === 90 || degrees === 270;
+  const canvas = createCanvas(swap ? source.height : source.width, swap ? source.width : source.height);
+  const context = context2d(canvas);
+  if (degrees === 90) context.setTransform(0, 1, -1, 0, source.height, 0);
+  else if (degrees === 180) context.setTransform(-1, 0, 0, -1, source.width, source.height);
+  else context.setTransform(0, -1, 1, 0, 0, source.width);
+  context.drawImage(source, 0, 0);
+  context.resetTransform();
   return canvas;
 }
 
@@ -219,6 +247,34 @@ async function initializeRecognition() {
   });
 }
 
+async function initializeParser() {
+  if (!PARSER_ENABLED) return null;
+  const [manifestResponse, modelResponse] = await Promise.all([
+    fetch(PARSER_MANIFEST),
+    fetch(PARSER_MODEL),
+  ]);
+  if (!manifestResponse.ok) throw new Error(`Parser manifest HTTP ${manifestResponse.status}`);
+  if (!modelResponse.ok) throw new Error(`Parser model HTTP ${modelResponse.status}`);
+  const contract = validateParserManifest(await manifestResponse.json());
+  const modelBytes = await modelResponse.arrayBuffer();
+  if (!self.crypto?.subtle) throw new Error("Web Crypto is required to verify the parser model");
+  const digest = Array.from(new Uint8Array(await self.crypto.subtle.digest("SHA-256", modelBytes)))
+    .map((value) => value.toString(16).padStart(2, "0")).join("");
+  if (digest !== contract.modelSha256) throw new Error("Parser model SHA-256 differs from export manifest");
+  parserSession = await ort.InferenceSession.create(modelBytes, {
+    executionProviders: ["wasm"], graphOptimizationLevel: "all",
+  });
+  const expectedInputs = [
+    "node_features", "edge_index", "edge_features", "relation_index", "relation_features",
+  ];
+  const expectedOutputs = ["role_logits", "relation_logits"];
+  if (JSON.stringify(parserSession.inputNames) !== JSON.stringify(expectedInputs)
+      || JSON.stringify(parserSession.outputNames) !== JSON.stringify(expectedOutputs)) {
+    throw new Error("Parser ONNX session IO differs from the export manifest contract");
+  }
+  return contract;
+}
+
 async function detect(sourceCanvas) {
   const dimensions = detectionDimensions(sourceCanvas.width, sourceCanvas.height);
   const canvas = drawScaled(sourceCanvas, dimensions.width, dimensions.height);
@@ -244,7 +300,7 @@ async function detect(sourceCanvas) {
   );
 }
 
-async function recognizeBoxes(refinedBoxes, dictionary) {
+async function recognizeBoxes(refinedBoxes, dictionary, { reportProgress = true } = {}) {
   const ordered = refinedBoxes.map((box, inputIndex) => ({
     inputIndex,
     width: recognitionTargetWidth(
@@ -265,8 +321,10 @@ async function recognizeBoxes(refinedBoxes, dictionary) {
         output.data, output.dims, dictionary, index,
       ) });
     }
-    progress(60 + Math.round(30 * Math.min(ordered.length, start + batch.length)
-      / Math.max(1, ordered.length)));
+    if (reportProgress) {
+      progress(60 + Math.round(30 * Math.min(ordered.length, start + batch.length)
+        / Math.max(1, ordered.length)));
+    }
   }
   decoded.sort((a, b) => a.inputIndex - b.inputIndex);
   return decoded.map(({ inputIndex, ...result }) => ({
@@ -275,10 +333,67 @@ async function recognizeBoxes(refinedBoxes, dictionary) {
   })).filter((item) => item.text && item.score >= 0.0);
 }
 
+function orientationProbeQuality(decoded, expectedCount) {
+  if (!expectedCount) return 0;
+  let total = 0;
+  for (const item of decoded) {
+    const compact = String(item.text || "").replace(/\s+/g, "");
+    total += Number(item.score || 0) * Math.min(compact.length / 3, 1);
+  }
+  return Math.max(0, Math.min(1, total / expectedCount));
+}
+
+async function canonicalizePageOrientation(sourceCanvas, boxes, dictionary) {
+  const candidates = orientationCandidates(boxes);
+  if (!boxes.length) {
+    return {
+      canvas: sourceCanvas,
+      boxes,
+      orientation: {
+        method: "detector_axis_recognizer_probe_v1",
+        candidates,
+        probe_scores: {},
+        probe_regions: 0,
+        applied_rotation_degrees: 0,
+      },
+    };
+  }
+  const selected = orientationProbeIndices(boxes, 6).map((index) => boxes[index]);
+  const scores = {};
+  let probeRegions = 0;
+  for (const rotation of candidates) {
+    const rotated = rotateCanvasRightAngle(sourceCanvas, rotation);
+    const canonical = canonicalizeBoxes(selected, sourceCanvas.width, sourceCanvas.height, rotation);
+    const refined = refineDetectedBoxes(rotated, canonical.boxes);
+    const decoded = await recognizeBoxes(refined, dictionary, { reportProgress: false });
+    scores[rotation] = orientationProbeQuality(decoded, refined.length);
+    probeRegions += refined.length;
+    if (rotated !== sourceCanvas) {
+      rotated.width = 1;
+      rotated.height = 1;
+    }
+  }
+  const rotation = selectOrientation(scores);
+  const canonical = canonicalizeBoxes(boxes, sourceCanvas.width, sourceCanvas.height, rotation);
+  const canvas = rotateCanvasRightAngle(sourceCanvas, rotation);
+  return {
+    canvas,
+    boxes: canonical.boxes,
+    orientation: {
+      method: "detector_axis_recognizer_probe_v1",
+      candidates,
+      probe_scores: Object.fromEntries(candidates.map((candidate) => [candidate, Number(scores[candidate].toFixed(6))])),
+      probe_regions: probeRegions,
+      applied_rotation_degrees: rotation,
+    },
+  };
+}
+
 async function dispose() {
-  const sessions = [detectionSession, recognitionSession];
+  const sessions = [detectionSession, recognitionSession, parserSession];
   detectionSession = null;
   recognitionSession = null;
+  parserSession = null;
   await Promise.all(sessions.map((session) => session?.release()));
 }
 
@@ -286,29 +401,60 @@ async function recognize(image, includeItems = false) {
   progress(5);
   const bitmap = await createImageBitmap(image);
   const sourceDimensions = resizeWithin(bitmap.width, bitmap.height, MAX_SOURCE_EDGE);
-  const sourceCanvas = drawScaled(bitmap, sourceDimensions.width, sourceDimensions.height);
+  let sourceCanvas = drawScaled(bitmap, sourceDimensions.width, sourceDimensions.height);
   bitmap.close();
   progress(10);
   const dictionary = await initializeDetection();
   progress(35);
-  const boxes = await detect(sourceCanvas);
-  const refinedBoxes = refineDetectedBoxes(sourceCanvas, boxes);
+  let boxes = await detect(sourceCanvas);
   await detectionSession.release();
   detectionSession = null;
   await initializeRecognition();
+  const canonical = await canonicalizePageOrientation(sourceCanvas, boxes, dictionary);
+  if (canonical.canvas !== sourceCanvas) {
+    sourceCanvas.width = 1;
+    sourceCanvas.height = 1;
+    sourceCanvas = canonical.canvas;
+  }
+  boxes = canonical.boxes;
+  const refinedBoxes = refineDetectedBoxes(sourceCanvas, boxes);
   progress(60);
   const items = (await recognizeBoxes(refinedBoxes, dictionary)).map((item, index) => ({
     ...item,
     id: `region-${String(index + 1).padStart(4, "0")}`,
   }));
+  const canonicalWidth = sourceCanvas.width;
+  const canonicalHeight = sourceCanvas.height;
+  await recognitionSession.release();
+  recognitionSession = null;
   sourceCanvas.width = 1;
   sourceCanvas.height = 1;
+  let parserStatus = "unavailable";
+  let rows;
+  if (PARSER_ENABLED) {
+    progress(94);
+    const parserContract = await initializeParser();
+    rows = await runParserModel(
+      parserSession,
+      ort,
+      parserContract,
+      items,
+      canonicalWidth,
+      canonicalHeight,
+    );
+    parserStatus = "ok";
+    await parserSession.release();
+    parserSession = null;
+    progress(98);
+  }
   await dispose();
   progress(100);
   self.postMessage({
     type: "result",
-    parser_status: "unavailable",
+    parser_status: parserStatus,
     region_count: items.length,
+    orientation: canonical.orientation,
+    ...(rows ? { rows } : {}),
     ...(includeItems ? { items } : {}),
   });
 }

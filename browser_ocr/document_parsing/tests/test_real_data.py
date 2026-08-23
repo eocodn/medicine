@@ -43,6 +43,8 @@ def _runtime_profile(image_sha256: str) -> dict:
             "full_document": "6" * 64,
             "full_document_cli": "7" * 64,
             "crop_refinement": "8" * 64,
+            "orientation": "1" * 64,
+            "orientation_runtime": "2" * 64,
             "detector_runtime": "b" * 64,
             "detector_benchmark": "c" * 64,
         },
@@ -156,7 +158,9 @@ class RealParserDataTest(unittest.TestCase):
             runtime_result = {
                 "status": "ok",
                 "profile": _runtime_profile(sample["image_sha256"]),
-                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+                "stages": {"orientation": {"applied_rotation_degrees": 0}},
                 "regions": [
                     {"index": 1, "text": "가나다정", "recognition_score": 0.98, "polygon": [[10, 10], [100, 10], [100, 35], [10, 35]]},
                     {"index": 2, "text": "1정", "recognition_score": 0.97, "polygon": [[120, 10], [170, 10], [170, 35], [120, 35]]},
@@ -187,7 +191,9 @@ class RealParserDataTest(unittest.TestCase):
             runtime_result = {
                 "status": "ok",
                 "profile": _runtime_profile(sample["image_sha256"]),
-                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+                "stages": {"orientation": {"applied_rotation_degrees": 0}},
                 "regions": [{"index": 1, "text": "안내", "recognition_score": 0.98, "polygon": [[10, 10], [100, 10], [100, 35], [10, 35]]}],
             }
             draft = prepare_real_annotation(sample, runtime_result)
@@ -208,7 +214,9 @@ class RealParserDataTest(unittest.TestCase):
             runtime_result = {
                 "status": "ok",
                 "profile": _runtime_profile(sample["image_sha256"]),
-                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+                "stages": {"orientation": {"applied_rotation_degrees": 0}},
                 "regions": [{"index": 1, "text": "가나다정", "recognition_score": 0.98, "polygon": [[10, 10], [100, 10], [100, 35], [10, 35]]}],
             }
             draft = prepare_real_annotation(sample, runtime_result)
@@ -223,7 +231,9 @@ class RealParserDataTest(unittest.TestCase):
             runtime_result = {
                 "status": "ok",
                 "profile": _runtime_profile(sample["image_sha256"]),
-                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+                "stages": {"orientation": {"applied_rotation_degrees": 0}},
                 "regions": [{"index": 1, "text": "가나다정", "recognition_score": 0.98, "polygon": [[10, 10], [100, 10], [100, 35], [10, 35]]}],
             }
             draft = prepare_real_annotation(sample, runtime_result)
@@ -244,7 +254,9 @@ class RealParserDataTest(unittest.TestCase):
                 prepare_real_annotation(sample, {
                     "status": "ok",
                     "profile": {},
-                    "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                    "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+                    "stages": {"orientation": {"applied_rotation_degrees": 0}},
                     "regions": [],
                 })
 
@@ -259,7 +271,9 @@ class RealParserDataTest(unittest.TestCase):
                 prepare_real_annotation(sample, {
                     "status": "ok",
                     "profile": profile,
-                    "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                    "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+                    "stages": {"orientation": {"applied_rotation_degrees": 0}},
                     "regions": [],
                 })
 
@@ -269,7 +283,9 @@ class RealParserDataTest(unittest.TestCase):
                 prepare_real_annotation(sample, {
                     "status": "ok",
                     "profile": profile,
-                    "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600},
+                    "image": {"sha256": sample["image_sha256"], "width": 1200, "height": 1600, "source_width": 1200, "source_height": 1600},
+
+                    "stages": {"orientation": {"applied_rotation_degrees": 0}},
                     "regions": [],
                 })
 

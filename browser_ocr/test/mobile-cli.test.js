@@ -16,4 +16,5 @@ test("mobile OCR agent-control CLI reports selected model identity as JSON", () 
   assert.equal(body.selected_checkpoint_sha256, "804a57a050096ed34feda8cfa584b1e335685c2703494341cc74ce933c1ee12f");
   assert.equal(body.recognizer_sha256_valid, true);
   assert.equal(body.dictionary_sha256_valid, true);
+  assert.deepEqual(body.parser, { enabled: false });
 });

@@ -15,10 +15,12 @@ import {
   MATERIAL_PROFILES,
   PRINTER_PROFILES,
   REQUIRED_AUGMENTATION_COMPONENTS,
+  SCENE_PROP_PROFILES,
 } from "../synthetic_catalog.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
 import { generationCheckpointInterval } from "../../corpus/generator.mjs";
 import { estimateRenderedTextBox } from "../synthetic_layouts.mjs";
+import { cameraOverlayArgs, documentCastShadowArgs, foregroundClutterArgs, scenePropArgs } from "../synthetic_raster.mjs";
 import { testDrugCatalog, testHistoricalDrugExposure } from "../../corpus/tests/fixtures.mjs";
 
 const TEST_DRUG_CATALOG = testDrugCatalog();
@@ -74,6 +76,41 @@ test("synthetic GT tracks rendered text extents rather than layout slot widths",
   assert.ok(mixed.width < 210);
 });
 
+test("foreground clutter is composed from recognizable margin-safe capture objects", () => {
+  const args = foregroundClutterArgs(12345, 1280, 1600);
+  const draws = args.flatMap((value, index) => args[index - 1] === "-draw" ? [value] : []);
+  assert.ok(draws.some((draw) => draw.startsWith("ellipse ")), "finger/nail clutter missing");
+  assert.ok(draws.some((draw) => draw.startsWith("polygon ")), "pen/card clutter missing");
+  assert.ok(draws.some((draw) => draw.startsWith("line ")), "receipt detail missing");
+  assert.ok(draws.every((draw) => !draw.startsWith("roundrectangle 0,")), "legacy abstract black bar returned");
+});
+
+test("document scene adds source-shaped cast shadow and explicit layered paper props", () => {
+  const capture = {
+    source_corners: [[0, 0], [1280, 0], [1280, 1600], [0, 1600]],
+    destination_corners: [[36, 42], [1244, 18], [1258, 1560], [28, 1580]],
+  };
+  const shadow = documentCastShadowArgs("/tmp/source.svg", capture, { texture_seed: 12345 }, 1280, 1600);
+  assert.ok(shadow.includes("-shadow"));
+  assert.ok(shadow.some((value) => /^\d+x\d+(?:\.\d+)?[+-]\d+[+-]\d+$/u.test(value)), "shadow geometry is not explicit");
+
+  for (const profile of SCENE_PROP_PROFILES.filter((value) => value !== "none")) {
+    const args = scenePropArgs({ scene_prop_profile: profile, texture_seed: 98765 }, 1280, 1600);
+    const draws = args.flatMap((value, index) => args[index - 1] === "-draw" ? [value] : []);
+    assert.ok(draws.some((draw) => draw.startsWith("polygon ")), `${profile} lacks paper geometry`);
+    assert.ok(draws.some((draw) => draw.startsWith("line ")), `${profile} lacks printed/ruled paper detail`);
+  }
+});
+
+test("camera glare resets inherited scene stroke before drawing soft highlight", () => {
+  const args = cameraOverlayArgs({ profile: "glare_shadow", glare_opacity: 0.2, shadow_opacity: 0 }, { texture_seed: 7 }, 1280, 1600);
+  const ellipse = args.findIndex((value) => typeof value === "string" && value.startsWith("ellipse "));
+  assert.ok(ellipse > 0);
+  const prefix = args.slice(0, ellipse);
+  const none = prefix.lastIndexOf("none");
+  assert.ok(none >= 1 && prefix[none - 1] === "-stroke", "glare ellipse can inherit a prior stroke");
+});
+
 test("legacy bag labels share the regimen association group with their values", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-det-legacy-association-"));
   try {
@@ -81,8 +118,10 @@ test("legacy bag labels share the regimen association group with their values", 
     const legacy = corpus.samples.find((sample) => sample.layout_family === "legacy_preprinted_medication_bag");
     assert.ok(legacy);
     const groups = new Map(legacy.regions.map((region) => [region.region_id, region.association_group]));
+    const medicationGroup = groups.get("product");
+    assert.match(medicationGroup, /^med-\d+$/);
     for (const id of ["daily", "frequency", "each", "dose", "days-label", "days", "product-label", "product"]) {
-      assert.equal(groups.get(id), "bag-regimen");
+      assert.equal(groups.get(id), medicationGroup);
     }
     assert.ok(legacy.regions.every((region) => region.natural_text_polygon?.length === 4));
   } finally {
@@ -95,7 +134,7 @@ test("scaled generator covers realistic layout/camera/material strata with raste
   try {
     const corpus = await generateCorpus({ outputDir: root, count: 36, seed: 153 });
     assert.equal(corpus.schema_version, 3);
-    assert.equal(corpus.generator.version, 5);
+    assert.equal(corpus.generator.version, 6);
     assert.ok(corpus.generator.revision >= 1);
     assert.deepEqual(corpus.tasks, ["detection", "recognition", "parsing", "e2e"]);
     assert.ok(corpus.samples.every((sample) => ["train", "val", "test"].includes(sample.split)));
@@ -108,6 +147,7 @@ test("scaled generator covers realistic layout/camera/material strata with raste
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.material_profile)), new Set(MATERIAL_PROFILES));
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.printer_profile)), new Set(PRINTER_PROFILES));
     assert.deepEqual(new Set(corpus.samples.map((sample) => sample.background_profile)), new Set(BACKGROUND_PROFILES));
+    assert.deepEqual(new Set(corpus.samples.map((sample) => sample.scene_prop_profile)), new Set(SCENE_PROP_PROFILES));
     assert.ok(corpus.samples.some((sample) => sample.risk_tags.includes("glare")));
     assert.ok(corpus.samples.some((sample) => sample.risk_tags.includes("blur")));
     assert.ok(corpus.samples.some((sample) => sample.risk_tags.includes("projective_geometry")));
@@ -198,8 +238,17 @@ test("coverage audit fails closed when a required synthetic stratum disappears",
     assert.equal(report.material_profiles.length, MATERIAL_PROFILES.length);
     assert.equal(report.printer_profiles.length, PRINTER_PROFILES.length);
     assert.equal(report.background_profiles.length, BACKGROUND_PROFILES.length);
+    assert.equal(report.scene_prop_profiles.length, SCENE_PROP_PROFILES.length);
+    assert.ok(report.visual_styles.length > 0);
     assert.ok(report.critical_semantic_roles.product > 0);
     assert.ok(report.critical_semantic_roles.dose > 0);
+
+    const legacy = structuredClone(corpus);
+    legacy.generator.version = 5;
+    legacy.samples = legacy.samples.filter((sample) => sample.layout_family !== "pharmacy_guide_receipt_sidecar");
+    const legacyReport = auditCoverage(legacy);
+    assert.equal(legacyReport.status, "pass");
+    assert.equal(legacyReport.failures.some((failure) => failure.includes("pharmacy_guide_receipt_sidecar")), false);
 
     const broken = structuredClone(corpus);
     for (const sample of broken.samples) {

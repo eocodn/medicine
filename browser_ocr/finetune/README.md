@@ -89,7 +89,7 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
   --train-samples 128 --val-samples 64 --batch-size 16 --json
 ```
 
-Generated datasets, downloaded weights, training logs, checkpoints, and large evaluation artifacts belong under `/artifacts`, which the writable OCR Compose services bind to host `~/dev/artifacts/medicine` by default. Create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`); Compose refuses to auto-create it so Docker cannot leave a root-owned artifact directory. Override the host location with `MEDICINE_ARTIFACTS_DIR=/absolute/path` when needed; the in-container path remains `/artifacts`. Do not generate a dictionary from only the training labels and silently replace the model dictionary; `audit-model` must remain green against the pinned upstream Korean dictionary before training.
+Generated datasets, downloaded weights, training logs, checkpoints, and large evaluation artifacts belong under `/artifacts`, which the writable OCR Compose services bind to host `~/dev/.artifacts/medicine` by default. Create that host directory as your normal user before the first run (`mkdir -p ~/dev/.artifacts/medicine`); Compose refuses to auto-create it so Docker cannot leave a root-owned artifact directory. Override the host location with `MEDICINE_ARTIFACTS_DIR=/absolute/path` when needed; the in-container path remains `/artifacts`. Do not generate a dictionary from only the training labels and silently replace the model dictionary; `audit-model` must remain green against the pinned upstream Korean dictionary before training.
 
 ## Deterministic synthetic recognition crops
 
@@ -205,11 +205,27 @@ COMPOSE_PROJECT_NAME=medicine_ocr_mixed_view \
 
 The mixed output is passed to the same `selected-finetune` runner. This keeps the only experimental difference in the training data composition while evaluation, model initialization, checkpointing, and fixed-eval selection remain identical.
 
+## V6 unified recognizer training boundary
+
+The current v6 rebuild does not depend on the historical selected-checkpoint file being present. `v6-preflight`/`v6-train` start from the pinned official `korean_PP-OCRv5_mobile_rec` pretrained weight and require a model-compatible unified recognition training view produced by `prepare-training-view`. Preflight verifies the pinned PaddleOCR config/dictionary/pretrain hashes, every source crop hash through the dataset loader, exact document-split membership and label-file content, and the training-view policy before constructing the Paddle command. Only `train` is optimized and only `val` is used for Paddle checkpoint selection; `test.txt` is bound into provenance but is forbidden from the optimization command.
+
+```bash
+docker compose run --rm ocr-finetune-train v6-preflight \
+  --manifest /artifacts/ocr/recognition/v6-training/manifest.json \
+  --export-dir /artifacts/ocr/recognition/v6-training/paddle \
+  --run-dir /artifacts/ocr/training/recognizer-v6 \
+  --epochs 4 --batch-size 32 --learning-rate 0.00005 --warmup-epochs 1 --json
+```
+
+Replacing `v6-preflight` with `v6-train` starts the explicitly approved optimization run. The runner is single-writer, persists atomic state/result files, emits 30-second heartbeats, checkpoints each epoch, and resumes only from the latest complete epoch. A completed `best_accuracy.pdparams` remains `pending_project_safety_evaluation`; held-out synthetic test evaluation, frozen full-document OCR evaluation, real-photo validation and Android runtime gates happen later and are not replaced by Paddle validation accuracy.
+
 ## Full-document detector → fine-tuned recognizer observation path
 
 `ocr-full-document` composes the mobile detector research pipeline with a completed fine-tune baseline. The default detector is the selected `PP-OCRv5_mobile_det` candidate at edge 640. Its official ONNX archive is verified against `browser_ocr/detection/detector-models.json`; the recognizer is loaded directly from the `best_checkpoint` recorded by the supplied baseline result and its SHA-256 is verified before inference.
 
-The command performs full-document detection, perspective-normalizes each quadrilateral into a recognition crop, and runs the selected Korean recognizer. The schema-v2 result contains raw OCR `regions` and `text_lines` only. Structured medication rows are the responsibility of the learned parser model, which is deliberately outside this OCR producer. The output profile pins detector, recognizer, cropper, runtime, and orchestration implementation hashes so parser experiments can reuse an unchanged OCR observation set without coupling to a parser implementation.
+The command runs the detector once on the input pixels, then canonicalizes metadata-free 0/90/180/270-degree page orientation before parser-visible OCR geometry is produced. Detector-box aspect ratios reduce the common search to one 180-degree pair; a bounded set of strong text boxes is recognized under the remaining candidates and the selected recognizer score resolves upright vs upside-down. The full page is then rotated once and the original detector polygons are transformed into the same canonical coordinate frame, avoiding a second detector pass. The browser/Android ONNX worker uses the same detector-axis + recognizer-probe policy. The result keeps the original file SHA-256 plus `source_width`/`source_height` for provenance, while `image.width`/`image.height` and every `regions[].polygon` describe the canonical upright frame. The orientation decision and probe scores are observable under `stages.orientation`.
+
+After orientation, the command perspective-normalizes each quadrilateral into a recognition crop and runs the selected Korean recognizer. The schema-v2 result contains raw OCR `regions` and `text_lines` only. Structured medication rows are the responsibility of the learned parser model, which is deliberately outside this OCR producer. The output profile pins detector, recognizer, orientation code, cropper, runtime, and orchestration implementation hashes so parser experiments can reuse an unchanged OCR observation set without coupling to a parser implementation.
 
 Detector assets must already be present under the detection cache (the detection pipeline's `assets` command populates that cache). Generated crops, logs, state, and results belong under `/artifacts/ocr/`, outside the Git worktree.
 

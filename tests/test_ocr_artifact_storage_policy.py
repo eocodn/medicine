@@ -13,12 +13,20 @@ OCR_DOCS = (
 )
 WRITABLE_ML_SERVICES = (
     "ocr-detection-benchmark",
+    "ocr-detector-train",
+    "ocr-detector-export-paddle",
+    "ocr-detector-convert",
+    "ocr-detector-candidate-eval",
     "ocr-corpus",
     "ocr-parser-data",
+    "ocr-parser-train",
+    "ocr-parser-eval-model",
+    "ocr-parser-export-model",
     "ocr-finetune",
     "ocr-finetune-train",
     "ocr-full-document",
     "ocr-parser-real",
+    "ocr-parser-synthetic-runtime",
 )
 
 
@@ -36,7 +44,7 @@ class OcrArtifactStoragePolicyTest(unittest.TestCase):
     def test_writable_ml_services_mount_durable_artifact_root(self) -> None:
         compose = COMPOSE.read_text(encoding="utf-8")
         expected_source = (
-            "source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}"
+            "source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/.artifacts/medicine}"
         )
 
         for service in WRITABLE_ML_SERVICES:
@@ -51,7 +59,7 @@ class OcrArtifactStoragePolicyTest(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             with self.subTest(path=path.relative_to(ROOT)):
                 self.assertIn("/artifacts", text)
-                self.assertIn("~/dev/artifacts/medicine", text)
+                self.assertIn("~/dev/.artifacts/medicine", text)
 
     def test_detector_benchmark_default_is_durable(self) -> None:
         cli = (ROOT / "browser_ocr" / "detection" / "cli.mjs").read_text(

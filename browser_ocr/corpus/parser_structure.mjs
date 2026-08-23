@@ -1,6 +1,7 @@
 import { DOCUMENT_HEIGHT, DOCUMENT_WIDTH, estimateRenderedTextBox } from "../detection/synthetic_layouts.mjs";
+import { LAYOUT_FAMILIES } from "../detection/synthetic_catalog.mjs";
 
-export const PARSER_STRUCTURE_REVISION = 3;
+export const PARSER_STRUCTURE_REVISION = 6;
 
 const TRAIN_VARIANTS = [
   "complete",
@@ -141,7 +142,23 @@ function fractionDose(regions, random) {
 function addRegimenDistractor(regions) {
   const source = regions.find((region) => ["dose", "frequency", "duration"].includes(region.semantic_role));
   if (!source) return regions;
-  const moved = moveRegion(source, 0, Math.min(420, DOCUMENT_HEIGHT - source.polygon[2][1] - 40), "-parser-distractor");
+  const receiptRegions = regions.filter((region) => region.region_id.startsWith("receipt-"));
+  const receiptValues = receiptRegions.filter((region) => region.region_id.endsWith("-value"));
+  let moved;
+  if (receiptValues.length > 0) {
+    const anchor = receiptValues[0];
+    const latestReceiptY = Math.max(...receiptRegions.map((region) => region.text_origin[1]));
+    const sourceHeight = source.natural_text_box[2][1] - source.natural_text_box[0][1];
+    const targetY = Math.min(DOCUMENT_HEIGHT - sourceHeight - 30, latestReceiptY + 42);
+    moved = moveRegion(
+      source,
+      anchor.text_origin[0] - source.text_origin[0],
+      targetY - source.text_origin[1],
+      "-parser-distractor",
+    );
+  } else {
+    moved = moveRegion(source, 0, Math.min(420, DOCUMENT_HEIGHT - source.polygon[2][1] - 40), "-parser-distractor");
+  }
   return [...regions, {
     ...moved,
     critical: false,
@@ -162,7 +179,29 @@ function ambiguousSpacing(regions) {
   const y1 = productY.get(groups[0]);
   const y2 = productY.get(groups[1]);
   if (!Number.isFinite(y1) || !Number.isFinite(y2)) return regions;
-  const targetY = (y1 + y2) / 2;
+  const moving = regions.filter((region) => (
+    region.association_group === first
+    && ["dose", "frequency", "duration"].includes(region.semantic_role)
+  ));
+  const otherMedication = regions.filter((region) => (
+    region.association_group !== "document"
+    && region.association_group !== first
+  ));
+  let targetY = y1 + (y2 - y1) * 0.48;
+  for (const source of moving) {
+    const sourceLeft = source.natural_text_box[0][0];
+    const sourceRight = source.natural_text_box[2][0];
+    const sourceHeight = source.natural_text_box[2][1] - source.natural_text_box[0][1];
+    const sourceTopOffset = source.natural_text_box[0][1] - source.text_origin[1];
+    for (const candidate of otherMedication) {
+      const candidateLeft = candidate.natural_text_box[0][0];
+      const candidateRight = candidate.natural_text_box[2][0];
+      if (sourceRight <= candidateLeft || sourceLeft >= candidateRight) continue;
+      const candidateTop = candidate.natural_text_box[0][1];
+      targetY = Math.min(targetY, candidateTop - sourceHeight - sourceTopOffset - 4);
+    }
+  }
+  targetY = Math.max(y1, targetY);
   return regions.map((region) => {
     if (region.association_group !== first || !["dose", "frequency", "duration"].includes(region.semantic_role)) return region;
     return moveRegion(region, 0, targetY - region.text_origin[1]);
@@ -176,6 +215,15 @@ function headerOnly(regions) {
   ));
 }
 
+function reconcileDecorationState(layout, regions) {
+  const headerBand = layout.decoration_adaptations?.header_band;
+  if (!headerBand || regions.some((region) => region.semantic_role === "header")) return layout.decorations;
+  if (!layout.decorations.includes(headerBand.full)) {
+    throw new Error("header-band decoration adaptation does not match rendered layout");
+  }
+  return layout.decorations.replace(headerBand.full, headerBand.empty);
+}
+
 export function parserStructureVariantForSample(index, split, splitOrdinal = index) {
   const pools = { train: TRAIN_VARIANTS, val: VAL_VARIANTS, test: TEST_VARIANTS };
   const pool = pools[split];
@@ -183,7 +231,7 @@ export function parserStructureVariantForSample(index, split, splitOrdinal = ind
   // Keep the original one-per-layout smoke harness structurally intact. Parser
   // stress recipes begin after that fixture band, while larger corpora still
   // cycle through every training recipe deterministically.
-  if (split === "train" && index < 6) return "complete";
+  if (split === "train" && index < LAYOUT_FAMILIES.length) return "complete";
   return pool[splitOrdinal % pool.length];
 }
 
@@ -210,6 +258,7 @@ export function applyParserStructureVariant(layout, { index, split, splitOrdinal
   return {
     ...layout,
     regions,
+    decorations: reconcileDecorationState(layout, regions),
     parser_structure_variant: variant,
     scenario_tags: [...new Set([...layout.scenario_tags, `parser_structure_${variant}`])],
     risk_tags: [...new Set([

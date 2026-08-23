@@ -2,16 +2,71 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from browser_ocr.finetune.orientation import transform_polygon_right_angle
+
 from .observation_profile import runtime_observation_producer, runtime_observation_profile
+from .synthetic_observations import SYNTHETIC_OBSERVATION_REVISION, synthetic_observed_regions
 from .training_alignment import align_observation_nodes, build_relation_labels, normalize_semantic_role
 from .training_dataset import ParserDatasetError, write_parser_dataset
 
 
-_SYNTHETIC_OBSERVATION_REVISION = 1
+def _runtime_orientation(result: Mapping[str, Any], *, document_id: str) -> tuple[int, int, int]:
+    image = result.get("image")
+    stages = result.get("stages")
+    orientation = stages.get("orientation") if isinstance(stages, Mapping) else None
+    if not isinstance(image, Mapping) or not isinstance(orientation, Mapping):
+        raise ParserDatasetError(f"runtime OCR result orientation metadata is missing: {document_id}")
+    rotation = orientation.get("applied_rotation_degrees")
+    if isinstance(rotation, bool) or not isinstance(rotation, int) or rotation not in {0, 90, 180, 270}:
+        raise ParserDatasetError(f"runtime OCR result orientation rotation is invalid: {document_id}")
+    source_width = image.get("source_width")
+    source_height = image.get("source_height")
+    width = image.get("width")
+    height = image.get("height")
+    for value, label in ((source_width, "source width"), (source_height, "source height"), (width, "width"), (height, "height")):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ParserDatasetError(f"runtime OCR result image {label} is invalid: {document_id}")
+    expected = (source_height, source_width) if rotation in {90, 270} else (source_width, source_height)
+    if (width, height) != expected:
+        raise ParserDatasetError(f"runtime OCR result canonical dimensions disagree with orientation: {document_id}")
+    return rotation, width, height
+
+
+def _canonical_truth_sample(sample: Mapping[str, Any], result: Mapping[str, Any]) -> dict[str, Any]:
+    document_id = str(sample["document_id"])
+    rotation, width, height = _runtime_orientation(result, document_id=document_id)
+    source_width = int(sample["width"])
+    source_height = int(sample["height"])
+    image = result["image"]
+    if int(image["source_width"]) != source_width or int(image["source_height"]) != source_height:
+        raise ParserDatasetError(f"runtime OCR result source dimensions do not match truth: {document_id}")
+    canonical = dict(sample)
+    canonical["width"] = width
+    canonical["height"] = height
+    nodes: list[dict[str, Any]] = []
+    for raw in sample["nodes"]:
+        if not isinstance(raw, Mapping):
+            raise ParserDatasetError(f"{document_id}.nodes contains non-object")
+        node = dict(raw)
+        node["polygon"] = transform_polygon_right_angle(
+            raw.get("polygon"),
+            width=source_width,
+            height=source_height,
+            degrees=rotation,
+        )
+        natural = raw.get("natural_text_polygon") or raw.get("polygon")
+        node["natural_text_polygon"] = transform_polygon_right_angle(
+            natural,
+            width=source_width,
+            height=source_height,
+            degrees=rotation,
+        )
+        nodes.append(node)
+    canonical["nodes"] = nodes
+    return canonical
 
 
 def _sha256_file(path: Path) -> str:
@@ -137,108 +192,6 @@ def _oracle_nodes(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
     return nodes
 
 
-def _jitter_polygon(polygon: object, rng: random.Random, width: int, height: int) -> list[list[float]]:
-    if not isinstance(polygon, list) or len(polygon) != 4:
-        raise ParserDatasetError("truth node polygon must contain four points")
-    max_dx = max(1.0, width * 0.0025)
-    max_dy = max(1.0, height * 0.0025)
-    dx = rng.uniform(-max_dx, max_dx)
-    dy = rng.uniform(-max_dy, max_dy)
-    return [
-        [max(0.0, min(float(point[0]) + dx, float(width))), max(0.0, min(float(point[1]) + dy, float(height)))]
-        for point in polygon
-    ]
-
-
-def _bbox(polygon: Sequence[Sequence[float]]) -> tuple[float, float, float, float]:
-    xs = [float(point[0]) for point in polygon]
-    ys = [float(point[1]) for point in polygon]
-    return min(xs), min(ys), max(xs), max(ys)
-
-
-def _rect(x1: float, y1: float, x2: float, y2: float) -> list[list[float]]:
-    return [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-
-
-def _corrupt_text(text: str, rng: random.Random) -> str:
-    if len(text) < 2 or rng.random() >= 0.10:
-        return text
-    index = rng.randrange(len(text))
-    if rng.random() < 0.5:
-        return text[:index] + text[index + 1 :]
-    substitutions = {"1": "I", "0": "O", "정": "점", "회": "외", "일": "|"}
-    replacement = substitutions.get(text[index], text[index])
-    return text[:index] + replacement + text[index + 1 :]
-
-
-def _synthetic_observed_regions(sample: Mapping[str, Any], seed: int) -> list[dict[str, Any]]:
-    document_id = str(sample["document_id"])
-    digest = hashlib.sha256(f"{seed}:{document_id}:{_SYNTHETIC_OBSERVATION_REVISION}".encode()).digest()
-    rng = random.Random(int.from_bytes(digest[:8], "big"))
-    width = int(sample["width"])
-    height = int(sample["height"])
-    observed: list[dict[str, Any]] = []
-    for raw in sample["nodes"]:
-        role = normalize_semantic_role(raw.get("semantic_role"))
-        drop_rate = 0.06 if role in {"product", "dose", "frequency", "duration"} else 0.035
-        if rng.random() < drop_rate:
-            continue
-        polygon = _jitter_polygon(raw.get("natural_text_polygon") or raw["polygon"], rng, width, height)
-        text = _corrupt_text(str(raw.get("text") or ""), rng)
-        confidence = round(rng.uniform(0.72, 0.995), 6)
-        x1, y1, x2, y2 = _bbox(polygon)
-        if len(text) >= 3 and x2 - x1 >= 36 and rng.random() < 0.10:
-            split_at = max(1, min(len(text) - 1, len(text) // 2))
-            split_x = x1 + (x2 - x1) * (split_at / len(text))
-            observed.append({"text": text[:split_at], "recognition_score": confidence, "polygon": _rect(x1, y1, split_x, y2)})
-            observed.append({"text": text[split_at:], "recognition_score": max(0.0, confidence - 0.02), "polygon": _rect(split_x, y1, x2, y2)})
-        else:
-            observed.append({"text": text, "recognition_score": confidence, "polygon": polygon})
-
-    # Merge at most one close visual-row pair. The alignment layer decides whether
-    # the merged observation is still labelable or must be masked as ambiguous.
-    spatial = sorted(range(len(observed)), key=lambda index: (_bbox(observed[index]["polygon"])[1], _bbox(observed[index]["polygon"])[0]))
-    for left_index, right_index in zip(spatial, spatial[1:]):
-        if rng.random() >= 0.08:
-            continue
-        left = observed[left_index]
-        right = observed[right_index]
-        lx1, ly1, lx2, ly2 = _bbox(left["polygon"])
-        rx1, ry1, rx2, ry2 = _bbox(right["polygon"])
-        vertical_overlap = max(0.0, min(ly2, ry2) - max(ly1, ry1))
-        if vertical_overlap < 0.45 * max(1.0, min(ly2 - ly1, ry2 - ry1)):
-            continue
-        gap = max(0.0, rx1 - lx2, lx1 - rx2)
-        if gap > max(28.0, 1.5 * max(ly2 - ly1, ry2 - ry1)):
-            continue
-        merged = {
-            "text": f"{left['text']}{right['text']}",
-            "recognition_score": min(float(left["recognition_score"]), float(right["recognition_score"])),
-            "polygon": _rect(min(lx1, rx1), min(ly1, ry1), max(lx2, rx2), max(ly2, ry2)),
-        }
-        first, second = sorted((left_index, right_index), reverse=True)
-        observed.pop(first)
-        observed.pop(second)
-        observed.append(merged)
-        break
-
-    if rng.random() < 0.30:
-        noise_x = rng.uniform(width * 0.05, width * 0.75)
-        noise_y = rng.uniform(height * 0.70, height * 0.94)
-        observed.append(
-            {
-                "text": rng.choice(["주의", "TEL", "보관", "문의"]),
-                "recognition_score": round(rng.uniform(0.45, 0.88), 6),
-                "polygon": _rect(noise_x, noise_y, min(width, noise_x + 80), min(height, noise_y + 28)),
-            }
-        )
-
-    rng.shuffle(observed)
-    for index, region in enumerate(observed, start=1):
-        region["index"] = index
-    return observed
-
-
 def _base_document(
     sample: Mapping[str, Any],
     *,
@@ -291,11 +244,11 @@ def build_synthetic_dataset(
             nodes = _oracle_nodes(sample)
             profile = {"producer": "unified_truth", "truth_samples_sha256": source_sha}
         else:
-            observed = _synthetic_observed_regions(sample, seed)
+            observed = synthetic_observed_regions(sample, seed)
             nodes = align_observation_nodes(_truth_regions(sample), observed)
             profile = {
                 "producer": "deterministic_synthetic_ocr",
-                "revision": _SYNTHETIC_OBSERVATION_REVISION,
+                "revision": SYNTHETIC_OBSERVATION_REVISION,
                 "seed": seed,
                 "truth_samples_sha256": source_sha,
             }
@@ -355,7 +308,8 @@ def build_runtime_dataset(
         observed_regions = result.get("regions")
         if not isinstance(observed_regions, list):
             raise ParserDatasetError(f"runtime OCR result regions are missing: {document_id}")
-        nodes = align_observation_nodes(_truth_regions(sample), observed_regions)
+        canonical_sample = _canonical_truth_sample(sample, result)
+        nodes = align_observation_nodes(_truth_regions(canonical_sample), observed_regions)
         observation_profile = runtime_observation_profile(
             result.get("profile"),
             expected_image_sha256=str(sample["image_sha256"]),
@@ -370,7 +324,7 @@ def build_runtime_dataset(
             raise ParserDatasetError("runtime parser dataset inputs mix different runtime OCR producers")
         documents.append(
             _base_document(
-                sample,
+                canonical_sample,
                 observation_kind="runtime_ocr",
                 observation_profile=observation_profile,
                 nodes=nodes,
