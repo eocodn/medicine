@@ -57,6 +57,38 @@ impl TrustedSigningKey {
             revoked: true,
         }
     }
+
+    pub fn active_spki_pem(
+        key_id: &str,
+        public_key_pem: &str,
+        expected_spki_sha256: &str,
+    ) -> Result<Self, ReferenceSignatureError> {
+        validate_key_id(key_id)?;
+        if !is_sha256(expected_spki_sha256) {
+            return Err(ReferenceSignatureError::new(
+                "invalid release signing public key fingerprint",
+            ));
+        }
+        const BEGIN: &str = "-----BEGIN PUBLIC KEY-----";
+        const END: &str = "-----END PUBLIC KEY-----";
+        let trimmed = public_key_pem.trim();
+        let body = trimmed
+            .strip_prefix(BEGIN)
+            .and_then(|value| value.strip_suffix(END))
+            .ok_or_else(|| ReferenceSignatureError::new("invalid release signing public key"))?
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<String>();
+        let spki = decode_base64(&body, "release signing public key")?;
+        parse_p256_spki(&spki)?;
+        if hex_digest(&spki) != expected_spki_sha256 {
+            return Err(ReferenceSignatureError::new(
+                "release signing public key fingerprint does not match",
+            ));
+        }
+        Ok(Self::active(key_id, spki))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,9 +353,63 @@ pub struct VerifiedReferenceRelease {
     pub patches: Vec<ReferenceReleaseArtifact>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceRootSelection {
+    Release(VerifiedReferenceRelease),
+    Retired {
+        release_sequence: i64,
+        root_hash: String,
+        current_contract_major: u64,
+        minimum_supported_contract_major: u64,
+    },
+}
+
 pub struct ReferenceReleaseProtocolV2;
 
 impl ReferenceReleaseProtocolV2 {
+    pub fn select_verified_root(
+        release_sequence: i64,
+        payload: &[u8],
+        contract_major: u64,
+    ) -> Result<ReferenceRootSelection, ReferenceSignatureError> {
+        validate_sequence(release_sequence, "reference root sequence")?;
+        if contract_major == 0 {
+            return Err(ReferenceSignatureError::new(
+                "invalid reference contract major",
+            ));
+        }
+        let root: Value = serde_json::from_slice(payload)
+            .map_err(|_| ReferenceSignatureError::new("invalid reference release root JSON"))?;
+        let protocol = root
+            .get("protocol_version")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                ReferenceSignatureError::new("unsupported reference release protocol")
+            })?;
+        if protocol != PROTOCOL_VERSION {
+            return Err(ReferenceSignatureError::new(
+                "unsupported reference release protocol",
+            ));
+        }
+        let current = positive_u64(&root, "current_contract_major")?;
+        let minimum = positive_u64(&root, "minimum_supported_contract_major")?;
+        if minimum > current || current - minimum > 1 {
+            return Err(ReferenceSignatureError::new(
+                "invalid reference contract support window",
+            ));
+        }
+        if contract_major < minimum {
+            return Ok(ReferenceRootSelection::Retired {
+                release_sequence,
+                root_hash: hex_digest(payload),
+                current_contract_major: current,
+                minimum_supported_contract_major: minimum,
+            });
+        }
+        Self::parse_verified_root(release_sequence, payload, contract_major)
+            .map(ReferenceRootSelection::Release)
+    }
+
     pub fn parse_verified_root(
         release_sequence: i64,
         payload: &[u8],

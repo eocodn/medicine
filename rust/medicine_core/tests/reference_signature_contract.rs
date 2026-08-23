@@ -6,7 +6,8 @@
 //! protocol parser to JNI, the local CLI, and the Linux development service.
 
 use medicine_core::{
-    ReferenceArtifactKind, ReferenceManifestVerifier, ReferenceReleaseProtocolV2, TrustedSigningKey,
+    ReferenceArtifactKind, ReferenceManifestVerifier, ReferenceReleaseProtocolV2,
+    ReferenceRootSelection, TrustedSigningKey,
 };
 use serde_json::{json, Value};
 
@@ -225,6 +226,22 @@ fn protocol_v2_enforces_n_over_n_minus_one_window_and_explicit_retirement() {
 
     let mut retired = valid_root();
     retired["minimum_supported_contract_major"] = json!(2);
+    let selected =
+        ReferenceReleaseProtocolV2::select_verified_root(43, &root_bytes(retired.clone()), 1)
+            .unwrap();
+    match selected {
+        ReferenceRootSelection::Retired {
+            release_sequence,
+            current_contract_major,
+            minimum_supported_contract_major,
+            ..
+        } => {
+            assert_eq!(release_sequence, 43);
+            assert_eq!(current_contract_major, 2);
+            assert_eq!(minimum_supported_contract_major, 2);
+        }
+        other => panic!("unexpected selection: {other:?}"),
+    }
     let error = ReferenceReleaseProtocolV2::parse_verified_root(43, &root_bytes(retired), 1)
         .unwrap_err()
         .to_string();

@@ -25,13 +25,16 @@ FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639
 
 ENV HOME=/tmp \
     MEDICINE_OCR_ASSETS_DIR=/opt/medicine-ocr-assets \
+    MEDICINE_REFERENCE_TRUST_MANIFEST=/opt/medicine-reference-trust.json \
+    MEDICINE_REFERENCE_UPDATE_BASE_URL=https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/ \
     MEDICINE_STATIC_DIR=/opt/medicine-static
 
 WORKDIR /app
 
 COPY medicine_app/static /opt/medicine-static
+COPY deploy/reference-signing-trusted-keys.json /opt/medicine-reference-trust.json
 COPY --from=ocr-assets /out /opt/medicine-ocr-assets
-RUN chmod -R a+rX /opt/medicine-static /opt/medicine-ocr-assets
+RUN chmod -R a+rX /opt/medicine-static /opt/medicine-ocr-assets /opt/medicine-reference-trust.json
 COPY --from=rust-web /build/target/release/medicine-core-web /usr/local/bin/medicine-core-web
 
 ENTRYPOINT ["/usr/local/bin/medicine-core-web"]

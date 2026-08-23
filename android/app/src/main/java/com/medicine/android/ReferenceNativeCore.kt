@@ -10,6 +10,65 @@ interface NativeReferenceArtifactObserver {
 }
 
 object ReferenceNativeCore {
+    fun planReferenceBootstrap(
+        expectedContractMajor: Int,
+        highestActivatedSequence: Long,
+        release: VerifiedReferenceRelease,
+    ): ReferenceBootstrapPlan {
+        val result = JSONObject(
+            nativePlanReferenceBootstrap(
+                expectedContractMajor.toLong(),
+                highestActivatedSequence,
+                releaseJson(release).toString(),
+            )
+        )
+        check(result.getString("status") == "bootstrap") {
+            "native reference bootstrap planner returned an invalid result"
+        }
+        return ReferenceBootstrapPlan.Download(
+            target = release.targetVersion(),
+            full = release.full,
+        )
+    }
+
+    fun planReferenceUpdate(
+        current: ReferenceVersion,
+        highestActivatedSequence: Long,
+        release: VerifiedReferenceRelease,
+    ): ReferenceUpdatePlan {
+        val result = JSONObject(
+            nativePlanReferenceUpdate(
+                versionJson(current).toString(),
+                highestActivatedSequence,
+                releaseJson(release).toString(),
+            )
+        )
+        return when (result.getString("status")) {
+            "up_to_date" -> ReferenceUpdatePlan.UpToDate
+            "rollback_rejected" -> ReferenceUpdatePlan.RollbackRejected
+            "identity_conflict" -> ReferenceUpdatePlan.IdentityConflict
+            "stage" -> {
+                val primaryKey = result.getString("primary_key")
+                val fallbackKey = result.optString("fallback_full_key").takeIf { it.isNotEmpty() }
+                val artifacts = listOf(release.full) + release.patches
+                val primary = requireNotNull(artifacts.singleOrNull { it.key == primaryKey }) {
+                    "native reference update planner selected an unknown artifact"
+                }
+                val fallback = fallbackKey?.let { key ->
+                    requireNotNull(artifacts.singleOrNull { it.key == key }) {
+                        "native reference update planner selected an unknown fallback artifact"
+                    }
+                }
+                ReferenceUpdatePlan.Stage(
+                    target = release.targetVersion(),
+                    primary = primary,
+                    fallbackFull = fallback,
+                )
+            }
+            else -> error("native reference update planner returned an invalid result")
+        }
+    }
+
     fun verifyManifest(
         trustedPublicKeys: Map<String, ByteArray>,
         envelopeVersion: Int,
@@ -164,7 +223,56 @@ object ReferenceNativeCore {
         contractMajor: Long,
     ): String
 
+    private external fun nativePlanReferenceBootstrap(
+        expectedContractMajor: Long,
+        highestActivatedSequence: Long,
+        releaseJson: String,
+    ): String
+
+    private external fun nativePlanReferenceUpdate(
+        currentJson: String,
+        highestActivatedSequence: Long,
+        releaseJson: String,
+    ): String
+
     init {
         System.loadLibrary("medicine_core")
     }
+
+    private fun versionJson(version: ReferenceVersion): JSONObject = JSONObject()
+        .put("datasetId", version.datasetId)
+        .put("sha256", version.sha256)
+        .put("sizeBytes", version.sizeBytes)
+        .put("contractMajor", version.contractMajor)
+        .put("releaseSequence", version.releaseSequence)
+
+    private fun releaseJson(release: VerifiedReferenceRelease): JSONObject = JSONObject()
+        .put("release_sequence", release.releaseSequence)
+        .put("root_hash", release.rootHash)
+        .put("dataset_id", release.datasetId)
+        .put("contract_major", release.contractMajor)
+        .put("target_sha256", release.targetSha256)
+        .put("target_size_bytes", release.targetSizeBytes)
+        .put("full", artifactJson(release.full))
+        .put("patches", release.patches.map(::artifactJson))
+
+    private fun artifactJson(artifact: ReferenceReleaseArtifact): JSONObject = JSONObject()
+        .put("contract_major", artifact.contractMajor)
+        .put("key", artifact.key)
+        .put("sha256", artifact.sha256)
+        .put("size_bytes", artifact.sizeBytes)
+        .put(
+            "kind",
+            if (artifact.kind == ReferenceArtifactKind.CHUNK_PATCH) "chunk_patch" else "full_gzip",
+        )
+        .put("from_sha256", artifact.fromSha256 ?: JSONObject.NULL)
+        .put("from_size_bytes", artifact.fromSizeBytes ?: JSONObject.NULL)
+
+    private fun VerifiedReferenceRelease.targetVersion() = ReferenceVersion(
+        datasetId = datasetId,
+        sha256 = targetSha256,
+        sizeBytes = targetSizeBytes,
+        contractMajor = contractMajor,
+        releaseSequence = releaseSequence,
+    )
 }

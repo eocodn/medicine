@@ -153,6 +153,11 @@ pub struct ReferenceStore {
 }
 
 impl ReferenceStore {
+    pub fn from_state(state: ReferenceStoreState) -> Result<Self, ReferenceStateError> {
+        validate_state(&state)?;
+        Ok(Self { state })
+    }
+
     pub fn snapshot(&self) -> ReferenceStoreState {
         self.state.clone()
     }

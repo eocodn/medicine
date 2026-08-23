@@ -1,10 +1,15 @@
+use medicine_core::development_reference::{
+    ensure_development_reference, DevelopmentReferenceConfig,
+};
 use medicine_core::web::{build_router, WebConfig};
 use std::{env, net::IpAddr, path::PathBuf};
 use tokio::net::TcpListener;
 
-const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";
 const DEFAULT_PERSONAL_DB: &str = "data/db/personal.sqlite";
+const DEFAULT_REFERENCE_DIR: &str = "data/reference";
+const DEFAULT_REFERENCE_TRUST_MANIFEST: &str = "deploy/reference-signing-trusted-keys.json";
 const DEFAULT_STATIC_DIR: &str = "medicine_app/static";
+const REFERENCE_CONTRACT_MAJOR: i32 = 1;
 
 #[tokio::main]
 async fn main() {
@@ -17,10 +22,18 @@ async fn main() {
 async fn run(args: Vec<String>) -> Result<(), String> {
     let mut host = env::var("MEDICINE_WEB_HOST").unwrap_or_else(|_| "127.0.0.1".to_owned());
     let mut port = env::var("MEDICINE_WEB_PORT").unwrap_or_else(|_| "8000".to_owned());
-    let mut canonical_db =
-        env::var("MEDICINE_CANONICAL_DB").unwrap_or_else(|_| DEFAULT_CANONICAL_DB.to_owned());
+    let mut canonical_db = env::var("MEDICINE_CANONICAL_DB")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
     let mut personal_db =
         env::var("MEDICINE_PERSONAL_DB").unwrap_or_else(|_| DEFAULT_PERSONAL_DB.to_owned());
+    let mut reference_dir =
+        env::var("MEDICINE_REFERENCE_DIR").unwrap_or_else(|_| DEFAULT_REFERENCE_DIR.to_owned());
+    let mut reference_update_base_url = env::var("MEDICINE_REFERENCE_UPDATE_BASE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let mut reference_trust_manifest = env::var("MEDICINE_REFERENCE_TRUST_MANIFEST")
+        .unwrap_or_else(|_| DEFAULT_REFERENCE_TRUST_MANIFEST.to_owned());
     let mut static_dir =
         env::var("MEDICINE_STATIC_DIR").unwrap_or_else(|_| DEFAULT_STATIC_DIR.to_owned());
     let mut ocr_assets_dir = env::var("MEDICINE_OCR_ASSETS_DIR").ok();
@@ -28,12 +41,32 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 
     let mut index = 0;
     while index < args.len() {
-        let value = match args[index].as_str() {
-            "--host" => &mut host,
-            "--port" => &mut port,
-            "--canonical-db" => &mut canonical_db,
-            "--personal-db" => &mut personal_db,
-            "--static-dir" => &mut static_dir,
+        match args[index].as_str() {
+            "--host"
+            | "--port"
+            | "--canonical-db"
+            | "--personal-db"
+            | "--reference-dir"
+            | "--reference-update-base-url"
+            | "--reference-trust-manifest"
+            | "--static-dir" => {
+                let option = args[index].clone();
+                index += 1;
+                let value = args.get(index).ok_or_else(usage)?.to_owned();
+                match option.as_str() {
+                    "--host" => host = value,
+                    "--port" => port = value,
+                    "--canonical-db" => canonical_db = Some(value),
+                    "--personal-db" => personal_db = value,
+                    "--reference-dir" => reference_dir = value,
+                    "--reference-update-base-url" => reference_update_base_url = Some(value),
+                    "--reference-trust-manifest" => reference_trust_manifest = value,
+                    "--static-dir" => static_dir = value,
+                    _ => unreachable!(),
+                }
+                index += 1;
+                continue;
+            }
             "--ocr-assets-dir" => {
                 index += 1;
                 ocr_assets_dir = Some(args.get(index).ok_or_else(usage)?.to_owned());
@@ -47,10 +80,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
                 continue;
             }
             _ => return Err(usage()),
-        };
-        index += 1;
-        *value = args.get(index).ok_or_else(usage)?.to_owned();
-        index += 1;
+        }
     }
 
     let host: IpAddr = host
@@ -65,8 +95,26 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 
     let canonical_db = if reference_unavailable_reason.is_some() {
         None
+    } else if let Some(path) = canonical_db {
+        Some(PathBuf::from(path))
     } else {
-        Some(PathBuf::from(canonical_db))
+        let base_url = reference_update_base_url.ok_or_else(|| {
+            "reference distribution base URL is not configured and no --canonical-db override was supplied"
+                .to_owned()
+        })?;
+        let selection = tokio::task::spawn_blocking(move || {
+            ensure_development_reference(DevelopmentReferenceConfig {
+                reference_dir: PathBuf::from(reference_dir),
+                base_url,
+                trust_manifest: PathBuf::from(reference_trust_manifest),
+                contract_major: REFERENCE_CONTRACT_MAJOR,
+            })
+        })
+        .await
+        .map_err(|error| format!("reference preparation task failed: {error}"))?
+        .map_err(|error| format!("reference preparation failed: {error}"))?;
+        reference_unavailable_reason = selection.unavailable_reason;
+        selection.database
     };
     let app = build_router(WebConfig {
         canonical_db,
@@ -86,5 +134,5 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: medicine-core-web [--host <IP>] [--port <PORT>] [--canonical-db <PATH>] [--personal-db <PATH>] [--static-dir <PATH>] [--ocr-assets-dir <PATH>] [--reference-unavailable-reason <REASON>]".to_owned()
+    "usage: medicine-core-web [--host <IP>] [--port <PORT>] [--canonical-db <PATH>] [--personal-db <PATH>] [--reference-dir <PATH>] [--reference-update-base-url <HTTPS_BASE_URL>] [--reference-trust-manifest <PATH>] [--static-dir <PATH>] [--ocr-assets-dir <PATH>] [--reference-unavailable-reason <REASON>]".to_owned()
 }

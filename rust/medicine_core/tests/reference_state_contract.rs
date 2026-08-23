@@ -349,6 +349,17 @@ fn initial_install_equal_sequence_is_idempotent_only_for_the_same_identity() {
 }
 
 #[test]
+fn validated_state_can_be_restored_into_portable_store() {
+    let state = ReferenceStoreState {
+        active: Some(version(7, 'a', 1)),
+        highest_activated_sequence: 7,
+        ..ReferenceStoreState::default()
+    };
+    let store = ReferenceStore::from_state(state.clone()).expect("restore validated state");
+    assert_eq!(store.snapshot(), state);
+}
+
+#[test]
 fn dataset_identity_requires_lowercase_hex_suffix() {
     let mut malformed = version(1, 'a', 1);
     malformed.dataset_id = format!("sha256:{}g", "a".repeat(63));

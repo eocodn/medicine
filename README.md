@@ -186,11 +186,13 @@ Reference DB 배포 workflow는 fresh source run에서 MFDS API snapshot과 subs
 R2 bucket은 public 개발 URL을 켜기 전에 `medicine-canonical r2-public-audit --json`으로
 `reference/v1/` 외 객체가 없는지 확인합니다.
 
-개발 단계의 Android reference update endpoint는 Cloudflare R2의 non-production `r2.dev` URL을 사용합니다.
-현재 개발 endpoint는 `https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/`이며 first-launch bootstrap이
-필수이므로 Gradle debug/release 빌드 모두의 기본값으로 내장합니다. `MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL`로
-개발 endpoint를 교체할 수 있고, `MEDICINE_REFERENCE_UPDATE_BASE_URL`은 두 variant 모두를 덮어쓰는 명시적
-테스트/build override입니다. 출시 준비 시에는 `r2.dev` 대신 custom domain으로 교체합니다.
+개발 단계의 Android 앱과 standalone development web은 Cloudflare R2의 동일한 non-production `r2.dev`
+reference channel을 사용합니다. 현재 개발 endpoint는
+`https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/`입니다. Android는 이 값을 Gradle debug/release
+기본값으로 사용하고, standalone web은 Compose의 `MEDICINE_REFERENCE_UPDATE_BASE_URL` 기본값으로 사용합니다.
+Android의 `MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL`은 개발 endpoint를 교체하며,
+`MEDICINE_REFERENCE_UPDATE_BASE_URL`은 Android와 standalone web 모두에서 명시적 테스트 override로 사용할 수
+있습니다. 출시 준비 시 Android 배포 channel은 `r2.dev` 대신 custom domain으로 교체합니다.
 
 `canonical verify`가 실패하면 앱은 데이터셋을 verified로 취급하지 않습니다. Reference publish workflow는
 `canonical mobile-build`로 `mobile.sqlite`와 manifest를 생성해 signed hosted release로 배포하지만, Android
@@ -339,14 +341,18 @@ Android 앱은 WebView를 UI 셸로 사용하지만 외부 웹 서버에는 연�
 HTTP/HTTPS 요청은 차단합니다. Android manifest의 `INTERNET` 권한은 native reference downloader에만 사용됩니다.
 
 배포용 reference DB는 검증된 `canonical.sqlite`에서 런타임 테이블과 view만 추린 `mobile.sqlite`입니다.
-로컬 standalone web과 Agent Control CLI도 기본적으로 이 동일한 `data/db/mobile.sqlite`를 사용합니다.
-개발 런타임은 `canonical.sqlite`로 자동 fallback하지 않으므로, schema나 materialization이 바뀌면 위의
-`mobile-build`를 다시 실행해 Android와 동일한 physical artifact로 검증해야 합니다.
-APK에는 DB를 넣지 않습니다. 검증된 LKG가 없는 첫 실행에는 signed `latest.json`을 확인하고 full gzip snapshot을
-Range-resume 가능한 checkpoint로 내려받은 뒤 artifact SHA-256/크기와 SQLite/runtime identity를 검증하여 앱 전용
-저장소에 원자적으로 설치합니다. 따라서 최초 설치 직후 첫 실행은 네트워크가 필요하지만, verified LKG가 생긴 뒤에는
-인터넷 연결 없이 약 검색·DUR 판정·복약 기록을 사용할 수 있습니다. reference DB는 읽기 전용으로 유지하고 개인 기록은
-별도의 `personal.sqlite`에 저장합니다.
+Android와 standalone development web은 같은 signed release protocol, Rust verifier/lifecycle policy, trust manifest를
+사용합니다. standalone web은 기본적으로 `data/reference/state.v1`과 content-addressed
+`data/reference/mobile-<sha256>.sqlite` LKG를 관리합니다. 검증된 LKG가 없으면 signed `latest.json`을 확인하고 full
+gzip snapshot을 Range-resume 가능한 checkpoint로 내려받아 artifact SHA-256/크기와 SQLite/runtime identity를
+검증한 뒤 원자적으로 설치합니다. 이후 signed update는 direct patch가 있으면 우선 사용하고 실패하면 signed full로
+fallback하며, 검증된 candidate는 pending으로 stage되어 다음 시작에 활성화됩니다. 유효한 LKG가 있으면 update endpoint가
+일시적으로 사용할 수 없어도 LKG로 정상 시작합니다. contract retirement/rollback/identity conflict는 fail-closed합니다.
+
+Agent Control CLI는 로컬 개발 편의를 위해 여전히 명시적인 `data/db/mobile.sqlite` 파일을 직접 사용합니다. standalone
+web에서 `MEDICINE_CANONICAL_DB` 또는 `--canonical-db`를 명시하면 signed store를 우회하는 테스트용 DB override가 됩니다.
+어느 경로도 `canonical.sqlite`로 자동 fallback하지 않습니다. reference DB는 읽기 전용으로 유지하고 개인 기록은 별도의
+`personal.sqlite`에 저장합니다.
 
 Docker에서 Android 단위 테스트와 debug APK 빌드를 실행합니다. Android 빌드 자체는 canonical/mobile DB를 생성하지 않습니다.
 

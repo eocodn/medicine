@@ -3,6 +3,8 @@ mod assessment_token;
 mod canonical_products;
 mod current_products;
 mod dashboard;
+#[cfg(feature = "web")]
+pub mod development_reference;
 mod dose_logs;
 mod dose_quantity;
 mod doses;
@@ -34,10 +36,12 @@ mod quantitative_safety;
 pub mod reference_artifacts;
 mod reference_capabilities;
 mod reference_db_verifier;
+mod reference_lifecycle;
 mod reference_runtime;
 mod reference_semantics;
 mod reference_signature;
 pub mod reference_state;
+mod reference_trust;
 mod regimen_review;
 mod safety_basis;
 mod safety_time;
@@ -51,10 +55,17 @@ pub use reference_capabilities::{
 pub use reference_db_verifier::{
     verify_reference_database, ReferenceVerificationError, ReferenceVerificationReport,
 };
+pub use reference_lifecycle::{
+    plan_reference_bootstrap, plan_reference_update, ReferenceBootstrapPlan,
+    ReferenceLifecycleError, ReferenceUpdatePlan,
+};
 pub use reference_signature::{
     ReferenceArtifactKind, ReferenceManifestVerifier, ReferenceReleaseArtifact,
-    ReferenceReleaseProtocolV2, ReferenceSignatureError, TrustedSigningKey,
+    ReferenceReleaseProtocolV2, ReferenceRootSelection, ReferenceSignatureError, TrustedSigningKey,
     VerifiedReferenceManifestSignature, VerifiedReferenceRelease,
+};
+pub use reference_trust::{
+    load_reference_trust_manifest, ReferenceTrustError, ReferenceTrustManifest,
 };
 pub const PERSONAL_SCHEMA_VERSION: i64 = personal_schema::SCHEMA_VERSION;
 
