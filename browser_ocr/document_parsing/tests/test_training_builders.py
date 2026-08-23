@@ -10,6 +10,7 @@ from browser_ocr.document_parsing.training_builders import (
     build_runtime_dataset,
     build_synthetic_dataset,
 )
+from browser_ocr.document_parsing.synthetic_observations import merge_one_visual_row_pair
 from browser_ocr.document_parsing.training_dataset import ParserDatasetError, load_parser_dataset
 
 
@@ -94,6 +95,33 @@ def _write_truth(root: Path) -> Path:
 
 
 class ParserTrainingBuildersTest(unittest.TestCase):
+    def test_synthetic_merge_rejects_tall_block_with_short_table_row(self) -> None:
+        class _AlwaysMerge:
+            @staticmethod
+            def random() -> float:
+                return 0.0
+
+        observed = [
+            {"text": "본 안내문은 복약 편의를 위한 정보입니다", "recognition_score": 0.9, "polygon": _poly(100, 100, 700, 650)},
+            {"text": "일수", "recognition_score": 0.9, "polygon": _poly(820, 700, 70, 24)},
+        ]
+        self.assertFalse(merge_one_visual_row_pair(observed, _AlwaysMerge()))
+        self.assertEqual(len(observed), 2)
+
+    def test_synthetic_merge_keeps_plausible_same_row_pair(self) -> None:
+        class _AlwaysMerge:
+            @staticmethod
+            def random() -> float:
+                return 0.0
+
+        observed = [
+            {"text": "가나다정", "recognition_score": 0.95, "polygon": _poly(100, 100, 90, 24)},
+            {"text": "1정", "recognition_score": 0.92, "polygon": _poly(200, 101, 50, 23)},
+        ]
+        self.assertTrue(merge_one_visual_row_pair(observed, _AlwaysMerge()))
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0]["text"], "가나다정1정")
+
     def test_oracle_builder_preserves_split_and_gold(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -139,6 +167,7 @@ class ParserTrainingBuildersTest(unittest.TestCase):
             self.assertEqual(a["observation"], b["observation"])
             self.assertEqual(a["relations"], b["relations"])
             self.assertEqual(a["observation"]["profile"]["seed"], 991)
+            self.assertEqual(a["observation"]["profile"]["revision"], 2)
 
     def test_runtime_builder_aligns_actual_ocr_nodes_to_truth(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
