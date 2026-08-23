@@ -78,7 +78,7 @@ services:
     volumes:
       - .:/workspace
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    command: ["sh", "-lc", "node --test browser_ocr/detection/tests/*.test.mjs && /opt/detection-venv/bin/python -m unittest browser_ocr.detection.tests.test_detector_benchmark -v && node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json && node browser_ocr/detection/cli.mjs audit --corpus browser_ocr/detection/corpus/manifest.json --json"]
+    command: ["sh", "-lc", "node --test browser_ocr/detection/tests/*.test.mjs && /opt/detection-venv/bin/python -m unittest discover -s browser_ocr/detection/tests -p 'test_*.py' -v && node browser_ocr/detection/cli.mjs validate --corpus browser_ocr/detection/corpus/manifest.json --json && node browser_ocr/detection/cli.mjs audit --corpus browser_ocr/detection/corpus/manifest.json --json"]
 
   ocr-detection-benchmark:
     build:
@@ -94,6 +94,26 @@ services:
           create_host_path: false
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     command: ["node", "browser_ocr/detection/cli.mjs", "benchmark", "--json"]
+
+  ocr-detector-train:
+    build:
+      context: .
+      dockerfile: browser_ocr/finetune/Dockerfile.train
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      CUDA_VISIBLE_DEVICES: "${OCR_FINETUNE_GPU:-0}"
+    volumes:
+      - .:/workspace
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
+    gpus: all
+    shm_size: "4gb"
+    entrypoint: ["python", "-m", "browser_ocr.detection.training_cli"]
 
   ocr-corpus:
     build:

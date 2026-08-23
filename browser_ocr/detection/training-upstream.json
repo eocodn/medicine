@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "framework": "PaddleOCR",
+  "detector": "PP-OCRv5_mobile_det",
+  "paddleocr": {
+    "repository": "https://github.com/PaddlePaddle/PaddleOCR.git",
+    "tag": "v3.7.0",
+    "commit": "b03f46425e8ff4442b268ce449e3eef758146cd4",
+    "config_path": "configs/det/PP-OCRv5/PP-OCRv5_mobile_det.yml",
+    "config_sha256": "18eb66497f683bf4c86e991ba8c02c55fe8ddf7a1aa3ff94ceaf271e89bceba9"
+  },
+  "document_config": {
+    "path": "PP-OCRv5_mobile_det_document.yml",
+    "sha256": "16e14d225bcf63bed7ae0e33d397e9f902206974c435d5d9be4a9bc8ab72505b"
+  },
+  "pretrained_model_url": "https://paddleocr.bj.bcebos.com/pretrained/PPLCNetV3_x0_75_ocr_det.pdparams",
+  "pretrained_model_bytes": 20103839,
+  "pretrained_model_sha256": "92825c8c7b590c8d7ee4b782a431def0e9b77f9ff0d8ac2a24a5af1a40497607",
+  "paddlepaddle": {
+    "package": "paddlepaddle-gpu",
+    "version": "3.2.0",
+    "cuda_runtime": "12.6"
+  },
+  "training_policy": {
+    "optimization_splits": ["train", "val"],
+    "promotion_split": "test",
+    "promotion_metric_source": "medicine_project_detection_evaluator",
+    "paddle_hmean_is_promotion_gate": false
+  },
+  "training_enabled": true
+}

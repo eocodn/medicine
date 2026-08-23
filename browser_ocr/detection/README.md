@@ -47,11 +47,19 @@ node browser_ocr/detection/cli.mjs matrix --json
 node browser_ocr/detection/cli.mjs assets --output browser_ocr/detection/.cache/models --json
 docker compose run --rm ocr-detection-benchmark
 node browser_ocr/detection/cli.mjs evaluate --corpus /path/to/manifest.json --predictions /path/to/predictions.json --json
+docker compose run --rm ocr-detector-train preflight \
+  --corpus-manifest /artifacts/ocr/corpora/unified-360/manifest.json \
+  --detection-export /artifacts/ocr/corpora/unified-360/views/detection/paddle/export.json \
+  --run-dir /artifacts/ocr/training/detector-unified-360 --json
 ```
+
+`ocr-detector-train` is the strict PP-OCRv5 mobile detector fine-tune boundary. `preflight` verifies the checked-in PaddleOCR source/config contract, the pinned PPLCNetV3 detector pretrain, the unified-corpus manifest, materialized detection export, label hashes, and exact document split counts before constructing the training command. The derived document config deliberately removes horizontal mirroring and CopyPaste: mirrored Korean glyphs are not a real camera distribution, and instance-level CopyPaste would destroy the row/association geometry the unified documents are designed to preserve. Training uses only `train` labels for optimization and `val` labels for Paddle checkpoint selection; the held-out `test` label path is bound into provenance but never appears in the optimization command.
+
+The `train` subcommand uses the same preflight contract and adds a non-blocking run lock, atomic state/result files, heartbeat/progress updates, per-epoch checkpoints, and strict resume from the latest complete epoch. A completed `best_accuracy.pdparams` is recorded only as `pending_project_safety_evaluation`: Paddle Hmean is not a promotion gate. Candidate deployment still requires the medicine detector evaluator on held-out observations, including critical-box recall and zero merge/cross-association/split safety gates, followed by representative Android runtime measurement and real-photo holdout evaluation. To start the explicitly approved optimization run, replace `preflight` with `train`; no fallback model or relaxed gate is selected automatically.
 
 The benchmark matrix is deliberately small: official `PP-OCRv5_mobile_det`, `PP-OCRv6_tiny_det`, and `PP-OCRv6_small_det` ONNX models at detector longest edges 640, 960, and 1280. Archive URLs, SHA-256 digests, official preprocessing, and model-specific DB postprocess settings are pinned in `detector-models.json`. Downloads are resumable and hash-verified; benchmark runs are checkpointed and write per-run prediction artifacts plus a ranked summary.
 
-The checked-in `reports/zero-shot-synthetic-36-r8.json` is a historical detector result produced against the previous v2/revision-8 manifest. It remains immutable evidence for that exact corpus identity; new experiments should use the unified v4 generator and record a new result rather than relabeling the old report. Historical detector numbers from earlier corpora are not assumed to carry over to the stronger composable augmentation. CPU latency/RSS numbers remain development proxies only; representative Android devices and a de-identified real-photo holdout remain release gates.
+The checked-in `reports/zero-shot-synthetic-36-r8.json` is a historical detector result produced against the previous v2/revision-8 manifest. It remains immutable evidence for that exact corpus identity; new experiments should use the current unified v6 generator and record a new result rather than relabeling the old report. Historical detector numbers from earlier corpora are not assumed to carry over to the stronger composable augmentation. CPU latency/RSS numbers remain development proxies only; representative Android devices and a de-identified real-photo holdout remain release gates.
 
 ## Prediction format
 
