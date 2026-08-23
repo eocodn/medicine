@@ -6,7 +6,7 @@ import { mkdtemp } from "node:fs/promises";
 import test from "node:test";
 
 import { buildDrugCatalog, buildHistoricalDrugExposure, normalizeDrugName } from "../drug_holdout.mjs";
-import { generateUnifiedCorpus } from "../generator.mjs";
+import { generateUnifiedCorpus, runConcurrentBatches } from "../generator.mjs";
 import { materializeUnifiedViews } from "../materialize.mjs";
 import { PARSER_STRUCTURE_VARIANTS } from "../parser_structure.mjs";
 import { validateUnifiedCorpus } from "../contract.mjs";
@@ -32,6 +32,50 @@ function historicalExposure(catalog) {
     sourceTrainSampleCount: 76520,
   });
 }
+
+test("bounded generation batches run concurrently while committing in index order", async () => {
+  let active = 0;
+  let maxActive = 0;
+  const committed = [];
+  await runConcurrentBatches({
+    start: 2,
+    end: 9,
+    concurrency: 3,
+    async worker(index) {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, (9 - index) * 2));
+      active -= 1;
+      return `sample-${index}`;
+    },
+    async onBatch(samples) {
+      committed.push(...samples);
+    },
+  });
+  assert.equal(maxActive, 3);
+  assert.deepEqual(committed, [
+    "sample-2", "sample-3", "sample-4", "sample-5", "sample-6", "sample-7", "sample-8",
+  ]);
+});
+
+test("parallel unified rendering preserves the serial corpus and image hashes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "medicine-unified-concurrency-"));
+  try {
+    const catalog = drugCatalog();
+    const exposure = historicalExposure(catalog);
+    const serial = await generateUnifiedCorpus({
+      outputDir: join(root, "serial"), count: 6, seed: 733, drugSplitSeed: 161,
+      historicalDrugExposure: exposure, drugCatalog: catalog, renderConcurrency: 1,
+    });
+    const parallel = await generateUnifiedCorpus({
+      outputDir: join(root, "parallel"), count: 6, seed: 733, drugSplitSeed: 161,
+      historicalDrugExposure: exposure, drugCatalog: catalog, renderConcurrency: 3,
+    });
+    assert.deepEqual(parallel, serial);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("one document corpus materializes aligned detection recognition parsing and e2e views", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-unified-ocr-"));

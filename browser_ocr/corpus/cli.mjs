@@ -97,6 +97,7 @@ async function main(argv) {
       drugSplitSeed: parsedDrugSplitSeed,
       historicalDrugExposure: resolve(historicalDrugExposure),
       canonicalDb: resolve(canonicalDb),
+      renderConcurrency: integerOption(args, "--concurrency", 1),
     });
     if (args.includes("--materialize")) {
       const views = await materializeUnifiedViews({

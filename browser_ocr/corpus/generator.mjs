@@ -353,6 +353,28 @@ export function generationCheckpointInterval(count) {
   return Math.min(50, Math.max(1, Math.floor(count / 20)));
 }
 
+export async function runConcurrentBatches({ start, end, concurrency, worker, onBatch }) {
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
+    throw new Error("generation batch range must be valid non-negative integers");
+  }
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
+    throw new Error("generation concurrency must be an integer between 1 and 8");
+  }
+  if (typeof worker !== "function" || typeof onBatch !== "function") {
+    throw new Error("generation batch worker and commit callback are required");
+  }
+  for (let batchStart = start; batchStart < end; batchStart += concurrency) {
+    const indices = Array.from(
+      { length: Math.min(concurrency, end - batchStart) },
+      (_, offset) => batchStart + offset,
+    );
+    const settled = await Promise.allSettled(indices.map((index) => worker(index)));
+    const failure = settled.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
+    await onBatch(settled.map((result) => result.value));
+  }
+}
+
 async function acquireLock(path) {
   try {
     return await open(path, "wx");
@@ -405,10 +427,14 @@ export async function generateUnifiedCorpus({
   historicalDrugExposure = null,
   canonicalDb = null,
   drugCatalog = null,
+  renderConcurrency = 1,
   onProgress = null,
 }) {
   if (!Number.isInteger(count) || count <= 0) throw new Error("count must be a positive integer");
   if (!Number.isInteger(seed)) throw new Error("seed must be an integer");
+  if (!Number.isInteger(renderConcurrency) || renderConcurrency < 1 || renderConcurrency > 8) {
+    throw new Error("renderConcurrency must be an integer between 1 and 8");
+  }
   await mkdir(join(outputDir, "images"), { recursive: true });
 
   const { assignment: drugAssignment, policy: drugNamePolicy } = await drugConfiguration({
@@ -442,29 +468,36 @@ export async function generateUnifiedCorpus({
     }
 
     const checkpointInterval = generationCheckpointInterval(count);
-    for (let index = state.completed; index < count; index += 1) {
-      const sample = await renderSample(index, seed, outputDir, drugAssignment);
-      state.samples.push(sample);
-      state.completed = state.samples.length;
-      if (state.completed === count || state.completed % checkpointInterval === 0) {
-        await atomicWrite(statePath, `${JSON.stringify(state, null, 2)}\n`);
-      }
+    await runConcurrentBatches({
+      start: state.completed,
+      end: count,
+      concurrency: renderConcurrency,
+      worker: (index) => renderSample(index, seed, outputDir, drugAssignment),
+      async onBatch(samples) {
+        for (const sample of samples) {
+          state.samples.push(sample);
+          state.completed = state.samples.length;
+          if (state.completed === count || state.completed % checkpointInterval === 0) {
+            await atomicWrite(statePath, `${JSON.stringify(state, null, 2)}\n`);
+          }
 
-      const event = {
-        completed: state.completed,
-        total: count,
-        sample_id: sample.id,
-        layout_family: sample.layout_family,
-        capture_profile: sample.capture_profile,
-        augmentation_difficulty: sample.augmentation_difficulty,
-        material_profile: sample.material_profile,
-      };
-      if (shouldReport(state.completed, count)) {
-        const percent = Math.round(state.completed * 100 / count);
-        process.stderr.write(`[ocr-synth] ${state.completed}/${count} ${percent}% ${sample.layout_family}/${sample.capture_profile}/${sample.material_profile}\n`);
-      }
-      if (onProgress) onProgress(event);
-    }
+          const event = {
+            completed: state.completed,
+            total: count,
+            sample_id: sample.id,
+            layout_family: sample.layout_family,
+            capture_profile: sample.capture_profile,
+            augmentation_difficulty: sample.augmentation_difficulty,
+            material_profile: sample.material_profile,
+          };
+          if (shouldReport(state.completed, count)) {
+            const percent = Math.round(state.completed * 100 / count);
+            process.stderr.write(`[ocr-synth] ${state.completed}/${count} ${percent}% ${sample.layout_family}/${sample.capture_profile}/${sample.material_profile}\n`);
+          }
+          if (onProgress) onProgress(event);
+        }
+      },
+    });
 
     const corpus = buildCorpus({ seed, count, fingerprint, rasterizer, drugNamePolicy, samples: state.samples });
     await atomicWrite(manifestPath, `${JSON.stringify(corpus, null, 2)}\n`);
