@@ -31,6 +31,7 @@ services:
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     environment:
       HOME: /tmp
+      MEDICINE_CANONICAL_DB: ${MEDICINE_CANONICAL_DB:-data/db/mobile.sqlite}
     working_dir: /app
     volumes:
       - .:/app
