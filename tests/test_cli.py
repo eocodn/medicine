@@ -73,6 +73,10 @@ class CliAdapterTest(unittest.TestCase):
         self.assertEqual(queued, [])
         return status, json.loads(stdout.getvalue()), calls
 
+    def test_default_reference_database_matches_android_mobile_artifact(self) -> None:
+        args = build_parser().parse_args(["people"])
+        self.assertEqual(args.canonical_db, Path("data/db/mobile.sqlite"))
+
     def test_people_command_initializes_schema_then_delegates_to_medicine_core_request(self) -> None:
         status, payload, calls = self.run_cli(
             "people",

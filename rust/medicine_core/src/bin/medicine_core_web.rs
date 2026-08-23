@@ -2,7 +2,7 @@ use medicine_core::web::{build_router, WebConfig};
 use std::{env, net::IpAddr, path::PathBuf};
 use tokio::net::TcpListener;
 
-const DEFAULT_CANONICAL_DB: &str = "data/db/canonical.sqlite";
+const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";
 const DEFAULT_PERSONAL_DB: &str = "data/db/personal.sqlite";
 const DEFAULT_STATIC_DIR: &str = "medicine_app/static";
 

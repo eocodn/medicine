@@ -568,6 +568,23 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn('ENTRYPOINT ["/usr/local/bin/medicine-core-web"]', dockerfile)
         self.assertNotIn("python", dockerfile.lower())
 
+    def test_development_runtime_defaults_to_android_mobile_reference_database(self) -> None:
+        compose = Path("compose.yaml").read_text()
+        web_service = compose.split("\n  web:\n", 1)[1].split("\n  ui:\n", 1)[0]
+        web_binary = Path("rust/medicine_core/src/bin/medicine_core_web.rs").read_text()
+        app_cli = Path("medicine_app/cli.py").read_text()
+
+        self.assertIn(
+            "MEDICINE_CANONICAL_DB: ${MEDICINE_CANONICAL_DB:-data/db/mobile.sqlite}",
+            web_service,
+        )
+        self.assertIn(
+            'const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";',
+            web_binary,
+        )
+        self.assertIn('DEFAULT_CANONICAL_DB = Path("data/db/mobile.sqlite")', app_cli)
+        self.assertNotIn('DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")', app_cli)
+
     def test_retired_legacy_etl_is_not_packaged_or_exposed(self) -> None:
         compose = Path("compose.yaml").read_text()
         dockerfile = Path("Dockerfile").read_text()

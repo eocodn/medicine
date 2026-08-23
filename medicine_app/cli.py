@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 
-DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")
+DEFAULT_CANONICAL_DB = Path("data/db/mobile.sqlite")
 DEFAULT_PERSONAL_DB = Path("data/db/personal.sqlite")
 MEDICINE_CORE_BINARY = os.environ.get("MEDICINE_CORE_BINARY", "medicine-core")
 MEDICINE_CORE_WEB_BINARY = os.environ.get("MEDICINE_CORE_WEB_BINARY", "medicine-core-web")

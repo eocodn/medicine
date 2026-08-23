@@ -37,7 +37,7 @@ docker compose down
 - 여러 사람 프로필을 한 기기에서 분리 관리
   - 이름, 생년월일, 성별, 임신 여부
 - 의약품 검색
-  - `canonical.sqlite`의 식약처 허가제품을 `ITEM_SEQ` 기준으로 검색
+  - Android와 로컬 개발 런타임 모두 `mobile.sqlite`의 식약처 허가제품을 `ITEM_SEQ` 기준으로 검색
   - 사용자 약 검색에는 허가상태 `정상` 품목만 표시하고, 비활성 품목은 신규 복용약으로 등록하지 않음
   - 취소·취하·만료 등 비활성 품목 행은 기존 복용약의 현재 허가상태 확인과 제품 식별을 위해 canonical/mobile DB에 유지
   - 정상 상태에서 등록된 기존 복용약의 허가상태가 나중에 바뀌면 복용 일정·기록은 유지하고 별도 `허가상태 변경` 안내를 표시
@@ -117,10 +117,10 @@ DUR 결과가 없다는 것은 안전하다는 뜻이 아닙니다. 앱은 제�
 지속 저장본으로 사용합니다. 개발용 CLI/standalone web의 `data/db/personal.sqlite`는 로컬 개발
 파일로서 암호화하지 않으며, 웹 서비스도 기본적으로 `127.0.0.1`에만 바인딩합니다.
 
-### `data/db/canonical.sqlite` (앱 기준 DB)
+### `data/db/canonical.sqlite` (reference 빌드 기준 DB)
 
-앱과 Android가 사용하는 단일 read-only 의약품/DUR 기준 DB입니다. 세 공식 MFDS 원본 계열을 직접
-보존하고 `ITEM_SEQ`를 제품 중심키로 사용합니다.
+Android와 로컬 개발 런타임이 직접 여는 DB가 아니라, 배포/개발용 `mobile.sqlite`를 만드는 authoritative
+build input입니다. 세 공식 MFDS 원본 계열을 직접 보존하고 `ITEM_SEQ`를 제품 중심키로 사용합니다.
 
 - `mfds_permit_api`: 식약처 허가제품 API
 - `mfds_dur_item_api`: 식약처 DUR 품목 API 9개 endpoint
@@ -174,7 +174,7 @@ docker compose run --rm canonical stats --json
 # 특정 ITEM_SEQ의 제품 DUR ↔ MFDS 성분기준 링크 확인
 docker compose run --rm canonical criteria --item-seq 198600630 --json
 
-# Android용 compact canonical snapshot 생성
+# Android와 로컬 개발 런타임이 공통으로 사용할 compact reference snapshot 생성
 docker compose run --rm canonical mobile-build --json
 ```
 
@@ -339,6 +339,9 @@ Android 앱은 WebView를 UI 셸로 사용하지만 외부 웹 서버에는 연�
 HTTP/HTTPS 요청은 차단합니다. Android manifest의 `INTERNET` 권한은 native reference downloader에만 사용됩니다.
 
 배포용 reference DB는 검증된 `canonical.sqlite`에서 런타임 테이블과 view만 추린 `mobile.sqlite`입니다.
+로컬 standalone web과 Agent Control CLI도 기본적으로 이 동일한 `data/db/mobile.sqlite`를 사용합니다.
+개발 런타임은 `canonical.sqlite`로 자동 fallback하지 않으므로, schema나 materialization이 바뀌면 위의
+`mobile-build`를 다시 실행해 Android와 동일한 physical artifact로 검증해야 합니다.
 APK에는 DB를 넣지 않습니다. 검증된 LKG가 없는 첫 실행에는 signed `latest.json`을 확인하고 full gzip snapshot을
 Range-resume 가능한 checkpoint로 내려받은 뒤 artifact SHA-256/크기와 SQLite/runtime identity를 검증하여 앱 전용
 저장소에 원자적으로 설치합니다. 따라서 최초 설치 직후 첫 실행은 네트워크가 필요하지만, verified LKG가 생긴 뒤에는
