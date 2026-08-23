@@ -12,6 +12,7 @@ lazy-loader==0.5
 lmdb==2.3.0
 networkx==3.6.1
 numpy==2.5.2
+onnx==1.22.0
 onnxruntime==1.23.2
 opencv-contrib-python==5.0.0.93
 opencv-python-headless==5.0.0.93
