@@ -89,7 +89,7 @@ COMPOSE_PROJECT_NAME=medicine_ocr_finetuning \
   --train-samples 128 --val-samples 64 --batch-size 16 --json
 ```
 
-Generated datasets, downloaded weights, training logs, checkpoints, and large evaluation artifacts belong under `/artifacts`, which the writable OCR Compose services bind to host `~/dev/artifacts/medicine` by default. Create that host directory as your normal user before the first run (`mkdir -p ~/dev/artifacts/medicine`); Compose refuses to auto-create it so Docker cannot leave a root-owned artifact directory. Override the host location with `MEDICINE_ARTIFACTS_DIR=/absolute/path` when needed; the in-container path remains `/artifacts`. Do not generate a dictionary from only the training labels and silently replace the model dictionary; `audit-model` must remain green against the pinned upstream Korean dictionary before training.
+Generated datasets, downloaded weights, training logs, checkpoints, and large evaluation artifacts belong under `/artifacts`, which the writable OCR Compose services bind to host `~/dev/.artifacts/medicine` by default. Create that host directory as your normal user before the first run (`mkdir -p ~/dev/.artifacts/medicine`); Compose refuses to auto-create it so Docker cannot leave a root-owned artifact directory. Override the host location with `MEDICINE_ARTIFACTS_DIR=/absolute/path` when needed; the in-container path remains `/artifacts`. Do not generate a dictionary from only the training labels and silently replace the model dictionary; `audit-model` must remain green against the pinned upstream Korean dictionary before training.
 
 ## Deterministic synthetic recognition crops
 
@@ -204,6 +204,20 @@ COMPOSE_PROJECT_NAME=medicine_ocr_mixed_view \
 ```
 
 The mixed output is passed to the same `selected-finetune` runner. This keeps the only experimental difference in the training data composition while evaluation, model initialization, checkpointing, and fixed-eval selection remain identical.
+
+## V6 unified recognizer training boundary
+
+The current v6 rebuild does not depend on the historical selected-checkpoint file being present. `v6-preflight`/`v6-train` start from the pinned official `korean_PP-OCRv5_mobile_rec` pretrained weight and require a model-compatible unified recognition training view produced by `prepare-training-view`. Preflight verifies the pinned PaddleOCR config/dictionary/pretrain hashes, every source crop hash through the dataset loader, exact document-split membership and label-file content, and the training-view policy before constructing the Paddle command. Only `train` is optimized and only `val` is used for Paddle checkpoint selection; `test.txt` is bound into provenance but is forbidden from the optimization command.
+
+```bash
+docker compose run --rm ocr-finetune-train v6-preflight \
+  --manifest /artifacts/ocr/recognition/v6-training/manifest.json \
+  --export-dir /artifacts/ocr/recognition/v6-training/paddle \
+  --run-dir /artifacts/ocr/training/recognizer-v6 \
+  --epochs 4 --batch-size 32 --learning-rate 0.00005 --warmup-epochs 1 --json
+```
+
+Replacing `v6-preflight` with `v6-train` starts the explicitly approved optimization run. The runner is single-writer, persists atomic state/result files, emits 30-second heartbeats, checkpoints each epoch, and resumes only from the latest complete epoch. A completed `best_accuracy.pdparams` remains `pending_project_safety_evaluation`; held-out synthetic test evaluation, frozen full-document OCR evaluation, real-photo validation and Android runtime gates happen later and are not replaced by Paddle validation accuracy.
 
 ## Full-document detector → fine-tuned recognizer observation path
 

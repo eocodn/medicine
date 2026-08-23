@@ -12,6 +12,11 @@ from .dataset import DatasetError, load_dataset
 from .evaluation import evaluate_test_slices, prepare_test_slices
 from .fixed_eval_runner import run_fixed_eval
 from .model_compat import audit_model_compatibility
+from .recognizer_training import (
+    V6RecognizerTrainingConfig,
+    prepare_v6_recognizer_training,
+    run_v6_recognizer_training,
+)
 from .selected_finetune import run_selected_finetune
 from .train_parser import build_parser
 from .runner_io import (
@@ -40,6 +45,24 @@ def run_probe() -> dict:
     except Exception as exc:
         raise DatasetError(f"could not import PaddlePaddle runtime: {exc}") from exc
     return probe_paddle_runtime(paddle)
+
+
+def _v6_recognizer_kwargs(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "upstream_path": args.upstream,
+        "paddleocr_root": args.paddleocr_root,
+        "pretrained_model": args.pretrained_model,
+        "manifest": args.manifest,
+        "export_dir": args.export_dir,
+        "run_dir": args.run_dir,
+        "config": V6RecognizerTrainingConfig(
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            warmup_epochs=args.warmup_epochs,
+            num_workers=args.num_workers,
+        ),
+    }
 
 
 
@@ -523,6 +546,10 @@ def main(argv: list[str] | None = None) -> int:
             result = run_fixed_eval(args)
         elif args.command == "selected-finetune":
             result = run_selected_finetune(args)
+        elif args.command == "v6-preflight":
+            result = prepare_v6_recognizer_training(**_v6_recognizer_kwargs(args))
+        elif args.command == "v6-train":
+            result = run_v6_recognizer_training(**_v6_recognizer_kwargs(args))
         else:
             raise DatasetError(f"unsupported command: {args.command}")
         if args.json:

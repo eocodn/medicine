@@ -78,4 +78,22 @@ def build_parser() -> argparse.ArgumentParser:
     selected.add_argument("--learning-rate", type=float, default=0.00005)
     selected.add_argument("--warmup-epochs", type=int, default=1)
     selected.add_argument("--json", action="store_true")
+
+    for name in ("v6-preflight", "v6-train"):
+        v6 = subparsers.add_parser(name)
+        v6.add_argument("--upstream", default="/workspace/browser_ocr/finetune/upstream.json")
+        v6.add_argument("--paddleocr-root", default="/opt/PaddleOCR")
+        v6.add_argument(
+            "--pretrained-model",
+            default="/artifacts/ocr/training/sources/korean_PP-OCRv5_mobile_rec_pretrained.pdparams",
+        )
+        v6.add_argument("--manifest", required=True)
+        v6.add_argument("--export-dir", required=True)
+        v6.add_argument("--run-dir", required=True)
+        v6.add_argument("--epochs", type=int, default=4)
+        v6.add_argument("--batch-size", type=int, default=32)
+        v6.add_argument("--learning-rate", type=float, default=0.00005)
+        v6.add_argument("--warmup-epochs", type=int, default=1)
+        v6.add_argument("--num-workers", type=int, default=2)
+        v6.add_argument("--json", action="store_true")
     return parser
