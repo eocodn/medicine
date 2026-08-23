@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .inspection import verify_canonical_database
+from .product_search_documents import materialize_product_search_fts
 
 
 def _build_progress(progress, phase: str, status: str, started: float | None = None, **extra) -> None:
@@ -20,7 +21,7 @@ def _build_progress(progress, phase: str, status: str, started: float | None = N
     progress(payload)
 
 
-MOBILE_PHYSICAL_POLICY_VERSION = "8"
+MOBILE_PHYSICAL_POLICY_VERSION = "9"
 # Compatibility alias for server-side callers while the old name is retired.
 # It is intentionally not part of dataset identity anymore.
 MOBILE_DATA_POLICY_VERSION = MOBILE_PHYSICAL_POLICY_VERSION
@@ -30,12 +31,13 @@ REFERENCE_BUILD_META_DDL = """CREATE TABLE reference_build_meta (
 )"""
 RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
-    "product_rules", "product_flags", "ingredient_rules", "dose_criteria", "product_criterion_links",
+    "product_search_documents", "product_rules", "product_flags", "ingredient_rules", "dose_criteria",
+    "product_criterion_links",
 )
 RUNTIME_VIEWS: tuple[str, ...] = ()
 COPIED_RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
-    "product_flags", "ingredient_rules", "dose_criteria",
+    "product_search_documents", "product_flags", "ingredient_rules", "dose_criteria",
 )
 # Mobile queries are intentionally narrower than canonical build/linking queries.
 # Keep only indexes that serve runtime lookup paths; copying every canonical
@@ -338,6 +340,10 @@ def _build_mobile_database(
             )
             dst.commit()
             dst.execute("DETACH DATABASE source_db")
+            # Build the physical accelerator only after detaching the canonical
+            # source. An unqualified DROP/CREATE while the source is attached
+            # can otherwise resolve to source_db when main has no FTS table yet.
+            materialize_product_search_fts(dst)
             source_indexes = {
                 name: sql
                 for name, sql in src.execute(

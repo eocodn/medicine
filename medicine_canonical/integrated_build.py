@@ -15,6 +15,7 @@ from .linking import materialize_product_criterion_links
 from .schema import SCHEMA, SCHEMA_VERSION
 from .source_policy import CANONICAL_SOURCE_POLICY
 from .mfds_ingredient import IngredientFetchPage
+from .product_search_documents import materialize_product_search_documents
 from .source_layout import MfdsSourceLayout
 from .sources import DurFetchPage, PermitFetchPage
 from .substance_build import assemble_substance_database
@@ -70,6 +71,7 @@ def assemble_integrated_databases(
 
         with closing(sqlite3.connect(staged_canonical)) as con:
             con.execute("BEGIN")
+            search_result = materialize_product_search_documents(con, staged_substance)
             bridge_result = materialize_dur_ingredient_bridge(con, staged_substance)
             link_result = materialize_product_criterion_links(con)
             built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
@@ -123,6 +125,7 @@ def assemble_integrated_databases(
         "substances": final_substance_result,
         "source_import": source_result,
         "dur_bridge": bridge_result,
+        "product_search": search_result,
         "linking": link_result,
         "elapsed_seconds": round(time.monotonic() - started, 3),
     }

@@ -68,6 +68,12 @@ function invalidateProductSearch() {
   state.searchRequestId += 1;
   clearTimeout(state.searchTimer);
   state.searchTimer = null;
+  state.searchObserver?.disconnect?.();
+  state.searchObserver = null;
+  state.searchTerm = null;
+  state.searchNextOffset = null;
+  state.searchHasMore = false;
+  state.searchLoadingMore = false;
 }
 
 function resetParserTransientState({ clearSearch = false } = {}) {
@@ -448,35 +454,31 @@ async function runDrugSearch(successMessage = "") {
   const root = $("#drug-results");
   state.searchTimer = null;
   updateSearchMode();
-  if (!term) { status.textContent = ""; root.innerHTML = ""; return false; }
+  if (!term) {
+    invalidateProductSearch();
+    status.textContent = "";
+    root.innerHTML = "";
+    return false;
+  }
   const requestId = ++state.searchRequestId;
+  state.searchObserver?.disconnect?.();
+  state.searchObserver = null;
+  state.searchTerm = term;
+  state.searchNextOffset = null;
+  state.searchHasMore = false;
+  state.searchLoadingMore = false;
   status.textContent = "";
   try {
-    const results = await api(`/api/products?q=${encodeURIComponent(term)}&limit=30`, {
+    const page = assertProductSearchPage(await api(`/api/products?q=${encodeURIComponent(term)}&limit=30&offset=0`, {
       coalesceKey: "product-search",
-    });
+    }));
     if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
     state.fullCatalog = true;
     status.textContent = successMessage;
-    root.innerHTML = results.length ? results.map((item) => `
-      <article class="card result-card" data-product-select="${escapeHtml(item.product_ref)}" role="button" tabindex="0">
-        <div class="result-row">
-          <div class="result-copy">
-            <div class="result-title-line"><strong>${escapeHtml(item.product_name)}</strong><span class="permit-badge ${escapeHtml(item.permit_status)}">${escapeHtml(permitStatusLabel(item.permit_status, item.permit_status_name))}</span></div>
-            <span>${escapeHtml(item.ingredient_name || "성분 정보 없음")}${item.manufacturer ? ` · ${escapeHtml(item.manufacturer)}` : ""}</span>
-            <span>${item.dur_coverage_status === "partial" ? "DUR 일부 기준 확인 필요" : item.dur_coverage_status === "complete" ? "DUR 자동 확인 가능" : "DUR 자동 확인 일부 제한"}${item.cancel_date ? ` · 허가 상태 변경일 ${escapeHtml(item.cancel_date)}` : ""}</span>
-          </div>
-          <span class="add-button" aria-hidden="true">추가</span>
-        </div>
-      </article>`).join("") : `<div class="empty-state"><strong>검색 결과가 없어요</strong>다른 제품명으로 검색해보세요.</div>`;
-    $$('[data-product-select]', root).forEach((card) => {
-      card.addEventListener("click", () => selectProductResult(card));
-      card.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        selectProductResult(card);
-      });
-    });
+    renderProductSearchPage(page);
+    state.searchHasMore = page.has_more;
+    state.searchNextOffset = page.next_offset;
+    observeProductSearchMore(term, requestId);
     return true;
   } catch (error) {
     if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
@@ -532,6 +534,17 @@ function bindEvents() {
     $("#drug-results").innerHTML = "";
     updateSearchMode();
     state.searchTimer = setTimeout(runDrugSearch, 280);
+  });
+  $("#drug-results").addEventListener("click", (event) => {
+    const card = event.target?.closest?.("[data-product-select]");
+    if (card) selectProductResult(card);
+  });
+  $("#drug-results").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target?.closest?.("[data-product-select]");
+    if (!card) return;
+    event.preventDefault();
+    selectProductResult(card);
   });
   document.addEventListener("medicine:sheet-closed", (event) => {
     if (event.detail?.id === "stop-medication-sheet") state.pendingStopMedicationId = null;

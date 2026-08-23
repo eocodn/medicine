@@ -118,11 +118,11 @@ test("home dose actions prioritize normal completion and compact completed state
   const app = source("app.js");
   const styles = source("styles.css");
 
-  assert.match(index, /\/static\/styles\.css\?v=20260821parser2/);
+  assert.match(index, /\/static\/styles\.css\?v=20260823search1/);
   assert.match(index, /\/static\/prescription-dur\.js\?v=20260818dur1/);
   assert.match(index, /\/static\/prescription\.js\?v=20260821parser2/);
-  assert.match(index, /\/static\/app-state\.js\?v=20260821parser2/);
-  assert.match(index, /\/static\/app\.js\?v=20260821parser2/);
+  assert.match(index, /\/static\/app-state\.js\?v=20260823search1/);
+  assert.match(index, /\/static\/app\.js\?v=20260823search1/);
   assert.match(index, /\/static\/dose-actions\.js\?v=20260820perf4/);
   assert.match(app, /class="dose-primary-action"[^>]*data-instance-taken[^>]*>✓ 사용했어요<\/button>/);
   assert.match(app, /class="dose-skip-action"[^>]*data-instance-skipped[^>]*>건너뛰기<\/button>/);

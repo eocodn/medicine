@@ -17,6 +17,12 @@ def canonical_stats(db_path: str | Path) -> dict:
         con.row_factory = sqlite3.Row
         products = con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
         active = con.execute("SELECT COUNT(*) FROM products WHERE permit_status='active'").fetchone()[0]
+        product_search_documents = con.execute(
+            "SELECT COUNT(*) FROM product_search_documents"
+        ).fetchone()[0]
+        product_search_index_rows = con.execute(
+            "SELECT COUNT(*) FROM product_search_fts"
+        ).fetchone()[0]
         product_rules = con.execute("SELECT COUNT(*) FROM product_rules").fetchone()[0]
         product_flags = con.execute("SELECT COUNT(*) FROM product_flags").fetchone()[0]
         ingredient_rules = con.execute("SELECT COUNT(*) FROM ingredient_rules").fetchone()[0]
@@ -163,6 +169,8 @@ def canonical_stats(db_path: str | Path) -> dict:
         "built_at": meta.get("built_at"),
         "products": products,
         "active_products": active,
+        "product_search_documents": product_search_documents,
+        "product_search_index_rows": product_search_index_rows,
         "product_rules": product_rules,
         "product_flags": product_flags,
         "ingredient_rules": ingredient_rules,
@@ -289,6 +297,16 @@ def verify_canonical_database(db_path: str | Path) -> dict:
             stats = canonical_stats(path)
             if stats["products"] == 0:
                 errors.append("no products imported")
+            if stats["product_search_documents"] != stats["products"]:
+                errors.append(
+                    "product search document materialization mismatch: "
+                    f"{stats['product_search_documents']}/{stats['products']}"
+                )
+            if stats["product_search_index_rows"] != stats["product_search_documents"]:
+                errors.append(
+                    "product search FTS materialization mismatch: "
+                    f"{stats['product_search_index_rows']}/{stats['product_search_documents']}"
+                )
             if stats["product_rules"] == 0:
                 errors.append("no product rules imported")
             if stats["ingredient_rules"] == 0:

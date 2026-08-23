@@ -88,7 +88,7 @@ test("parser result bypasses review and enters the generic product-search flow",
   assert.match(app, /medicine:parser-result/);
   assert.match(app, /product_query[\s\S]{0,900}runDrugSearch/);
   assert.match(index, /ocr-intake\.js/);
-  assert.match(index, /placeholder="제품명"/);
+  assert.match(index, /placeholder="제품명 · 제조사 · 성분명"/);
   assert.match(state, /pendingParserDraft/);
   assert.match(state, /pendingParserUncertaintyCodes/);
   assert.match(prescription, /pendingParserUncertaintyCodes/);

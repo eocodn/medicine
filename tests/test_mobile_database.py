@@ -11,6 +11,7 @@ from pathlib import Path
 from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
 from medicine_canonical.mobile import RUNTIME_INDEXES, build_mobile_database
 from medicine_canonical.cli import main as canonical_main
+from medicine_canonical.product_search_documents import materialize_product_search_fts
 from tests.canonical_fixture_support import make_canonical_db
 
 
@@ -34,6 +35,8 @@ class MobileDatabaseTest(unittest.TestCase):
         try:
             tables = {row[0] for row in mobile.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertIn("products", tables)
+            self.assertIn("product_search_documents", tables)
+            self.assertIn("product_search_fts", tables)
             self.assertIn("mobile_product_rules", tables)
             self.assertIn("mobile_rule_sources", tables)
             self.assertIn("mobile_rule_texts", tables)
@@ -52,6 +55,14 @@ class MobileDatabaseTest(unittest.TestCase):
                 )
             }
             self.assertEqual(runtime_indexes, set(RUNTIME_INDEXES))
+            self.assertEqual(
+                mobile.execute("SELECT COUNT(*) FROM product_search_documents").fetchone()[0],
+                mobile.execute("SELECT COUNT(*) FROM products").fetchone()[0],
+            )
+            self.assertEqual(
+                mobile.execute("SELECT COUNT(*) FROM product_search_fts").fetchone()[0],
+                mobile.execute("SELECT COUNT(*) FROM products").fetchone()[0],
+            )
             self.assertEqual(mobile.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         finally:
             mobile.close()
@@ -155,6 +166,21 @@ class MobileDatabaseTest(unittest.TestCase):
             build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
         self.assertFalse(self.mobile_db.exists())
         self.assertFalse(self.manifest.exists())
+
+    def test_mobile_build_does_not_mutate_canonical_search_index(self) -> None:
+        with closing(sqlite3.connect(self.canonical_db)) as con:
+            before = con.execute("SELECT COUNT(*) FROM product_search_fts").fetchone()[0]
+
+        build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
+
+        with closing(sqlite3.connect(self.canonical_db)) as con:
+            after = con.execute("SELECT COUNT(*) FROM product_search_fts").fetchone()[0]
+            exists = con.execute(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type='table' AND name='product_search_fts'"
+            ).fetchone()[0]
+        self.assertEqual(exists, 1)
+        self.assertEqual(after, before)
 
     def test_mobile_product_rules_omits_source_identity_unique_index(self) -> None:
         build_mobile_database(self.canonical_db, self.mobile_db, manifest_path=self.manifest)
@@ -267,7 +293,13 @@ class MobileDatabaseTest(unittest.TestCase):
     def test_mobile_build_rejects_duplicate_product_rule_source_identity(self) -> None:
         duplicate_source = self.canonical_db.with_name("canonical-duplicate-rule.sqlite")
         with closing(sqlite3.connect(self.canonical_db)) as source, source:
-            dump = "\n".join(source.iterdump())
+            # Python's iterdump serializes FTS5 virtual/shadow tables through
+            # writable sqlite_master statements which are not safely replayable.
+            # The search document table is authoritative, so omit the accelerator
+            # from this corruption fixture and deterministically rebuild it below.
+            dump = "\n".join(
+                line for line in source.iterdump() if "product_search_fts" not in line
+            )
         unique_clause = ",\n    UNIQUE(source_dataset_key, source_row)\n)"
         self.assertIn(unique_clause, dump)
         # iterdump() orders tables by name, so ingredient_rules appears before
@@ -276,6 +308,7 @@ class MobileDatabaseTest(unittest.TestCase):
         dump = dump.replace(unique_clause, "\n)")
         with closing(sqlite3.connect(duplicate_source)) as con, con:
             con.executescript(dump)
+            materialize_product_search_fts(con)
             columns = [
                 str(row[1])
                 for row in con.execute("PRAGMA table_info('product_rules')")

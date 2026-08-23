@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from medicine_reference.mfds_sources import MFDS_SOURCE_FAMILY_SET
 
+from .product_search_documents import PRODUCT_SEARCH_DOCUMENT_DDL
 
-SCHEMA_VERSION = "10"
+
+SCHEMA_VERSION = "11"
 CORE_SOURCE_FAMILIES = MFDS_SOURCE_FAMILY_SET
 
 SCHEMA = r"""
@@ -291,4 +293,4 @@ JOIN ingredient_rules i
 LEFT JOIN dose_criteria d
   ON d.criterion_rule_id = i.id;
 
-"""
+""" + PRODUCT_SEARCH_DOCUMENT_DDL

@@ -10,7 +10,9 @@ from pathlib import Path
 from unittest import mock
 
 from medicine_canonical.cli import main as canonical_main
-from medicine_canonical.mobile import build_mobile_database
+from medicine_canonical.mobile import MOBILE_PHYSICAL_POLICY_VERSION, build_mobile_database
+from medicine_canonical.product_search_documents import materialize_product_search_documents
+from medicine_canonical.schema import SCHEMA_VERSION
 from medicine_canonical.reference_contracts.v1 import (
     REFERENCE_CONTRACT_MAJOR,
     export_reference_database,
@@ -58,6 +60,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
                 effect_name="혈압강하작용의약품",
                 criterion_qualifier_note="외용제는 제외",
             )
+            materialize_product_search_documents(con, None)
             con.commit()
         self.release = build_mobile_database(self.canonical, self.mobile)
 
@@ -83,8 +86,8 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.assertEqual(REFERENCE_CONTRACT_MAJOR, 1)
         self.assertEqual(contract["contract_major"], "1")
         self.assertEqual(contract["dataset_id"], self.release["dataset_id"])
-        self.assertEqual(build["canonical_schema_version"], "10")
-        self.assertEqual(build["physical_policy_version"], "8")
+        self.assertEqual(build["canonical_schema_version"], SCHEMA_VERSION)
+        self.assertEqual(build["physical_policy_version"], MOBILE_PHYSICAL_POLICY_VERSION)
         self.assertNotIn("canonical_schema_version", contract)
         self.assertNotIn("physical_policy_version", contract)
 

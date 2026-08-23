@@ -139,7 +139,9 @@ impl MedicineEngine {
         if normalized_method(method) == "GET" && path == "/api/health" {
             return self.health_response();
         }
-        if let Some((status, body)) = product_search::handle_request(method, raw_path) {
+        if let Some((status, body)) =
+            product_search::handle_request(self.canonical_db.as_deref(), method, raw_path)
+        {
             return json!({"status": status, "body": body}).to_string();
         }
         if let Some((status, body)) =

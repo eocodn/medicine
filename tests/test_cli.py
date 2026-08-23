@@ -120,12 +120,14 @@ class CliAdapterTest(unittest.TestCase):
             "drug-search", "씬지록신 25", "--explain-matches",
             responses=[
                 {"status": 200, "body": {"initialized": True, "schema_version": 4}},
-                {"status": 503, "body": {"detail": "product search engine is not implemented"}},
+                {"status": 200, "body": {"items": [], "has_more": False, "next_offset": None}},
             ],
         )
-        self.assertEqual(status, 3)
-        self.assertIn("not implemented", payload["detail"])
+        self.assertEqual(status, 0)
+        self.assertEqual(payload["items"], [])
         self.assertIn("/api/products?", calls[1][3])
+        self.assertIn("offset=0", calls[1][3])
+        self.assertIn("explain_matches=true", calls[1][3])
 
     def test_runtime_error_is_structured_instead_of_falling_back_to_python_domain(self) -> None:
         status, payload, _ = self.run_cli(
