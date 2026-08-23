@@ -39,6 +39,7 @@ export function auditCoverage(corpus, {
   const printerCounts = counts(corpus.samples.map((sample) => sample.printer_profile));
   const backgroundCounts = counts(corpus.samples.map((sample) => sample.background_profile));
   const scenePropCounts = counts(corpus.samples.map((sample) => sample.scene_prop_profile));
+  const visualStyleCounts = counts(corpus.samples.map((sample) => sample.visual_style).filter(Boolean));
   const riskCounts = counts(corpus.samples.flatMap((sample) => sample.risk_tags));
   const semanticCounts = counts(corpus.samples.flatMap((sample) => sample.regions.map((region) => region.semantic_role)));
   const classCounts = counts(corpus.samples.flatMap((sample) => sample.regions.map((region) => region.region_class)));
@@ -109,6 +110,7 @@ export function auditCoverage(corpus, {
     printer_profiles: sortedEntries(printerCounts),
     background_profiles: sortedEntries(backgroundCounts),
     scene_prop_profiles: sortedEntries(scenePropCounts),
+    visual_styles: sortedEntries(visualStyleCounts),
     risk_tags: riskCounts,
     semantic_roles: semanticCounts,
     critical_semantic_roles: criticalSemanticCounts,

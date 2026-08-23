@@ -239,6 +239,7 @@ test("coverage audit fails closed when a required synthetic stratum disappears",
     assert.equal(report.printer_profiles.length, PRINTER_PROFILES.length);
     assert.equal(report.background_profiles.length, BACKGROUND_PROFILES.length);
     assert.equal(report.scene_prop_profiles.length, SCENE_PROP_PROFILES.length);
+    assert.ok(report.visual_styles.length > 0);
     assert.ok(report.critical_semantic_roles.product > 0);
     assert.ok(report.critical_semantic_roles.dose > 0);
 

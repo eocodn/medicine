@@ -3,91 +3,11 @@ import {
   region,
   scaledFont,
 } from "./synthetic_layout_primitives.mjs";
-
-const STYLES = Object.freeze([
-  Object.freeze({
-    id: "yellow_integrated",
-    accent: "#d1a91f",
-    accentSoft: "#f4e8a7",
-    paper: "#f7f4ea",
-    receipt: "#f2efe5",
-    border: "#d1c79a",
-    headerText: "#2b2a23",
-    receiptX: 995,
-    rowStart: 330,
-    rowGap: 108,
-    detachedReceipt: false,
-    zebra: false,
-    stamp: false,
-  }),
-  Object.freeze({
-    id: "blue_striped",
-    accent: "#23436f",
-    accentSoft: "#d9e6ef",
-    paper: "#f7f8f7",
-    receipt: "#f4f6f7",
-    border: "#8798ab",
-    headerText: "#f7f9fb",
-    receiptX: 990,
-    rowStart: 350,
-    rowGap: 112,
-    detachedReceipt: false,
-    zebra: true,
-    stamp: false,
-  }),
-  Object.freeze({
-    id: "cream_dense_receipt",
-    accent: "#c0aa4f",
-    accentSoft: "#eee7c9",
-    paper: "#f4f0e5",
-    receipt: "#efebdf",
-    border: "#aaa38c",
-    headerText: "#2b2a23",
-    receiptX: 985,
-    rowStart: 335,
-    rowGap: 104,
-    detachedReceipt: false,
-    zebra: false,
-    stamp: false,
-  }),
-  Object.freeze({
-    id: "navy_dense_guide",
-    accent: "#18345f",
-    accentSoft: "#dbe2eb",
-    paper: "#f4f4f1",
-    receipt: "#f1f1ee",
-    border: "#718099",
-    headerText: "#f7f9fb",
-    receiptX: 1005,
-    rowStart: 325,
-    rowGap: 102,
-    detachedReceipt: true,
-    zebra: false,
-    stamp: true,
-  }),
-  Object.freeze({
-    id: "low_contrast_blue",
-    accent: "#6b86a2",
-    accentSoft: "#e3e8eb",
-    paper: "#f3f2ed",
-    receipt: "#eef0ef",
-    border: "#9ea9b0",
-    headerText: "#263747",
-    receiptX: 995,
-    rowStart: 345,
-    rowGap: 118,
-    detachedReceipt: false,
-    zebra: true,
-    stamp: false,
-  }),
-]);
-
-export const PHARMACY_GUIDE_STYLE_IDS = Object.freeze(STYLES.map((style) => style.id));
-
-export function pharmacyGuideStyleForIndex(index) {
-  if (!Number.isInteger(index) || index < 0) throw new Error("pharmacy-guide style index must be a non-negative integer");
-  return STYLES[index % STYLES.length];
-}
+export {
+  PHARMACY_GUIDE_STYLE_IDS,
+  pharmacyGuideStyleForIndex,
+} from "./synthetic_pharmacy_guide_templates.mjs";
+import { pharmacyGuideStyleForIndex } from "./synthetic_pharmacy_guide_templates.mjs";
 
 function medicationColumns(style) {
   const mainRight = style.receiptX - 18;
@@ -160,7 +80,7 @@ function receiptRegions(document, style) {
   const rowStart = 198;
   const rowGap = 48;
   const regions = [
-    region("receipt-title", "약제비 계산서·영수증", x, 68, 232, 31, { semanticRole: "receipt", regionClass: "distractor", fontSize: 19 }),
+    region("receipt-title", "약제비 계산서·영수증", x, 68, 232, 31, { semanticRole: "receipt", regionClass: "distractor", fontSize: 19, textFill: style.receiptHeaderText || null }),
     region("receipt-patient", `성명 ${document.context.patient}`, x, 112, 220, 26, { semanticRole: "receipt", regionClass: "distractor", fontSize: 15 }),
     region("receipt-pharmacy", document.context.pharmacy, x, 148, 220, 26, { semanticRole: "pharmacy", regionClass: "distractor", fontSize: 15 }),
   ];
@@ -242,13 +162,13 @@ ${lines}
 
 function lowerGuidePanel(style, y, mainRight) {
   const width = mainRight - 110;
-  const schedule = ["blue_striped", "low_contrast_blue"].includes(style.id);
-  if (schedule) {
+  if (style.lowerPanel === "schedule" || style.lowerPanel === "compact_schedule") {
     const labels = ["아침", "점심", "저녁", "취침전"];
+    const compact = style.lowerPanel === "compact_schedule";
     const regions = [
       region("guide-lower-title", "다음에 복용할 시간", 82, y + 28, 240, 28, { semanticRole: "instruction", regionClass: "distractor", fontSize: 17 }),
       ...labels.map((label, index) => region(`guide-lower-slot-${index}`, label, 285 + index * 145, y + 28, 105, 26, { semanticRole: "label", regionClass: "distractor", fontSize: 16 })),
-      region("guide-lower-note", "복용 후 해당 시간에 표시해 주세요.", 82, y + 112, 420, 26, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
+      region("guide-lower-note", compact ? "식후 30분 · 정해진 시간에 복용" : "복용 후 해당 시간에 표시해 주세요.", 82, y + 112, 420, 26, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
     ];
     const columns = Array.from({ length: 4 }, (_, index) => {
       const x = 260 + index * 145;
@@ -256,8 +176,64 @@ function lowerGuidePanel(style, y, mainRight) {
     }).join("\n");
     return {
       regions,
-      decorations: `<g class="guide-lower-schedule-panel"><rect x="70" y="${y}" width="${width}" height="160" rx="13" fill="${style.accentSoft}" opacity="0.42" stroke="${style.border}"/><line x1="70" y1="${y + 62}" x2="${70 + width}" y2="${y + 62}" stroke="${style.border}"/>${columns}</g>`,
+      decorations: `<g class="guide-lower-${compact ? "compact-schedule" : "schedule"}-panel"><rect x="70" y="${y}" width="${width}" height="160" rx="13" fill="${style.accentSoft}" opacity="0.42" stroke="${style.border}"/><line x1="70" y1="${y + 62}" x2="${70 + width}" y2="${y + 62}" stroke="${style.border}"/>${columns}</g>`,
       bottom: y + 160,
+    };
+  }
+  if (style.lowerPanel === "storage") {
+    const items = ["직사광선을 피해 보관", "어린이 손이 닿지 않는 곳", "습기가 적은 곳", "실온 보관"];
+    const regions = [
+      region("guide-lower-title", "보관방법", 88, y + 30, 170, 28, { semanticRole: "storage", regionClass: "distractor", fontSize: 18 }),
+      ...items.map((text, index) => region(`guide-lower-storage-${index}`, text, 92 + index * Math.floor(width / 4), y + 117, Math.floor(width / 4) - 10, 48, { semanticRole: "storage", regionClass: "distractor", fontSize: 14 })),
+    ];
+    const icons = items.map((_, index) => {
+      const cx = 145 + index * Math.floor(width / 4);
+      return `<circle cx="${cx}" cy="${y + 78}" r="24" fill="none" stroke="${style.accent}" stroke-width="3"/><path d="M${cx - 11} ${y + 78} h22 M${cx} ${y + 67} v22" stroke="${style.accent}" stroke-width="2" opacity="0.72"/>`;
+    }).join("\n");
+    return {
+      regions,
+      decorations: `<g class="guide-lower-storage-panel"><rect x="70" y="${y}" width="${width}" height="190" rx="9" fill="${style.accentSoft}" opacity="0.26" stroke="${style.border}"/>${icons}</g>`,
+      bottom: y + 190,
+    };
+  }
+  if (style.lowerPanel === "pediatric") {
+    const regions = [
+      region("guide-lower-title", "우리 아이 복약 체크", 92, y + 28, 240, 28, { semanticRole: "instruction", regionClass: "distractor", fontSize: 17 }),
+      region("guide-lower-pediatric-0", "정해진 용법·용량을 보호자가 확인해 주세요.", 128, y + 78, 620, 28, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
+      region("guide-lower-pediatric-1", "복용 후 이상반응이 있으면 약사와 상의하세요.", 128, y + 124, 620, 28, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
+      region("guide-lower-pediatric-2", "다른 약·식품과 함께 먹을 때는 먼저 확인하세요.", 128, y + 170, 620, 28, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
+    ];
+    return {
+      regions,
+      decorations: `<g class="guide-lower-pediatric-panel"><rect x="70" y="${y}" width="${width}" height="220" rx="18" fill="${style.accentSoft}" opacity="0.34" stroke="${style.border}"/><rect x="70" y="${y}" width="${width}" height="48" rx="18" fill="${style.secondary}" opacity="0.48"/><circle cx="100" cy="${y + 91}" r="13" fill="${style.secondary}" opacity="0.55"/><circle cx="100" cy="${y + 137}" r="13" fill="${style.accent}" opacity="0.55"/><circle cx="100" cy="${y + 183}" r="13" fill="${style.secondary}" opacity="0.55"/></g>`,
+      bottom: y + 220,
+    };
+  }
+  if (style.lowerPanel === "monochrome") {
+    const regions = [
+      region("guide-lower-title", "주의 · 안내", 88, y + 27, 180, 27, { semanticRole: "instruction", regionClass: "distractor", fontSize: 17 }),
+      region("guide-lower-mono-0", "정해진 용법·용량을 지켜 복용하세요.", 92, y + 78, 630, 28, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
+      region("guide-lower-mono-1", "졸음·어지러움이 있으면 운전에 주의하세요.", 92, y + 122, 630, 28, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
+      region("guide-lower-mono-2", "이상반응이 나타나면 복용을 중단하고 상담하세요.", 92, y + 166, 630, 28, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
+    ];
+    return {
+      regions,
+      decorations: `<g class="guide-lower-monochrome-panel"><rect x="70" y="${y}" width="${width}" height="205" fill="none" stroke="${style.border}" stroke-width="1.5"/><line x1="70" y1="${y + 50}" x2="${70 + width}" y2="${y + 50}" stroke="${style.border}"/><line x1="84" y1="${y + 106}" x2="${70 + width - 14}" y2="${y + 106}" stroke="${style.border}" opacity="0.35"/><line x1="84" y1="${y + 150}" x2="${70 + width - 14}" y2="${y + 150}" stroke="${style.border}" opacity="0.35"/></g>`,
+      bottom: y + 205,
+    };
+  }
+  if (style.lowerPanel === "triple_info") {
+    const cellWidth = Math.floor(width / 3);
+    const regions = [
+      region("guide-lower-title", "복용방법 안내", 86, y + 28, 190, 27, { semanticRole: "instruction", regionClass: "distractor", fontSize: 17 }),
+      region("guide-lower-info-0", "아침·점심·저녁 · 식후 30분", 88, y + 78, cellWidth - 25, 76, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
+      region("guide-lower-info-1", "일반 주의사항 · 이상반응 시 상담", 88 + cellWidth, y + 78, cellWidth - 25, 76, { semanticRole: "instruction", regionClass: "distractor", fontSize: 15 }),
+      region("guide-lower-info-2", "보관방법 · 습기·직사광선 주의", 88 + cellWidth * 2, y + 78, cellWidth - 25, 76, { semanticRole: "storage", regionClass: "distractor", fontSize: 15 }),
+    ];
+    return {
+      regions,
+      decorations: `<g class="guide-lower-triple-info-panel"><rect x="70" y="${y}" width="${width}" height="180" rx="12" fill="${style.accentSoft}" opacity="0.28" stroke="${style.border}"/><line x1="${70 + cellWidth}" y1="${y + 18}" x2="${70 + cellWidth}" y2="${y + 162}" stroke="${style.border}"/><line x1="${70 + cellWidth * 2}" y1="${y + 18}" x2="${70 + cellWidth * 2}" y2="${y + 162}" stroke="${style.border}"/></g>`,
+      bottom: y + 180,
     };
   }
   const warnings = ["운전 또는 기계조작 시 주의", "졸림이 올 수 있습니다", "임의로 용량을 늘리지 마세요"];
@@ -274,12 +250,45 @@ function lowerGuidePanel(style, y, mainRight) {
 }
 
 function mainPaperSvg(style, mainRight) {
-  if (style.detachedReceipt) {
+  if (style.receiptMode === "detached") {
     return `<path class="paper-silhouette" d="M30 30 Q${Math.round(mainRight * 0.5)} 18 ${mainRight - 8} 28 Q${mainRight + 1} 790 ${mainRight - 10} 1555 Q${Math.round(mainRight * 0.5)} 1564 28 1554 Q19 790 30 30 Z" fill="${style.paper}" stroke="${style.border}" stroke-width="1.5"/>
 <path class="receipt-silhouette" d="M${style.receiptX + 3} 42 Q${Math.round((style.receiptX + 1262) / 2)} 34 1258 43 Q1264 780 1257 1528 Q${Math.round((style.receiptX + 1262) / 2)} 1537 ${style.receiptX + 4} 1529 Q${style.receiptX - 2} 790 ${style.receiptX + 3} 42 Z" fill="${style.receipt}" stroke="${style.border}" stroke-width="1.2"/>`;
   }
+  if (style.receiptMode === "stapled") {
+    return `<path class="paper-silhouette" d="M30 30 Q640 18 1258 30 Q1266 790 1256 1555 Q640 1565 28 1554 Q18 790 30 30 Z" fill="${style.paper}" stroke="${style.border}" stroke-width="1.5"/>
+<path class="receipt-silhouette stapled-receipt" d="M${style.receiptX + 3} 48 Q1115 34 1255 54 L1255 865 Q1125 878 ${style.receiptX + 6} 858 Z" fill="${style.receipt}" stroke="${style.border}" stroke-width="1.2"/>
+<line class="receipt-staple" x1="${style.receiptX + 55}" y1="54" x2="${style.receiptX + 105}" y2="48" stroke="#505050" stroke-width="5" stroke-linecap="round"/>`;
+  }
   return `<path class="paper-silhouette" d="M30 30 Q640 18 1258 30 Q1266 790 1256 1555 Q640 1565 28 1554 Q18 790 30 30 Z" fill="${style.paper}" stroke="${style.border}" stroke-width="1.5"/>
 <rect x="${style.receiptX}" y="38" width="${1262 - style.receiptX}" height="1494" fill="${style.receipt}" stroke="${style.border}" stroke-width="0.8"/>`;
+}
+
+function templateOverlay(style, mainRight) {
+  const width = mainRight - 52;
+  if (style.id === "teal_modern_grid") {
+    return `<g class="guide-template-teal-modern-grid"><rect x="27" y="30" width="16" height="1522" fill="${style.accent}" opacity="0.82"/><rect x="${style.receiptX + 8}" y="48" width="${1248 - style.receiptX}" height="48" rx="5" fill="${style.secondary}" opacity="0.92"/><rect x="${style.receiptX + 8}" y="1185" width="${1248 - style.receiptX}" height="118" rx="8" fill="${style.accent}" opacity="0.82"/></g>`;
+  }
+  if (style.id === "pediatric_pastel") {
+    return `<g class="guide-template-pediatric-pastel"><rect x="30" y="30" width="${mainRight - 38}" height="18" fill="${style.accent}" opacity="0.55"/><rect x="48" y="185" width="${width - 15}" height="34" rx="12" fill="${style.secondary}" opacity="0.35"/><circle cx="${style.receiptX + 205}" cy="1240" r="18" fill="${style.secondary}" opacity="0.38"/><circle cx="${style.receiptX + 230}" cy="1272" r="13" fill="${style.secondary}" opacity="0.26"/><path d="M${style.receiptX + 205} 1258 q18 38 7 78" fill="none" stroke="${style.secondary}" opacity="0.3"/></g>`;
+  }
+  if (style.id === "monochrome_stapled") {
+    return `<g class="guide-template-monochrome-stapled"><rect x="48" y="50" width="${width}" height="92" fill="none" stroke="${style.border}" stroke-width="1.4"/><path d="M45 1510 h${Math.max(40, width - 10)}" stroke="${style.border}" stroke-width="1.2"/><rect x="${style.receiptX + 18}" y="102" width="${1240 - style.receiptX}" height="34" fill="none" stroke="${style.border}"/></g>`;
+  }
+  if (style.id === "lavender_dense") {
+    return `<g class="guide-template-lavender-dense"><rect x="45" y="50" width="${width}" height="86" fill="${style.accent}" opacity="0.54"/><rect x="45" y="1460" width="${width}" height="60" fill="${style.accent}" opacity="0.56"/><line x1="385" y1="245" x2="385" y2="760" stroke="${style.border}"/><line x1="655" y1="245" x2="655" y2="760" stroke="${style.border}"/></g>`;
+  }
+  if (style.id === "yellow_blue_split") {
+    return `<g class="guide-template-yellow-blue-split"><rect x="45" y="50" width="${Math.round(width * 0.56)}" height="100" fill="${style.accentSoft}" opacity="0.74"/><rect x="${45 + Math.round(width * 0.56)}" y="50" width="${Math.round(width * 0.44)}" height="100" fill="${style.accent}" opacity="0.82"/><rect x="${style.receiptX + 8}" y="45" width="${1248 - style.receiptX}" height="54" fill="${style.secondary}" opacity="0.8"/></g>`;
+  }
+  return "";
+}
+
+function templateExtraRegions(style) {
+  if (style.id !== "teal_modern_grid") return [];
+  return [
+    region("guide-template-promo-title", "내 건강정보, 한번에!", style.receiptX + 23, 1204, 265, 28, { semanticRole: "label", regionClass: "distractor", fontSize: 16, textFill: "#f8fbfb" }),
+    region("guide-template-promo-note", "복약알림과 처방내역을 확인하세요.", style.receiptX + 23, 1244, 265, 42, { semanticRole: "instruction", regionClass: "distractor", fontSize: 13, textFill: "#f8fbfb" }),
+  ];
 }
 
 function stampDecoration(style) {
@@ -304,7 +313,7 @@ export function buildPharmacyGuideReceiptSidecar(index, random, document) {
   const ruledStart = lower.bottom + 42;
   const regions = [
     region("guide-brand", context.pharmacy, 74, 70, 380, 46, { semanticRole: "pharmacy", fontSize: 32 }),
-    region("guide-title", "복약안내", 690, 70, 220, 46, { semanticRole: "document_title", fontSize: 34 }),
+    region("guide-title", "복약안내", 690, 70, 220, 46, { semanticRole: "document_title", fontSize: 34, textFill: style.titleText || null }),
     region("guide-patient", `복약자 ${context.patient}`, 70, 145, 285, 31, { semanticRole: "patient", fontSize: 22 }),
     region("guide-clinic", `처방 ${context.clinic}`, 365, 145, 315, 31, { semanticRole: "clinic", fontSize: 22 }),
     region("guide-date", `조제 ${context.dispense_date}`, 690, 145, 250, 31, { semanticRole: "date", regionClass: "distractor", fontSize: 21 }),
@@ -316,6 +325,7 @@ export function buildPharmacyGuideReceiptSidecar(index, random, document) {
     region("guide-legal-1", "※ 의약품은 처방된 용법과 용량을 지켜 복용하세요.", 70, 1450, 640, 23, { semanticRole: "instruction", regionClass: "distractor", fontSize: 13 }),
     region("guide-legal-2", "※ 문의사항은 조제한 약국 또는 의료기관에 확인하세요.", 70, 1480, 640, 23, { semanticRole: "instruction", regionClass: "distractor", fontSize: 13 }),
     ...(style.stamp ? [region("guide-stamp-label", "복약상담", 810, 1337, 92, 26, { semanticRole: "label", regionClass: "distractor", fontSize: 15 })] : []),
+    ...templateExtraRegions(style),
     ...receipt.regions,
   ];
   const ruledLines = Array.from({ length: 5 }, (_, row) => {
@@ -329,6 +339,7 @@ export function buildPharmacyGuideReceiptSidecar(index, random, document) {
   const emptyHeaderBand = `<line class="guide-header-band-empty" x1="45" y1="267" x2="${45 + headerBandWidth}" y2="267" stroke="${style.border}" stroke-width="2" opacity="0.72"/>`;
   const decoration = `${mainPaperSvg(style, mainRight)}
 <rect x="45" y="50" width="${headerBandWidth}" height="100" rx="4" fill="${style.accentSoft}" opacity="0.72"/>
+${templateOverlay(style, mainRight)}
 ${headerBand}
 <line class="receipt-perforation" x1="${seamX}" y1="45" x2="${seamX}" y2="1525" stroke="${style.border}" stroke-width="1.4" stroke-dasharray="4 5"/>
 ${rowDecorations(index, document, style, medication.columns)}
@@ -346,6 +357,8 @@ ${stampDecoration(style)}`;
       "receipt_sidecar",
       "multi_style_print",
       `print_style_${style.id}`,
+      `receipt_mode_${style.receiptMode}`,
+      `lower_panel_${style.lowerPanel}`,
       document.medications.length === 1 ? "single_medication" : "multi_medication",
       "structured_lower_panel",
     ],

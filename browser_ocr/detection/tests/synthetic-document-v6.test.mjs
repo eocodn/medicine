@@ -79,10 +79,17 @@ test("receipt-sidecar layout derives medication truth and keeps accounting numer
 });
 
 test("receipt-sidecar cycles distinct real-print style families and medication-row densities", () => {
-  assert.equal(PHARMACY_GUIDE_STYLE_IDS.length, 5);
+  assert.equal(PHARMACY_GUIDE_STYLE_IDS.length, 10);
   const observedStyles = new Set();
   const observedMedicationCounts = new Set();
-  for (let index = 0; index < 35; index += 1) {
+  const expectedTopologyMarkers = new Map([
+    ["teal_modern_grid", "guide-template-teal-modern-grid"],
+    ["pediatric_pastel", "guide-template-pediatric-pastel"],
+    ["monochrome_stapled", "guide-template-monochrome-stapled"],
+    ["lavender_dense", "guide-template-lavender-dense"],
+    ["yellow_blue_split", "guide-template-yellow-blue-split"],
+  ]);
+  for (let index = 0; index < 70; index += 1) {
     const random = seeded(900 + index);
     const document = buildDocumentTruth(index, random, {
       products: PRODUCTS,
@@ -98,8 +105,10 @@ test("receipt-sidecar cycles distinct real-print style families and medication-r
     assert.match(layout.decorations, /thumbnail-grain/u);
     assert.match(layout.decorations, /receipt-perforation/u);
     assert.match(layout.decorations, /qr-distractor/u);
-    assert.match(layout.decorations, /guide-lower-(?:schedule|warning)-panel/u);
+    assert.match(layout.decorations, /guide-lower-(?:schedule|warning|storage|pediatric|monochrome|triple-info|compact-schedule)-panel/u);
     assert.ok(layout.regions.some((region) => region.region_id.startsWith("guide-lower-")));
+    const topologyMarker = expectedTopologyMarkers.get(layout.visual_style);
+    if (topologyMarker) assert.match(layout.decorations, new RegExp(topologyMarker, "u"));
     const headers = layout.regions.filter((region) => region.region_id.startsWith("guide-") && region.semantic_role === "header");
     if (["blue_striped", "navy_dense_guide"].includes(layout.visual_style)) {
       assert.ok(headers.length > 0);
@@ -110,6 +119,21 @@ test("receipt-sidecar cycles distinct real-print style families and medication-r
       const lowerTitle = layout.regions.find((region) => region.region_id === "guide-lower-title");
       assert.equal(lowerTitle?.text_fill, "#f7f9fb");
       assert.match(renderLayoutRegions([lowerTitle]), /fill="#f7f9fb"/u);
+    }
+    if (layout.visual_style === "teal_modern_grid") {
+      assert.ok(layout.regions.some((region) => region.region_id === "guide-template-promo-title"));
+      assert.ok(layout.regions.some((region) => region.region_id === "guide-template-promo-note"));
+    }
+    if (layout.visual_style === "monochrome_stapled") {
+      const title = layout.regions.find((region) => region.region_id === "receipt-title");
+      const staple = layout.decorations.match(/class="receipt-staple"[^>]*y1="([0-9.]+)"[^>]*y2="([0-9.]+)"/u);
+      assert.ok(title && staple);
+      assert.ok(Math.max(Number(staple[1]), Number(staple[2])) < title.natural_text_box[0][1]);
+    }
+    if (layout.visual_style === "lavender_dense") {
+      const lowerInfo = layout.regions.filter((region) => region.region_id.startsWith("guide-lower-info-"));
+      assert.ok(lowerInfo.length >= 3);
+      assert.ok(lowerInfo.every((region) => !region.text.includes("\n")));
     }
   }
   assert.deepEqual(observedStyles, new Set(PHARMACY_GUIDE_STYLE_IDS));
