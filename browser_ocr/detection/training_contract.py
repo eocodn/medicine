@@ -7,7 +7,7 @@ import os
 import re
 import sys
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Mapping
@@ -48,7 +48,7 @@ class DetectorTrainingConfig:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _sha256_file(path: Path) -> str:

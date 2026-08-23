@@ -9,6 +9,7 @@ import numpy as np
 
 from browser_ocr.detection.runtime import _verify_extracted_assets
 from browser_ocr.detection.detector_benchmark import (
+    _verify_optional_onnx_sha,
     db_postprocess,
     rectify_text_crop,
     resize_dimensions,
@@ -113,6 +114,38 @@ class DetectorBenchmarkCoreTest(unittest.TestCase):
             broken["postprocess"]["box_threshold"] = 0.6
             with self.assertRaisesRegex(ValueError, "box_threshold"):
                 validate_official_config(path, "PP-OCRv6_small_det", broken)
+
+    def test_candidate_runtime_key_can_bind_original_config_model_name(self):
+        pinned = {
+            "config_model_name": "PP-OCRv5_mobile_det",
+            "preprocess": {
+                "color_mode": "BGR",
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225],
+            },
+            "postprocess": {
+                "threshold": 0.3,
+                "box_threshold": 0.6,
+                "max_candidates": 1000,
+                "unclip_ratio": 1.5,
+            },
+        }
+        config = """Global:\n  model_name: PP-OCRv5_mobile_det\nPreProcess:\n  transform_ops:\n  - DecodeImage:\n      img_mode: BGR\n  - NormalizeImage:\n      mean: [0.485, 0.456, 0.406]\n      std: [0.229, 0.224, 0.225]\nPostProcess:\n  name: DBPostProcess\n  thresh: 0.3\n  box_thresh: 0.6\n  max_candidates: 1000\n  unclip_ratio: 1.5\n"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "inference.yml"
+            path.write_text(config, encoding="utf-8")
+            validate_official_config(path, "PP-OCRv5_mobile_det_candidate_deadbeef", pinned)
+
+    def test_candidate_onnx_sha_is_verified_when_manifest_provides_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "inference.onnx"
+            path.write_bytes(b"candidate-onnx")
+            import hashlib
+
+            expected = hashlib.sha256(path.read_bytes()).hexdigest()
+            _verify_optional_onnx_sha(path, {"onnx_sha256": expected})
+            with self.assertRaisesRegex(ValueError, "ONNX SHA-256"):
+                _verify_optional_onnx_sha(path, {"onnx_sha256": "0" * 64})
 
 
 if __name__ == "__main__":

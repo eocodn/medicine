@@ -173,10 +173,18 @@ function ratio(numerator, denominator) {
   return denominator ? numerator / denominator : 1;
 }
 
-export function evaluateDetections(corpus, predictionInput) {
+export function evaluateDetections(corpus, predictionInput, options = {}) {
   const predictions = validatePredictions(predictionInput, corpus);
   const byId = new Map(predictions.samples.map((sample) => [sample.id, sample]));
-  const samples = corpus.samples.map((sample) => evaluateSample(sample, byId.get(sample.id)));
+  const split = options?.split ?? null;
+  if (split !== null && !["train", "val", "test"].includes(split)) {
+    throw new Error(`unsupported detector evaluation split: ${split}`);
+  }
+  const sourceSamples = split === null ? corpus.samples : corpus.samples.filter((sample) => sample.split === split);
+  if (sourceSamples.length === 0) {
+    throw new Error(`detector evaluation split ${split} has no samples`);
+  }
+  const samples = sourceSamples.map((sample) => evaluateSample(sample, byId.get(sample.id)));
   const totals = samples.reduce((sum, sample) => ({
     ground_truth_boxes: sum.ground_truth_boxes + sample.ground_truth_boxes,
     predicted_boxes: sum.predicted_boxes + sample.predicted_boxes,
@@ -227,6 +235,7 @@ export function evaluateDetections(corpus, predictionInput) {
   return {
     schema_version: 1,
     corpus_id: corpus.corpus_id,
+    ...(split === null ? {} : { evaluation_scope: { split } }),
     status: pass ? "pass" : "fail",
     matching: { criterion: "visible_text_core_coverage", min_core_coverage: MATCH_CORE_COVERAGE },
     gates,

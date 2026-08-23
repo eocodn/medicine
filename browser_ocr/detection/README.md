@@ -51,11 +51,25 @@ docker compose run --rm ocr-detector-train preflight \
   --corpus-manifest /artifacts/ocr/corpora/unified-360/manifest.json \
   --detection-export /artifacts/ocr/corpora/unified-360/views/detection/paddle/export.json \
   --run-dir /artifacts/ocr/training/detector-unified-360 --json
+docker compose run --rm ocr-detector-export-paddle export \
+  --training-result /artifacts/ocr/training/detector-unified-360/result.json \
+  --output-dir /artifacts/ocr/candidates/detector-unified-360/stage --json
+docker compose run --rm ocr-detector-convert convert \
+  --stage-manifest /artifacts/ocr/candidates/detector-unified-360/stage/stage-manifest.json \
+  --output-dir /artifacts/ocr/candidates/detector-unified-360/onnx --json
+docker compose run --rm ocr-detector-candidate-eval \
+  --candidate /artifacts/ocr/candidates/detector-unified-360/onnx/candidate.json \
+  --corpus /artifacts/ocr/corpora/unified-360/manifest.json \
+  --output /artifacts/ocr/evaluations/detection/detector-unified-360 --edge 640 --json
 ```
 
 `ocr-detector-train` is the strict PP-OCRv5 mobile detector fine-tune boundary. `preflight` verifies the checked-in PaddleOCR source/config contract, the pinned PPLCNetV3 detector pretrain, the unified-corpus manifest, materialized detection export, label hashes, and exact document split counts before constructing the training command. The derived document config deliberately removes horizontal mirroring and CopyPaste: mirrored Korean glyphs are not a real camera distribution, and instance-level CopyPaste would destroy the row/association geometry the unified documents are designed to preserve. Training uses only `train` labels for optimization and `val` labels for Paddle checkpoint selection; the held-out `test` label path is bound into provenance but never appears in the optimization command.
 
 The `train` subcommand uses the same preflight contract and adds a non-blocking run lock, atomic state/result files, heartbeat/progress updates, per-epoch checkpoints, and strict resume from the latest complete epoch. A completed `best_accuracy.pdparams` is recorded only as `pending_project_safety_evaluation`: Paddle Hmean is not a promotion gate. Candidate deployment still requires the medicine detector evaluator on held-out observations, including critical-box recall and zero merge/cross-association/split safety gates, followed by representative Android runtime measurement and real-photo holdout evaluation. To start the explicitly approved optimization run, replace `preflight` with `train`; no fallback model or relaxed gate is selected automatically.
+
+Detector deployment export is deliberately split in two. `ocr-detector-export-paddle` runs the pinned PaddleOCR exporter against the hash-verified `best_accuracy` checkpoint and persists the PIR inference program/parameters/config as an immutable stage. `ocr-detector-convert` then uses a separately pinned CPython 3.10 toolchain (`Paddle 3.2.0`, `paddle2onnx 2.1.0`, ONNX 1.17, ONNX Runtime 1.23.2) to convert that exact stage to opset-17 ONNX. Conversion is accepted only after ONNX checker validation and two-shape Paddle-vs-ORT numerical parity within `1e-4`; model/config/toolchain/source hashes are recorded in `candidate.json`.
+
+`ocr-detector-candidate-eval` runs the candidate through the same detector benchmark/postprocess implementation used for zero-shot models. It validates that the candidate and requested corpus hashes match, but **promotion quality is computed only from the corpus `test` documents**. Train/val/full-corpus metrics are retained as diagnostics and cannot make a failed held-out test pass. Passing the synthetic test gate still yields only `synthetic_test_pass_pending_real_holdout_and_android`; it is not a deployment approval and does not replace the locked de-identified real-photo holdout or representative handset memory/latency gates.
 
 The benchmark matrix is deliberately small: official `PP-OCRv5_mobile_det`, `PP-OCRv6_tiny_det`, and `PP-OCRv6_small_det` ONNX models at detector longest edges 640, 960, and 1280. Archive URLs, SHA-256 digests, official preprocessing, and model-specific DB postprocess settings are pinned in `detector-models.json`. Downloads are resumable and hash-verified; benchmark runs are checkpointed and write per-run prediction artifacts plus a ranked summary.
 

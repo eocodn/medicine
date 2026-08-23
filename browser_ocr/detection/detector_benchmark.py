@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import statistics
@@ -42,7 +43,8 @@ def _close_sequence(left: list[float], right: list[float], tolerance: float = 1e
 
 def validate_official_config(config_path: Path, model_name: str, pinned: dict[str, Any]) -> dict[str, Any]:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    if config.get("Global", {}).get("model_name") != model_name:
+    expected_config_model_name = pinned.get("config_model_name", model_name)
+    if config.get("Global", {}).get("model_name") != expected_config_model_name:
         raise ValueError(f"official model_name mismatch for {model_name}")
     decode = _find_transform(config, "DecodeImage")
     normalize = _find_transform(config, "NormalizeImage")
@@ -71,6 +73,21 @@ def validate_official_config(config_path: Path, model_name: str, pinned: dict[st
         if not equal:
             raise ValueError(f"{model_name} postprocess {pinned_key} differs from pinned manifest")
     return config
+
+
+def _verify_optional_onnx_sha(path: Path, model: dict[str, Any]) -> None:
+    expected = model.get("onnx_sha256")
+    if expected is None:
+        return
+    if not isinstance(expected, str) or len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+        raise ValueError("detector ONNX SHA-256 pin is invalid")
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected:
+        raise ValueError(f"detector ONNX SHA-256 mismatch: expected {expected}, got {actual}")
 
 
 def _order_box_points(points: np.ndarray) -> np.ndarray:
@@ -268,6 +285,7 @@ def run_benchmark(
     config_path = extracted / model["config_file"]
     if not onnx_path.is_file() or not config_path.is_file():
         raise ValueError(f"detector assets are incomplete for {model_name}")
+    _verify_optional_onnx_sha(onnx_path, model)
     validate_official_config(config_path, model_name, model)
 
     cv2.setNumThreads(1)

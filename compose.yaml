@@ -102,6 +102,7 @@ services:
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     working_dir: /workspace
     environment:
+      HOME: /tmp
       PYTHONDONTWRITEBYTECODE: "1"
       CUDA_VISIBLE_DEVICES: "${OCR_FINETUNE_GPU:-0}"
     volumes:
@@ -114,6 +115,60 @@ services:
     gpus: all
     shm_size: "4gb"
     entrypoint: ["python", "-m", "browser_ocr.detection.training_cli"]
+
+  ocr-detector-export-paddle:
+    build:
+      context: .
+      dockerfile: browser_ocr/finetune/Dockerfile.train
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      HOME: /tmp
+      PYTHONDONTWRITEBYTECODE: "1"
+      CUDA_VISIBLE_DEVICES: ""
+    volumes:
+      - .:/workspace:ro
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
+    entrypoint: ["python", "-m", "browser_ocr.detection.export_cli"]
+
+  ocr-detector-convert:
+    build:
+      context: .
+      dockerfile: browser_ocr/detection/Dockerfile.converter
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      HOME: /tmp
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - .:/workspace:ro
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
+    entrypoint: ["python", "-m", "browser_ocr.detection.candidate_cli"]
+
+  ocr-detector-candidate-eval:
+    build:
+      context: .
+      dockerfile: browser_ocr/detection/Dockerfile
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    environment:
+      HOME: /tmp
+    volumes:
+      - .:/workspace:ro
+      - type: bind
+        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/artifacts/medicine}
+        target: /artifacts
+        bind:
+          create_host_path: false
+    entrypoint: ["node", "browser_ocr/detection/candidate_evaluation.mjs"]
 
   ocr-corpus:
     build:

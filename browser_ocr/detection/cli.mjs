@@ -99,7 +99,8 @@ async function main(argv) {
     const corpus = await loadCorpus(resolve(corpusPath));
     await validateFiles(corpus, resolve(corpusPath));
     const predictions = JSON.parse(await readFile(resolve(predictionsPath), "utf8"));
-    result = evaluateDetections(corpus, predictions);
+    const split = option(args, "--split");
+    result = evaluateDetections(corpus, predictions, split === null ? {} : { split });
     if (result.status !== "pass") process.exitCode = 1;
   } else if (command === "matrix") {
     result = benchmarkMatrix(await loadDetectorModelManifest());
