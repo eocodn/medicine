@@ -24,6 +24,16 @@ function sortedEntries(counter) {
   return Object.entries(counter).sort(([left], [right]) => left.localeCompare(right));
 }
 
+function requiredAppearanceProfiles(corpus) {
+  const expandedAppearance = corpus.generator?.version >= 6 && corpus.generator?.revision >= 5;
+  return expandedAppearance
+    ? { materials: MATERIAL_PROFILES, backgrounds: BACKGROUND_PROFILES }
+    : {
+        materials: ["paper_plain", "paper_folded", "plastic_wrinkled"],
+        backgrounds: ["desk_light", "desk_dark", "pharmacy_counter"],
+      };
+}
+
 export function auditCoverage(corpus, {
   minimumPerLayout = 1,
   minimumPerCapture = 1,
@@ -47,6 +57,7 @@ export function auditCoverage(corpus, {
     sample.regions.filter((region) => region.critical).map((region) => region.semantic_role)
   )));
   const failures = [];
+  const requiredAppearance = requiredAppearanceProfiles(corpus);
 
   for (const family of requiredLayoutFamilies) {
     if ((layoutCounts[family] || 0) < minimumPerLayout) failures.push(`layout family ${family} < ${minimumPerLayout}`);
@@ -65,13 +76,13 @@ export function auditCoverage(corpus, {
       if ((augmentationComponentCounts[component] || 0) < 1) failures.push(`augmentation component ${component} < 1`);
     }
   }
-  for (const profile of MATERIAL_PROFILES) {
+  for (const profile of requiredAppearance.materials) {
     if ((materialCounts[profile] || 0) < 1) failures.push(`material profile ${profile} < 1`);
   }
   for (const profile of PRINTER_PROFILES) {
     if ((printerCounts[profile] || 0) < 1) failures.push(`printer profile ${profile} < 1`);
   }
-  for (const profile of BACKGROUND_PROFILES) {
+  for (const profile of requiredAppearance.backgrounds) {
     if ((backgroundCounts[profile] || 0) < 1) failures.push(`background profile ${profile} < 1`);
   }
   if (corpus.generator?.version >= 6 && corpus.generator?.revision >= 6) {
