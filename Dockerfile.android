@@ -14,7 +14,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund \
 COPY browser_ocr/mobile ./mobile
 RUN node mobile/export_runtime.mjs /downloads /out
 
-FROM rust:1.98-bookworm@sha256:e70e2eec3d495fd5c8e0be74adda86507dfac7f51a724fbf9813ff59b2b247c7 AS rust-toolchain
+FROM rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS rust-toolchain
 
 RUN rustup target add aarch64-linux-android
 

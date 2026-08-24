@@ -1,4 +1,4 @@
-FROM rust:1.98-slim@sha256:cc0448b41c3b7b7fea44f5dc50eacba729a56db365b65b7bd5e8a82d5b3db078 AS rust-cli
+FROM rust:1.89-slim@sha256:8cffb8fe4e8a95cf0d6a2060375e5a28aff4c752155aa9f1f9193530769bdf66 AS rust-cli
 
 WORKDIR /build
 COPY rust/medicine_core/Cargo.toml rust/medicine_core/Cargo.lock ./
