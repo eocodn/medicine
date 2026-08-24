@@ -125,6 +125,34 @@ class ReferenceBootstrapperTest {
     private fun sha(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
         .digest(bytes).joinToString("") { "%02x".format(it) }
 
+    private fun bootstrapper(
+        root: File,
+        store: ReferenceStore,
+        source: ReferenceReleaseSource,
+        rebuilder: ReferenceArtifactRebuilder,
+        storageCapacity: ReferenceStorageCapacity,
+        observer: ReferenceUpdateObserver? = null,
+    ) = if (observer == null) {
+        ReferenceBootstrapper(
+            root,
+            store,
+            source,
+            rebuilder,
+            storageCapacity,
+            planner = TestReferenceLifecyclePlanner,
+        )
+    } else {
+        ReferenceBootstrapper(
+            root,
+            store,
+            source,
+            rebuilder,
+            storageCapacity,
+            observer,
+            TestReferenceLifecyclePlanner,
+        )
+    }
+
     private fun release(contractMajor: Int = 1, sequence: Long = 12): VerifiedReferenceRelease =
         VerifiedReferenceRelease(
             releaseSequence = sequence,
@@ -157,7 +185,7 @@ class ReferenceBootstrapperTest {
             val source = FakeSource(release())
             val rebuilder = FakeRebuilder()
             val observer = RecordingObserver()
-            val bootstrapper = ReferenceBootstrapper(
+            val bootstrapper = bootstrapper(
                 root,
                 store,
                 source,
@@ -190,7 +218,7 @@ class ReferenceBootstrapperTest {
             val storage = MemoryStateStorage()
             val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
             val source = RetiredSource(33, "f".repeat(64))
-            val bootstrapper = ReferenceBootstrapper(
+            val bootstrapper = bootstrapper(
                 root,
                 store,
                 source,
@@ -206,7 +234,7 @@ class ReferenceBootstrapperTest {
             assertEquals(33, store.snapshot().highestSeenRootSequence)
             assertEquals("f".repeat(64), store.snapshot().highestSeenRootHash)
 
-            val reopened = ReferenceBootstrapper(
+            val reopened = bootstrapper(
                 root,
                 ReferenceStore(root, storage, FakeDatabaseVerifier()),
                 source,
@@ -240,7 +268,7 @@ class ReferenceBootstrapperTest {
             )
             val source = FakeSource(release(sequence = 10))
 
-            val installed = ReferenceBootstrapper(
+            val installed = bootstrapper(
                 root,
                 store,
                 source,
@@ -262,7 +290,7 @@ class ReferenceBootstrapperTest {
         try {
             val source = FakeSource(release(contractMajor = 2))
             val error = runCatching {
-                ReferenceBootstrapper(
+                bootstrapper(
                     root,
                     ReferenceStore(root, MemoryStateStorage(), FakeDatabaseVerifier()),
                     source,
@@ -285,7 +313,7 @@ class ReferenceBootstrapperTest {
         try {
             val source = FakeSource(release())
             val error = runCatching {
-                ReferenceBootstrapper(
+                bootstrapper(
                     root,
                     ReferenceStore(root, MemoryStateStorage(), FakeDatabaseVerifier()),
                     source,
@@ -310,7 +338,7 @@ class ReferenceBootstrapperTest {
             val source = FakeSource(release(), failDownloads = 1)
 
             val error = runCatching {
-                ReferenceBootstrapper(
+                bootstrapper(
                     root,
                     store,
                     source,
@@ -337,7 +365,7 @@ class ReferenceBootstrapperTest {
             val stateStorage = MemoryStateStorage()
             val store = ReferenceStore(root, stateStorage, FakeDatabaseVerifier())
             val source = FakeSource(release(), failDownloads = 1)
-            val bootstrapper = ReferenceBootstrapper(
+            val bootstrapper = bootstrapper(
                 root,
                 store,
                 source,
@@ -372,14 +400,14 @@ class ReferenceBootstrapperTest {
                 continueDownload = continueFirstDownload,
             )
             val secondSource = FakeSource(release(), fetchEntered = secondFetchEntered)
-            val first = ReferenceBootstrapper(
+            val first = bootstrapper(
                 root,
                 ReferenceStore(root, stateStorage, FakeDatabaseVerifier()),
                 firstSource,
                 FakeRebuilder(),
                 FixedStorageCapacity(Long.MAX_VALUE),
             )
-            val second = ReferenceBootstrapper(
+            val second = bootstrapper(
                 root,
                 ReferenceStore(root, stateStorage, FakeDatabaseVerifier()),
                 secondSource,
@@ -420,7 +448,7 @@ class ReferenceBootstrapperTest {
             store.fileFor(version).writeBytes(TARGET_BYTES)
             val source = FakeSource(currentRelease)
 
-            val installed = ReferenceBootstrapper(
+            val installed = bootstrapper(
                 root,
                 store,
                 source,
@@ -445,7 +473,7 @@ class ReferenceBootstrapperTest {
                 ".bootstrap-artifact-11-${sha("old-artifact".toByteArray())}.part",
             ).apply { writeBytes("stale".toByteArray()) }
 
-            ReferenceBootstrapper(
+            bootstrapper(
                 root,
                 ReferenceStore(root, MemoryStateStorage(), FakeDatabaseVerifier()),
                 FakeSource(release(sequence = 12)),
@@ -483,7 +511,7 @@ class ReferenceBootstrapperTest {
                 .apply { writeBytes(TARGET_BYTES) }
             val source = FakeSource(release(sequence = 10))
 
-            ReferenceBootstrapper(
+            bootstrapper(
                 root,
                 store,
                 source,

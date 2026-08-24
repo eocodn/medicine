@@ -109,6 +109,19 @@ class ReferenceUpdaterTest {
 
     private fun rootHash(sequence: Long): String = sha("root-$sequence".toByteArray())
 
+    private fun updater(
+        root: File,
+        store: ReferenceStore,
+        source: ReferenceReleaseSource,
+        rebuilder: ReferenceArtifactRebuilder,
+    ) = ReferenceUpdater(
+        root,
+        store,
+        source,
+        rebuilder,
+        planner = TestReferenceLifecyclePlanner,
+    )
+
     private fun version(bytes: ByteArray, sequence: Long, label: String) = ReferenceVersion(
         datasetId = dataset(label),
         sha256 = sha(bytes),
@@ -171,7 +184,7 @@ class ReferenceUpdaterTest {
             val source = FakeSource(release)
             val rebuilder = FakeRebuilder(targetBytes)
 
-            val result = ReferenceUpdater(root, store, source, rebuilder).checkForUpdate(installed)
+            val result = updater(root, store, source, rebuilder).checkForUpdate(installed)
 
             assertEquals(ReferenceUpdateStatus.STAGED, result.status)
             assertEquals(ReferenceArtifactKind.CHUNK_PATCH, source.downloads.single().kind)
@@ -210,7 +223,7 @@ class ReferenceUpdaterTest {
             )
             val rebuilder = FakeRebuilder(targetBytes)
 
-            val result = ReferenceUpdater(root, store, source, rebuilder).checkForUpdate(installed)
+            val result = updater(root, store, source, rebuilder).checkForUpdate(installed)
 
             assertEquals(ReferenceUpdateStatus.STAGED, result.status)
             assertEquals(
@@ -251,7 +264,7 @@ class ReferenceUpdaterTest {
                 failKinds = setOf(ReferenceArtifactKind.CHUNK_PATCH),
             )
 
-            val result = ReferenceUpdater(root, store, source, rebuilder).checkForUpdate(installed)
+            val result = updater(root, store, source, rebuilder).checkForUpdate(installed)
 
             assertEquals(ReferenceUpdateStatus.STAGED, result.status)
             assertEquals(
@@ -286,7 +299,7 @@ class ReferenceUpdaterTest {
             val source = FakeSource(release)
             val rebuilder = FakeRebuilder(targetBytes)
 
-            val result = ReferenceUpdater(root, store, source, rebuilder).checkForUpdate(installed)
+            val result = updater(root, store, source, rebuilder).checkForUpdate(installed)
 
             assertEquals(ReferenceUpdateStatus.STAGED, result.status)
             assertEquals(ReferenceArtifactKind.FULL_GZIP, source.downloads.single().kind)
@@ -315,7 +328,7 @@ class ReferenceUpdaterTest {
                 release(targetBytes, 2, "cleanup", current, includeMatchingPatch = false),
             )
 
-            val result = ReferenceUpdater(
+            val result = updater(
                 root,
                 store,
                 source,
@@ -345,7 +358,7 @@ class ReferenceUpdaterTest {
             val signedRootHash = rootHash(8)
             val source = RetiredSource(8, signedRootHash)
 
-            val result = ReferenceUpdater(
+            val result = updater(
                 root,
                 store,
                 source,
@@ -384,7 +397,7 @@ class ReferenceUpdaterTest {
             )
             val source = FakeSource(release)
 
-            val result = ReferenceUpdater(
+            val result = updater(
                 root,
                 store,
                 source,
@@ -422,7 +435,7 @@ class ReferenceUpdaterTest {
             val oldRelease = release(oldBytes, 6, "six", installed.version, includeMatchingPatch = false)
             val source = FakeSource(oldRelease)
 
-            val result = ReferenceUpdater(root, ReferenceStore(root, storage, FakeDatabaseVerifier()), source, FakeRebuilder(oldBytes))
+            val result = updater(root, ReferenceStore(root, storage, FakeDatabaseVerifier()), source, FakeRebuilder(oldBytes))
                 .checkForUpdate(installed)
 
             assertEquals(ReferenceUpdateStatus.ROLLBACK_REJECTED, result.status)
@@ -457,7 +470,7 @@ class ReferenceUpdaterTest {
                 failDownload = true,
             )
 
-            val result = ReferenceUpdater(root, store, source, FakeRebuilder(targetBytes)).checkForUpdate(installed)
+            val result = updater(root, store, source, FakeRebuilder(targetBytes)).checkForUpdate(installed)
 
             assertEquals(ReferenceUpdateStatus.FAILED, result.status)
             assertTrue(result.detail!!.contains("network interrupted"))
@@ -507,13 +520,13 @@ class ReferenceUpdaterTest {
                 continueDownload = continueFirstDownload,
             )
             val secondSource = FakeSource(nextRelease, fetchEntered = secondFetchEntered)
-            val firstUpdater = ReferenceUpdater(
+            val firstUpdater = updater(
                 root,
                 ReferenceStore(root, storage, FakeDatabaseVerifier()),
                 firstSource,
                 FakeRebuilder(targetBytes),
             )
-            val secondUpdater = ReferenceUpdater(
+            val secondUpdater = updater(
                 root,
                 ReferenceStore(root, storage, FakeDatabaseVerifier()),
                 secondSource,

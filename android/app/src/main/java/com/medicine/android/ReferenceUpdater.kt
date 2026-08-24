@@ -168,6 +168,7 @@ class ReferenceUpdater(
     private val source: ReferenceReleaseSource,
     private val rebuilder: ReferenceArtifactRebuilder,
     private val observer: ReferenceUpdateObserver = NoOpReferenceUpdateObserver,
+    private val planner: ReferenceLifecyclePlanner = RustReferenceLifecyclePlanner,
 ) {
     fun checkForUpdate(current: InstalledReferenceVersion): ReferenceUpdateResult =
         ReferenceOperationCoordinator.exclusive {
@@ -186,15 +187,40 @@ class ReferenceUpdater(
             }
             releaseSequence = release.releaseSequence
             store.observeSignedRoot(release.releaseSequence, release.rootHash)
-            require(release.contractMajor == current.version.contractMajor) {
-                "reference release contract does not match installed runtime"
+            when (
+                val plan = planner.planUpdate(
+                    current.version,
+                    store.snapshot().highestActivatedSequence,
+                    release,
+                )
+            ) {
+                ReferenceUpdatePlan.UpToDate -> {
+                    cleanupUpdateFiles()
+                    ReferenceUpdateResult(ReferenceUpdateStatus.UP_TO_DATE, release.releaseSequence)
+                }
+                ReferenceUpdatePlan.RollbackRejected -> {
+                    cleanupUpdateFiles()
+                    ReferenceUpdateResult(
+                        ReferenceUpdateStatus.ROLLBACK_REJECTED,
+                        release.releaseSequence,
+                        "signed release sequence is below the activation high-water mark",
+                    )
+                }
+                ReferenceUpdatePlan.IdentityConflict -> {
+                    cleanupUpdateFiles()
+                    ReferenceUpdateResult(
+                        ReferenceUpdateStatus.FAILED,
+                        release.releaseSequence,
+                        "activated release sequence has a different signed target identity",
+                    )
+                }
+                is ReferenceUpdatePlan.Stage -> {
+                    val prepared = preparePreferredArtifact(current, release.releaseSequence, plan)
+                    stagePrepared(plan.target, prepared)
+                    observer.phase("staged")
+                    ReferenceUpdateResult(ReferenceUpdateStatus.STAGED, release.releaseSequence)
+                }
             }
-            terminalResult(current, release)?.let { return it }
-
-            val prepared = preparePreferredArtifact(current, release)
-            stagePrepared(targetVersion(release), prepared)
-            observer.phase("staged")
-            ReferenceUpdateResult(ReferenceUpdateStatus.STAGED, release.releaseSequence)
         } catch (error: Exception) {
             observer.phase("failed")
             failureResult(error, releaseSequence)
@@ -219,60 +245,29 @@ class ReferenceUpdater(
         )
     }
 
-    private fun terminalResult(
-        current: InstalledReferenceVersion,
-        release: VerifiedReferenceRelease,
-    ): ReferenceUpdateResult? {
-        val state = store.snapshot()
-        val result = when {
-            release.releaseSequence < state.highestActivatedSequence -> ReferenceUpdateResult(
-                ReferenceUpdateStatus.ROLLBACK_REJECTED,
-                release.releaseSequence,
-                "signed release sequence is below the activation high-water mark",
-            )
-            current.version.sha256 == release.targetSha256 &&
-                current.version.sizeBytes == release.targetSizeBytes &&
-                current.version.datasetId == release.datasetId -> ReferenceUpdateResult(
-                ReferenceUpdateStatus.UP_TO_DATE,
-                release.releaseSequence,
-            )
-            release.releaseSequence == state.highestActivatedSequence &&
-                current.version.releaseSequence == state.highestActivatedSequence -> ReferenceUpdateResult(
-                ReferenceUpdateStatus.FAILED,
-                release.releaseSequence,
-                "activated release sequence has a different signed target identity",
-            )
-            else -> null
-        }
-        if (result != null) cleanupUpdateFiles()
-        return result
-    }
-
-    private fun targetVersion(release: VerifiedReferenceRelease) = ReferenceVersion(
-        datasetId = release.datasetId,
-        sha256 = release.targetSha256,
-        sizeBytes = release.targetSizeBytes,
-        contractMajor = release.contractMajor,
-        releaseSequence = release.releaseSequence,
-    )
-
     private fun preparePreferredArtifact(
         current: InstalledReferenceVersion,
-        release: VerifiedReferenceRelease,
+        releaseSequence: Long,
+        plan: ReferenceUpdatePlan.Stage,
     ): PreparedArtifactFiles {
-        val matchingPatches = release.patches.filter {
-            it.fromSha256 == current.version.sha256 && it.fromSizeBytes == current.version.sizeBytes
-        }
-        require(matchingPatches.size <= 1) { "multiple direct patches match the active reference" }
-        val patch = matchingPatches.singleOrNull()
-            ?: return prepareArtifact(
+        val fallback = plan.fallbackFull
+        if (fallback == null) {
+            return prepareArtifact(
                 current,
-                release,
-                release.full,
+                plan.target,
+                releaseSequence,
+                plan.primary,
                 preserveCheckpointOnFailure = true,
             )
+        }
         return try {
-            prepareArtifact(current, release, patch, preserveCheckpointOnFailure = false)
+            prepareArtifact(
+                current,
+                plan.target,
+                releaseSequence,
+                plan.primary,
+                preserveCheckpointOnFailure = false,
+            )
         } catch (patchError: Exception) {
             // A signed patch is only an optimization. Any failure before state
             // mutation falls back to the mandatory signed full.
@@ -280,8 +275,9 @@ class ReferenceUpdater(
             try {
                 prepareArtifact(
                     current,
-                    release,
-                    release.full,
+                    plan.target,
+                    releaseSequence,
+                    fallback,
                     preserveCheckpointOnFailure = true,
                 )
             } catch (fullError: Exception) {
@@ -326,18 +322,19 @@ class ReferenceUpdater(
 
     private fun prepareArtifact(
         current: InstalledReferenceVersion,
-        release: VerifiedReferenceRelease,
+        target: ReferenceVersion,
+        releaseSequence: Long,
         artifact: ReferenceReleaseArtifact,
         preserveCheckpointOnFailure: Boolean,
     ): PreparedArtifactFiles {
         val downloaded = File(
             referenceDir,
-            ".artifact-${release.releaseSequence}-${artifact.sha256}.part",
+            ".artifact-$releaseSequence-${artifact.sha256}.part",
         )
         cleanupUpdateFiles(keepArtifact = downloaded)
         val candidate = File(
             referenceDir,
-            ".candidate-${release.releaseSequence}-${release.targetSha256}.sqlite",
+            ".candidate-$releaseSequence-${target.sha256}.sqlite",
         )
         if (candidate.exists()) {
             check(candidate.delete()) { "cannot remove stale reference update candidate" }
@@ -356,7 +353,7 @@ class ReferenceUpdater(
             observer.phase("rebuild")
             rebuilder.rebuild(
                 current,
-                targetVersion(release),
+                target,
                 artifact,
                 downloaded,
                 candidate,

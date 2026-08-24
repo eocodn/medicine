@@ -47,6 +47,7 @@ class ReferenceBootstrapper(
     private val rebuilder: ReferenceArtifactRebuilder,
     private val storageCapacity: ReferenceStorageCapacity,
     private val observer: ReferenceUpdateObserver = NoOpReferenceBootstrapObserver,
+    private val planner: ReferenceLifecyclePlanner = RustReferenceLifecyclePlanner,
 ) {
     fun ensureInstalled(expectedContractMajor: Int): InstalledReferenceVersion =
         ReferenceOperationCoordinator.exclusive {
@@ -79,21 +80,14 @@ class ReferenceBootstrapper(
         observer.phase("manifest")
         val release = source.fetchLatest()
         store.observeSignedRoot(release.releaseSequence, release.rootHash)
-        require(release.contractMajor == expectedContractMajor) {
-            "reference release contract is incompatible with this app"
-        }
         val state = store.snapshot()
-        require(release.releaseSequence >= state.highestActivatedSequence) {
-            "reference rollback is not allowed"
-        }
-        val version = ReferenceVersion(
-            datasetId = release.datasetId,
-            sha256 = release.targetSha256,
-            sizeBytes = release.targetSizeBytes,
-            contractMajor = release.contractMajor,
-            releaseSequence = release.releaseSequence,
+        val plan = planner.planBootstrap(
+            expectedContractMajor,
+            state.highestActivatedSequence,
+            release,
         )
-        val artifact = release.full
+        val version = (plan as ReferenceBootstrapPlan.Download).target
+        val artifact = plan.full
         val downloaded = File(
             referenceDir,
             ".bootstrap-artifact-${release.releaseSequence}-${artifact.sha256}.part",

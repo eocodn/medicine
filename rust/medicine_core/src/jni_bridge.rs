@@ -7,6 +7,8 @@ use std::path::Path;
 use std::ptr;
 use std::sync::Mutex;
 
+mod reference_lifecycle;
+
 type EngineHandle = Mutex<MedicineEngine>;
 
 struct JniArtifactObserver {
@@ -267,12 +269,12 @@ pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeParse
             .map_err(|error| format!("cannot read reference root payload: {error}"))?;
         let contract_major = u64::try_from(contract_major)
             .map_err(|_| "reference contract major must be positive".to_owned())?;
-        match crate::ReferenceReleaseProtocolV2::parse_verified_root(
+        match crate::ReferenceReleaseProtocolV2::select_verified_root(
             release_sequence,
             &payload,
             contract_major,
         ) {
-            Ok(release) => {
+            Ok(crate::ReferenceRootSelection::Release(release)) => {
                 let artifact = |value: &crate::ReferenceReleaseArtifact| {
                     serde_json::json!({
                         "contract_major": value.contract_major,
@@ -300,31 +302,19 @@ pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeParse
                 })
                 .to_string())
             }
-            Err(error) if error.to_string().contains(" is retired") => {
-                let root: serde_json::Value = serde_json::from_slice(&payload)
-                    .map_err(|_| "invalid retired reference root JSON".to_owned())?;
-                let current = root
-                    .get("current_contract_major")
-                    .and_then(serde_json::Value::as_u64)
-                    .ok_or_else(|| "invalid retired reference current contract".to_owned())?;
-                let minimum = root
-                    .get("minimum_supported_contract_major")
-                    .and_then(serde_json::Value::as_u64)
-                    .ok_or_else(|| "invalid retired reference minimum contract".to_owned())?;
-                use sha2::{Digest, Sha256};
-                let root_hash = Sha256::digest(&payload)
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>();
-                Ok(serde_json::json!({
-                    "status": "retired",
-                    "release_sequence": release_sequence,
-                    "root_hash": root_hash,
-                    "current_contract_major": current,
-                    "minimum_supported_contract_major": minimum,
-                })
-                .to_string())
-            }
+            Ok(crate::ReferenceRootSelection::Retired {
+                release_sequence,
+                root_hash,
+                current_contract_major,
+                minimum_supported_contract_major,
+            }) => Ok(serde_json::json!({
+                "status": "retired",
+                "release_sequence": release_sequence,
+                "root_hash": root_hash,
+                "current_contract_major": current_contract_major,
+                "minimum_supported_contract_major": minimum_supported_contract_major,
+            })
+            .to_string()),
             Err(error) => Err(error.to_string()),
         }
     }))

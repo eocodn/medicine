@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-web = ["dep:axum", "dep:tokio", "dep:tower", "dep:tower-http"]
+web = ["dep:axum", "dep:reqwest", "dep:tokio", "dep:tower", "dep:tower-http"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -26,6 +26,7 @@ flate2 = { version = "1.0", default-features = false, features = ["rust_backend"
 jni = "0.21"
 libc = "0.2"
 p256 = { version = "0.13", features = ["ecdsa"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
 regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }

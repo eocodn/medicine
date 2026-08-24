@@ -31,7 +31,9 @@ services:
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     environment:
       HOME: /tmp
-      MEDICINE_CANONICAL_DB: ${MEDICINE_CANONICAL_DB:-data/db/mobile.sqlite}
+      MEDICINE_CANONICAL_DB: ${MEDICINE_CANONICAL_DB:-}
+      MEDICINE_REFERENCE_DIR: ${MEDICINE_REFERENCE_DIR:-data/reference}
+      MEDICINE_REFERENCE_UPDATE_BASE_URL: ${MEDICINE_REFERENCE_UPDATE_BASE_URL:-https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/}
     working_dir: /app
     volumes:
       - .:/app
