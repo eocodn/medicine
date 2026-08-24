@@ -17,7 +17,7 @@ Global:
   use_visualdl: false
   infer_img: doc/imgs_en/img_10.jpg
   save_res_path: ./checkpoints/det_db/predicts_db.txt
-  d2s_train_image_shape: [3, 640, 640]
+  d2s_train_image_shape: [3, 960, 960]
   distributed: true
 
 Architecture:
@@ -79,6 +79,7 @@ Train:
     - DecodeImage:
         img_mode: BGR
         channel_first: false
+    - DetLabelEncode: null
     # The unified corpus already contains camera orientation, clutter, perspective,
     # blur and printer degradation. Horizontal mirroring would turn Korean text
     # into an impossible glyph distribution, while CopyPaste would break the
@@ -97,9 +98,12 @@ Train:
             - 1.5
     - EastRandomCropData:
         size:
-        - 640
-        - 640
-        max_tries: 50
+        - 960
+        - 960
+        # max_tries=0 makes PaddleOCR keep the entire document and only
+        # aspect-ratio resize/pad it. This matches the full-document detector
+        # deployment geometry instead of optimizing on local text crops.
+        max_tries: 0
         keep_ratio: true
     - MakeBorderMap:
         shrink_ratio: 0.4

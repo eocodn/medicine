@@ -29,7 +29,7 @@ test("ocr corpus CLI generates and validates the canonical multi-stage corpus", 
     const generated = await run([
       "generate", "--output", root, "--canonical-db", canonicalDb, "--drug-split-seed", "161",
       "--historical-drug-exposure", historicalExposure,
-      "--count", "6", "--seed", "501", "--json",
+      "--count", "6", "--seed", "501", "--concurrency", "3", "--json",
     ]);
     assert.equal(generated.code, 0, generated.stderr);
     const generatedJson = JSON.parse(generated.stdout);

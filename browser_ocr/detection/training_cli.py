@@ -31,7 +31,6 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--learning-rate", type=float, default=0.0001)
     parser.add_argument("--warmup-epochs", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--eval-batch-step", type=int, default=10)
     parser.add_argument("--json", action="store_true")
 
 
@@ -53,7 +52,6 @@ def _config(args: argparse.Namespace) -> DetectorTrainingConfig:
         learning_rate=args.learning_rate,
         warmup_epochs=args.warmup_epochs,
         num_workers=args.num_workers,
-        eval_batch_step=args.eval_batch_step,
     )
 
 

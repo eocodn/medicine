@@ -22,7 +22,10 @@ class DetectorExportError(RuntimeError):
     pass
 
 
-_TRAINING_RUNNER = "ppocrv5-mobile-document-detector-finetune-v1"
+_SUPPORTED_TRAINING_RUNNERS = {
+    "ppocrv5-mobile-document-detector-finetune-v1",
+    "ppocrv5-mobile-document-detector-finetune-v2",
+}
 _PADDLE_FILES = ("inference.json", "inference.pdiparams", "inference.yml")
 
 
@@ -33,7 +36,7 @@ def _verify_training_result(path: Path) -> dict[str, object]:
     if result.get("promotion_status") != "pending_project_safety_evaluation":
         raise DetectorExportError("detector training result has invalid promotion status")
     profile = result.get("profile")
-    if not isinstance(profile, Mapping) or profile.get("runner") != _TRAINING_RUNNER:
+    if not isinstance(profile, Mapping) or profile.get("runner") not in _SUPPORTED_TRAINING_RUNNERS:
         raise DetectorExportError("detector training result has unsupported runner profile")
     commit = str(profile.get("paddleocr_commit") or "")
     if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
@@ -106,6 +109,7 @@ def prepare_paddle_export(
     export_profile = {
         "schema_version": 1,
         "runner": "ppocrv5-mobile-detector-paddle-export-v1",
+        "training_runner": profile["runner"],
         "training_result_sha256": _sha256_file(training_result),
         "checkpoint_sha256": verified["checkpoint_sha256"],
         "trained_config_sha256": verified["trained_config_sha256"],

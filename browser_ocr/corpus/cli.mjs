@@ -29,7 +29,7 @@ function safePath(root, relativePath) {
 }
 
 async function loadCorpus(path) {
-  return validateUnifiedCorpus(JSON.parse(await readFile(path, "utf8")));
+  return validateUnifiedCorpus(JSON.parse(await readFile(path, "utf8")), { clone: false });
 }
 
 async function validateFiles(corpus, corpusPath) {
@@ -97,6 +97,7 @@ async function main(argv) {
       drugSplitSeed: parsedDrugSplitSeed,
       historicalDrugExposure: resolve(historicalDrugExposure),
       canonicalDb: resolve(canonicalDb),
+      renderConcurrency: integerOption(args, "--concurrency", 1),
     });
     if (args.includes("--materialize")) {
       const views = await materializeUnifiedViews({

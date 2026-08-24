@@ -35,4 +35,11 @@ RUN python -m pip install --disable-pip-version-check --no-cache-dir \
     && rm /tmp/requirements-paddle-runtime.lock \
     && python -m pip check
 
+COPY browser_ocr/finetune/patches/paddleocr-numpy2-random-crop.patch /tmp/paddleocr-numpy2-random-crop.patch
+RUN cd /opt/PaddleOCR \
+    && git apply --check /tmp/paddleocr-numpy2-random-crop.patch \
+    && git apply /tmp/paddleocr-numpy2-random-crop.patch \
+    && printf '%s  %s\n' c7b272e696b0704a85a6796d0a8e4df92eee9e52835020aad3a24835fcbfb6d0 ppocr/data/imaug/random_crop_data.py | sha256sum -c - \
+    && rm /tmp/paddleocr-numpy2-random-crop.patch
+
 WORKDIR /workspace

@@ -12,6 +12,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Mapping
 
+import yaml
+
 
 class DetectorTrainingError(RuntimeError):
     pass
@@ -24,7 +26,6 @@ class DetectorTrainingConfig:
     learning_rate: float = 0.0001
     warmup_epochs: int = 1
     num_workers: int = 2
-    eval_batch_step: int = 10
 
     def validate(self) -> None:
         if isinstance(self.epochs, bool) or not isinstance(self.epochs, int) or self.epochs <= 0:
@@ -42,9 +43,8 @@ class DetectorTrainingConfig:
             or self.warmup_epochs >= self.epochs
         ):
             raise DetectorTrainingError("warmup epochs must be non-negative and less than total epochs")
-        for label, value in (("num workers", self.num_workers), ("eval batch step", self.eval_batch_step)):
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                raise DetectorTrainingError(f"{label} must be a positive integer")
+        if isinstance(self.num_workers, bool) or not isinstance(self.num_workers, int) or self.num_workers <= 0:
+            raise DetectorTrainingError("num workers must be a positive integer")
 
 
 def _now() -> str:
@@ -161,6 +161,54 @@ def _format_override(value: object) -> str:
     return str(value)
 
 
+def _bound_training_transforms(document_config: Path, *, epochs: int) -> list[object]:
+    try:
+        document = yaml.safe_load(document_config.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise DetectorTrainingError(f"document detector fine-tune config is invalid YAML: {document_config}") from exc
+    if not isinstance(document, Mapping):
+        raise DetectorTrainingError("document detector fine-tune config must be a mapping")
+    global_config = document.get("Global")
+    train = document.get("Train")
+    if not isinstance(global_config, Mapping) or not isinstance(train, Mapping):
+        raise DetectorTrainingError("document detector fine-tune config is missing Global or Train")
+    base_epochs = global_config.get("epoch_num")
+    dataset = train.get("dataset")
+    if isinstance(base_epochs, bool) or not isinstance(base_epochs, int) or base_epochs <= 0:
+        raise DetectorTrainingError("document detector fine-tune config has invalid Global.epoch_num")
+    if not isinstance(dataset, Mapping) or not isinstance(dataset.get("transforms"), list):
+        raise DetectorTrainingError("document detector fine-tune config is missing Train.dataset.transforms")
+
+    # PaddleOCR resolves YAML anchors before applying `-o` CLI overrides. Therefore
+    # overriding only Global.epoch_num does not update the epoch-aware DB target
+    # transforms. Rebind the complete transform list so the target schedule and
+    # optimizer schedule share one authoritative requested epoch count.
+    transforms = json.loads(json.dumps(dataset["transforms"], ensure_ascii=False))
+    schedule_names = {"MakeBorderMap", "MakeShrinkMap"}
+    seen: set[str] = set()
+    for item in transforms:
+        if not isinstance(item, dict):
+            continue
+        for name in schedule_names:
+            if name not in item:
+                continue
+            if name in seen:
+                raise DetectorTrainingError(f"document detector fine-tune config has duplicate {name} transform")
+            settings = item[name]
+            if not isinstance(settings, dict):
+                raise DetectorTrainingError(f"document detector fine-tune config has invalid {name} transform")
+            if settings.get("total_epoch") != base_epochs:
+                raise DetectorTrainingError(
+                    f"document detector fine-tune config {name}.total_epoch must match Global.epoch_num"
+                )
+            settings["total_epoch"] = epochs
+            seen.add(name)
+    if seen != schedule_names:
+        missing = ", ".join(sorted(schedule_names - seen))
+        raise DetectorTrainingError(f"document detector fine-tune config is missing epoch-aware transforms: {missing}")
+    return transforms
+
+
 def _training_overrides(
     *,
     data_dir: Path,
@@ -168,6 +216,7 @@ def _training_overrides(
     val_labels: Path,
     pretrained_model: Path,
     model_dir: Path,
+    training_transforms: list[object],
     config: DetectorTrainingConfig,
     resume_checkpoint: Path | None,
 ) -> dict[str, object]:
@@ -176,14 +225,19 @@ def _training_overrides(
         "Global.epoch_num": config.epochs,
         "Global.print_batch_step": 10,
         "Global.save_epoch_step": 1,
-        "Global.eval_batch_step": [0, config.eval_batch_step],
-        "Global.cal_metric_during_train": True,
+        # DB detector train batches do not include the eval shape_list contract, so
+        # PaddleOCR's in-train metric path is invalid here. Validation remains a
+        # separate full Eval pass, once per epoch, and still selects best_accuracy.
+        "Global.eval_batch_step": [0, 1],
+        "Global.eval_batch_epoch": 1,
+        "Global.cal_metric_during_train": False,
         "Global.distributed": False,
         "Global.use_gpu": True,
         "Optimizer.lr.learning_rate": float(config.learning_rate),
         "Optimizer.lr.warmup_epoch": config.warmup_epochs,
         "Train.dataset.data_dir": str(data_dir),
         "Train.dataset.label_file_list": [str(train_labels)],
+        "Train.dataset.transforms": training_transforms,
         "Train.loader.batch_size_per_card": config.batch_size,
         "Train.loader.num_workers": config.num_workers,
         "Train.loader.shuffle": True,
@@ -249,6 +303,32 @@ def _load_inputs(
         paddle.get("config_sha256"),
         "official PP-OCRv5 mobile detector config",
     )
+    runtime_source_files = paddle.get("runtime_source_files")
+    if not isinstance(runtime_source_files, list) or not runtime_source_files:
+        raise DetectorTrainingError("detector PaddleOCR runtime source bindings are missing")
+    verified_runtime_source_files: list[dict[str, str]] = []
+    for index, source_binding in enumerate(runtime_source_files):
+        if not isinstance(source_binding, Mapping):
+            raise DetectorTrainingError(f"detector PaddleOCR runtime source binding {index} must be an object")
+        raw_source_path = source_binding.get("path")
+        if not isinstance(raw_source_path, str) or not raw_source_path:
+            raise DetectorTrainingError(f"detector PaddleOCR runtime source binding {index} path is missing")
+        source_path = Path(raw_source_path)
+        if source_path.is_absolute() or not source_path.parts or ".." in source_path.parts:
+            raise DetectorTrainingError(f"detector PaddleOCR runtime source binding {index} path is unsafe")
+        resolved_source = (paddleocr_root / source_path).resolve()
+        try:
+            resolved_source.relative_to(paddleocr_root)
+        except ValueError as exc:
+            raise DetectorTrainingError(
+                f"detector PaddleOCR runtime source binding {index} escapes PaddleOCR root"
+            ) from exc
+        source_sha = _verify_file(
+            resolved_source,
+            source_binding.get("sha256"),
+            f"detector PaddleOCR runtime source {raw_source_path}",
+        )
+        verified_runtime_source_files.append({"path": source_path.as_posix(), "sha256": source_sha})
 
     document = upstream.get("document_config")
     if not isinstance(document, Mapping):
@@ -351,8 +431,10 @@ def _load_inputs(
         "commit": commit,
         "official_config": official_config,
         "official_config_sha256": official_sha,
+        "runtime_source_files": verified_runtime_source_files,
         "document_config": document_config,
         "document_config_sha256": document_sha,
+        "training_transforms": _bound_training_transforms(document_config, epochs=config.epochs),
         "pretrained_model_sha256": pretrained_sha,
         "corpus": corpus,
         "corpus_id": corpus_id,
@@ -376,10 +458,11 @@ def _profile(
 ) -> dict[str, object]:
     return {
         "schema_version": 1,
-        "runner": "ppocrv5-mobile-document-detector-finetune-v1",
+        "runner": "ppocrv5-mobile-document-detector-finetune-v2",
         "upstream_sha256": _sha256_file(upstream_path),
         "paddleocr_commit": inputs["commit"],
         "official_config_sha256": inputs["official_config_sha256"],
+        "paddleocr_runtime_source_files": inputs["runtime_source_files"],
         "document_config_sha256": inputs["document_config_sha256"],
         "pretrained_model_sha256": inputs["pretrained_model_sha256"],
         "corpus": {
@@ -433,6 +516,7 @@ def prepare_detector_training(
         val_labels=inputs["labels"]["val"],
         pretrained_model=pretrained_model,
         model_dir=model_dir,
+        training_transforms=inputs["training_transforms"],
         config=config,
         resume_checkpoint=None,
     )
