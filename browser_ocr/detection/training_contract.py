@@ -12,6 +12,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Mapping
 
+import yaml
+
 
 class DetectorTrainingError(RuntimeError):
     pass
@@ -159,6 +161,54 @@ def _format_override(value: object) -> str:
     return str(value)
 
 
+def _bound_training_transforms(document_config: Path, *, epochs: int) -> list[object]:
+    try:
+        document = yaml.safe_load(document_config.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise DetectorTrainingError(f"document detector fine-tune config is invalid YAML: {document_config}") from exc
+    if not isinstance(document, Mapping):
+        raise DetectorTrainingError("document detector fine-tune config must be a mapping")
+    global_config = document.get("Global")
+    train = document.get("Train")
+    if not isinstance(global_config, Mapping) or not isinstance(train, Mapping):
+        raise DetectorTrainingError("document detector fine-tune config is missing Global or Train")
+    base_epochs = global_config.get("epoch_num")
+    dataset = train.get("dataset")
+    if isinstance(base_epochs, bool) or not isinstance(base_epochs, int) or base_epochs <= 0:
+        raise DetectorTrainingError("document detector fine-tune config has invalid Global.epoch_num")
+    if not isinstance(dataset, Mapping) or not isinstance(dataset.get("transforms"), list):
+        raise DetectorTrainingError("document detector fine-tune config is missing Train.dataset.transforms")
+
+    # PaddleOCR resolves YAML anchors before applying `-o` CLI overrides. Therefore
+    # overriding only Global.epoch_num does not update the epoch-aware DB target
+    # transforms. Rebind the complete transform list so the target schedule and
+    # optimizer schedule share one authoritative requested epoch count.
+    transforms = json.loads(json.dumps(dataset["transforms"], ensure_ascii=False))
+    schedule_names = {"MakeBorderMap", "MakeShrinkMap"}
+    seen: set[str] = set()
+    for item in transforms:
+        if not isinstance(item, dict):
+            continue
+        for name in schedule_names:
+            if name not in item:
+                continue
+            if name in seen:
+                raise DetectorTrainingError(f"document detector fine-tune config has duplicate {name} transform")
+            settings = item[name]
+            if not isinstance(settings, dict):
+                raise DetectorTrainingError(f"document detector fine-tune config has invalid {name} transform")
+            if settings.get("total_epoch") != base_epochs:
+                raise DetectorTrainingError(
+                    f"document detector fine-tune config {name}.total_epoch must match Global.epoch_num"
+                )
+            settings["total_epoch"] = epochs
+            seen.add(name)
+    if seen != schedule_names:
+        missing = ", ".join(sorted(schedule_names - seen))
+        raise DetectorTrainingError(f"document detector fine-tune config is missing epoch-aware transforms: {missing}")
+    return transforms
+
+
 def _training_overrides(
     *,
     data_dir: Path,
@@ -166,6 +216,7 @@ def _training_overrides(
     val_labels: Path,
     pretrained_model: Path,
     model_dir: Path,
+    training_transforms: list[object],
     config: DetectorTrainingConfig,
     resume_checkpoint: Path | None,
 ) -> dict[str, object]:
@@ -186,6 +237,7 @@ def _training_overrides(
         "Optimizer.lr.warmup_epoch": config.warmup_epochs,
         "Train.dataset.data_dir": str(data_dir),
         "Train.dataset.label_file_list": [str(train_labels)],
+        "Train.dataset.transforms": training_transforms,
         "Train.loader.batch_size_per_card": config.batch_size,
         "Train.loader.num_workers": config.num_workers,
         "Train.loader.shuffle": True,
@@ -382,6 +434,7 @@ def _load_inputs(
         "runtime_source_files": verified_runtime_source_files,
         "document_config": document_config,
         "document_config_sha256": document_sha,
+        "training_transforms": _bound_training_transforms(document_config, epochs=config.epochs),
         "pretrained_model_sha256": pretrained_sha,
         "corpus": corpus,
         "corpus_id": corpus_id,
@@ -405,7 +458,7 @@ def _profile(
 ) -> dict[str, object]:
     return {
         "schema_version": 1,
-        "runner": "ppocrv5-mobile-document-detector-finetune-v1",
+        "runner": "ppocrv5-mobile-document-detector-finetune-v2",
         "upstream_sha256": _sha256_file(upstream_path),
         "paddleocr_commit": inputs["commit"],
         "official_config_sha256": inputs["official_config_sha256"],
@@ -463,6 +516,7 @@ def prepare_detector_training(
         val_labels=inputs["labels"]["val"],
         pretrained_model=pretrained_model,
         model_dir=model_dir,
+        training_transforms=inputs["training_transforms"],
         config=config,
         resume_checkpoint=None,
     )

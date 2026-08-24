@@ -44,7 +44,23 @@ def _fixture(root: Path) -> dict[str, Path]:
     (paddleocr / "tools/train.py").write_text("# fixture\n", encoding="utf-8")
 
     document_config = root / "PP-OCRv5_mobile_det_document.yml"
-    document_config.write_text("document-finetune-config\n", encoding="utf-8")
+    document_config.write_text(
+        """Global:
+  epoch_num: 500
+Train:
+  dataset:
+    transforms:
+    - DecodeImage: null
+    - MakeBorderMap:
+        shrink_ratio: 0.4
+        total_epoch: 500
+    - MakeShrinkMap:
+        shrink_ratio: 0.4
+        min_text_size: 8
+        total_epoch: 500
+""",
+        encoding="utf-8",
+    )
     pretrained = root / "PPLCNetV3_x0_75_ocr_det.pdparams"
     pretrained.write_bytes(b"detector-pretrained-v1")
 
@@ -182,6 +198,14 @@ class DetectorTrainingTest(unittest.TestCase):
             self.assertIn("Global.cal_metric_during_train=False", command)
             self.assertIn("Global.eval_batch_step=[0,1]", command)
             self.assertIn("Global.eval_batch_epoch=1", command)
+            transform_override = next(
+                item for item in result["command"] if item.startswith("Train.dataset.transforms=")
+            )
+            transforms = json.loads(transform_override.split("=", 1)[1])
+            border = next(item["MakeBorderMap"] for item in transforms if "MakeBorderMap" in item)
+            shrink = next(item["MakeShrinkMap"] for item in transforms if "MakeShrinkMap" in item)
+            self.assertEqual(border["total_epoch"], 6)
+            self.assertEqual(shrink["total_epoch"], 6)
             self.assertEqual(result["promotion"], "requires_project_safety_evaluation")
 
     def test_preflight_rejects_mutated_paddleocr_runtime_source(self) -> None:

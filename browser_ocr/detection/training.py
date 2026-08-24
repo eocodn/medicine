@@ -225,6 +225,7 @@ def run_detector_training(
             val_labels=inputs["labels"]["val"],
             pretrained_model=pretrained_model,
             model_dir=model_dir,
+            training_transforms=inputs["training_transforms"],
             config=config,
             resume_checkpoint=resume_prefix,
         )
