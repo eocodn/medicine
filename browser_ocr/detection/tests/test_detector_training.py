@@ -144,7 +144,11 @@ class DetectorTrainingTest(unittest.TestCase):
         transform_names = [next(iter(item)) for item in transforms]
         self.assertIn("DetLabelEncode", transform_names)
         self.assertLess(transform_names.index("DetLabelEncode"), transform_names.index("IaaAugment"))
-        self.assertEqual(config["Global"]["d2s_train_image_shape"], [3, 640, 640])
+        crop = next(item["EastRandomCropData"] for item in transforms if "EastRandomCropData" in item)
+        self.assertEqual(crop["size"], [960, 960])
+        self.assertEqual(crop["max_tries"], 0)
+        self.assertTrue(crop["keep_ratio"])
+        self.assertEqual(config["Global"]["d2s_train_image_shape"], [3, 960, 960])
 
     def test_preflight_is_hash_bound_and_never_uses_test_labels_for_optimization(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
