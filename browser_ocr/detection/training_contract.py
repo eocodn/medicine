@@ -249,6 +249,32 @@ def _load_inputs(
         paddle.get("config_sha256"),
         "official PP-OCRv5 mobile detector config",
     )
+    runtime_source_files = paddle.get("runtime_source_files")
+    if not isinstance(runtime_source_files, list) or not runtime_source_files:
+        raise DetectorTrainingError("detector PaddleOCR runtime source bindings are missing")
+    verified_runtime_source_files: list[dict[str, str]] = []
+    for index, source_binding in enumerate(runtime_source_files):
+        if not isinstance(source_binding, Mapping):
+            raise DetectorTrainingError(f"detector PaddleOCR runtime source binding {index} must be an object")
+        raw_source_path = source_binding.get("path")
+        if not isinstance(raw_source_path, str) or not raw_source_path:
+            raise DetectorTrainingError(f"detector PaddleOCR runtime source binding {index} path is missing")
+        source_path = Path(raw_source_path)
+        if source_path.is_absolute() or not source_path.parts or ".." in source_path.parts:
+            raise DetectorTrainingError(f"detector PaddleOCR runtime source binding {index} path is unsafe")
+        resolved_source = (paddleocr_root / source_path).resolve()
+        try:
+            resolved_source.relative_to(paddleocr_root)
+        except ValueError as exc:
+            raise DetectorTrainingError(
+                f"detector PaddleOCR runtime source binding {index} escapes PaddleOCR root"
+            ) from exc
+        source_sha = _verify_file(
+            resolved_source,
+            source_binding.get("sha256"),
+            f"detector PaddleOCR runtime source {raw_source_path}",
+        )
+        verified_runtime_source_files.append({"path": source_path.as_posix(), "sha256": source_sha})
 
     document = upstream.get("document_config")
     if not isinstance(document, Mapping):
@@ -351,6 +377,7 @@ def _load_inputs(
         "commit": commit,
         "official_config": official_config,
         "official_config_sha256": official_sha,
+        "runtime_source_files": verified_runtime_source_files,
         "document_config": document_config,
         "document_config_sha256": document_sha,
         "pretrained_model_sha256": pretrained_sha,
@@ -380,6 +407,7 @@ def _profile(
         "upstream_sha256": _sha256_file(upstream_path),
         "paddleocr_commit": inputs["commit"],
         "official_config_sha256": inputs["official_config_sha256"],
+        "paddleocr_runtime_source_files": inputs["runtime_source_files"],
         "document_config_sha256": inputs["document_config_sha256"],
         "pretrained_model_sha256": inputs["pretrained_model_sha256"],
         "corpus": {

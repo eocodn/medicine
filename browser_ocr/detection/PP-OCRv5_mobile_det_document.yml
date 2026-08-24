@@ -79,6 +79,7 @@ Train:
     - DecodeImage:
         img_mode: BGR
         channel_first: false
+    - DetLabelEncode: null
     # The unified corpus already contains camera orientation, clutter, perspective,
     # blur and printer degradation. Horizontal mirroring would turn Korean text
     # into an impossible glyph distribution, while CopyPaste would break the

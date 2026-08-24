@@ -7,11 +7,17 @@
     "tag": "v3.7.0",
     "commit": "b03f46425e8ff4442b268ce449e3eef758146cd4",
     "config_path": "configs/det/PP-OCRv5/PP-OCRv5_mobile_det.yml",
-    "config_sha256": "18eb66497f683bf4c86e991ba8c02c55fe8ddf7a1aa3ff94ceaf271e89bceba9"
+    "config_sha256": "18eb66497f683bf4c86e991ba8c02c55fe8ddf7a1aa3ff94ceaf271e89bceba9",
+    "runtime_source_files": [
+      {
+        "path": "ppocr/data/imaug/random_crop_data.py",
+        "sha256": "c7b272e696b0704a85a6796d0a8e4df92eee9e52835020aad3a24835fcbfb6d0"
+      }
+    ]
   },
   "document_config": {
     "path": "PP-OCRv5_mobile_det_document.yml",
-    "sha256": "16e14d225bcf63bed7ae0e33d397e9f902206974c435d5d9be4a9bc8ab72505b"
+    "sha256": "1866f7baab89dd2e469bfdd24240bb0bfa9cf380fb2e1f62df0862ba1b7f3c60"
   },
   "pretrained_model_url": "https://paddleocr.bj.bcebos.com/pretrained/PPLCNetV3_x0_75_ocr_det.pdparams",
   "pretrained_model_bytes": 20103839,

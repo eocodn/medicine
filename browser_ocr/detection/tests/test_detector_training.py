@@ -37,6 +37,9 @@ def _fixture(root: Path) -> dict[str, Path]:
     official_config = paddleocr / "configs/det/PP-OCRv5/PP-OCRv5_mobile_det.yml"
     official_config.parent.mkdir(parents=True)
     official_config.write_text("official-mobile-det-config\n", encoding="utf-8")
+    random_crop = paddleocr / "ppocr/data/imaug/random_crop_data.py"
+    random_crop.parent.mkdir(parents=True)
+    random_crop.write_text("# numpy-2-compatible-random-crop\n", encoding="utf-8")
     (paddleocr / "tools").mkdir()
     (paddleocr / "tools/train.py").write_text("# fixture\n", encoding="utf-8")
 
@@ -54,6 +57,12 @@ def _fixture(root: Path) -> dict[str, Path]:
             "commit": "b03f46425e8ff4442b268ce449e3eef758146cd4",
             "config_path": "configs/det/PP-OCRv5/PP-OCRv5_mobile_det.yml",
             "config_sha256": _sha(official_config),
+            "runtime_source_files": [
+                {
+                    "path": "ppocr/data/imaug/random_crop_data.py",
+                    "sha256": _sha(random_crop),
+                }
+            ],
         },
         "document_config": {
             "path": str(document_config),
@@ -107,6 +116,7 @@ def _fixture(root: Path) -> dict[str, Path]:
     })
     return {
         "paddleocr": paddleocr,
+        "random_crop": random_crop,
         "document_config": document_config,
         "pretrained": pretrained,
         "upstream": upstream,
@@ -131,6 +141,9 @@ class DetectorTrainingTest(unittest.TestCase):
         self.assertNotIn("Fliplr", encoded)
         self.assertNotIn("CopyPaste", encoded)
         self.assertIn("EastRandomCropData", encoded)
+        transform_names = [next(iter(item)) for item in transforms]
+        self.assertIn("DetLabelEncode", transform_names)
+        self.assertLess(transform_names.index("DetLabelEncode"), transform_names.index("IaaAugment"))
         self.assertEqual(config["Global"]["d2s_train_image_shape"], [3, 640, 640])
 
     def test_preflight_is_hash_bound_and_never_uses_test_labels_for_optimization(self) -> None:
@@ -150,6 +163,10 @@ class DetectorTrainingTest(unittest.TestCase):
             self.assertEqual(result["status"], "ready")
             self.assertEqual(result["profile"]["corpus"]["counts"], {"train": 2, "val": 1, "test": 1})
             self.assertEqual(result["profile"]["pretrained_model_sha256"], _sha(paths["pretrained"]))
+            self.assertEqual(
+                result["profile"]["paddleocr_runtime_source_files"],
+                [{"path": "ppocr/data/imaug/random_crop_data.py", "sha256": _sha(paths["random_crop"])}],
+            )
             command = " ".join(result["command"])
             self.assertIn("Train.dataset.label_file_list", command)
             self.assertIn("Eval.dataset.label_file_list", command)
@@ -159,6 +176,21 @@ class DetectorTrainingTest(unittest.TestCase):
             self.assertIn("Global.epoch_num=6", command)
             self.assertIn("Optimizer.lr.learning_rate=0.0001", command)
             self.assertEqual(result["promotion"], "requires_project_safety_evaluation")
+
+    def test_preflight_rejects_mutated_paddleocr_runtime_source(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            paths = _fixture(Path(raw))
+            paths["random_crop"].write_text("# mutated\n", encoding="utf-8")
+            with self.assertRaisesRegex(DetectorTrainingError, "runtime source"):
+                prepare_detector_training(
+                    upstream_path=paths["upstream"],
+                    paddleocr_root=paths["paddleocr"],
+                    pretrained_model=paths["pretrained"],
+                    corpus_manifest=paths["corpus_manifest"],
+                    detection_export=paths["detection_export"],
+                    run_dir=Path(raw) / "run",
+                    config=DetectorTrainingConfig(),
+                )
 
     def test_preflight_rejects_export_from_another_corpus(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
