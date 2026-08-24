@@ -70,6 +70,12 @@ class OcrArtifactStoragePolicyTest(unittest.TestCase):
             cli,
         )
 
+    def test_detector_paddle_export_mounts_nvidia_runtime_without_enabling_gpu_compute(self) -> None:
+        compose = COMPOSE.read_text(encoding="utf-8")
+        block = compose_service_block(compose, "ocr-detector-export-paddle")
+        self.assertIn("gpus: all", block)
+        self.assertIn('CUDA_VISIBLE_DEVICES: ""', block)
+
     def test_training_view_docs_keep_hardlink_source_on_artifact_mount(self) -> None:
         readme = (ROOT / "browser_ocr" / "finetune" / "README.md").read_text(
             encoding="utf-8"

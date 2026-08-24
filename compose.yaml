@@ -133,6 +133,7 @@ services:
         target: /artifacts
         bind:
           create_host_path: false
+    gpus: all
     entrypoint: ["python", "-m", "browser_ocr.detection.export_cli"]
 
   ocr-detector-convert:
