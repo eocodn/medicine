@@ -87,6 +87,39 @@ class DetectorPaddleExportTest(unittest.TestCase):
             self.assertIn(f"Global.save_inference_dir={output / 'paddle'}", command)
             self.assertNotIn("Global.pretrained_model", command)
 
+    def test_preflight_accepts_schedule_bound_training_runner_v2(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            paths = _fixture(Path(raw))
+            training_result = json.loads(paths["training_result"].read_text(encoding="utf-8"))
+            training_result["profile"]["runner"] = "ppocrv5-mobile-document-detector-finetune-v2"
+            _write_json(paths["training_result"], training_result)
+
+            result = prepare_paddle_export(
+                training_result=paths["training_result"],
+                paddleocr_root=paths["paddleocr"],
+                output_dir=Path(raw) / "candidate-stage",
+            )
+
+            self.assertEqual(result["status"], "ready")
+            self.assertEqual(
+                result["profile"]["training_runner"],
+                "ppocrv5-mobile-document-detector-finetune-v2",
+            )
+
+    def test_preflight_rejects_unknown_training_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            paths = _fixture(Path(raw))
+            training_result = json.loads(paths["training_result"].read_text(encoding="utf-8"))
+            training_result["profile"]["runner"] = "unsupported-detector-runner"
+            _write_json(paths["training_result"], training_result)
+
+            with self.assertRaisesRegex(DetectorExportError, "unsupported runner profile"):
+                prepare_paddle_export(
+                    training_result=paths["training_result"],
+                    paddleocr_root=paths["paddleocr"],
+                    output_dir=Path(raw) / "candidate-stage",
+                )
+
     def test_preflight_rejects_tampered_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             paths = _fixture(Path(raw))
