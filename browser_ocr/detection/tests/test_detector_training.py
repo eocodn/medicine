@@ -175,6 +175,9 @@ class DetectorTrainingTest(unittest.TestCase):
             self.assertNotIn("test.txt", command)
             self.assertIn("Global.epoch_num=6", command)
             self.assertIn("Optimizer.lr.learning_rate=0.0001", command)
+            self.assertIn("Global.cal_metric_during_train=False", command)
+            self.assertIn("Global.eval_batch_step=[0,1]", command)
+            self.assertIn("Global.eval_batch_epoch=1", command)
             self.assertEqual(result["promotion"], "requires_project_safety_evaluation")
 
     def test_preflight_rejects_mutated_paddleocr_runtime_source(self) -> None:

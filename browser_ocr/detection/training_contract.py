@@ -24,7 +24,6 @@ class DetectorTrainingConfig:
     learning_rate: float = 0.0001
     warmup_epochs: int = 1
     num_workers: int = 2
-    eval_batch_step: int = 10
 
     def validate(self) -> None:
         if isinstance(self.epochs, bool) or not isinstance(self.epochs, int) or self.epochs <= 0:
@@ -42,9 +41,8 @@ class DetectorTrainingConfig:
             or self.warmup_epochs >= self.epochs
         ):
             raise DetectorTrainingError("warmup epochs must be non-negative and less than total epochs")
-        for label, value in (("num workers", self.num_workers), ("eval batch step", self.eval_batch_step)):
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                raise DetectorTrainingError(f"{label} must be a positive integer")
+        if isinstance(self.num_workers, bool) or not isinstance(self.num_workers, int) or self.num_workers <= 0:
+            raise DetectorTrainingError("num workers must be a positive integer")
 
 
 def _now() -> str:
@@ -176,8 +174,12 @@ def _training_overrides(
         "Global.epoch_num": config.epochs,
         "Global.print_batch_step": 10,
         "Global.save_epoch_step": 1,
-        "Global.eval_batch_step": [0, config.eval_batch_step],
-        "Global.cal_metric_during_train": True,
+        # DB detector train batches do not include the eval shape_list contract, so
+        # PaddleOCR's in-train metric path is invalid here. Validation remains a
+        # separate full Eval pass, once per epoch, and still selects best_accuracy.
+        "Global.eval_batch_step": [0, 1],
+        "Global.eval_batch_epoch": 1,
+        "Global.cal_metric_during_train": False,
         "Global.distributed": False,
         "Global.use_gpu": True,
         "Optimizer.lr.learning_rate": float(config.learning_rate),
