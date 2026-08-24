@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: browser_ocr/package-lock.json
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.89.0
+        uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: aarch64-linux-android
 
