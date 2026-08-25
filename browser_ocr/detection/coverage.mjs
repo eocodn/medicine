@@ -5,6 +5,7 @@ import {
   LEGACY_LAYOUT_FAMILIES,
   LAYOUT_FAMILIES,
   MATERIAL_PROFILES,
+  PAGE_ROTATIONS,
   PRINTER_PROFILES,
   REQUIRED_AUGMENTATION_COMPONENTS,
   REQUIRED_CRITICAL_SEMANTIC_ROLES,
@@ -26,6 +27,7 @@ function sortedEntries(counter) {
 
 
 const MIN_SPLIT_APPEARANCE_AUDIT_SAMPLES = 20;
+const MIN_VARIANT_ROTATION_AUDIT_SAMPLES = 20;
 
 function splitAppearanceCoverage(corpus, requiredAppearance) {
   if (!(corpus.generator?.version >= 6 && corpus.generator?.revision >= 9)) return { counts: {}, failures: [] };
@@ -47,6 +49,30 @@ function splitAppearanceCoverage(corpus, requiredAppearance) {
       if (samples.length < MIN_SPLIT_APPEARANCE_AUDIT_SAMPLES) continue;
       for (const profile of required) {
         if ((categoryCounts[profile] || 0) < 1) failures.push(`${split} ${label} ${profile} is absent`);
+      }
+    }
+  }
+  return { counts: result, failures };
+}
+
+function parserVariantRotationCoverage(corpus) {
+  if (!(corpus.generator?.version >= 6 && corpus.generator?.revision >= 10)) return { counts: {}, failures: [] };
+  const result = {};
+  const failures = [];
+  for (const split of ["train", "val", "test"]) {
+    const samples = corpus.samples.filter((sample) => sample.split === split);
+    if (!samples.length) continue;
+    const variants = [...new Set(samples.map((sample) => sample.parser_structure_variant).filter(Boolean))].sort();
+    result[split] = {};
+    for (const variant of variants) {
+      const variantSamples = samples.filter((sample) => sample.parser_structure_variant === variant);
+      const rotationCounts = counts(variantSamples.map((sample) => sample.capture?.page_rotation_degrees));
+      result[split][variant] = sortedEntries(rotationCounts);
+      if (variantSamples.length < MIN_VARIANT_ROTATION_AUDIT_SAMPLES) continue;
+      for (const rotation of PAGE_ROTATIONS) {
+        if ((rotationCounts[rotation] || 0) < 1) {
+          failures.push(`${split} parser variant ${variant} page rotation ${rotation} is absent`);
+        }
       }
     }
   }
@@ -88,7 +114,9 @@ export function auditCoverage(corpus, {
   const failures = [];
   const requiredAppearance = requiredAppearanceProfiles(corpus);
   const splitAppearance = splitAppearanceCoverage(corpus, requiredAppearance);
+  const parserVariantRotations = parserVariantRotationCoverage(corpus);
   failures.push(...splitAppearance.failures);
+  failures.push(...parserVariantRotations.failures);
 
   for (const family of requiredLayoutFamilies) {
     if ((layoutCounts[family] || 0) < minimumPerLayout) failures.push(`layout family ${family} < ${minimumPerLayout}`);
@@ -153,6 +181,7 @@ export function auditCoverage(corpus, {
     background_profiles: sortedEntries(backgroundCounts),
     scene_prop_profiles: sortedEntries(scenePropCounts),
     split_appearance_profiles: splitAppearance.counts,
+    parser_variant_page_rotations: parserVariantRotations.counts,
     visual_styles: sortedEntries(visualStyleCounts),
     risk_tags: riskCounts,
     semantic_roles: semanticCounts,

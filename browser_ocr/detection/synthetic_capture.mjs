@@ -91,7 +91,15 @@ export function augmentationDifficultyForSample(sampleIndex, profileIndex) {
 
 const ROTATION_CYCLE = [0, 0, 90, 0, 270, 180];
 
-export function pageRotationForSample(sampleIndex, profileIndex) {
+export function pageRotationForSample(sampleIndex, profileIndex, rotationCycleIndex = null) {
+  if (rotationCycleIndex !== null) {
+    if (!Number.isInteger(rotationCycleIndex) || rotationCycleIndex < 0) {
+      throw new Error("rotation cycle index must be a non-negative integer");
+    }
+    const rotation = ROTATION_CYCLE[rotationCycleIndex % ROTATION_CYCLE.length];
+    if (!PAGE_ROTATIONS.includes(rotation)) throw new Error(`unsupported page rotation: ${rotation}`);
+    return rotation;
+  }
   const layoutIndex = sampleIndex % LAYOUT_FAMILIES.length;
   const rotation = ROTATION_CYCLE[(layoutIndex + profileIndex) % ROTATION_CYCLE.length];
   if (!PAGE_ROTATIONS.includes(rotation)) throw new Error(`unsupported page rotation: ${rotation}`);
@@ -252,10 +260,12 @@ function applySharedDifficulty(capture, difficulty, random, sampleIndex) {
   }
 }
 
-export function captureForSample(sampleIndex, profileIndex, random, width, height) {
+export function captureForSample(sampleIndex, profileIndex, random, width, height, {
+  rotationCycleIndex = null,
+} = {}) {
   const profile = CAPTURE_PROFILES[profileIndex % CAPTURE_PROFILES.length];
   const difficulty = augmentationDifficultyForSample(sampleIndex, profileIndex);
-  const pageRotation = pageRotationForSample(sampleIndex, profileIndex);
+  const pageRotation = pageRotationForSample(sampleIndex, profileIndex, rotationCycleIndex);
   const capture = {
     profile,
     difficulty,

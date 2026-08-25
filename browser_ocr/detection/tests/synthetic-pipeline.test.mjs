@@ -283,6 +283,22 @@ test("coverage audit fails closed when a required synthetic stratum disappears",
     const splitConfoundedReport = auditCoverage(splitConfounded);
     assert.equal(splitConfoundedReport.status, "fail");
     assert.ok(splitConfoundedReport.failures.some((failure) => failure.includes("train material profile")));
+
+    const rotationConfounded = structuredClone(corpus);
+    const targetVariant = rotationConfounded.samples.find((sample) => sample.parser_structure_variant)?.parser_structure_variant;
+    assert.ok(targetVariant);
+    const targetSamples = rotationConfounded.samples.filter((sample) => sample.parser_structure_variant === targetVariant);
+    assert.ok(targetSamples.length > 0);
+    const template = targetSamples[0];
+    while (rotationConfounded.samples.filter((sample) => sample.parser_structure_variant === targetVariant).length < 20) {
+      rotationConfounded.samples.push(structuredClone(template));
+    }
+    for (const sample of rotationConfounded.samples) {
+      if (sample.parser_structure_variant === targetVariant) sample.capture.page_rotation_degrees = 0;
+    }
+    const rotationConfoundedReport = auditCoverage(rotationConfounded);
+    assert.equal(rotationConfoundedReport.status, "fail");
+    assert.ok(rotationConfoundedReport.failures.some((failure) => failure.includes(`parser variant ${targetVariant} page rotation`)));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

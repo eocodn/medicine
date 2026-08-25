@@ -14,7 +14,7 @@ import {
   validateHistoricalDrugExposure,
 } from "./drug_holdout.mjs";
 import { printerDescriptor, renderMaterialOverlay, renderPrinterOverlay } from "../detection/synthetic_appearance.mjs";
-import { appearanceForSplitOrdinal } from "./appearance_assignment.mjs";
+import { appearanceForSplitOrdinal, rotationCycleIndexForSplit } from "./appearance_assignment.mjs";
 import { captureForSample, transformPolygonToImageBounds } from "../detection/synthetic_capture.mjs";
 import {
   AUGMENTATION_DIFFICULTIES,
@@ -34,7 +34,7 @@ import { PARSER_STRUCTURE_REVISION, applyParserStructureVariant } from "./parser
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 6;
-const GENERATOR_REVISION = 9;
+const GENERATOR_REVISION = 10;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
@@ -160,7 +160,9 @@ function buildSamplePlan(index, seed, drugAssignment) {
   const baseLayout = buildLayout(index, layoutRandom, { document });
   const layout = applyParserStructureVariant(baseLayout, { index, split, splitOrdinal, random: layoutRandom });
   const captureIndex = Math.floor(index / LAYOUT_FAMILIES.length) % CAPTURE_PROFILES.length;
-  const capture = captureForSample(index, captureIndex, captureRandom, DOCUMENT_WIDTH, DOCUMENT_HEIGHT);
+  const capture = captureForSample(index, captureIndex, captureRandom, DOCUMENT_WIDTH, DOCUMENT_HEIGHT, {
+    rotationCycleIndex: rotationCycleIndexForSplit(split, splitOrdinal),
+  });
   const appearance = appearanceForSplitOrdinal(split, splitOrdinal);
   const id = `synthetic-${String(index + 1).padStart(6, "0")}`;
   const image = `images/${id}.jpg`;
