@@ -291,6 +291,19 @@ class ParserTrainingDatasetContractTest(unittest.TestCase):
             with self.assertRaisesRegex(ParserDatasetError, "runtime_ocr"):
                 write_parser_dataset(Path(raw), dataset_id="bad-real-observation", documents=[document])
 
+    def test_runtime_observation_accepts_hash_bound_trained_detector_candidate_id(self) -> None:
+        document = _doc()
+        document["observation"]["kind"] = "runtime_ocr"
+        document["observation"]["profile"] = _runtime_profile()
+        document["observation"]["profile"]["detector_model"] = "PP-OCRv5_mobile_det_candidate_955718a0048c"
+        with tempfile.TemporaryDirectory() as raw:
+            manifest = write_parser_dataset(Path(raw), dataset_id="trained-detector-runtime", documents=[document])
+            loaded = load_parser_dataset(manifest)
+            self.assertEqual(
+                loaded.documents[0]["observation"]["profile"]["detector_model"],
+                "PP-OCRv5_mobile_det_candidate_955718a0048c",
+            )
+
     def test_runtime_observation_requires_canonical_pinned_profile(self) -> None:
         document = _doc(source_kind="real_deidentified", split="val")
         document["observation"]["kind"] = "runtime_ocr"
