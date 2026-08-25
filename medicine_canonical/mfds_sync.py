@@ -206,6 +206,11 @@ def sync_paginated_jsonl(
         os.fsync(target.fileno())
     if total and row_count != total:
         temp_output.unlink(missing_ok=True)
+        # A complete merge that disagrees with the authoritative total proves
+        # at least one successfully fetched page is not reusable. Discard the
+        # checkpoint so the outer workflow retry starts from page 1; transport
+        # failures still retain partial pages for resume.
+        shutil.rmtree(pages_dir, ignore_errors=True)
         raise RuntimeError(f"{dataset_key} row-count mismatch: expected {total}, got {row_count}")
     os.replace(temp_output, output)
     fetched_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
