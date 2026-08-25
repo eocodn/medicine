@@ -135,7 +135,7 @@ class SyntheticParserDataCliTest(unittest.TestCase):
         self.assertEqual(args.detector_edge, 640)
         self.assertEqual(args.detector_threads, 1)
         self.assertEqual(args.recognizer_device, "gpu")
-        self.assertEqual(args.max_new_documents, 64)
+        self.assertIsNone(args.max_new_documents)
 
     def test_batch_rejects_nonpositive_document_chunk(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

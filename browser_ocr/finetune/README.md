@@ -229,7 +229,7 @@ After orientation, the command perspective-normalizes each quadrilateral into a 
 
 Detector assets must already be present under the detection cache (the detection pipeline's `assets` command populates that cache). Generated crops, logs, state, and results belong under `/artifacts/ocr/`, outside the Git worktree.
 
-The synthetic parser runtime materializer bounds each process to 64 newly OCR-processed documents by default (`--max-new-documents`). A partial chunk exits successfully only after the per-document result and batch checkpoint are durable; the next invocation resumes from that checkpoint under the same producer profile. This process boundary is intentional: Paddle/ONNX/Python allocator caches are released back to the OS between chunks instead of allowing host RSS to accumulate across the full corpus. Chunk size is execution policy only and is not part of OCR producer identity.
+The synthetic parser runtime materializer has no document-count limit by default and keeps one persistent detector/recognizer runtime for the full invocation. `--max-new-documents N` remains available only when an explicitly bounded invocation is desired. Whether bounded or unbounded, per-document result and batch checkpoints are made durable before advancing, and this execution policy is not part of OCR producer identity.
 
 ```bash
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
