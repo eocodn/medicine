@@ -14,6 +14,7 @@ from browser_ocr.finetune.dataset import DatasetError
 from browser_ocr.finetune.full_document_cli import (
     _implementation_profile,
     _recognize_crops,
+    _run_logged,
     build_ocr_producer_profile,
     build_parser,
     load_selected_recognizer,
@@ -77,6 +78,13 @@ class FullDocumentCliContractTest(unittest.TestCase):
             },
         )
         self.assertTrue(all(len(value) == 64 for value in profile.values()))
+
+    def test_logged_subprocess_executes_and_captures_output(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            log = root / "command.log"
+            _run_logged([sys.executable, "-c", "print('runtime-ok')"], cwd=root, log_path=log)
+            self.assertIn("runtime-ok", log.read_text(encoding="utf-8"))
 
     def test_recognizer_crop_command_uses_current_python_executable(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
