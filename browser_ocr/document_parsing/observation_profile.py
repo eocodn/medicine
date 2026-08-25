@@ -23,6 +23,8 @@ _SHA_FIELDS = {
 _IMPLEMENTATION_SHA_FIELDS = {
     "full_document",
     "full_document_cli",
+    "full_document_runtime",
+    "recognizer_runtime",
     "crop_refinement",
     "orientation",
     "orientation_runtime",

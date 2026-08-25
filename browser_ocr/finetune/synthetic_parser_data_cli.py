@@ -15,8 +15,7 @@ from browser_ocr.document_parsing.training_builders import build_runtime_dataset
 from browser_ocr.document_parsing.training_dataset import ParserDatasetError, load_parser_dataset
 
 from .full_document_cli import build_ocr_producer_profile
-from .full_document_cli import build_parser as build_full_document_parser
-from .full_document_cli import run_full_document
+from .full_document_runtime import FullDocumentRuntime
 
 
 LOCK_FILE = ".synthetic-parser-runtime.lock"
@@ -173,22 +172,6 @@ def _batch_profile(args: argparse.Namespace, corpus: Mapping[str, Any], samples:
     }
 
 
-def _full_document_args(args: argparse.Namespace, *, image_path: Path, output_dir: Path) -> argparse.Namespace:
-    return build_full_document_parser().parse_args([
-        "--image", str(image_path),
-        "--baseline-result", str(Path(args.baseline_result).resolve()),
-        "--output-dir", str(output_dir),
-        "--paddleocr-root", str(Path(args.paddleocr_root).resolve()),
-        "--detector-manifest", str(Path(args.detector_manifest).resolve()),
-        "--detector-root", str(Path(args.detector_root).resolve()),
-        "--detector-model", args.detector_model,
-        "--detector-edge", str(args.detector_edge),
-        "--detector-threads", str(args.detector_threads),
-        "--recognizer-device", args.recognizer_device,
-        "--json",
-    ])
-
-
 def _validate_runtime_result(
     result_path: Path,
     *,
@@ -313,6 +296,7 @@ def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
             })
 
         producer = profile["ocr_producer"]
+        runtime: FullDocumentRuntime | None = None
         for index, sample in enumerate(samples, start=1):
             image_path = Path(sample["image_path"])
             if not image_path.is_file() or _sha256_file(image_path) != sample["image_sha256"]:
@@ -330,11 +314,12 @@ def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
             if result_path.is_file():
                 _validate_runtime_result(result_path, sample=sample, producer=producer)
             else:
-                returned = run_full_document(_full_document_args(
-                    args,
+                if runtime is None:
+                    runtime = FullDocumentRuntime(args)
+                returned = runtime.run(
                     image_path=image_path,
                     output_dir=runtime_root / sample["document_id"],
-                ))
+                )
                 persisted = _validate_runtime_result(result_path, sample=sample, producer=producer)
                 if returned != persisted:
                     raise ParserDatasetError("runtime OCR returned result differs from persisted result")

@@ -35,6 +35,8 @@ def _producer() -> dict[str, object]:
         "implementation": {
             "full_document": "b" * 64,
             "full_document_cli": "c" * 64,
+            "full_document_runtime": "3" * 64,
+            "recognizer_runtime": "4" * 64,
             "crop_refinement": "d" * 64,
             "orientation": "1" * 64,
             "orientation_runtime": "2" * 64,
@@ -171,12 +173,23 @@ class SyntheticParserDataCliTest(unittest.TestCase):
                 (output / "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
                 return result
 
+            constructions = []
+
+            class FakeRuntime:
+                def __init__(self, runtime_args):
+                    constructions.append(runtime_args)
+
+                def run(self, *, image_path: Path, output_dir: Path):
+                    full_args = type("Args", (), {"image": str(image_path), "output_dir": str(output_dir)})()
+                    return fake_run(full_args)
+
             with patch("browser_ocr.finetune.synthetic_parser_data_cli.build_ocr_producer_profile", return_value=producer), patch(
-                "browser_ocr.finetune.synthetic_parser_data_cli.run_full_document", side_effect=fake_run
+                "browser_ocr.finetune.synthetic_parser_data_cli.FullDocumentRuntime", FakeRuntime
             ):
                 result = run_synthetic_batch(args)
 
             self.assertEqual(result["status"], "ok")
+            self.assertEqual(len(constructions), 1)
             self.assertEqual(calls, [item["document_id"] for item in truth])
             self.assertEqual(result["documents"], 3)
             for split in ("train", "val", "test"):
@@ -187,7 +200,7 @@ class SyntheticParserDataCliTest(unittest.TestCase):
                 self.assertEqual(dataset.documents[0]["gold_rows"][0]["product_query"], "가나다정")
 
             with patch("browser_ocr.finetune.synthetic_parser_data_cli.build_ocr_producer_profile", return_value=producer), patch(
-                "browser_ocr.finetune.synthetic_parser_data_cli.run_full_document", side_effect=AssertionError("must reuse completed batch")
+                "browser_ocr.finetune.synthetic_parser_data_cli.FullDocumentRuntime", side_effect=AssertionError("must reuse completed batch without model initialization")
             ):
                 reused = run_synthetic_batch(args)
             self.assertEqual(reused, result)
@@ -200,7 +213,7 @@ class SyntheticParserDataCliTest(unittest.TestCase):
             truth_path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
             args = self._args(root, manifest, truth_path)
             with patch("browser_ocr.finetune.synthetic_parser_data_cli.build_ocr_producer_profile", return_value=_producer()), patch(
-                "browser_ocr.finetune.synthetic_parser_data_cli.run_full_document", side_effect=AssertionError("must not run OCR")
+                "browser_ocr.finetune.synthetic_parser_data_cli.FullDocumentRuntime", side_effect=AssertionError("must not run OCR")
             ):
                 with self.assertRaisesRegex(Exception, "document set"):
                     run_synthetic_batch(args)

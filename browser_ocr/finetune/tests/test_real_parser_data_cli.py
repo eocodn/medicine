@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from browser_ocr.document_parsing.real_data import REAL_PARSER_LOCK_FILE, annotation_immutable_sha256, load_real_source_manifest, prepare_real_annotation
-from browser_ocr.finetune.real_parser_data_cli import _batch_profile, _full_document_args, build_parser, run_real_batch
+from browser_ocr.finetune.real_parser_data_cli import _batch_profile, build_parser, run_real_batch
 
 
 class RealParserDataCliTest(unittest.TestCase):
@@ -195,24 +195,21 @@ class RealParserDataCliTest(unittest.TestCase):
                     run_real_batch(args)
             self.assertEqual(captured, [output.resolve() / REAL_PARSER_LOCK_FILE])
 
-    def test_each_real_photo_is_routed_through_full_document_cli_contract(self) -> None:
+    def test_runtime_receives_the_batch_ocr_configuration_directly(self) -> None:
         args = build_parser().parse_args([
             "--source-manifest", "/real/manifest.json",
             "--baseline-result", "/run/baseline.json",
             "--output-dir", "/run/real-parser",
             "--recognizer-device", "cpu",
         ])
-        full = _full_document_args(args, image_path=Path("/real/rx-1.jpg"), output_dir=Path("/run/real-parser/runtime/rx-1"))
-        self.assertEqual(full.image, "/real/rx-1.jpg")
-        self.assertEqual(full.output_dir, "/run/real-parser/runtime/rx-1")
-        self.assertEqual(full.detector_model, "PP-OCRv5_mobile_det")
-        self.assertEqual(full.recognizer_device, "cpu")
+        self.assertEqual(args.detector_model, "PP-OCRv5_mobile_det")
+        self.assertEqual(args.recognizer_device, "cpu")
 
     def test_completed_batch_rerun_does_not_overwrite_human_annotation(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             args, annotation_path = self._completed_batch_fixture(root)
-            with patch("browser_ocr.finetune.real_parser_data_cli.run_full_document", side_effect=AssertionError("must not rerun OCR")):
+            with patch("browser_ocr.finetune.real_parser_data_cli.FullDocumentRuntime", side_effect=AssertionError("must not rerun OCR")):
                 result = run_real_batch(args)
             self.assertEqual(result["status"], "ok")
             preserved = json.loads(annotation_path.read_text(encoding="utf-8"))
@@ -318,7 +315,7 @@ class RealParserDataCliTest(unittest.TestCase):
                 "completed": 0,
             }), encoding="utf-8")
 
-            with patch("browser_ocr.finetune.real_parser_data_cli.run_full_document", side_effect=AssertionError("must adopt existing OCR result")):
+            with patch("browser_ocr.finetune.real_parser_data_cli.FullDocumentRuntime", side_effect=AssertionError("must adopt existing OCR result")):
                 result = run_real_batch(args)
             self.assertEqual(result["status"], "ok")
             preserved = json.loads(annotation_path.read_text(encoding="utf-8"))

@@ -13,13 +13,11 @@ from unittest.mock import patch
 from browser_ocr.finetune.dataset import DatasetError
 from browser_ocr.finetune.full_document_cli import (
     _implementation_profile,
-    _recognize_crops,
-    _run_logged,
     build_ocr_producer_profile,
     build_parser,
     load_selected_recognizer,
-    run_full_document,
 )
+from browser_ocr.finetune.full_document_runtime import FullDocumentRuntime
 from browser_ocr.finetune.runtime_environment import (
     _gpu_runtime_identity,
     _installed_distributions,
@@ -70,6 +68,8 @@ class FullDocumentCliContractTest(unittest.TestCase):
             {
                 "full_document",
                 "full_document_cli",
+                "full_document_runtime",
+                "recognizer_runtime",
                 "crop_refinement",
                 "orientation",
                 "orientation_runtime",
@@ -78,40 +78,6 @@ class FullDocumentCliContractTest(unittest.TestCase):
             },
         )
         self.assertTrue(all(len(value) == 64 for value in profile.values()))
-
-    def test_logged_subprocess_executes_and_captures_output(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            log = root / "command.log"
-            _run_logged([sys.executable, "-c", "print('runtime-ok')"], cwd=root, log_path=log)
-            self.assertIn("runtime-ok", log.read_text(encoding="utf-8"))
-
-    def test_recognizer_crop_command_uses_current_python_executable(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            crop_dir = root / "crops"
-            crop_dir.mkdir()
-            crop = crop_dir / "region-0001.png"
-            crop.write_bytes(b"fixture")
-            output = root / "recognition.txt"
-            commands: list[list[str]] = []
-
-            def fake_run(command: list[str], *, cwd: Path, log_path: Path) -> None:
-                commands.append(command)
-                output.write_text(f"{crop.resolve()}\t약품명\t0.99\n", encoding="utf-8")
-
-            with patch("browser_ocr.finetune.full_document_cli._run_logged", side_effect=fake_run):
-                recognized = _recognize_crops(
-                    paddleocr_root=root,
-                    config_path=root / "config.yml",
-                    checkpoint=root / "model.pdparams",
-                    crop_dir=crop_dir,
-                    output_path=output,
-                    log_path=root / "recognition.log",
-                    use_gpu=True,
-                )
-            self.assertEqual(commands[0][0], sys.executable)
-            self.assertEqual(recognized[str(crop.resolve())]["text"], "약품명")
 
     def test_full_document_ocr_defaults_to_selected_mobile_detector(self) -> None:
         args = build_parser().parse_args([
@@ -335,9 +301,11 @@ class FullDocumentCliContractTest(unittest.TestCase):
             image.write_bytes(b"fixture-image")
             output = root / "out"
             output.mkdir()
-            profile = {"fixture": "profile"}
-            original = {"status": "ok", "profile": profile, "regions": [{"text": "ORIGINAL"}]}
+            image_sha = hashlib.sha256(image.read_bytes()).hexdigest()
             result_path = output / "result.json"
+            producer = {"fixture": "profile"}
+            profile = {**producer, "image_sha256": image_sha}
+            original = {"status": "ok", "profile": profile, "regions": [{"text": "ORIGINAL"}]}
             result_path.write_text(json.dumps(original, sort_keys=True), encoding="utf-8")
             digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
             (output / "state.json").write_text(json.dumps({
@@ -345,13 +313,10 @@ class FullDocumentCliContractTest(unittest.TestCase):
             }), encoding="utf-8")
             forged = {**original, "regions": [{"text": "FORGED OCR"}]}
             result_path.write_text(json.dumps(forged, sort_keys=True), encoding="utf-8")
-            args = build_parser().parse_args([
-                "--image", str(image), "--baseline-result", str(root / "unused.json"), "--output-dir", str(output),
-            ])
-            with patch("browser_ocr.finetune.full_document_cli.load_selected_recognizer", return_value={}), \
-                 patch("browser_ocr.finetune.full_document_cli._profile", return_value=profile):
-                with self.assertRaisesRegex(DatasetError, "result.*SHA-256|completed.*result"):
-                    run_full_document(args)
+            runtime = object.__new__(FullDocumentRuntime)
+            runtime.producer = producer
+            with self.assertRaisesRegex(DatasetError, "result.*SHA-256|completed.*result"):
+                runtime.run(image_path=image, output_dir=output)
 
 
 if __name__ == "__main__":
