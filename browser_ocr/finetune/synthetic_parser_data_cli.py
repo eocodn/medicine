@@ -81,6 +81,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--detector-edge", type=int, default=640)
     parser.add_argument("--detector-threads", type=int, default=1)
     parser.add_argument("--recognizer-device", choices=("gpu", "cpu"), default="gpu")
+    parser.add_argument(
+        "--max-new-documents",
+        type=int,
+        default=64,
+        help="Exit successfully after checkpointing this many newly OCR-processed documents so process-local ML allocator caches are released",
+    )
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -257,6 +263,8 @@ def _validate_completed(
 
 
 def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
+    if isinstance(args.max_new_documents, bool) or not isinstance(args.max_new_documents, int) or args.max_new_documents <= 0:
+        raise ParserDatasetError("max-new-documents must be a positive integer")
     corpus_manifest = Path(args.corpus_manifest).resolve()
     truth_samples = Path(args.truth_samples).resolve()
     corpus, samples = _load_source(corpus_manifest, truth_samples)
@@ -297,6 +305,7 @@ def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
 
         producer = profile["ocr_producer"]
         runtime: FullDocumentRuntime | None = None
+        newly_processed = 0
         for index, sample in enumerate(samples, start=1):
             image_path = Path(sample["image_path"])
             if not image_path.is_file() or _sha256_file(image_path) != sample["image_sha256"]:
@@ -320,6 +329,7 @@ def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
                     image_path=image_path,
                     output_dir=runtime_root / sample["document_id"],
                 )
+                newly_processed += 1
                 persisted = _validate_runtime_result(result_path, sample=sample, producer=producer)
                 if returned != persisted:
                     raise ParserDatasetError("runtime OCR returned result differs from persisted result")
@@ -334,6 +344,15 @@ def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
                 "runtime_results": completed_results,
             })
             print(f"[ocr-parser-synthetic-runtime] {index}/{len(samples)} {sample['document_id']}", file=sys.stderr, flush=True)
+            if newly_processed >= args.max_new_documents and completed < len(samples):
+                return {
+                    "status": "partial",
+                    "documents": len(samples),
+                    "completed": completed,
+                    "remaining": len(samples) - completed,
+                    "runtime_root": str(runtime_root),
+                    "profile": profile,
+                }
 
         split_counts = {name: sum(sample["split"] == name for sample in samples) for name in ("train", "val", "test")}
         datasets: dict[str, str] = {}
