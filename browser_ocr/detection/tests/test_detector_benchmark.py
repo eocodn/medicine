@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from browser_ocr.detection.runtime import _verify_extracted_assets
+from browser_ocr.detection.runtime import _verify_extracted_assets, _verify_runtime_assets
 from browser_ocr.detection.detector_benchmark import (
     _verify_optional_onnx_sha,
     db_postprocess,
@@ -90,6 +90,52 @@ class DetectorBenchmarkCoreTest(unittest.TestCase):
             onnx.write_bytes(b"tampered")
             with self.assertRaisesRegex(ValueError, "pinned archive"):
                 _verify_extracted_assets(archive, "model", onnx, config)
+
+    def test_trained_candidate_runtime_assets_are_hash_pinned_without_archive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            onnx = root / "inference.onnx"
+            config = root / "inference.yml"
+            onnx.write_bytes(b"candidate-onnx")
+            config.write_bytes(b"candidate-config")
+            import hashlib
+
+            onnx_sha = hashlib.sha256(onnx.read_bytes()).hexdigest()
+            config_sha = hashlib.sha256(config.read_bytes()).hexdigest()
+            model = {
+                "archive_root": ".",
+                "onnx_file": "inference.onnx",
+                "config_file": "inference.yml",
+                "sha256": onnx_sha,
+                "onnx_sha256": onnx_sha,
+                "config_sha256": config_sha,
+            }
+            verified = _verify_runtime_assets(root, "candidate", model)
+            self.assertEqual(verified["asset_sha256"], onnx_sha)
+            self.assertEqual(verified["onnx_sha256"], onnx_sha)
+            self.assertEqual(verified["config_sha256"], config_sha)
+
+            config.write_bytes(b"tampered")
+            with self.assertRaisesRegex(ValueError, "config SHA-256"):
+                _verify_runtime_assets(root, "candidate", model)
+
+    def test_trained_candidate_runtime_requires_explicit_config_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "inference.onnx").write_bytes(b"candidate-onnx")
+            (root / "inference.yml").write_bytes(b"candidate-config")
+            import hashlib
+
+            onnx_sha = hashlib.sha256((root / "inference.onnx").read_bytes()).hexdigest()
+            model = {
+                "archive_root": ".",
+                "onnx_file": "inference.onnx",
+                "config_file": "inference.yml",
+                "sha256": onnx_sha,
+                "onnx_sha256": onnx_sha,
+            }
+            with self.assertRaisesRegex(ValueError, "config_sha256"):
+                _verify_runtime_assets(root, "candidate", model)
 
     def test_official_inference_yaml_must_match_pinned_db_settings(self):
         pinned = {
