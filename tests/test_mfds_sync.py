@@ -95,6 +95,58 @@ class MfdsSyncEngineTest(unittest.TestCase):
                 [1, 2, 3],
             )
 
+    def test_row_count_mismatch_discards_checkpoint_for_clean_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "dur.jsonl"
+
+            def incomplete_fetch(page: int, _page_size: int) -> tuple[list[dict], int]:
+                if page == 1:
+                    return [{"id": 1}, {"id": 2}], 4
+                return [], 4
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "row-count mismatch: expected 4, got 2",
+            ):
+                sync_paginated_jsonl(
+                    output,
+                    dataset_key="mfds_dur:test",
+                    source_family="mfds_dur_item_api",
+                    source_locator="https://apis.data.go.kr/example",
+                    page_size=2,
+                    workers=1,
+                    fetch_page=incomplete_fetch,
+                    progress=False,
+                )
+
+            self.assertFalse(output.with_name(output.name + ".pages").exists())
+
+            retry_pages: list[int] = []
+
+            def stable_fetch(page: int, _page_size: int) -> tuple[list[dict], int]:
+                retry_pages.append(page)
+                if page == 1:
+                    return [{"id": 1}, {"id": 2}], 4
+                return [{"id": 3}, {"id": 4}], 4
+
+            metadata = sync_paginated_jsonl(
+                output,
+                dataset_key="mfds_dur:test",
+                source_family="mfds_dur_item_api",
+                source_locator="https://apis.data.go.kr/example",
+                page_size=2,
+                workers=1,
+                fetch_page=stable_fetch,
+                progress=False,
+            )
+
+            self.assertEqual(retry_pages, [1, 2])
+            self.assertEqual(metadata["row_count"], 4)
+            self.assertEqual(
+                [json.loads(line)["id"] for line in output.read_text(encoding="utf-8").splitlines()],
+                [1, 2, 3, 4],
+            )
+
     def test_transient_page_failure_keeps_checkpoint_for_resume(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "dur.jsonl"
