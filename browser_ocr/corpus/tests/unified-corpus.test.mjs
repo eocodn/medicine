@@ -157,7 +157,8 @@ test("one document corpus materializes aligned detection recognition parsing and
     assert.equal(detection.length, 12);
     const detectorExport = JSON.parse(await readFile(join(viewsRoot, "detection", "paddle", "export.json"), "utf8"));
     assert.equal(detectorExport.parent_corpus_id, corpus.corpus_id);
-    assert.equal(detectorExport.polygon_kind, "natural_text_polygon");
+    assert.equal(detectorExport.polygon_kind, "interpolated_text_core_polygon");
+    assert.equal(detectorExport.region_padding_fraction, 0.5);
     const corpusByImage = new Map(corpus.samples.map((sample) => [sample.image, sample]));
     let sawDetectorPaddingDifference = false;
     for (const name of ["train", "val", "test"]) {
@@ -172,10 +173,15 @@ test("one document corpus materializes aligned detection recognition parsing and
         assert.ok(source);
         assert.equal(regions.length, source.regions.length);
         for (let index = 0; index < regions.length; index += 1) {
-          assert.deepEqual(regions[index].points, source.regions[index].natural_text_polygon);
+          const expectedDetectorPolygon = source.regions[index].natural_text_polygon.map((point, pointIndex) => [
+            point[0] + 0.5 * (source.regions[index].polygon[pointIndex][0] - point[0]),
+            point[1] + 0.5 * (source.regions[index].polygon[pointIndex][1] - point[1]),
+          ]);
+          assert.deepEqual(regions[index].points, expectedDetectorPolygon);
           if (JSON.stringify(source.regions[index].polygon) !== JSON.stringify(source.regions[index].natural_text_polygon)) {
             sawDetectorPaddingDifference = true;
             assert.notDeepEqual(regions[index].points, source.regions[index].polygon);
+            assert.notDeepEqual(regions[index].points, source.regions[index].natural_text_polygon);
           }
         }
       }
