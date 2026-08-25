@@ -275,6 +275,14 @@ test("coverage audit fails closed when a required synthetic stratum disappears",
     const materialFailed = auditCoverage(missingMaterial);
     assert.equal(materialFailed.status, "fail");
     assert.ok(materialFailed.failures.some((failure) => failure.includes("plastic_wrinkled")));
+
+    const splitConfounded = structuredClone(corpus);
+    for (const sample of splitConfounded.samples) {
+      if (sample.split === "train") sample.material_profile = "paper_plain";
+    }
+    const splitConfoundedReport = auditCoverage(splitConfounded);
+    assert.equal(splitConfoundedReport.status, "fail");
+    assert.ok(splitConfoundedReport.failures.some((failure) => failure.includes("train material profile")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -24,6 +24,35 @@ function sortedEntries(counter) {
   return Object.entries(counter).sort(([left], [right]) => left.localeCompare(right));
 }
 
+
+const MIN_SPLIT_APPEARANCE_AUDIT_SAMPLES = 20;
+
+function splitAppearanceCoverage(corpus, requiredAppearance) {
+  if (!(corpus.generator?.version >= 6 && corpus.generator?.revision >= 9)) return { counts: {}, failures: [] };
+  const categories = [
+    ["material_profile", "material profile", requiredAppearance.materials],
+    ["printer_profile", "printer profile", PRINTER_PROFILES],
+    ["background_profile", "background profile", requiredAppearance.backgrounds],
+    ["scene_prop_profile", "scene prop profile", SCENE_PROP_PROFILES],
+  ];
+  const result = {};
+  const failures = [];
+  for (const split of ["train", "val", "test"]) {
+    const samples = corpus.samples.filter((sample) => sample.split === split);
+    if (!samples.length) continue;
+    result[split] = {};
+    for (const [key, label, required] of categories) {
+      const categoryCounts = counts(samples.map((sample) => sample[key]));
+      result[split][key] = sortedEntries(categoryCounts);
+      if (samples.length < MIN_SPLIT_APPEARANCE_AUDIT_SAMPLES) continue;
+      for (const profile of required) {
+        if ((categoryCounts[profile] || 0) < 1) failures.push(`${split} ${label} ${profile} is absent`);
+      }
+    }
+  }
+  return { counts: result, failures };
+}
+
 function requiredAppearanceProfiles(corpus) {
   const expandedAppearance = corpus.generator?.version >= 6 && corpus.generator?.revision >= 5;
   return expandedAppearance
@@ -58,6 +87,8 @@ export function auditCoverage(corpus, {
   )));
   const failures = [];
   const requiredAppearance = requiredAppearanceProfiles(corpus);
+  const splitAppearance = splitAppearanceCoverage(corpus, requiredAppearance);
+  failures.push(...splitAppearance.failures);
 
   for (const family of requiredLayoutFamilies) {
     if ((layoutCounts[family] || 0) < minimumPerLayout) failures.push(`layout family ${family} < ${minimumPerLayout}`);
@@ -121,6 +152,7 @@ export function auditCoverage(corpus, {
     printer_profiles: sortedEntries(printerCounts),
     background_profiles: sortedEntries(backgroundCounts),
     scene_prop_profiles: sortedEntries(scenePropCounts),
+    split_appearance_profiles: splitAppearance.counts,
     visual_styles: sortedEntries(visualStyleCounts),
     risk_tags: riskCounts,
     semantic_roles: semanticCounts,
