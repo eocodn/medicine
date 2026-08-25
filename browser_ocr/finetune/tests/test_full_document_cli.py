@@ -13,6 +13,7 @@ from unittest.mock import patch
 from browser_ocr.finetune.dataset import DatasetError
 from browser_ocr.finetune.full_document_cli import (
     _implementation_profile,
+    _recognize_crops,
     build_ocr_producer_profile,
     build_parser,
     load_selected_recognizer,
@@ -76,6 +77,33 @@ class FullDocumentCliContractTest(unittest.TestCase):
             },
         )
         self.assertTrue(all(len(value) == 64 for value in profile.values()))
+
+    def test_recognizer_crop_command_uses_current_python_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            crop_dir = root / "crops"
+            crop_dir.mkdir()
+            crop = crop_dir / "region-0001.png"
+            crop.write_bytes(b"fixture")
+            output = root / "recognition.txt"
+            commands: list[list[str]] = []
+
+            def fake_run(command: list[str], *, cwd: Path, log_path: Path) -> None:
+                commands.append(command)
+                output.write_text(f"{crop.resolve()}\t약품명\t0.99\n", encoding="utf-8")
+
+            with patch("browser_ocr.finetune.full_document_cli._run_logged", side_effect=fake_run):
+                recognized = _recognize_crops(
+                    paddleocr_root=root,
+                    config_path=root / "config.yml",
+                    checkpoint=root / "model.pdparams",
+                    crop_dir=crop_dir,
+                    output_path=output,
+                    log_path=root / "recognition.log",
+                    use_gpu=True,
+                )
+            self.assertEqual(commands[0][0], sys.executable)
+            self.assertEqual(recognized[str(crop.resolve())]["text"], "약품명")
 
     def test_full_document_ocr_defaults_to_selected_mobile_detector(self) -> None:
         args = build_parser().parse_args([
