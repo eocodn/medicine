@@ -401,7 +401,7 @@ def _load_inputs(
         raise DetectorTrainingError("Paddle detection export corpus id does not match the unified corpus")
     if export.get("parent_corpus_sha256") != corpus_sha:
         raise DetectorTrainingError("Paddle detection export corpus SHA-256 does not match the unified corpus")
-    if export.get("polygon_kind") != "region_polygon" or export.get("transcription_policy") != "ground_truth_text":
+    if export.get("polygon_kind") != "natural_text_polygon" or export.get("transcription_policy") != "ground_truth_text":
         raise DetectorTrainingError("Paddle detection export annotation policy is unsupported")
     counts = export.get("counts")
     if counts != split_counts:
@@ -469,6 +469,7 @@ def _profile(
             "id": inputs["corpus_id"],
             "manifest_sha256": _sha256_file(corpus_manifest),
             "export_sha256": _sha256_file(detection_export),
+            "polygon_kind": inputs["export"]["polygon_kind"],
             "counts": inputs["counts"],
             "label_sha256": inputs["label_sha256"],
         },

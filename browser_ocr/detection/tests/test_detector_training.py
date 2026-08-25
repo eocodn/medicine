@@ -127,7 +127,7 @@ Train:
         "data_dir": str(corpus),
         "label_files": {"train": "train.txt", "val": "val.txt", "test": "test.txt"},
         "counts": {"train": 2, "val": 1, "test": 1},
-        "polygon_kind": "region_polygon",
+        "polygon_kind": "natural_text_polygon",
         "transcription_policy": "ground_truth_text",
     })
     return {
@@ -281,6 +281,7 @@ class DetectorTrainingTest(unittest.TestCase):
             payload = json.loads(output.getvalue())
             self.assertEqual(payload["status"], "ready")
             self.assertEqual(payload["profile"]["optimization_splits"], ["train", "val"])
+            self.assertEqual(payload["profile"]["corpus"]["polygon_kind"], "natural_text_polygon")
 
     def test_training_is_resumable_and_completion_does_not_claim_promotion(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
