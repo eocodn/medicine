@@ -7,7 +7,7 @@ import { validateUnifiedCorpus } from "./contract.mjs";
 import { RECOGNITION_EVAL_POLICY, recognitionOodTag } from "./evaluation_policy.mjs";
 import { buildOracleManifest, buildParsingItems, expectedRows } from "./parser_truth.mjs";
 
-const MATERIALIZER_VERSION = 14;
+const MATERIALIZER_VERSION = 15;
 const STAGES = ["detection", "recognition", "parsing", "e2e"];
 const STATE_FILE = ".materialize-state.json";
 const LOCK_FILE = ".materialize.lock";
@@ -285,7 +285,11 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       const labels = selected.map((item) => {
         const regions = corpus.samples.find((sample) => sample.id === item.document_id).regions.map((region) => ({
           transcription: region.text,
-          points: region.polygon,
+          // Detector supervision follows the visible text core used by the
+          // project evaluator. The padded region polygon is intentionally kept
+          // for recognition crops, but it can overlap adjacent medication rows
+          // even when their rendered text is visibly separated.
+          points: region.natural_text_polygon,
         }));
         return `${item.image}\t${JSON.stringify(regions)}`;
       });
@@ -299,7 +303,7 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
       data_dir: corpusRoot,
       label_files: { train: "train.txt", val: "val.txt", test: "test.txt" },
       counts: detectorCounts,
-      polygon_kind: "region_polygon",
+      polygon_kind: "natural_text_polygon",
       transcription_policy: "ground_truth_text",
     });
     await writeStageManifest(detectionDir, {
