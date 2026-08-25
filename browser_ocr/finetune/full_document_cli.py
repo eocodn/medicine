@@ -3,13 +3,9 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
-import importlib.metadata as importlib_metadata
-import platform
 import json
 import os
 import shutil
-import subprocess
-import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -22,9 +18,8 @@ from .full_document import (
     parse_recognition_rows,
     sort_text_predictions,
 )
-from .native_runtime import native_runtime_identity as _native_runtime_identity
-from .native_runtime import python_native_runtime_identity as _python_native_runtime_identity
 from .orientation_runtime import resolve_page_orientation
+from .runtime_environment import runtime_environment_sha256 as _runtime_environment_sha256
 
 
 def _sha256_file(path: Path) -> str:
@@ -122,65 +117,6 @@ def _detector_profile(manifest_path: Path, model_root: Path, model_name: str) ->
         "onnx_sha256": _sha256_file(onnx_path),
         "config_sha256": _sha256_file(config_path),
     }
-
-
-def _gpu_runtime_identity() -> dict[str, object]:
-    import paddle
-
-    from .training import probe_paddle_runtime
-
-    report = dict(probe_paddle_runtime(paddle))
-    try:
-        nvidia = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=uuid,name,driver_version,compute_cap",
-                "--format=csv,noheader,nounits",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise DatasetError("GPU OCR producer identity requires a working nvidia-smi runtime report") from exc
-    rows = sorted(line.strip() for line in nvidia.stdout.splitlines() if line.strip())
-    if not rows:
-        raise DatasetError("GPU OCR producer identity received an empty nvidia-smi runtime report")
-    report["nvidia_smi"] = rows
-    return report
-
-
-def _runtime_environment_sha256(recognizer_device: str) -> str:
-    distributions = sorted({
-        (str(dist.metadata.get("Name") or "").lower(), str(dist.version))
-        for dist in importlib_metadata.distributions()
-        if dist.metadata.get("Name")
-    })
-    finetune_root = Path(__file__).resolve().parent
-    runtime_contract = {
-        name: _sha256_file(finetune_root / name)
-        for name in ("Dockerfile.train", "requirements-train.lock", "requirements-paddle-runtime.lock")
-    }
-    payload = {
-        "python": sys.version,
-        "python_implementation": platform.python_implementation(),
-        "machine": platform.machine(),
-        "system": platform.system(),
-        "distributions": distributions,
-        "native_runtime": _native_runtime_identity(),
-        "python_native_runtime": _python_native_runtime_identity(),
-        "runtime_contract": runtime_contract,
-        "recognizer_device": recognizer_device,
-    }
-    if recognizer_device == "gpu":
-        payload["gpu_runtime"] = {
-            **_gpu_runtime_identity(),
-            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
-            "nvidia_visible_devices": os.environ.get("NVIDIA_VISIBLE_DEVICES"),
-        }
-    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _selected_dictionary(config_path: Path, paddleocr_root: Path) -> Path:
