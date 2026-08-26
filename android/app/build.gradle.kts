@@ -238,11 +238,15 @@ if (releaseReferenceUpdateBaseUrl.isNotEmpty()) {
 }
 val effectiveReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride ?: releaseReferenceUpdateBaseUrl
 
-val ocrAssetsDirectory = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
-    .orElse("/opt/medicine-ocr-assets")
-val prepareOcrAssets = tasks.register<PrepareOcrAssets>("prepareOcrAssets") {
-    sourceDirectory.set(layout.dir(ocrAssetsDirectory.map { file(it) }))
-    outputDirectory.set(layout.buildDirectory.dir("generated/ocrAssets"))
+val prepareOcrAssets = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
+    .orNull
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?.let { source ->
+    tasks.register<PrepareOcrAssets>("prepareOcrAssets") {
+        sourceDirectory.set(layout.dir(providers.provider { file(source) }))
+        outputDirectory.set(layout.buildDirectory.dir("generated/ocrAssets"))
+    }
 }
 
 val rustNdkVersion = "29.0.14206865"
@@ -340,7 +344,9 @@ androidComponents {
             "Android assets source API is unavailable for ${variant.name}"
         }
         assets.addStaticSourceDirectory(rootProject.file("../medicine_app/static").absolutePath)
-        assets.addGeneratedSourceDirectory(prepareOcrAssets, PrepareOcrAssets::outputDirectory)
+        prepareOcrAssets?.let { task ->
+            assets.addGeneratedSourceDirectory(task, PrepareOcrAssets::outputDirectory)
+        }
         val jniLibs = checkNotNull(variant.sources.jniLibs) {
             "Android JNI source API is unavailable for ${variant.name}"
         }

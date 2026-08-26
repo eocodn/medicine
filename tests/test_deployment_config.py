@@ -465,7 +465,6 @@ class DeploymentConfigTest(unittest.TestCase):
             "ocr-detection-test",
             "ocr-detection-benchmark",
             "ocr-corpus",
-            "ocr-finetune",
             "ocr-finetune-train",
             "ocr-full-document",
             "android",
@@ -547,22 +546,23 @@ class DeploymentConfigTest(unittest.TestCase):
             ["gradle:--no-daemon --dependency-verification strict testDebugUnitTest assembleDebug"],
         )
 
-    def test_local_web_packages_rust_runtime_and_approved_on_device_ocr_runtime(self) -> None:
+    def test_local_web_keeps_ocr_as_an_external_runtime_boundary(self) -> None:
         compose = Path("compose.yaml").read_text()
         web_service = compose.split("\n  web:\n", 1)[1].split("\n  ui:\n", 1)[0]
         dockerfile = Path("Dockerfile.web").read_text()
+        web_binary = Path("rust/medicine_core/src/bin/medicine_core_web.rs").read_text()
 
         self.assertIn("dockerfile: Dockerfile.web", web_service)
         self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', web_service)
         self.assertIn("HOME: /tmp", web_service)
         self.assertNotIn("PYTHONDONTWRITEBYTECODE", web_service)
-        self.assertIn("AS ocr-assets", dockerfile)
         self.assertIn("AS rust-web", dockerfile)
         self.assertIn("cargo build --locked --release --features web --bin medicine-core-web", dockerfile)
-        self.assertIn("mobile/export_runtime.mjs /downloads /out", dockerfile)
-        self.assertIn("COPY --from=ocr-assets /out /opt/medicine-ocr-assets", dockerfile)
-        self.assertIn("chmod -R a+rX /opt/medicine-static /opt/medicine-ocr-assets", dockerfile)
-        self.assertIn("MEDICINE_OCR_ASSETS_DIR=/opt/medicine-ocr-assets", dockerfile)
+        self.assertNotIn("AS ocr-assets", dockerfile)
+        self.assertNotIn("browser_ocr/mobile", dockerfile)
+        self.assertNotIn("medicine-ocr-assets", dockerfile)
+        self.assertIn("MEDICINE_OCR_ASSETS_DIR", web_binary)
+        self.assertIn("--ocr-assets-dir", web_binary)
         self.assertIn("MEDICINE_REFERENCE_TRUST_MANIFEST=/opt/medicine-reference-trust.json", dockerfile)
         self.assertIn("COPY deploy/reference-signing-trusted-keys.json /opt/medicine-reference-trust.json", dockerfile)
         self.assertIn("COPY medicine_app/static /opt/medicine-static", dockerfile)

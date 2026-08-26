@@ -251,10 +251,25 @@
     worker.postMessage({ type: "recognize", image: file });
   }
 
-  function bind() {
+  async function runtimeAvailable() {
+    if (typeof root.Worker !== "function" || typeof root.createImageBitmap !== "function"
+      || typeof root.fetch !== "function") return false;
+    try {
+      const response = await root.fetch("/ocr-assets/runtime-manifest.json", { cache: "no-store" });
+      if (!response.ok) return false;
+      const manifest = await response.json();
+      return manifest?.schema_version === 1
+        && typeof manifest.files?.["direct/ocr-worker.js"]?.sha256 === "string";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function bind() {
     const input = root.document?.querySelector("#ocr-image-input");
     if (!input) return;
-    supported = typeof root.Worker === "function" && typeof root.createImageBitmap === "function";
+    setImportDisabled(true);
+    supported = await runtimeAvailable();
     setImportDisabled(!supported);
     if (!supported) {
       setStatus("이 기기에서는 사진 인식을 사용할 수 없어요.");
@@ -268,6 +283,6 @@
     root.addEventListener("pagehide", reset, { once: false });
   }
 
-  if (root.document) root.document.addEventListener("DOMContentLoaded", bind);
+  if (root.document) root.document.addEventListener("DOMContentLoaded", () => { void bind(); });
   return { normalizeParserRows, reset };
 });
