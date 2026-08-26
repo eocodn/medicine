@@ -14,7 +14,7 @@ from .full_document_cli import (
     _sha256_file,
     _write_json_atomic,
     build_ocr_producer_profile,
-    load_selected_recognizer,
+    load_recognizer_result,
 )
 from .orientation_runtime import resolve_page_orientation
 from .recognizer_runtime import PersistentRecognizer
@@ -41,7 +41,7 @@ class FullDocumentRuntime:
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        self.recognizer = load_selected_recognizer(args.baseline_result)
+        self.recognizer = load_recognizer_result(args.recognizer_result)
         self.producer = build_ocr_producer_profile(args, self.recognizer)
 
         from browser_ocr.detection.runtime import load_detector_runtime

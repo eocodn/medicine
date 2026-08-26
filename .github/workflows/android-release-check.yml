@@ -22,13 +22,6 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: browser_ocr/package-lock.json
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.89.0
         with:
@@ -79,20 +72,6 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;29.0.14206865"
-
-      - name: Prepare OCR runtime assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          runtime="${RUNNER_TEMP}/medicine-ocr-assets"
-          printf 'MEDICINE_OCR_ASSETS_DIR=%s\n' "${runtime}" >> "${GITHUB_ENV}"
-          cd browser_ocr
-          npm ci --ignore-scripts --no-audit --no-fund
-          downloads="${RUNNER_TEMP}/medicine-ocr-downloads"
-          rm -rf "${downloads}" "${runtime}"
-          mkdir -p "${downloads}"
-          node fetch_assets.mjs "${downloads}" detection
-          node mobile/export_runtime.mjs "${downloads}" "${runtime}"
 
       - name: Resolve Android release version
         id: version

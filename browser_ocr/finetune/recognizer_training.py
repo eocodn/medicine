@@ -16,8 +16,11 @@ from typing import Callable, Mapping
 
 from .dataset import DatasetError, load_dataset
 from .model_compat import audit_model_compatibility
+from .recognizer_training_contract import (
+    build_recognizer_training_overrides,
+    validate_recognizer_training_view,
+)
 from .runner_io import json_file, sha256_file, verify_sha, write_json_atomic
-from .selected_finetune import build_selected_training_overrides, validate_selected_training_view
 from .training import export_identity, find_resume_checkpoint, format_paddle_override
 from .training_view import TRAINING_VIEW_POLICY_ID
 
@@ -155,7 +158,7 @@ def _load_inputs(
     )
     if compatibility.get("status") != "ok":
         raise DatasetError("v6 recognizer dataset is incompatible with the pinned recognizer contract")
-    view = validate_selected_training_view(
+    view = validate_recognizer_training_view(
         dataset,
         export_dir,
         expected_dictionary_sha256=str(upstream["upstream"]["paddleocr"]["dictionary_sha256"]),
@@ -217,7 +220,7 @@ def _training_command(
     config: V6RecognizerTrainingConfig,
     resume_checkpoint: Path | None,
 ) -> list[str]:
-    overrides = build_selected_training_overrides(
+    overrides = build_recognizer_training_overrides(
         dataset_root=dataset_root,
         export_dir=export_dir,
         initial_checkpoint=pretrained_model,

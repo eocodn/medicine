@@ -45,9 +45,9 @@ class ParserDatasetCliTest(unittest.TestCase):
         results = root / "results" / "rx-001"
         results.mkdir(parents=True)
         profile = {
-            "schema_version": 2,
+            "schema_version": 3,
             "image_sha256": image_sha,
-            "baseline_result_sha256": "1" * 64,
+            "recognizer_result_sha256": "1" * 64,
             "recognizer_checkpoint_sha256": "2" * 64,
             "recognizer_config_sha256": "3" * 64,
             "recognizer_device": "cpu",

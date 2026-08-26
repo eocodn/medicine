@@ -17,8 +17,8 @@ def _poly(x: float, y: float, w: float = 80, h: float = 24) -> list[list[float]]
 
 def _producer() -> dict[str, object]:
     return {
-        "schema_version": 2,
-        "baseline_result_sha256": "1" * 64,
+        "schema_version": 3,
+        "recognizer_result_sha256": "1" * 64,
         "recognizer_checkpoint_sha256": "2" * 64,
         "recognizer_config_sha256": "3" * 64,
         "recognizer_device": "cpu",
@@ -119,16 +119,16 @@ class SyntheticParserDataCliTest(unittest.TestCase):
         return build_parser().parse_args([
             "--corpus-manifest", str(manifest),
             "--truth-samples", str(truth),
-            "--baseline-result", str(root / "baseline.json"),
+            "--recognizer-result", str(root / "recognizer_result.json"),
             "--output-dir", str(root / "out"),
             "--recognizer-device", "cpu",
         ])
 
-    def test_defaults_match_selected_mobile_full_document_path(self) -> None:
+    def test_defaults_match_current_full_document_path(self) -> None:
         args = build_parser().parse_args([
             "--corpus-manifest", "/corpus/manifest.json",
             "--truth-samples", "/corpus/views/parsing/samples.jsonl",
-            "--baseline-result", "/run/baseline.json",
+            "--recognizer-result", "/run/recognizer_result.json",
             "--output-dir", "/run/runtime-parser",
         ])
         self.assertEqual(args.detector_model, "PP-OCRv5_mobile_det")

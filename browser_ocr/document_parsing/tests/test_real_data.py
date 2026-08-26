@@ -23,9 +23,9 @@ def _write_image(path: Path) -> str:
 
 def _runtime_profile(image_sha256: str) -> dict:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "image_sha256": image_sha256,
-        "baseline_result_sha256": "1" * 64,
+        "recognizer_result_sha256": "1" * 64,
         "recognizer_checkpoint_sha256": "2" * 64,
         "recognizer_config_sha256": "3" * 64,
         "recognizer_device": "cpu",

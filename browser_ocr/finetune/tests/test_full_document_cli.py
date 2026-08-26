@@ -15,7 +15,7 @@ from browser_ocr.finetune.full_document_cli import (
     _implementation_profile,
     build_ocr_producer_profile,
     build_parser,
-    load_selected_recognizer,
+    load_recognizer_result,
 )
 from browser_ocr.finetune.full_document_runtime import FullDocumentRuntime
 from browser_ocr.finetune.runtime_environment import (
@@ -32,8 +32,8 @@ class FullDocumentCliContractTest(unittest.TestCase):
         checkpoint = model / "best_accuracy.pdparams"
         checkpoint.write_bytes(b"selected-model")
         (model / "config.yml").write_text("Global: {}\n", encoding="utf-8")
-        baseline = root / "baseline-result.json"
-        baseline.write_text(json.dumps({
+        recognizer_result = root / "result.json"
+        recognizer_result.write_text(json.dumps({
             "status": "ok",
             "best_checkpoint": str(checkpoint),
             "best_checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
@@ -59,7 +59,7 @@ class FullDocumentCliContractTest(unittest.TestCase):
         (paddle / "tools" / "infer_rec.py").write_text(f"# infer {source_marker}\n", encoding="utf-8")
         (paddle / "ppocr" / "engine" / "runner.py").write_text(f"# runner {source_marker}\n", encoding="utf-8")
         (paddle / "ppocr" / "utils" / "dict" / "ppocrv5_korean_dict.txt").write_text("가\n나\n", encoding="utf-8")
-        return baseline, detector, paddle, detector_root
+        return recognizer_result, detector, paddle, detector_root
 
     def test_output_profile_pins_ocr_pipeline_implementation(self) -> None:
         profile = _implementation_profile()
@@ -79,17 +79,17 @@ class FullDocumentCliContractTest(unittest.TestCase):
         )
         self.assertTrue(all(len(value) == 64 for value in profile.values()))
 
-    def test_full_document_ocr_defaults_to_selected_mobile_detector(self) -> None:
+    def test_full_document_ocr_defaults_to_configured_detector(self) -> None:
         args = build_parser().parse_args([
             "--image", "/data/doc.jpg",
-            "--baseline-result", "/run/baseline-result.json",
+            "--recognizer-result", "/run/result.json",
             "--output-dir", "/run/full-doc",
         ])
         self.assertEqual(args.detector_model, "PP-OCRv5_mobile_det")
         self.assertEqual(args.detector_edge, 640)
         self.assertEqual(args.detector_threads, 1)
 
-    def test_selected_recognizer_is_bound_to_baseline_hash_and_config(self) -> None:
+    def test_recognizer_result_is_bound_to_checkpoint_hash_and_config(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             model = root / "model"
@@ -98,7 +98,7 @@ class FullDocumentCliContractTest(unittest.TestCase):
             checkpoint.write_bytes(b"selected-model")
             (model / "config.yml").write_text("Global: {}\n", encoding="utf-8")
             digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
-            result = root / "baseline-result.json"
+            result = root / "result.json"
             result.write_text(json.dumps({
                 "status": "ok",
                 "best_checkpoint": str(checkpoint),
@@ -106,22 +106,22 @@ class FullDocumentCliContractTest(unittest.TestCase):
                 "best_test": {"acc": 0.9987},
             }), encoding="utf-8")
 
-            selected = load_selected_recognizer(result)
+            selected = load_recognizer_result(result)
             self.assertEqual(selected["checkpoint"], checkpoint)
             self.assertEqual(selected["checkpoint_sha256"], digest)
             self.assertEqual(selected["config"], model / "config.yml")
 
             checkpoint.write_bytes(b"mutated")
             with self.assertRaisesRegex(DatasetError, "SHA-256 mismatch"):
-                load_selected_recognizer(result)
+                load_recognizer_result(result)
 
     def test_ocr_producer_profile_binds_actual_paddleocr_source_content(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            baseline, detector, paddle, detector_root = self._producer_inputs(root)
+            recognizer_result, detector, paddle, detector_root = self._producer_inputs(root)
             args = build_parser().parse_args([
                 "--image", str(root / "unused.jpg"),
-                "--baseline-result", str(baseline),
+                "--recognizer-result", str(recognizer_result),
                 "--output-dir", str(root / "out"),
                 "--detector-manifest", str(detector),
                 "--detector-root", str(detector_root),
@@ -146,10 +146,10 @@ class FullDocumentCliContractTest(unittest.TestCase):
     def test_ocr_producer_profile_changes_when_inference_runtime_changes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            baseline, detector, paddle, detector_root = self._producer_inputs(root)
+            recognizer_result, detector, paddle, detector_root = self._producer_inputs(root)
             args = build_parser().parse_args([
                 "--image", str(root / "unused.jpg"),
-                "--baseline-result", str(baseline),
+                "--recognizer-result", str(recognizer_result),
                 "--output-dir", str(root / "out"),
                 "--detector-manifest", str(detector),
                 "--detector-root", str(detector_root),
@@ -217,7 +217,7 @@ class FullDocumentCliContractTest(unittest.TestCase):
     def test_ocr_producer_profile_binds_dictionary_selected_by_recognizer_config(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            baseline, detector, paddle, detector_root = self._producer_inputs(root)
+            recognizer_result, detector, paddle, detector_root = self._producer_inputs(root)
             selected_dictionary = root / "selected-dict.txt"
             selected_dictionary.write_text("가\n나\n", encoding="utf-8")
             config = root / "model" / "config.yml"
@@ -227,7 +227,7 @@ class FullDocumentCliContractTest(unittest.TestCase):
             )
             args = build_parser().parse_args([
                 "--image", str(root / "unused.jpg"),
-                "--baseline-result", str(baseline),
+                "--recognizer-result", str(recognizer_result),
                 "--output-dir", str(root / "out"),
                 "--detector-manifest", str(detector),
                 "--detector-root", str(detector_root),
@@ -243,10 +243,10 @@ class FullDocumentCliContractTest(unittest.TestCase):
     def test_gpu_producer_profile_binds_runtime_selected_device(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            baseline, detector, paddle, detector_root = self._producer_inputs(root)
+            recognizer_result, detector, paddle, detector_root = self._producer_inputs(root)
             args = build_parser().parse_args([
                 "--image", str(root / "unused.jpg"),
-                "--baseline-result", str(baseline),
+                "--recognizer-result", str(recognizer_result),
                 "--output-dir", str(root / "out"),
                 "--detector-manifest", str(detector),
                 "--detector-root", str(detector_root),

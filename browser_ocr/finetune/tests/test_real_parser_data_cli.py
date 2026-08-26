@@ -18,8 +18,8 @@ class RealParserDataCliTest(unittest.TestCase):
         checkpoint = root / "best.pdparams"
         checkpoint.write_bytes(b"recognizer-checkpoint")
         (root / "config.yml").write_text("Global: {}\n", encoding="utf-8")
-        baseline = root / "baseline.json"
-        baseline.write_text(json.dumps({
+        recognizer_result = root / "recognizer_result.json"
+        recognizer_result.write_text(json.dumps({
             "status": "ok",
             "best_checkpoint": str(checkpoint),
             "best_checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
@@ -45,7 +45,7 @@ class RealParserDataCliTest(unittest.TestCase):
         (paddle_root / "tools" / "infer_rec.py").write_text("# infer fixture\n", encoding="utf-8")
         (paddle_root / "ppocr" / "engine" / "runner.py").write_text("# runner fixture\n", encoding="utf-8")
         (paddle_root / "ppocr" / "utils" / "dict" / "ppocrv5_korean_dict.txt").write_text("가\n나\n", encoding="utf-8")
-        return baseline, detector_manifest, paddle_root, detector_root
+        return recognizer_result, detector_manifest, paddle_root, detector_root
 
     def _source_manifest(self, root: Path) -> Path:
         root.mkdir(parents=True, exist_ok=True)
@@ -76,11 +76,11 @@ class RealParserDataCliTest(unittest.TestCase):
 
     def _completed_batch_fixture(self, root: Path) -> tuple[argparse.Namespace, Path]:
         source_manifest = self._source_manifest(root / "source")
-        baseline, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
+        recognizer_result, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
         output = root / "out"
         args = build_parser().parse_args([
             "--source-manifest", str(source_manifest),
-            "--baseline-result", str(baseline),
+            "--recognizer-result", str(recognizer_result),
             "--detector-manifest", str(detector_manifest),
             "--detector-root", str(detector_root),
             "--paddleocr-root", str(paddle_root),
@@ -156,10 +156,10 @@ class RealParserDataCliTest(unittest.TestCase):
         }), encoding="utf-8")
         return args, annotation_path
 
-    def test_defaults_match_selected_mobile_full_document_path(self) -> None:
+    def test_defaults_match_current_full_document_path(self) -> None:
         args = build_parser().parse_args([
             "--source-manifest", "/real/manifest.json",
-            "--baseline-result", "/run/baseline.json",
+            "--recognizer-result", "/run/recognizer_result.json",
             "--output-dir", "/run/real-parser",
         ])
         self.assertEqual(args.detector_model, "PP-OCRv5_mobile_det")
@@ -171,11 +171,11 @@ class RealParserDataCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             source_manifest = self._source_manifest(root / "source")
-            baseline, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
+            recognizer_result, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
             output = root / "out"
             args = build_parser().parse_args([
                 "--source-manifest", str(source_manifest),
-                "--baseline-result", str(baseline),
+                "--recognizer-result", str(recognizer_result),
                 "--detector-manifest", str(detector_manifest),
                 "--detector-root", str(detector_root),
                 "--paddleocr-root", str(paddle_root),
@@ -198,7 +198,7 @@ class RealParserDataCliTest(unittest.TestCase):
     def test_runtime_receives_the_batch_ocr_configuration_directly(self) -> None:
         args = build_parser().parse_args([
             "--source-manifest", "/real/manifest.json",
-            "--baseline-result", "/run/baseline.json",
+            "--recognizer-result", "/run/recognizer_result.json",
             "--output-dir", "/run/real-parser",
             "--recognizer-device", "cpu",
         ])
@@ -227,10 +227,10 @@ class RealParserDataCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             source_manifest = self._source_manifest(root / "source")
-            baseline, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
+            recognizer_result, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
             args = build_parser().parse_args([
                 "--source-manifest", str(source_manifest),
-                "--baseline-result", str(baseline),
+                "--recognizer-result", str(recognizer_result),
                 "--detector-manifest", str(detector_manifest),
                 "--detector-root", str(detector_root),
                 "--paddleocr-root", str(paddle_root),
@@ -264,11 +264,11 @@ class RealParserDataCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             source_manifest = self._source_manifest(root / "source")
-            baseline, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
+            recognizer_result, detector_manifest, paddle_root, detector_root = self._model_inputs(root)
             output = root / "out"
             args = build_parser().parse_args([
                 "--source-manifest", str(source_manifest),
-                "--baseline-result", str(baseline),
+                "--recognizer-result", str(recognizer_result),
                 "--detector-manifest", str(detector_manifest),
                 "--detector-root", str(detector_root),
                 "--paddleocr-root", str(paddle_root),

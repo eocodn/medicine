@@ -1,19 +1,3 @@
-FROM node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS ocr-assets
-
-WORKDIR /pipeline/browser_ocr
-COPY browser_ocr/package.json browser_ocr/package-lock.json ./
-COPY browser_ocr/THIRD_PARTY_NOTICES.md ./
-COPY browser_ocr/model-manifest.json ./
-COPY browser_ocr/runtime-layout.mjs ./
-COPY browser_ocr/parser-export-package.mjs ./
-COPY browser_ocr/fetch_assets.mjs ./
-COPY browser_ocr/src ./src
-RUN npm ci --ignore-scripts --no-audit --no-fund \
-    && mkdir -p /downloads \
-    && node fetch_assets.mjs /downloads detection
-COPY browser_ocr/mobile ./mobile
-RUN node mobile/export_runtime.mjs /downloads /out
-
 FROM rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS rust-toolchain
 
 RUN rustup target add aarch64-linux-android
@@ -24,7 +8,6 @@ ENV ANDROID_HOME=/opt/android-sdk \
     ANDROID_SDK_ROOT=/opt/android-sdk \
     CARGO_HOME=/tmp/cargo-home \
     GRADLE_USER_HOME=/opt/gradle-cache \
-    MEDICINE_OCR_ASSETS_DIR=/opt/medicine-ocr-assets \
     MEDICINE_ANDROID_NDK_VERSION=29.0.14206865 \
     RUSTUP_HOME=/usr/local/rustup \
     PATH=/usr/local/cargo/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:$PATH
@@ -42,7 +25,6 @@ RUN apt-get update \
     && sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;${MEDICINE_ANDROID_NDK_VERSION}" \
     && chmod -R a+rX "$ANDROID_HOME"
 
-COPY --from=ocr-assets /out /opt/medicine-ocr-assets
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 RUN apt-get update \

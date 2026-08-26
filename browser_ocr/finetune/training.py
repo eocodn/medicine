@@ -120,7 +120,7 @@ def build_smoke_overrides(
     }
 
 
-def build_baseline_overrides(
+def build_training_overrides(
     *,
     dataset_root: str,
     train_labels: str,
@@ -185,20 +185,3 @@ def find_resume_checkpoint(model_dir: str | Path) -> Path | None:
         return None
     candidates.sort(key=lambda item: item[0])
     return candidates[-1][1]
-
-
-def parse_eval_metrics(log_text: str) -> dict[str, float]:
-    import re
-
-    marker = "metric eval ***************"
-    marker_index = log_text.rfind(marker)
-    if marker_index < 0:
-        raise DatasetError("PaddleOCR evaluation log does not contain the final metric section")
-    section = log_text[marker_index + len(marker) :]
-    metrics: dict[str, float] = {}
-    for key in ("acc", "norm_edit_dis", "fps"):
-        match = re.search(rf"ppocr INFO:\s+{re.escape(key)}:([-+0-9.eE]+)", section)
-        if match is None:
-            raise DatasetError(f"PaddleOCR evaluation log is missing metric {key}")
-        metrics[key] = float(match.group(1))
-    return metrics

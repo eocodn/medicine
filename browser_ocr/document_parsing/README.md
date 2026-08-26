@@ -98,7 +98,7 @@ After a detector/recognizer candidate is explicitly frozen, use `ocr-parser-synt
 docker compose run --rm ocr-parser-synthetic-runtime \
   --corpus-manifest /artifacts/ocr/corpora/unified-v6/manifest.json \
   --truth-samples /artifacts/ocr/corpora/unified-v6/views/parsing/samples.jsonl \
-  --baseline-result /artifacts/ocr/training/selected/baseline-result.json \
+  --recognizer-result /artifacts/ocr/training/selected/result.json \
   --output-dir /artifacts/parser/synthetic-runtime-v6 \
   --json
 ```
@@ -121,7 +121,7 @@ Every epoch writes an atomic model+optimizer checkpoint and validation metrics b
 
 `ocr-parser-eval-model` binds evaluation to the completed training state, selected checkpoint hash, strict dataset fingerprints, decoder thresholds and evaluation implementation. It evaluates one document at a time, atomically checkpoints each prediction+metric record, and resumes from the last verified document after interruption. Train documents are always rejected. Test documents are also rejected by default and require the explicit `--allow-test` flag, so routine validation cannot casually consume the locked holdout. Aggregation uses the same evidence-aware safety metrics as the parser contract; unresolved fields do not count as false exact claims, while invented values, unproven evidence and cross-medication associations remain release-blocking.
 
-`ocr-parser-export-model` converts the selected checkpoint into the mobile ONNX contract without depending on the legacy `paddle2onnx` converter. The exporter constructs the fixed sparse message-passing graph directly from the verified Paddle state dict, preserving dynamic node/edge/relation counts, exact GELU, mean neighbor aggregation, role logits and product↔field relation logits. The artifact manifest binds the training result/checkpoint, exporter implementation, ONNX/Paddle/ONNX Runtime toolchain, architecture, parameter count, IO shapes and model SHA-256. Export is accepted only after two different dynamic graph shapes agree with Paddle to `1e-5` maximum absolute error; completed exports are immutable and fail closed on model, implementation or toolchain drift.
+`ocr-parser-export-model` converts the selected checkpoint into the mobile ONNX contract by constructing the fixed sparse message-passing graph directly from the verified Paddle state dict, preserving dynamic node/edge/relation counts, exact GELU, mean neighbor aggregation, role logits and product↔field relation logits. The artifact manifest binds the training result/checkpoint, exporter implementation, ONNX/Paddle/ONNX Runtime toolchain, architecture, parameter count, IO shapes and model SHA-256. Export is accepted only after two different dynamic graph shapes agree with Paddle to `1e-5` maximum absolute error; completed exports are immutable and fail closed on model, implementation or toolchain drift.
 
 ```sh
 docker compose run --rm ocr-parser-train \
@@ -157,7 +157,7 @@ docker compose run --rm ocr-parser-export-model \
   --json
 ```
 
-The shared browser/Android OCR worker already contains the learned-parser runtime contract, but parser activation is explicit at packaging time. `export_runtime.mjs` and `mobile/export_runtime.mjs` accept the verified parser export directory as an optional third argument. If it is omitted, the runtime manifest records `parser.enabled=false` and no parser model/manifest is packaged. If it is supplied, packaging verifies the export/model hashes and mobile architecture budget, copies `parser.onnx`, and derives a minimal deployment manifest containing only the graph/decoder/IO contract plus cryptographic source bindings. The absolute training-result path from the research export is deliberately not shipped. At inference time the worker releases the recognizer before loading the parser, verifies the parser ONNX SHA-256 with Web Crypto, runs one role pass and only then a second pass for confident product↔field candidate pairs, and fails closed instead of falling back to layout rules.
+The shared browser/Android OCR worker contains the learned-parser runtime contract, but research export and application promotion are separate. `ocr-parser-export-model` produces a verified `parser.onnx` plus its manifest; an OCR runtime promoted for application use must explicitly bind that export together with the selected detector and recognizer. Product builds do not select or bundle a parser model from this research tree by default. At inference time the worker releases the recognizer before loading the parser, verifies the parser ONNX SHA-256 with Web Crypto, runs one role pass and only then a second pass for confident product↔field candidate pairs, and fails closed instead of falling back to layout rules.
 
 Use the dataset Agent Control service directly when needed. Writable OCR/parser services mount host `~/dev/.artifacts/medicine` at `/artifacts`; create that host directory as your normal user before the first run (`mkdir -p ~/dev/.artifacts/medicine`). Set `MEDICINE_ARTIFACTS_DIR=/absolute/path` to override the host root without changing container paths. Compose refuses to auto-create the bind source so Docker cannot leave a root-owned artifact directory:
 
@@ -183,7 +183,7 @@ docker compose run --rm \
   -v /absolute/deidentified-corpus:/real:ro \
   ocr-parser-real \
   --source-manifest /real/manifest.json \
-  --baseline-result /artifacts/ocr/training/selected/baseline-result.json \
+  --recognizer-result /artifacts/ocr/training/selected/result.json \
   --output-dir /artifacts/parser/real-holdout \
   --json
 ```
