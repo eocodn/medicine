@@ -210,8 +210,8 @@ function classicMedicationBag(_index, random, document) {
       region(`b${block}-instruction`, medication.instruction_text, 740, y + 85, 310, 48, { associationGroup: medication.id, semanticRole: "instruction", regionClass: "context", fontSize: 31 }),
     );
   });
-  regions.push(
-    region("checkbox-label", "아침   점심   저녁   취침전", 110, 1210, 520, 42, { semanticRole: "schedule", regionClass: "distractor", fontSize: 30 }),
+  const scheduleRow = classicScheduleCheckboxRow();
+  regions.push(...scheduleRow.regions,
     region("pharmacy-phone", "약국전화 02-123-4567", 760, 1340, 350, 40, { semanticRole: "phone", regionClass: "distractor", fontSize: 28 }),
   );
   return {
@@ -221,7 +221,36 @@ function classicMedicationBag(_index, random, document) {
     regions,
     decorations: `<rect x="45" y="35" width="1190" height="1510" rx="34" fill="#fffdf5" stroke="#d4d0c4" stroke-width="3"/>
 <path d="M45 270 H1235" stroke="#a8a8a0" stroke-width="2"/>
-<rect x="90" y="1195" width="24" height="24" fill="none" stroke="#777"/><rect x="215" y="1195" width="24" height="24" fill="none" stroke="#777"/><rect x="340" y="1195" width="24" height="24" fill="none" stroke="#777"/><rect x="465" y="1195" width="24" height="24" fill="none" stroke="#777"/>`,
+${scheduleRow.decorations}`,
+  };
+}
+
+function classicScheduleCheckboxRow() {
+  const boxY = 1195;
+  const boxSize = 24;
+  const labelGap = 12;
+  const labelY = 1194;
+  const labelHeight = 42;
+  const fontSize = 30;
+  const options = [
+    { key: "morning", text: "아침", boxX: 90, labelWidth: 80 },
+    { key: "lunch", text: "점심", boxX: 220, labelWidth: 80 },
+    { key: "evening", text: "저녁", boxX: 350, labelWidth: 80 },
+    { key: "bedtime", text: "취침전", boxX: 480, labelWidth: 120 },
+  ];
+  return {
+    regions: options.map((option) => region(
+      `schedule-${option.key}`,
+      option.text,
+      option.boxX + boxSize + labelGap,
+      labelY,
+      option.labelWidth,
+      labelHeight,
+      { semanticRole: "schedule", regionClass: "distractor", fontSize },
+    )),
+    decorations: options.map((option) => (
+      `<rect class="schedule-checkbox" data-option="${option.key}" x="${option.boxX}" y="${boxY}" width="${boxSize}" height="${boxSize}" fill="none" stroke="#777"/>`
+    )).join(""),
   };
 }
 

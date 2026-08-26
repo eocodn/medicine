@@ -34,7 +34,7 @@ import { PARSER_STRUCTURE_REVISION, applyParserStructureVariant } from "./parser
 
 const GENERATOR_ID = "medicine_full_document_synthetic";
 const GENERATOR_VERSION = 6;
-const GENERATOR_REVISION = 10;
+const GENERATOR_REVISION = 11;
 const STATE_FILE = ".generation-state.json";
 const LOCK_FILE = ".generation.lock";
 
