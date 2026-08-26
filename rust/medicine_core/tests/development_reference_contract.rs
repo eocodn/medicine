@@ -3,8 +3,8 @@
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use medicine_core::development_reference::{
-    DevelopmentReferenceError, DevelopmentReferenceManager, ReferenceDatabaseValidator,
-    ReferenceReleaseSource,
+    DevelopmentReferenceError, DevelopmentReferenceManager, DevelopmentReferenceUpdateStatus,
+    ReferenceDatabaseValidator, ReferenceReleaseSource,
 };
 use medicine_core::reference_state::ReferenceStateCodec;
 use medicine_core::{
@@ -41,6 +41,23 @@ impl ReferenceReleaseSource for FakeSource {
             .ok_or_else(|| DevelopmentReferenceError::from_message("missing fake artifact"))?;
         std::fs::write(target, bytes)
             .map_err(|error| DevelopmentReferenceError::from_message(error.to_string()))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PanicSource;
+
+impl ReferenceReleaseSource for PanicSource {
+    fn fetch_latest(&self) -> Result<ReferenceRootSelection, DevelopmentReferenceError> {
+        panic!("valid LKG startup must not fetch latest release")
+    }
+
+    fn download(
+        &self,
+        _artifact: &ReferenceReleaseArtifact,
+        _target: &Path,
+    ) -> Result<(), DevelopmentReferenceError> {
+        panic!("valid LKG startup must not download reference artifacts")
     }
 }
 
@@ -170,7 +187,7 @@ fn bootstrap_repairs_writable_content_addressed_file_before_state_adoption() {
 }
 
 #[test]
-fn valid_lkg_starts_offline_without_redownloading() {
+fn valid_lkg_startup_does_not_fetch_latest() {
     let root = temp_root();
     let (release, archive) = fixture_release(17, 2);
     DevelopmentReferenceManager::new(
@@ -186,13 +203,10 @@ fn valid_lkg_starts_offline_without_redownloading() {
     permissions.set_mode(0o644);
     std::fs::set_permissions(&installed, permissions).unwrap();
 
-    let offline = FakeSource {
-        root: Err("offline".into()),
-        artifacts: HashMap::new(),
-    };
-    let selected = DevelopmentReferenceManager::new(root.clone(), 1, offline, AcceptingValidator)
-        .ensure_installed()
-        .expect("offline LKG startup");
+    let selected =
+        DevelopmentReferenceManager::new(root.clone(), 1, PanicSource, AcceptingValidator)
+            .ensure_installed()
+            .expect("local LKG startup");
     assert_eq!(selected.database, Some(installed.clone()));
     let mode = std::fs::metadata(&installed).unwrap().permissions().mode();
     assert_eq!(
@@ -217,29 +231,33 @@ fn update_is_staged_and_activates_on_next_start() {
     .unwrap();
 
     let (release2, archive2) = fixture_release(18, 4);
-    let first_after_update = DevelopmentReferenceManager::new(
+    let update_manager = DevelopmentReferenceManager::new(
         root.clone(),
         1,
         source_for(release2.clone(), archive2),
         AcceptingValidator,
-    )
-    .ensure_installed()
-    .expect("stage update");
+    );
+    let startup = update_manager
+        .ensure_installed()
+        .expect("start from existing LKG before update check");
     assert_eq!(
-        first_after_update.database,
+        startup.database,
         Some(root.join(format!("mobile-{}.sqlite", release1.target_sha256)))
+    );
+    let before_update =
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+    assert!(before_update.pending.is_none());
+    assert_eq!(
+        update_manager.check_for_update().expect("stage update"),
+        DevelopmentReferenceUpdateStatus::Staged
     );
     let staged =
         ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
     assert_eq!(staged.pending.unwrap().release_sequence, 18);
 
-    let offline = FakeSource {
-        root: Err("offline".into()),
-        artifacts: HashMap::new(),
-    };
-    let next = DevelopmentReferenceManager::new(root.clone(), 1, offline, AcceptingValidator)
+    let next = DevelopmentReferenceManager::new(root.clone(), 1, PanicSource, AcceptingValidator)
         .ensure_installed()
-        .expect("activate pending before offline update check");
+        .expect("activate pending without an update fetch");
     assert_eq!(
         next.database,
         Some(root.join(format!("mobile-{}.sqlite", release2.target_sha256)))
@@ -248,6 +266,54 @@ fn update_is_staged_and_activates_on_next_start() {
         ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
     assert_eq!(activated.active.unwrap().release_sequence, 18);
     assert_eq!(activated.previous.unwrap().release_sequence, 17);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn authenticated_update_retirement_is_applied_only_by_explicit_update_check() {
+    let root = temp_root();
+    let (release, archive) = fixture_release(17, 8);
+    DevelopmentReferenceManager::new(
+        root.clone(),
+        1,
+        source_for(release.clone(), archive),
+        AcceptingValidator,
+    )
+    .ensure_installed()
+    .unwrap();
+
+    let retired = ReferenceRootSelection::Retired {
+        release_sequence: 19,
+        root_hash: digest(b"retired-update-root"),
+        current_contract_major: 2,
+        minimum_supported_contract_major: 2,
+    };
+    let manager = DevelopmentReferenceManager::new(
+        root.clone(),
+        1,
+        FakeSource {
+            root: Ok(retired),
+            artifacts: HashMap::new(),
+        },
+        AcceptingValidator,
+    );
+    let startup = manager
+        .ensure_installed()
+        .expect("local startup before retirement check");
+    assert_eq!(
+        startup.database,
+        Some(root.join(format!("mobile-{}.sqlite", release.target_sha256)))
+    );
+    assert_eq!(
+        manager
+            .check_for_update()
+            .expect("authenticated retirement check"),
+        DevelopmentReferenceUpdateStatus::UpdateRequired
+    );
+    let state =
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+    assert_eq!(state.highest_retired_contract_major, 1);
+    assert_eq!(state.highest_seen_root_sequence, 19);
     let _ = std::fs::remove_dir_all(root);
 }
 

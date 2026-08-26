@@ -64,6 +64,13 @@ pub struct DevelopmentReferenceSelection {
     pub unavailable_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DevelopmentReferenceUpdateStatus {
+    NoChange,
+    Staged,
+    UpdateRequired,
+}
+
 pub trait ReferenceReleaseSource {
     fn fetch_latest(&self) -> Result<ReferenceRootSelection, DevelopmentReferenceError>;
     fn download(
@@ -152,11 +159,6 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
             if store.is_contract_retired(self.contract_major) {
                 return Ok(unavailable());
             }
-            match self.try_stage_update(&mut store, &current) {
-                Ok(true) => return Ok(unavailable()),
-                Ok(false) => {}
-                Err(error) => eprintln!("reference update skipped; using LKG: {error}"),
-            }
             return Ok(DevelopmentReferenceSelection {
                 database: Some(self.file_for(&current)),
                 unavailable_reason: None,
@@ -166,6 +168,27 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
             return Ok(unavailable());
         }
         self.bootstrap(&mut store)
+    }
+
+    pub fn check_for_update(
+        &self,
+    ) -> Result<DevelopmentReferenceUpdateStatus, DevelopmentReferenceError> {
+        fs::create_dir_all(&self.root).map_err(io_error("create reference data directory"))?;
+        let _operation_lock = ReferenceDirectoryLock::acquire(&self.root.join(".operation.lock"))?;
+        let mut store = self.load_store()?;
+        if store.is_contract_retired(self.contract_major) {
+            return Ok(DevelopmentReferenceUpdateStatus::UpdateRequired);
+        }
+        let current = store
+            .snapshot()
+            .active
+            .filter(|version| self.is_installed_valid(version))
+            .ok_or_else(|| {
+                DevelopmentReferenceError::new(
+                    "cannot check for reference update without a valid active LKG",
+                )
+            })?;
+        self.try_stage_update(&mut store, &current)
     }
 
     fn bootstrap(
@@ -260,13 +283,11 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
         result
     }
 
-    /// Returns true only when an authenticated retirement makes the current
-    /// runtime contract unavailable. Network/update failures retain the LKG.
     fn try_stage_update(
         &self,
         store: &mut ReferenceStore,
         current: &ReferenceVersion,
-    ) -> Result<bool, DevelopmentReferenceError> {
+    ) -> Result<DevelopmentReferenceUpdateStatus, DevelopmentReferenceError> {
         let release = match self.source.fetch_latest()? {
             ReferenceRootSelection::Release(release) => release,
             ReferenceRootSelection::Retired {
@@ -279,7 +300,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
                     .map_err(|error| DevelopmentReferenceError::new(error.to_string()))?;
                 self.persist_store(store)?;
                 self.cleanup_update_files(None)?;
-                return Ok(true);
+                return Ok(DevelopmentReferenceUpdateStatus::UpdateRequired);
             }
         };
         store
@@ -291,6 +312,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
         {
             ReferenceUpdatePlan::UpToDate | ReferenceUpdatePlan::RollbackRejected => {
                 self.cleanup_update_files(None)?;
+                return Ok(DevelopmentReferenceUpdateStatus::NoChange);
             }
             ReferenceUpdatePlan::IdentityConflict => {
                 return Err(DevelopmentReferenceError::new(
@@ -320,9 +342,9 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
                 self.persist_store(store)?;
                 self.cleanup_update_files(None)?;
                 self.cleanup_unreferenced(store)?;
+                return Ok(DevelopmentReferenceUpdateStatus::Staged);
             }
         }
-        Ok(false)
     }
 
     fn prepare_update_artifact(
@@ -512,6 +534,21 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
 pub fn ensure_development_reference(
     config: DevelopmentReferenceConfig,
 ) -> Result<DevelopmentReferenceSelection, DevelopmentReferenceError> {
+    development_reference_manager(config)?.ensure_installed()
+}
+
+pub fn check_development_reference_update(
+    config: DevelopmentReferenceConfig,
+) -> Result<DevelopmentReferenceUpdateStatus, DevelopmentReferenceError> {
+    development_reference_manager(config)?.check_for_update()
+}
+
+fn development_reference_manager(
+    config: DevelopmentReferenceConfig,
+) -> Result<
+    DevelopmentReferenceManager<HttpsReferenceReleaseSource, RustReferenceDatabaseValidator>,
+    DevelopmentReferenceError,
+> {
     if config.contract_major <= 0 {
         return Err(DevelopmentReferenceError::new(
             "reference contract major must be positive",
@@ -522,13 +559,12 @@ pub fn ensure_development_reference(
     let verifier = ReferenceManifestVerifier::new(trust.keys);
     let source =
         HttpsReferenceReleaseSource::new(&config.base_url, verifier, config.contract_major as u64)?;
-    DevelopmentReferenceManager::new(
+    Ok(DevelopmentReferenceManager::new(
         config.reference_dir,
         config.contract_major,
         source,
         RustReferenceDatabaseValidator,
-    )
-    .ensure_installed()
+    ))
 }
 
 fn unavailable() -> DevelopmentReferenceSelection {

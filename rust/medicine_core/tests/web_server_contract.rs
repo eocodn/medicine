@@ -6,7 +6,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use medicine_core::web::{build_router, WebConfig, BROWSER_CSP};
+use medicine_core::web::{build_router, build_runtime, WebConfig, BROWSER_CSP};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf};
@@ -258,6 +258,53 @@ async fn local_http_adapter_serves_ui_and_routes_api_through_medicine_engine() {
         con.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .expect("personal schema version"),
         medicine_core::PERSONAL_SCHEMA_VERSION
+    );
+
+    fs::remove_file(reference).ok();
+    fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test]
+async fn runtime_handle_can_disable_reference_after_listener_startup() {
+    let reference = reference_db("web-server-live-retirement");
+    let (config, root) = fixture_config(Some(reference.clone()), None);
+    let runtime = build_runtime(config).expect("build mutable Rust web runtime");
+    let app = runtime.router.clone();
+
+    runtime
+        .engine
+        .write()
+        .expect("lock medicine engine")
+        .set_reference_available(false, Some("update_required"))
+        .expect("disable retired reference");
+
+    let health = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("health response after retirement");
+    let health_body = response_json(health).await;
+    assert_eq!(health_body["reference_available"], false);
+    assert_eq!(health_body["reference_status"], "update_required");
+
+    let products = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/products?q=fixture")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("product response after retirement");
+    assert_eq!(products.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response_json(products).await["reference_status"],
+        "update_required"
     );
 
     fs::remove_file(reference).ok();
