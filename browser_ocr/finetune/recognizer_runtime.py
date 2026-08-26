@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-import numpy as np
-
 from .dataset import DatasetError
 
 
@@ -132,6 +130,11 @@ class PersistentRecognizer:
         self._post_process = post_process
 
     def recognize_paths(self, paths: Iterable[str | Path]) -> dict[str, dict[str, object]]:
+        try:
+            import numpy as np
+        except ImportError as exc:
+            raise DatasetError(f"failed to import recognizer tensor runtime: {exc}") from exc
+
         ordered = [str(Path(path).resolve()) for path in paths]
         recognized: dict[str, dict[str, object]] = {}
         # Keep inference one crop at a time. Same-shape batching is faster, but it

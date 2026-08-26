@@ -57,17 +57,17 @@ def _write_json_atomic(path: Path, value: object) -> None:
     os.replace(temporary, path)
 
 
-def load_selected_recognizer(baseline_result_path: str | Path) -> dict[str, object]:
-    result_path = Path(baseline_result_path).resolve()
-    result = _read_json_object(result_path, "baseline result")
+def load_recognizer_result(recognizer_result_path: str | Path) -> dict[str, object]:
+    result_path = Path(recognizer_result_path).resolve()
+    result = _read_json_object(result_path, "recognizer result")
     if result.get("status") != "ok":
-        raise DatasetError("baseline result is not completed successfully")
+        raise DatasetError("recognizer result is not completed successfully")
     checkpoint_value = result.get("best_checkpoint")
     expected_sha = result.get("best_checkpoint_sha256")
     if not isinstance(checkpoint_value, str) or not checkpoint_value:
-        raise DatasetError("baseline result is missing best_checkpoint")
+        raise DatasetError("recognizer result is missing best_checkpoint")
     if not isinstance(expected_sha, str) or len(expected_sha) != 64:
-        raise DatasetError("baseline result is missing best_checkpoint_sha256")
+        raise DatasetError("recognizer result is missing best_checkpoint_sha256")
     checkpoint = Path(checkpoint_value).resolve()
     if not checkpoint.is_file():
         raise DatasetError(f"selected recognizer checkpoint does not exist: {checkpoint}")
@@ -175,7 +175,7 @@ def build_ocr_producer_profile(
     args: argparse.Namespace,
     recognizer: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    selected = recognizer or load_selected_recognizer(args.baseline_result)
+    selected = recognizer or load_recognizer_result(args.recognizer_result)
     manifest_path = Path(args.detector_manifest).resolve()
     detector = _detector_profile(manifest_path, Path(args.detector_root).resolve(), args.detector_model)
     if args.detector_edge <= 0:
@@ -185,8 +185,8 @@ def build_ocr_producer_profile(
     implementation = _implementation_profile()
     paddleocr = _paddleocr_profile(Path(args.paddleocr_root).resolve(), Path(selected["config"]).resolve())
     return {
-        "schema_version": 2,
-        "baseline_result_sha256": _sha256_file(selected["result_path"]),
+        "schema_version": 3,
+        "recognizer_result_sha256": _sha256_file(selected["result_path"]),
         "recognizer_checkpoint_sha256": selected["checkpoint_sha256"],
         "recognizer_config_sha256": selected["config_sha256"],
         "recognizer_device": args.recognizer_device,
@@ -207,7 +207,7 @@ def build_ocr_producer_profile(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ocr-full-document")
     parser.add_argument("--image", required=True)
-    parser.add_argument("--baseline-result", required=True)
+    parser.add_argument("--recognizer-result", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--paddleocr-root", default="/opt/PaddleOCR")
     parser.add_argument("--detector-manifest", default="/workspace/browser_ocr/detection/detector-models.json")

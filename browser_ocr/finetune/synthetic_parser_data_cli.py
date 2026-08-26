@@ -72,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--corpus-manifest", required=True)
     parser.add_argument("--truth-samples", required=True)
-    parser.add_argument("--baseline-result", required=True)
+    parser.add_argument("--recognizer-result", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--paddleocr-root", default="/opt/PaddleOCR")
     parser.add_argument("--detector-manifest", default="/workspace/browser_ocr/detection/detector-models.json")

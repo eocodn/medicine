@@ -302,23 +302,6 @@ services:
           create_host_path: false
     entrypoint: ["python", "-m", "browser_ocr.document_parsing.dataset_cli"]
 
-  ocr-finetune:
-    build:
-      context: .
-      dockerfile: browser_ocr/finetune/Dockerfile
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    working_dir: /workspace
-    environment:
-      PYTHONDONTWRITEBYTECODE: "1"
-    volumes:
-      - .:/workspace
-      - type: bind
-        source: ${MEDICINE_ARTIFACTS_DIR:-${HOME}/dev/.artifacts/medicine}
-        target: /artifacts
-        bind:
-          create_host_path: false
-    entrypoint: ["python", "-m", "browser_ocr.finetune.cli"]
-
   ocr-finetune-test:
     build:
       context: .

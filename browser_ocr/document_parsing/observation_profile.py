@@ -9,7 +9,7 @@ from .training_dataset import ParserDatasetError
 
 _SHA_FIELDS = {
     "image_sha256",
-    "baseline_result_sha256",
+    "recognizer_result_sha256",
     "recognizer_checkpoint_sha256",
     "recognizer_config_sha256",
     "detector_manifest_sha256",
@@ -64,8 +64,8 @@ def runtime_observation_profile(raw: object, *, expected_image_sha256: str | Non
     if unknown:
         raise ParserDatasetError(f"unsupported runtime OCR profile fields: {', '.join(map(str, unknown))}")
     profile = {str(key): value for key, value in raw.items()}
-    if profile.get("schema_version") != 2:
-        raise ParserDatasetError("runtime OCR profile schema_version must be 2")
+    if profile.get("schema_version") != 3:
+        raise ParserDatasetError("runtime OCR profile schema_version must be 3")
     for field in _SHA_FIELDS:
         profile[field] = _require_sha256(profile.get(field), field)
     if expected_image_sha256 is not None and profile["image_sha256"] != expected_image_sha256:

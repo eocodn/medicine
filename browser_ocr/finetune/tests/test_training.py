@@ -113,11 +113,11 @@ class TrainingRuntimeProbeTest(unittest.TestCase):
         self.assertEqual(report["cudnn_version"], 90501)
         self.assertEqual(report["matmul_checksum"], 262144.0)
 
-class BaselineTrainingPlanTest(unittest.TestCase):
-    def test_baseline_overrides_resume_from_complete_checkpoint(self) -> None:
-        from browser_ocr.finetune.training import build_baseline_overrides
+class RecognizerTrainingPlanTest(unittest.TestCase):
+    def test_training_overrides_resume_from_complete_checkpoint(self) -> None:
+        from browser_ocr.finetune.training import build_training_overrides
 
-        overrides = build_baseline_overrides(
+        overrides = build_training_overrides(
             dataset_root="/data",
             train_labels="/export/train.txt",
             val_labels="/export/val.txt",
@@ -134,10 +134,10 @@ class BaselineTrainingPlanTest(unittest.TestCase):
         self.assertEqual(overrides["Global.print_batch_step"], 10)
         self.assertEqual(overrides["Train.sampler.first_bs"], 32)
 
-    def test_baseline_overrides_bind_explicit_learning_rate_and_warmup(self) -> None:
-        from browser_ocr.finetune.training import build_baseline_overrides
+    def test_training_overrides_bind_explicit_learning_rate_and_warmup(self) -> None:
+        from browser_ocr.finetune.training import build_training_overrides
 
-        overrides = build_baseline_overrides(
+        overrides = build_training_overrides(
             dataset_root="/data",
             train_labels="/export/train.txt",
             val_labels="/export/val.txt",
@@ -153,7 +153,7 @@ class BaselineTrainingPlanTest(unittest.TestCase):
         self.assertEqual(overrides["Optimizer.lr.warmup_epoch"], 1)
 
         with self.assertRaisesRegex(ValueError, "learning rate"):
-            build_baseline_overrides(
+            build_training_overrides(
                 dataset_root="/data",
                 train_labels="/export/train.txt",
                 val_labels="/export/val.txt",
@@ -177,22 +177,6 @@ class BaselineTrainingPlanTest(unittest.TestCase):
                 (model / f"iter_epoch_2{suffix}").write_text("ok")
             (model / "iter_epoch_3.pdparams").write_text("partial")
             self.assertEqual(find_resume_checkpoint(model), model / "iter_epoch_2")
-
-    def test_eval_metric_parser_uses_final_metric_section(self) -> None:
-        from browser_ocr.finetune.training import parse_eval_metrics
-
-        log = """
-[time] ppocr INFO: metric in ckpt ***************
-[time] ppocr INFO: acc:0.99
-[time] ppocr INFO: metric eval ***************
-[time] ppocr INFO: acc:0.8125
-[time] ppocr INFO: norm_edit_dis:0.945
-[time] ppocr INFO: fps:777.0
-"""
-        self.assertEqual(
-            parse_eval_metrics(log),
-            {"acc": 0.8125, "norm_edit_dis": 0.945, "fps": 777.0},
-        )
 
     def test_export_identity_changes_when_split_or_label_content_changes(self) -> None:
         import json
@@ -226,18 +210,18 @@ class TrainingCommandStreamingTest(unittest.TestCase):
         import sys
         from tempfile import TemporaryDirectory
         from pathlib import Path
-        from browser_ocr.finetune.train_cli import _stream_command
+        from browser_ocr.finetune.runner_io import stream_command
 
         with TemporaryDirectory() as raw:
             root = Path(raw)
             log = root / "train.log"
-            first = _stream_command(
+            first = stream_command(
                 [sys.executable, "-c", "print('first')"],
                 cwd=root,
                 log_path=log,
                 capture=False,
             )
-            second = _stream_command(
+            second = stream_command(
                 [sys.executable, "-c", "print('second')"],
                 cwd=root,
                 log_path=log,

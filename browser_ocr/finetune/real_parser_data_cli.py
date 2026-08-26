@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the selected full-document OCR stack over external de-identified prescription photos and create parser annotation drafts",
     )
     parser.add_argument("--source-manifest", required=True)
-    parser.add_argument("--baseline-result", required=True)
+    parser.add_argument("--recognizer-result", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--paddleocr-root", default="/opt/PaddleOCR")
     parser.add_argument("--detector-manifest", default="/workspace/browser_ocr/detection/detector-models.json")
@@ -76,11 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _batch_profile(args: argparse.Namespace, source) -> dict[str, Any]:
     source_manifest = Path(args.source_manifest).resolve()
-    baseline = Path(args.baseline_result).resolve()
+    recognizer_result = Path(args.recognizer_result).resolve()
     if not source_manifest.is_file():
         raise ParserDatasetError(f"real source manifest does not exist: {source_manifest}")
-    if not baseline.is_file():
-        raise ParserDatasetError(f"baseline result does not exist: {baseline}")
+    if not recognizer_result.is_file():
+        raise ParserDatasetError(f"recognizer result does not exist: {recognizer_result}")
     return {
         "schema_version": 2,
         "source_dataset_id": source.dataset_id,

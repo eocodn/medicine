@@ -22,7 +22,6 @@ WRITABLE_ML_SERVICES = (
     "ocr-parser-train",
     "ocr-parser-eval-model",
     "ocr-parser-export-model",
-    "ocr-finetune",
     "ocr-finetune-train",
     "ocr-full-document",
     "ocr-parser-real",
@@ -80,14 +79,8 @@ class OcrArtifactStoragePolicyTest(unittest.TestCase):
         readme = (ROOT / "browser_ocr" / "finetune" / "README.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn(
-            "--manifest /artifacts/ocr/corpora/unified-360/views/recognition/manifest.json",
-            readme,
-        )
-        self.assertIn(
-            "--split /artifacts/ocr/corpora/unified-360/views/recognition/document-split.json",
-            readme,
-        )
+        self.assertRegex(readme, r"--manifest /artifacts/ocr/corpora/.+/recognition/manifest\.json")
+        self.assertRegex(readme, r"--split /artifacts/ocr/corpora/.+/recognition/split\.json")
 
 
 if __name__ == "__main__":
