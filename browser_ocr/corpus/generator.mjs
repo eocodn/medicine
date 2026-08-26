@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { acquireAdvisoryLock, releaseAdvisoryLock } from "./advisory_lock.mjs";
 import { validateCorpus } from "./contract.mjs";
 import {
   assignDrugPools,
@@ -378,15 +379,6 @@ export async function runConcurrentBatches({ start, end, concurrency, worker, on
   }
 }
 
-async function acquireLock(path) {
-  try {
-    return await open(path, "wx");
-  } catch (error) {
-    if (error && error.code === "EEXIST") throw new Error("synthetic generation is already running for this output directory");
-    throw error;
-  }
-}
-
 function injectedDrugSource(catalog) {
   const sourceSha = digest(JSON.stringify(catalog.map((product) => [product.item_seq, product.product_name])));
   return {
@@ -447,7 +439,10 @@ export async function generateUnifiedCorpus({
   const manifestPath = join(outputDir, "manifest.json");
   const statePath = join(outputDir, STATE_FILE);
   const lockPath = join(outputDir, LOCK_FILE);
-  const lock = await acquireLock(lockPath);
+  const lock = await acquireAdvisoryLock(lockPath, {
+    busyMessage: "synthetic generation is already running for this output directory",
+    label: "synthetic generation lock",
+  });
   try {
     const existingManifest = await maybeReadJson(manifestPath);
     if (existingManifest) {
@@ -507,10 +502,7 @@ export async function generateUnifiedCorpus({
     await rm(statePath, { force: true });
     return corpus;
   } finally {
-    await lock.close();
-    await unlink(lockPath).catch((error) => {
-      if (!error || error.code !== "ENOENT") throw error;
-    });
+    await releaseAdvisoryLock(lock);
   }
 }
 
