@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, open, readFile, rename, rm, stat, unlink } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
+import { acquireAdvisoryLock, releaseAdvisoryLock } from "../advisory_lock.mts";
 import { loadDetectorModelManifest } from "./detector_models.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -122,20 +123,14 @@ async function extractPinned(modelName, model, archivePath, outputDir) {
   return extracted;
 }
 
-async function acquireLock(path) {
-  try {
-    return await open(path, "wx");
-  } catch (error) {
-    if (error?.code === "EEXIST") throw new Error("detector asset fetch is already running for this output directory");
-    throw error;
-  }
-}
-
 export async function fetchDetectorAssets({ outputDir, modelNames = null }) {
   const root = resolve(outputDir);
   await mkdir(root, { recursive: true });
   const lockPath = join(root, LOCK_FILE);
-  const lock = await acquireLock(lockPath);
+  const lock = await acquireAdvisoryLock(lockPath, {
+    busyMessage: "detector asset fetch is already running for this output directory",
+    label: "detector asset fetch lock",
+  });
   try {
     const manifest = await loadDetectorModelManifest();
     const requested = modelNames || Object.keys(manifest.models);
@@ -163,10 +158,7 @@ export async function fetchDetectorAssets({ outputDir, modelNames = null }) {
     }
     return { schema_version: 1, output_dir: root, models: results };
   } finally {
-    await lock.close();
-    await unlink(lockPath).catch((error) => {
-      if (error?.code !== "ENOENT") throw error;
-    });
+    await releaseAdvisoryLock(lock);
   }
 }
 

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
-import { acquireAdvisoryLock, releaseAdvisoryLock } from "../advisory_lock.mts";
+import { acquireAdvisoryLock, releaseAdvisoryLock } from "../../advisory_lock.mts";
 
 const options = {
   busyMessage: "fixture lock is already held",
@@ -40,7 +40,7 @@ test("advisory lock uses live kernel ownership instead of lock-file existence", 
 test("advisory lock ownership survives loss of acquisition helper processes", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-corpus-advisory-lock-owner-"));
   const lockPath = join(root, ".fixture.lock");
-  const helperUrl = pathToFileURL(join(process.cwd(), "browser_ocr/corpus/advisory_lock.mts")).href;
+  const helperUrl = pathToFileURL(join(process.cwd(), "browser_ocr/advisory_lock.mts")).href;
   const ownerSource = `
     import { acquireAdvisoryLock } from ${JSON.stringify(helperUrl)};
     await acquireAdvisoryLock(process.env.LOCK_PATH, {

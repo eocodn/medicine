@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, open, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,6 +8,7 @@ import { validateCorpus } from "./contract.mjs";
 import { loadDetectorModelManifest, benchmarkMatrix } from "./detector_models.mjs";
 import { evaluateDetections } from "./evaluation.mjs";
 import { fetchDetectorAssets } from "./fetch_detector_assets.mjs";
+import { acquireAdvisoryLock, releaseAdvisoryLock } from "../advisory_lock.mts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUNNER_VERSION = 1;
@@ -77,15 +78,6 @@ async function loadCorpus(corpusPath) {
   return validateCorpus(JSON.parse(await readFile(corpusPath, "utf8")));
 }
 
-async function acquireBenchmarkLock(path) {
-  try {
-    return await open(path, "wx");
-  } catch (error) {
-    if (error?.code === "EEXIST") throw new Error("detector benchmark is already running for this output directory");
-    throw error;
-  }
-}
-
 async function verifyCompletedRuns(outputDir, state) {
   const keys = new Set();
   for (const run of state.runs || []) {
@@ -126,7 +118,10 @@ export async function runDetectorBenchmarkMatrix({
 
   await mkdir(join(resolvedOutput, "runs"), { recursive: true });
   const benchmarkLockPath = join(resolvedOutput, ".benchmark.lock");
-  const benchmarkLock = await acquireBenchmarkLock(benchmarkLockPath);
+  const benchmarkLock = await acquireAdvisoryLock(benchmarkLockPath, {
+    busyMessage: "detector benchmark is already running for this output directory",
+    label: "detector benchmark lock",
+  });
   try {
   const assets = await fetchDetectorAssets({ outputDir: resolvedCache, modelNames: selectedModels });
   const assetByName = new Map(assets.models.map((asset) => [asset.model, asset]));
@@ -215,9 +210,6 @@ export async function runDetectorBenchmarkMatrix({
   await rm(statePath, { force: true });
   return summary;
   } finally {
-    await benchmarkLock.close();
-    await unlink(benchmarkLockPath).catch((error) => {
-      if (error?.code !== "ENOENT") throw error;
-    });
+    await releaseAdvisoryLock(benchmarkLock);
   }
 }
