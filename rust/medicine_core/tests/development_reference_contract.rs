@@ -13,7 +13,8 @@ use medicine_core::{
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
@@ -137,6 +138,38 @@ fn first_bootstrap_installs_content_addressed_reference_and_state() {
 }
 
 #[test]
+fn bootstrap_repairs_writable_content_addressed_file_before_state_adoption() {
+    let root = temp_root();
+    std::fs::create_dir_all(&root).unwrap();
+    let (release, archive) = fixture_release(17, 7);
+    let mut decoder = flate2::read::GzDecoder::new(archive.as_slice());
+    let mut target = Vec::new();
+    decoder.read_to_end(&mut target).unwrap();
+    let final_path = root.join(format!("mobile-{}.sqlite", release.target_sha256));
+    std::fs::write(&final_path, target).unwrap();
+    let mut permissions = std::fs::metadata(&final_path).unwrap().permissions();
+    permissions.set_mode(0o644);
+    std::fs::set_permissions(&final_path, permissions).unwrap();
+
+    let selected = DevelopmentReferenceManager::new(
+        root.clone(),
+        1,
+        source_for(release.clone(), archive),
+        AcceptingValidator,
+    )
+    .ensure_installed()
+    .expect("adopt crash-after-rename artifact");
+
+    assert_eq!(selected.database.as_deref(), Some(final_path.as_path()));
+    let mode = std::fs::metadata(&final_path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o222, 0, "adopted reference must be read-only");
+    let state =
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+    assert_eq!(state.active.unwrap().release_sequence, 17);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn valid_lkg_starts_offline_without_redownloading() {
     let root = temp_root();
     let (release, archive) = fixture_release(17, 2);
@@ -148,6 +181,10 @@ fn valid_lkg_starts_offline_without_redownloading() {
     )
     .ensure_installed()
     .unwrap();
+    let installed = root.join(format!("mobile-{}.sqlite", release.target_sha256));
+    let mut permissions = std::fs::metadata(&installed).unwrap().permissions();
+    permissions.set_mode(0o644);
+    std::fs::set_permissions(&installed, permissions).unwrap();
 
     let offline = FakeSource {
         root: Err("offline".into()),
@@ -156,9 +193,12 @@ fn valid_lkg_starts_offline_without_redownloading() {
     let selected = DevelopmentReferenceManager::new(root.clone(), 1, offline, AcceptingValidator)
         .ensure_installed()
         .expect("offline LKG startup");
+    assert_eq!(selected.database, Some(installed.clone()));
+    let mode = std::fs::metadata(&installed).unwrap().permissions().mode();
     assert_eq!(
-        selected.database,
-        Some(root.join(format!("mobile-{}.sqlite", release.target_sha256)))
+        mode & 0o222,
+        0,
+        "referenced LKG must be resealed before use"
     );
     let _ = std::fs::remove_dir_all(root);
 }

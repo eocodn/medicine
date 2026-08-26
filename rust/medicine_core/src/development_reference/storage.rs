@@ -6,6 +6,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 const IO_BUFFER_SIZE: usize = 1024 * 1024;
@@ -59,6 +60,36 @@ pub(super) fn normalize_checkpoint(
         return Ok(());
     }
     fs::remove_file(target).map_err(io_error("discard invalid reference checkpoint"))
+}
+
+pub(super) fn seal_read_only(path: &Path) -> Result<(), DevelopmentReferenceError> {
+    let mut permissions = fs::metadata(path)
+        .map_err(io_error("read reference file permissions"))?
+        .permissions();
+    if permissions.mode() & 0o222 != 0 {
+        permissions.set_mode(permissions.mode() & !0o222);
+        fs::set_permissions(path, permissions)
+            .map_err(io_error("make reference file read-only"))?;
+    }
+    let mode = fs::metadata(path)
+        .map_err(io_error("verify reference file permissions"))?
+        .permissions()
+        .mode();
+    if mode & 0o222 != 0 {
+        return Err(DevelopmentReferenceError::new(
+            "reference file remains writable after sealing",
+        ));
+    }
+    File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(io_error("sync sealed reference file"))?;
+    Ok(())
+}
+
+pub(super) fn sync_directory(path: &Path) -> Result<(), DevelopmentReferenceError> {
+    File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(io_error("sync reference directory"))
 }
 
 pub(super) fn verify_file_identity(

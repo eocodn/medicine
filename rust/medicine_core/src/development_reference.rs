@@ -16,7 +16,6 @@ use crate::reference_state::{ReferenceStateCodec, ReferenceStore, ReferenceVersi
 use crate::reference_trust::load_reference_trust_manifest;
 use std::fmt::{Display, Formatter};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 mod http;
@@ -24,8 +23,8 @@ mod storage;
 
 use http::HttpsReferenceReleaseSource;
 use storage::{
-    atomic_write, available_bytes, io_error, normalize_checkpoint, verify_file_identity,
-    ReferenceDirectoryLock,
+    atomic_write, available_bytes, io_error, normalize_checkpoint, seal_read_only, sync_directory,
+    verify_file_identity, ReferenceDirectoryLock,
 };
 
 const STORAGE_SAFETY_MARGIN_BYTES: u64 = 16 * 1024 * 1024;
@@ -195,7 +194,10 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
             .map_err(|error| DevelopmentReferenceError::new(error.to_string()))?;
         self.cleanup_bootstrap_files(None)?;
         let final_path = self.file_for(&plan.target);
-        if self.is_file_valid(&final_path, &plan.target) {
+        if self
+            .ensure_installed_file(&final_path, &plan.target)
+            .is_ok()
+        {
             store
                 .install_initial(plan.target.clone())
                 .map_err(|error| DevelopmentReferenceError::new(error.to_string()))?;
@@ -402,12 +404,27 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
 
     fn is_installed_valid(&self, version: &ReferenceVersion) -> bool {
         version.contract_major == self.contract_major
-            && self.is_file_valid(&self.file_for(version), version)
+            && self
+                .ensure_installed_file(&self.file_for(version), version)
+                .is_ok()
     }
 
-    fn is_file_valid(&self, path: &Path, version: &ReferenceVersion) -> bool {
-        verify_file_identity(path, version.size_bytes as u64, &version.sha256).is_ok()
-            && self.validator.verify(path, version).is_ok()
+    fn validate_file(
+        &self,
+        path: &Path,
+        version: &ReferenceVersion,
+    ) -> Result<(), DevelopmentReferenceError> {
+        verify_file_identity(path, version.size_bytes as u64, &version.sha256)?;
+        self.validator.verify(path, version)
+    }
+
+    fn ensure_installed_file(
+        &self,
+        path: &Path,
+        version: &ReferenceVersion,
+    ) -> Result<(), DevelopmentReferenceError> {
+        self.validate_file(path, version)?;
+        seal_read_only(path)
     }
 
     fn finish_content_addressed(
@@ -416,20 +433,17 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
         final_path: &Path,
         version: &ReferenceVersion,
     ) -> Result<(), DevelopmentReferenceError> {
-        if final_path.is_file() && self.is_file_valid(final_path, version) {
+        if final_path.is_file() && self.ensure_installed_file(final_path, version).is_ok() {
             let _ = fs::remove_file(candidate);
             return Ok(());
         }
         if final_path.exists() {
             fs::remove_file(final_path).map_err(io_error("remove invalid reference target"))?;
         }
+        self.validate_file(candidate, version)?;
+        seal_read_only(candidate)?;
         fs::rename(candidate, final_path).map_err(io_error("install verified reference target"))?;
-        let mut permissions = fs::metadata(final_path)
-            .map_err(io_error("read installed reference permissions"))?
-            .permissions();
-        permissions.set_mode(permissions.mode() & !0o222);
-        fs::set_permissions(final_path, permissions)
-            .map_err(io_error("make installed reference read-only"))?;
+        sync_directory(&self.root)?;
         Ok(())
     }
 
