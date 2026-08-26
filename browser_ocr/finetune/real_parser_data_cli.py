@@ -20,8 +20,7 @@ from browser_ocr.document_parsing.observation_profile import runtime_observation
 from browser_ocr.document_parsing.training_dataset import ParserDatasetError
 
 from .full_document_cli import build_ocr_producer_profile
-from .full_document_cli import build_parser as build_full_document_parser
-from .full_document_cli import run_full_document
+from .full_document_runtime import FullDocumentRuntime
 
 
 def _sha256_file(path: Path) -> str:
@@ -89,29 +88,6 @@ def _batch_profile(args: argparse.Namespace, source) -> dict[str, Any]:
         "source_samples_sha256": _sha256_file(source.samples_path),
         "ocr_producer": build_ocr_producer_profile(args),
     }
-
-
-def _full_document_args(
-    args: argparse.Namespace,
-    *,
-    image_path: Path,
-    output_dir: Path,
-) -> argparse.Namespace:
-    return build_full_document_parser().parse_args(
-        [
-            "--image", str(image_path),
-            "--baseline-result", str(Path(args.baseline_result).resolve()),
-            "--output-dir", str(output_dir),
-            "--paddleocr-root", str(Path(args.paddleocr_root).resolve()),
-            "--detector-manifest", str(Path(args.detector_manifest).resolve()),
-            "--detector-root", str(Path(args.detector_root).resolve()),
-            "--detector-model", args.detector_model,
-            "--detector-edge", str(args.detector_edge),
-            "--detector-threads", str(args.detector_threads),
-            "--recognizer-device", args.recognizer_device,
-            "--json",
-        ]
-    )
 
 
 def _validate_completed_artifacts(
@@ -225,6 +201,7 @@ def run_real_batch(args: argparse.Namespace) -> dict[str, Any]:
             _atomic_json(state_path, {"schema_version": 1, "status": "running", "profile": profile, "completed": 0})
 
         entries: list[dict[str, str]] = []
+        runtime: FullDocumentRuntime | None = None
         for index, sample in enumerate(source.samples, start=1):
             document_id = str(sample["document_id"])
             image_path = (source.root / str(sample["image"])).resolve()
@@ -252,12 +229,11 @@ def run_real_batch(args: argparse.Namespace) -> dict[str, Any]:
                     if annotation_immutable_sha256(annotation) != annotation_immutable_sha256(expected):
                         raise ParserDatasetError("uncheckpointed real annotation immutable snapshot differs from runtime OCR")
                 else:
-                    result = run_full_document(
-                        _full_document_args(
-                            args,
-                            image_path=image_path,
-                            output_dir=runtime_root / document_id,
-                        )
+                    if runtime is None:
+                        runtime = FullDocumentRuntime(args)
+                    result = runtime.run(
+                        image_path=image_path,
+                        output_dir=runtime_root / document_id,
                     )
                     if runtime_observation_producer(result.get("profile"), expected_image_sha256=str(sample["image_sha256"])) != profile["ocr_producer"]:
                         raise ParserDatasetError("runtime OCR producer differs from real batch profile")

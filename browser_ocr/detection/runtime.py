@@ -48,6 +48,65 @@ def _verify_extracted_assets(archive_path: Path, archive_root: str, onnx_path: P
     return onnx_sha256, config_sha256
 
 
+def _require_sha256(value: object, label: str) -> str:
+    if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise ValueError(f"detector {label} must be a lowercase SHA-256")
+    return value
+
+
+def _verify_runtime_assets(root: Path, model_name: str, model: dict[str, Any]) -> dict[str, object]:
+    archive_root = model.get("archive_root")
+    onnx_file = model.get("onnx_file")
+    config_file = model.get("config_file")
+    if not all(isinstance(value, str) and value for value in (archive_root, onnx_file, config_file)):
+        raise ValueError(f"detector model {model_name} is missing extracted asset paths")
+    extracted = root / str(archive_root)
+    onnx_path = extracted / str(onnx_file)
+    config_path = extracted / str(config_file)
+    for label, path in (("ONNX", onnx_path), ("config", config_path)):
+        if not path.is_file():
+            raise ValueError(f"detector {label} asset is missing: {path}")
+
+    archive_value = model.get("archive")
+    if archive_value is not None:
+        if not isinstance(archive_value, str) or not archive_value:
+            raise ValueError(f"detector model {model_name} archive must be a non-empty string")
+        archive_path = root / archive_value
+        if not archive_path.is_file():
+            raise ValueError(f"detector archive asset is missing: {archive_path}")
+        expected_archive_sha = _require_sha256(model.get("sha256"), "archive sha256")
+        archive_sha = _sha256_file(archive_path)
+        if archive_sha != expected_archive_sha:
+            raise ValueError(f"detector archive SHA-256 mismatch: {archive_path}")
+        onnx_sha, config_sha = _verify_extracted_assets(archive_path, str(archive_root), onnx_path, config_path)
+        return {
+            "asset_sha256": archive_sha,
+            "onnx_sha256": onnx_sha,
+            "config_sha256": config_sha,
+            "onnx_path": onnx_path,
+            "config_path": config_path,
+        }
+
+    expected_onnx_sha = _require_sha256(model.get("onnx_sha256"), "onnx_sha256")
+    expected_config_sha = _require_sha256(model.get("config_sha256"), "config_sha256")
+    asset_sha = _require_sha256(model.get("sha256"), "asset sha256")
+    if asset_sha != expected_onnx_sha:
+        raise ValueError("trained detector candidate asset SHA-256 must equal its ONNX SHA-256")
+    onnx_sha = _sha256_file(onnx_path)
+    if onnx_sha != expected_onnx_sha:
+        raise ValueError(f"detector ONNX SHA-256 mismatch: {onnx_path}")
+    config_sha = _sha256_file(config_path)
+    if config_sha != expected_config_sha:
+        raise ValueError(f"detector config SHA-256 mismatch: {config_path}")
+    return {
+        "asset_sha256": asset_sha,
+        "onnx_sha256": onnx_sha,
+        "config_sha256": config_sha,
+        "onnx_path": onnx_path,
+        "config_path": config_path,
+    }
+
+
 @dataclass(frozen=True)
 class DetectorRuntime:
     model_name: str
@@ -100,21 +159,13 @@ def load_detector_runtime(
     if not isinstance(model, dict):
         raise ValueError(f"unknown detector model {model_name}")
 
-    archive_path = root / model["archive"]
-    extracted = root / model["archive_root"]
-    onnx_path = extracted / model["onnx_file"]
-    config_path = extracted / model["config_file"]
-    for label, path in (("archive", archive_path), ("ONNX", onnx_path), ("config", config_path)):
-        if not path.is_file():
-            raise ValueError(f"detector {label} asset is missing: {path}")
-
-    archive_sha256 = _sha256_file(archive_path)
-    if archive_sha256 != model["sha256"]:
-        raise ValueError(f"detector archive SHA-256 mismatch: {archive_path}")
+    verified = _verify_runtime_assets(root, model_name, model)
+    onnx_path = Path(verified["onnx_path"])
+    config_path = Path(verified["config_path"])
     validate_official_config(config_path, model_name, model)
-    onnx_sha256, config_sha256 = _verify_extracted_assets(
-        archive_path, str(model["archive_root"]), onnx_path, config_path
-    )
+    archive_sha256 = str(verified["asset_sha256"])
+    onnx_sha256 = str(verified["onnx_sha256"])
+    config_sha256 = str(verified["config_sha256"])
 
     cv2.setNumThreads(1)
     options = ort.SessionOptions()

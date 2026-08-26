@@ -156,6 +156,8 @@ class DetectorCandidateConversionTest(unittest.TestCase):
             model = benchmark["models"][result["benchmark_model_key"]]
             self.assertEqual(model["config_model_name"], "PP-OCRv5_mobile_det")
             self.assertEqual(model["sha256"], result["onnx_sha256"])
+            self.assertEqual(model["onnx_sha256"], result["onnx_sha256"])
+            self.assertEqual(model["config_sha256"], result["inference_config_sha256"])
             self.assertEqual(model["postprocess"]["box_threshold"], 0.6)
 
     def test_agent_control_cli_reports_conversion_preflight_as_json(self) -> None:

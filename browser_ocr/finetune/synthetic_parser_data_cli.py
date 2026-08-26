@@ -15,8 +15,7 @@ from browser_ocr.document_parsing.training_builders import build_runtime_dataset
 from browser_ocr.document_parsing.training_dataset import ParserDatasetError, load_parser_dataset
 
 from .full_document_cli import build_ocr_producer_profile
-from .full_document_cli import build_parser as build_full_document_parser
-from .full_document_cli import run_full_document
+from .full_document_runtime import FullDocumentRuntime
 
 
 LOCK_FILE = ".synthetic-parser-runtime.lock"
@@ -82,6 +81,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--detector-edge", type=int, default=640)
     parser.add_argument("--detector-threads", type=int, default=1)
     parser.add_argument("--recognizer-device", choices=("gpu", "cpu"), default="gpu")
+    parser.add_argument(
+        "--max-new-documents",
+        type=int,
+        default=None,
+        help="Optionally exit successfully after checkpointing this many newly OCR-processed documents; omitted means no document-count limit",
+    )
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -173,22 +178,6 @@ def _batch_profile(args: argparse.Namespace, corpus: Mapping[str, Any], samples:
     }
 
 
-def _full_document_args(args: argparse.Namespace, *, image_path: Path, output_dir: Path) -> argparse.Namespace:
-    return build_full_document_parser().parse_args([
-        "--image", str(image_path),
-        "--baseline-result", str(Path(args.baseline_result).resolve()),
-        "--output-dir", str(output_dir),
-        "--paddleocr-root", str(Path(args.paddleocr_root).resolve()),
-        "--detector-manifest", str(Path(args.detector_manifest).resolve()),
-        "--detector-root", str(Path(args.detector_root).resolve()),
-        "--detector-model", args.detector_model,
-        "--detector-edge", str(args.detector_edge),
-        "--detector-threads", str(args.detector_threads),
-        "--recognizer-device", args.recognizer_device,
-        "--json",
-    ])
-
-
 def _validate_runtime_result(
     result_path: Path,
     *,
@@ -274,6 +263,12 @@ def _validate_completed(
 
 
 def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
+    if args.max_new_documents is not None and (
+        isinstance(args.max_new_documents, bool)
+        or not isinstance(args.max_new_documents, int)
+        or args.max_new_documents <= 0
+    ):
+        raise ParserDatasetError("max-new-documents must be a positive integer when provided")
     corpus_manifest = Path(args.corpus_manifest).resolve()
     truth_samples = Path(args.truth_samples).resolve()
     corpus, samples = _load_source(corpus_manifest, truth_samples)
@@ -313,6 +308,8 @@ def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
             })
 
         producer = profile["ocr_producer"]
+        runtime: FullDocumentRuntime | None = None
+        newly_processed = 0
         for index, sample in enumerate(samples, start=1):
             image_path = Path(sample["image_path"])
             if not image_path.is_file() or _sha256_file(image_path) != sample["image_sha256"]:
@@ -330,11 +327,13 @@ def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
             if result_path.is_file():
                 _validate_runtime_result(result_path, sample=sample, producer=producer)
             else:
-                returned = run_full_document(_full_document_args(
-                    args,
+                if runtime is None:
+                    runtime = FullDocumentRuntime(args)
+                returned = runtime.run(
                     image_path=image_path,
                     output_dir=runtime_root / sample["document_id"],
-                ))
+                )
+                newly_processed += 1
                 persisted = _validate_runtime_result(result_path, sample=sample, producer=producer)
                 if returned != persisted:
                     raise ParserDatasetError("runtime OCR returned result differs from persisted result")
@@ -349,6 +348,19 @@ def run_synthetic_batch(args: argparse.Namespace) -> dict[str, Any]:
                 "runtime_results": completed_results,
             })
             print(f"[ocr-parser-synthetic-runtime] {index}/{len(samples)} {sample['document_id']}", file=sys.stderr, flush=True)
+            if (
+                args.max_new_documents is not None
+                and newly_processed >= args.max_new_documents
+                and completed < len(samples)
+            ):
+                return {
+                    "status": "partial",
+                    "documents": len(samples),
+                    "completed": completed,
+                    "remaining": len(samples) - completed,
+                    "runtime_root": str(runtime_root),
+                    "profile": profile,
+                }
 
         split_counts = {name: sum(sample["split"] == name for sample in samples) for name in ("train", "val", "test")}
         datasets: dict[str, str] = {}

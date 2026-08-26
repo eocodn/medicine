@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from typing import Any, Mapping
 
 from .training_dataset import ParserDatasetError
@@ -21,6 +23,8 @@ _SHA_FIELDS = {
 _IMPLEMENTATION_SHA_FIELDS = {
     "full_document",
     "full_document_cli",
+    "full_document_runtime",
+    "recognizer_runtime",
     "crop_refinement",
     "orientation",
     "orientation_runtime",
@@ -39,6 +43,7 @@ _PROFILE_FIELDS = {
 _RAW_PROFILE_FIELDS = _PROFILE_FIELDS
 _RAW_IMPLEMENTATION_FIELDS = _IMPLEMENTATION_SHA_FIELDS
 _ALLOWED_DETECTOR_MODELS = {"PP-OCRv5_mobile_det", "PP-OCRv6_tiny_det", "PP-OCRv6_small_det"}
+_TRAINED_DETECTOR_MODEL = re.compile(r"PP-OCRv5_mobile_det_candidate_[0-9a-f]{12}")
 _ORACLE_FIELDS = {"producer", "truth_samples_sha256"}
 _SYNTHETIC_FIELDS = {"producer", "revision", "seed", "truth_samples_sha256"}
 
@@ -68,7 +73,7 @@ def runtime_observation_profile(raw: object, *, expected_image_sha256: str | Non
     if profile.get("recognizer_device") not in {"cpu", "gpu"}:
         raise ParserDatasetError("runtime OCR profile recognizer_device must be cpu or gpu")
     detector_model = str(profile.get("detector_model") or "").strip()
-    if detector_model not in _ALLOWED_DETECTOR_MODELS:
+    if detector_model not in _ALLOWED_DETECTOR_MODELS and _TRAINED_DETECTOR_MODEL.fullmatch(detector_model) is None:
         raise ParserDatasetError("runtime OCR profile detector_model must be a supported detector id")
     profile["detector_model"] = detector_model
     for field in ("detector_edge", "detector_threads"):

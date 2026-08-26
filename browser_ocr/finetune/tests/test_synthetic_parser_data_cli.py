@@ -35,6 +35,8 @@ def _producer() -> dict[str, object]:
         "implementation": {
             "full_document": "b" * 64,
             "full_document_cli": "c" * 64,
+            "full_document_runtime": "3" * 64,
+            "recognizer_runtime": "4" * 64,
             "crop_refinement": "d" * 64,
             "orientation": "1" * 64,
             "orientation_runtime": "2" * 64,
@@ -133,6 +135,16 @@ class SyntheticParserDataCliTest(unittest.TestCase):
         self.assertEqual(args.detector_edge, 640)
         self.assertEqual(args.detector_threads, 1)
         self.assertEqual(args.recognizer_device, "gpu")
+        self.assertIsNone(args.max_new_documents)
+
+    def test_batch_rejects_nonpositive_document_chunk(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest, truth_path, _ = self._source(root)
+            args = self._args(root, manifest, truth_path)
+            args.max_new_documents = 0
+            with self.assertRaisesRegex(Exception, "max-new-documents"):
+                run_synthetic_batch(args)
 
     def test_batch_runs_one_frozen_ocr_producer_and_builds_runtime_split_datasets(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -171,12 +183,23 @@ class SyntheticParserDataCliTest(unittest.TestCase):
                 (output / "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
                 return result
 
+            constructions = []
+
+            class FakeRuntime:
+                def __init__(self, runtime_args):
+                    constructions.append(runtime_args)
+
+                def run(self, *, image_path: Path, output_dir: Path):
+                    full_args = type("Args", (), {"image": str(image_path), "output_dir": str(output_dir)})()
+                    return fake_run(full_args)
+
             with patch("browser_ocr.finetune.synthetic_parser_data_cli.build_ocr_producer_profile", return_value=producer), patch(
-                "browser_ocr.finetune.synthetic_parser_data_cli.run_full_document", side_effect=fake_run
+                "browser_ocr.finetune.synthetic_parser_data_cli.FullDocumentRuntime", FakeRuntime
             ):
                 result = run_synthetic_batch(args)
 
             self.assertEqual(result["status"], "ok")
+            self.assertEqual(len(constructions), 1)
             self.assertEqual(calls, [item["document_id"] for item in truth])
             self.assertEqual(result["documents"], 3)
             for split in ("train", "val", "test"):
@@ -187,10 +210,78 @@ class SyntheticParserDataCliTest(unittest.TestCase):
                 self.assertEqual(dataset.documents[0]["gold_rows"][0]["product_query"], "가나다정")
 
             with patch("browser_ocr.finetune.synthetic_parser_data_cli.build_ocr_producer_profile", return_value=producer), patch(
-                "browser_ocr.finetune.synthetic_parser_data_cli.run_full_document", side_effect=AssertionError("must reuse completed batch")
+                "browser_ocr.finetune.synthetic_parser_data_cli.FullDocumentRuntime", side_effect=AssertionError("must reuse completed batch without model initialization")
             ):
                 reused = run_synthetic_batch(args)
             self.assertEqual(reused, result)
+
+
+    def test_batch_stops_cleanly_at_document_chunk_and_resumes_next_process(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest, truth_path, truth = self._source(root)
+            args = self._args(root, manifest, truth_path)
+            args.max_new_documents = 2
+            producer = _producer()
+            calls: list[str] = []
+
+            class FakeRuntime:
+                def __init__(self, runtime_args):
+                    pass
+
+                def run(self, *, image_path: Path, output_dir: Path):
+                    document_id = image_path.stem
+                    sample = next(item for item in truth if item["document_id"] == document_id)
+                    calls.append(document_id)
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    profile = {**producer, "image_sha256": sample["image_sha256"]}
+                    result = {
+                        "schema_version": 2,
+                        "status": "ok",
+                        "profile": profile,
+                        "image": {
+                            "path": str(image_path),
+                            "sha256": sample["image_sha256"],
+                            "width": 1280,
+                            "height": 1600,
+                            "source_width": 1280,
+                            "source_height": 1600,
+                        },
+                        "stages": {"orientation": {"applied_rotation_degrees": 0}},
+                        "regions": [
+                            {"index": index, "text": node["text"], "recognition_score": 0.98, "polygon": node.get("natural_text_polygon") or node["polygon"]}
+                            for index, node in enumerate(sample["nodes"], start=1)
+                        ],
+                        "text_lines": [node["text"] for node in sample["nodes"]],
+                    }
+                    (output_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+                    return result
+
+            with patch("browser_ocr.finetune.synthetic_parser_data_cli.build_ocr_producer_profile", return_value=producer), patch(
+                "browser_ocr.finetune.synthetic_parser_data_cli.FullDocumentRuntime", FakeRuntime
+            ):
+                partial = run_synthetic_batch(args)
+
+            self.assertEqual(partial["status"], "partial")
+            self.assertEqual(partial["completed"], 2)
+            self.assertEqual(partial["remaining"], 1)
+            self.assertEqual(calls, [truth[0]["document_id"], truth[1]["document_id"]])
+            state = json.loads((root / "out" / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "running")
+            self.assertEqual(state["completed"], 2)
+            self.assertFalse((root / "out" / "result.json").exists())
+
+            calls.clear()
+            with patch("browser_ocr.finetune.synthetic_parser_data_cli.build_ocr_producer_profile", return_value=producer), patch(
+                "browser_ocr.finetune.synthetic_parser_data_cli.FullDocumentRuntime", FakeRuntime
+            ):
+                completed = run_synthetic_batch(args)
+
+            self.assertEqual(completed["status"], "ok")
+            self.assertEqual(calls, [truth[2]["document_id"]])
+            state = json.loads((root / "out" / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "completed")
+            self.assertEqual(state["completed"], 3)
 
     def test_batch_rejects_truth_and_corpus_document_mismatch_before_ocr(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -200,7 +291,7 @@ class SyntheticParserDataCliTest(unittest.TestCase):
             truth_path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
             args = self._args(root, manifest, truth_path)
             with patch("browser_ocr.finetune.synthetic_parser_data_cli.build_ocr_producer_profile", return_value=_producer()), patch(
-                "browser_ocr.finetune.synthetic_parser_data_cli.run_full_document", side_effect=AssertionError("must not run OCR")
+                "browser_ocr.finetune.synthetic_parser_data_cli.FullDocumentRuntime", side_effect=AssertionError("must not run OCR")
             ):
                 with self.assertRaisesRegex(Exception, "document set"):
                     run_synthetic_batch(args)

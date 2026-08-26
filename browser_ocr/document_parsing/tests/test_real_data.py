@@ -41,6 +41,8 @@ def _runtime_profile(image_sha256: str) -> dict:
         "paddleocr_dictionary_sha256": "b" * 64,
         "implementation": {
             "full_document": "6" * 64,
+            "full_document_runtime": "7" * 64,
+            "recognizer_runtime": "8" * 64,
             "full_document_cli": "7" * 64,
             "crop_refinement": "8" * 64,
             "orientation": "1" * 64,

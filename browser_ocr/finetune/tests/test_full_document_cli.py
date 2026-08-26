@@ -12,13 +12,16 @@ from unittest.mock import patch
 
 from browser_ocr.finetune.dataset import DatasetError
 from browser_ocr.finetune.full_document_cli import (
-    _gpu_runtime_identity,
     _implementation_profile,
-    _runtime_environment_sha256,
     build_ocr_producer_profile,
     build_parser,
     load_selected_recognizer,
-    run_full_document,
+)
+from browser_ocr.finetune.full_document_runtime import FullDocumentRuntime
+from browser_ocr.finetune.runtime_environment import (
+    _gpu_runtime_identity,
+    _installed_distributions,
+    runtime_environment_sha256 as _runtime_environment_sha256,
 )
 
 
@@ -65,6 +68,8 @@ class FullDocumentCliContractTest(unittest.TestCase):
             {
                 "full_document",
                 "full_document_cli",
+                "full_document_runtime",
+                "recognizer_runtime",
                 "crop_refinement",
                 "orientation",
                 "orientation_runtime",
@@ -159,15 +164,35 @@ class FullDocumentCliContractTest(unittest.TestCase):
             self.assertEqual(second["inference_runtime_sha256"], "b" * 64)
             self.assertNotEqual(first, second)
 
+    def test_installed_distribution_inventory_ignores_runtime_added_vendor_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            site_packages = root / "site-packages"
+            vendor = root / "setuptools" / "_vendor"
+            for base, name, version in ((site_packages, "basepkg", "1.0"), (vendor, "vendored", "9.9")):
+                dist_info = base / f"{name}-{version}.dist-info"
+                dist_info.mkdir(parents=True)
+                (dist_info / "METADATA").write_text(
+                    f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+                    encoding="utf-8",
+                )
+            with patch("browser_ocr.finetune.runtime_environment.site.getsitepackages", return_value=[str(site_packages)]), \
+                 patch("browser_ocr.finetune.runtime_environment.site.getusersitepackages", return_value=str(root / "user-site")), \
+                 patch("browser_ocr.finetune.runtime_environment.site.ENABLE_USER_SITE", False), \
+                 patch.object(sys, "path", [*sys.path, str(vendor)]):
+                distributions = _installed_distributions()
+            self.assertIn(("basepkg", "1.0"), distributions)
+            self.assertNotIn(("vendored", "9.9"), distributions)
+
     def test_runtime_environment_hash_binds_native_runtime_identity(self) -> None:
         with patch(
-            "browser_ocr.finetune.full_document_cli._native_runtime_identity",
+            "browser_ocr.finetune.runtime_environment.native_runtime_identity",
             return_value={"packages": ["libgomp1=1"], "libraries": {"libgomp.so.1": "a" * 64}},
             create=True,
         ):
             first = _runtime_environment_sha256("cpu")
         with patch(
-            "browser_ocr.finetune.full_document_cli._native_runtime_identity",
+            "browser_ocr.finetune.runtime_environment.native_runtime_identity",
             return_value={"packages": ["libgomp1=1"], "libraries": {"libgomp.so.1": "b" * 64}},
             create=True,
         ):
@@ -176,13 +201,13 @@ class FullDocumentCliContractTest(unittest.TestCase):
 
     def test_runtime_environment_hash_binds_python_wheel_native_payloads(self) -> None:
         with patch(
-            "browser_ocr.finetune.full_document_cli._python_native_runtime_identity",
+            "browser_ocr.finetune.runtime_environment.python_native_runtime_identity",
             return_value={"onnxruntime": {"onnxruntime/capi/libonnxruntime.so": "a" * 64}},
             create=True,
         ):
             first = _runtime_environment_sha256("cpu")
         with patch(
-            "browser_ocr.finetune.full_document_cli._python_native_runtime_identity",
+            "browser_ocr.finetune.runtime_environment.python_native_runtime_identity",
             return_value={"onnxruntime": {"onnxruntime/capi/libonnxruntime.so": "b" * 64}},
             create=True,
         ):
@@ -236,7 +261,7 @@ class FullDocumentCliContractTest(unittest.TestCase):
                 "cudnn_version": 90501,
             }
             with patch(
-                "browser_ocr.finetune.full_document_cli._gpu_runtime_identity",
+                "browser_ocr.finetune.runtime_environment._gpu_runtime_identity",
                 return_value=runtime,
                 create=True,
             ):
@@ -265,7 +290,7 @@ class FullDocumentCliContractTest(unittest.TestCase):
                      "cudnn_version": 90501,
                  },
              ), \
-             patch("browser_ocr.finetune.full_document_cli.subprocess.run", return_value=nvidia):
+             patch("browser_ocr.finetune.runtime_environment.subprocess.run", return_value=nvidia):
             identity = _gpu_runtime_identity()
         self.assertEqual(identity["nvidia_smi"], ["GPU-fixture, Fixture GPU, 610.47, 8.9"])
 
@@ -276,9 +301,11 @@ class FullDocumentCliContractTest(unittest.TestCase):
             image.write_bytes(b"fixture-image")
             output = root / "out"
             output.mkdir()
-            profile = {"fixture": "profile"}
-            original = {"status": "ok", "profile": profile, "regions": [{"text": "ORIGINAL"}]}
+            image_sha = hashlib.sha256(image.read_bytes()).hexdigest()
             result_path = output / "result.json"
+            producer = {"fixture": "profile"}
+            profile = {**producer, "image_sha256": image_sha}
+            original = {"status": "ok", "profile": profile, "regions": [{"text": "ORIGINAL"}]}
             result_path.write_text(json.dumps(original, sort_keys=True), encoding="utf-8")
             digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
             (output / "state.json").write_text(json.dumps({
@@ -286,13 +313,10 @@ class FullDocumentCliContractTest(unittest.TestCase):
             }), encoding="utf-8")
             forged = {**original, "regions": [{"text": "FORGED OCR"}]}
             result_path.write_text(json.dumps(forged, sort_keys=True), encoding="utf-8")
-            args = build_parser().parse_args([
-                "--image", str(image), "--baseline-result", str(root / "unused.json"), "--output-dir", str(output),
-            ])
-            with patch("browser_ocr.finetune.full_document_cli.load_selected_recognizer", return_value={}), \
-                 patch("browser_ocr.finetune.full_document_cli._profile", return_value=profile):
-                with self.assertRaisesRegex(DatasetError, "result.*SHA-256|completed.*result"):
-                    run_full_document(args)
+            runtime = object.__new__(FullDocumentRuntime)
+            runtime.producer = producer
+            with self.assertRaisesRegex(DatasetError, "result.*SHA-256|completed.*result"):
+                runtime.run(image_path=image, output_dir=output)
 
 
 if __name__ == "__main__":

@@ -3,28 +3,15 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
-import importlib.metadata as importlib_metadata
-import platform
 import json
 import os
-import shutil
-import subprocess
 import sys
-import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from .crop_refinement import refine_prediction_crops
 from .dataset import DatasetError
-from .full_document import (
-    build_document_regions,
-    parse_recognition_rows,
-    sort_text_predictions,
-)
-from .native_runtime import native_runtime_identity as _native_runtime_identity
-from .native_runtime import python_native_runtime_identity as _python_native_runtime_identity
-from .orientation_runtime import resolve_page_orientation
+from .runtime_environment import runtime_environment_sha256 as _runtime_environment_sha256
 
 
 def _sha256_file(path: Path) -> str:
@@ -40,6 +27,8 @@ def _implementation_profile() -> dict[str, str]:
     sources = {
         "full_document": browser_root / "finetune" / "full_document.py",
         "full_document_cli": Path(__file__).resolve(),
+        "full_document_runtime": browser_root / "finetune" / "full_document_runtime.py",
+        "recognizer_runtime": browser_root / "finetune" / "recognizer_runtime.py",
         "crop_refinement": browser_root / "finetune" / "crop_refinement.py",
         "orientation": browser_root / "finetune" / "orientation.py",
         "orientation_runtime": browser_root / "finetune" / "orientation_runtime.py",
@@ -122,65 +111,6 @@ def _detector_profile(manifest_path: Path, model_root: Path, model_name: str) ->
         "onnx_sha256": _sha256_file(onnx_path),
         "config_sha256": _sha256_file(config_path),
     }
-
-
-def _gpu_runtime_identity() -> dict[str, object]:
-    import paddle
-
-    from .training import probe_paddle_runtime
-
-    report = dict(probe_paddle_runtime(paddle))
-    try:
-        nvidia = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=uuid,name,driver_version,compute_cap",
-                "--format=csv,noheader,nounits",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise DatasetError("GPU OCR producer identity requires a working nvidia-smi runtime report") from exc
-    rows = sorted(line.strip() for line in nvidia.stdout.splitlines() if line.strip())
-    if not rows:
-        raise DatasetError("GPU OCR producer identity received an empty nvidia-smi runtime report")
-    report["nvidia_smi"] = rows
-    return report
-
-
-def _runtime_environment_sha256(recognizer_device: str) -> str:
-    distributions = sorted({
-        (str(dist.metadata.get("Name") or "").lower(), str(dist.version))
-        for dist in importlib_metadata.distributions()
-        if dist.metadata.get("Name")
-    })
-    finetune_root = Path(__file__).resolve().parent
-    runtime_contract = {
-        name: _sha256_file(finetune_root / name)
-        for name in ("Dockerfile.train", "requirements-train.lock", "requirements-paddle-runtime.lock")
-    }
-    payload = {
-        "python": sys.version,
-        "python_implementation": platform.python_implementation(),
-        "machine": platform.machine(),
-        "system": platform.system(),
-        "distributions": distributions,
-        "native_runtime": _native_runtime_identity(),
-        "python_native_runtime": _python_native_runtime_identity(),
-        "runtime_contract": runtime_contract,
-        "recognizer_device": recognizer_device,
-    }
-    if recognizer_device == "gpu":
-        payload["gpu_runtime"] = {
-            **_gpu_runtime_identity(),
-            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
-            "nvidia_visible_devices": os.environ.get("NVIDIA_VISIBLE_DEVICES"),
-        }
-    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _selected_dictionary(config_path: Path, paddleocr_root: Path) -> Path:
@@ -307,280 +237,11 @@ def _exclusive_lock(path: Path) -> Iterator[None]:
             stream.close()
 
 
-def _run_logged(command: list[str], *, cwd: Path, log_path: Path) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.Popen(
-            command,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        assert process.stdout is not None
-        for line in process.stdout:
-            sys.stderr.write(line)
-            sys.stderr.flush()
-            log.write(line)
-            log.flush()
-        process.stdout.close()
-        return_code = process.wait()
-    if return_code != 0:
-        raise DatasetError(f"recognizer inference failed with exit code {return_code}")
-
-
-def _profile(args: argparse.Namespace, image: Path, recognizer: dict[str, object]) -> dict[str, object]:
-    producer = build_ocr_producer_profile(args, recognizer)
-    return {
-        **producer,
-        "image_sha256": _sha256_file(image),
-    }
-
-
-def _recognize_crops(
-    *,
-    paddleocr_root: Path,
-    config_path: Path,
-    checkpoint: Path,
-    crop_dir: Path,
-    output_path: Path,
-    log_path: Path,
-    use_gpu: bool,
-) -> dict[str, dict[str, object]]:
-    command = [
-        sys.executable,
-        "tools/infer_rec.py",
-        "-c",
-        str(config_path),
-        "-o",
-        f"Global.use_gpu={'True' if use_gpu else 'False'}",
-        "Global.distributed=False",
-        f"Global.checkpoints={checkpoint}",
-        f"Global.infer_img={crop_dir}",
-        f"Global.save_res_path={output_path}",
-    ]
-    _run_logged(command, cwd=paddleocr_root, log_path=log_path)
-    expected = [str(path.resolve()) for path in sorted(crop_dir.glob("region-*.png"))]
-    if not output_path.is_file():
-        raise DatasetError("recognizer inference did not produce its result file")
-    return parse_recognition_rows(output_path.read_text(encoding="utf-8"), expected)
-
-
-def _orientation_probe_quality(
-    recognized: dict[str, dict[str, object]],
-    paths: list[str],
-) -> float:
-    if not paths:
-        return 0.0
-    quality = 0.0
-    for path in paths:
-        item = recognized[path]
-        text = "".join(str(item.get("text") or "").split())
-        score = float(item.get("score") or 0.0)
-        # Upside-down crops can occasionally produce a high-confidence single
-        # glyph. Require a little decoded content without over-penalizing short
-        # numeric regimen fields.
-        content = min(len(text) / 3.0, 1.0)
-        quality += score * content
-    return max(0.0, min(1.0, quality / len(paths)))
-
-
-def _recognize_orientation_probes(
-    probes: dict[int, list[object]],
-    *,
-    paddleocr_root: Path,
-    config_path: Path,
-    checkpoint: Path,
-    output_dir: Path,
-    use_gpu: bool,
-) -> dict[int, float]:
-    import cv2
-
-    probe_dir = output_dir / "orientation-probes"
-    shutil.rmtree(probe_dir, ignore_errors=True)
-    probe_dir.mkdir(parents=True)
-    paths_by_rotation: dict[int, list[str]] = {rotation: [] for rotation in probes}
-    counter = 0
-    for rotation in probes:
-        for crop in probes[rotation]:
-            counter += 1
-            path = probe_dir / f"region-{counter:04d}.png"
-            if not cv2.imwrite(str(path), crop):
-                raise DatasetError(f"failed to write orientation probe crop: {path}")
-            paths_by_rotation[rotation].append(str(path.resolve()))
-    if counter == 0:
-        return {rotation: 0.0 for rotation in probes}
-    recognized = _recognize_crops(
-        paddleocr_root=paddleocr_root,
-        config_path=config_path,
-        checkpoint=checkpoint,
-        crop_dir=probe_dir,
-        output_path=output_dir / "orientation-recognition.txt",
-        log_path=output_dir / "orientation-recognition.log",
-        use_gpu=use_gpu,
-    )
-    return {
-        rotation: _orientation_probe_quality(recognized, paths_by_rotation[rotation])
-        for rotation in probes
-    }
-
-
 def run_full_document(args: argparse.Namespace) -> dict[str, object]:
-    image_path = Path(args.image).resolve()
-    if not image_path.is_file():
-        raise DatasetError(f"input image does not exist: {image_path}")
-    output_dir = Path(args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    state_path = output_dir / "state.json"
-    result_path = output_dir / "result.json"
-    recognizer = load_selected_recognizer(args.baseline_result)
-    profile = _profile(args, image_path, recognizer)
+    from .full_document_runtime import FullDocumentRuntime
 
-    with _exclusive_lock(output_dir / ".pipeline.lock"):
-        if state_path.is_file():
-            state = _read_json_object(state_path, "full-document state")
-            if state.get("profile") != profile:
-                raise DatasetError("full-document output profile differs from the requested inputs/models")
-            if state.get("status") == "completed":
-                expected_result_sha = state.get("result_sha256")
-                if not isinstance(expected_result_sha, str) or len(expected_result_sha) != 64:
-                    raise DatasetError("completed full-document state is missing result SHA-256")
-                if not result_path.is_file() or _sha256_file(result_path) != expected_result_sha:
-                    raise DatasetError("completed full-document result SHA-256 mismatch")
-                result = _read_json_object(result_path, "full-document result")
-                if result.get("profile") != profile or result.get("status") != "ok":
-                    raise DatasetError("completed full-document state/result disagree")
-                return result
-        elif any(path.name != ".pipeline.lock" for path in output_dir.iterdir()):
-            raise DatasetError("full-document output directory is non-empty without authoritative state")
-
-        state = {"schema_version": 2, "status": "running", "profile": profile}
-        _write_json_atomic(state_path, state)
-        crop_dir = output_dir / "crops"
-        shutil.rmtree(crop_dir, ignore_errors=True)
-        crop_dir.mkdir(parents=True)
-        for stale in (output_dir / "recognition.txt", output_dir / "recognition.log", result_path):
-            stale.unlink(missing_ok=True)
-
-        try:
-            import cv2
-
-            from browser_ocr.detection.runtime import load_detector_runtime
-
-            image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
-            if image is None:
-                raise DatasetError(f"failed to decode input image: {image_path}")
-            source_height, source_width = image.shape[:2]
-            detector_started = time.perf_counter()
-            detector = load_detector_runtime(
-                model_manifest_path=Path(args.detector_manifest),
-                model_root=Path(args.detector_root),
-                model_name=args.detector_model,
-                detector_edge=args.detector_edge,
-                threads=args.detector_threads,
-            )
-            if detector.onnx_sha256 != profile["detector_onnx_sha256"] or detector.config_sha256 != profile["detector_config_sha256"]:
-                raise DatasetError("loaded detector assets changed after OCR producer profile resolution")
-            predictions = sort_text_predictions(detector.predict(image))
-            detector_ms = (time.perf_counter() - detector_started) * 1000.0
-
-            orientation_started = time.perf_counter()
-            image, predictions, orientation = resolve_page_orientation(
-                image,
-                predictions,
-                probe_scorer=lambda probes: _recognize_orientation_probes(
-                    dict(probes),
-                    paddleocr_root=Path(args.paddleocr_root).resolve(),
-                    config_path=recognizer["config"],
-                    checkpoint=recognizer["checkpoint"],
-                    output_dir=output_dir,
-                    use_gpu=args.recognizer_device == "gpu",
-                ),
-            )
-            orientation_ms = (time.perf_counter() - orientation_started) * 1000.0
-            prediction_crops = refine_prediction_crops(image, predictions)
-            predictions = [prediction for prediction, _ in prediction_crops]
-
-            crop_paths: list[str] = []
-            for index, (_, crop) in enumerate(prediction_crops, start=1):
-                crop_path = crop_dir / f"region-{index:04d}.png"
-                if not cv2.imwrite(str(crop_path), crop):
-                    raise DatasetError(f"failed to write recognition crop: {crop_path}")
-                crop_paths.append(str(crop_path.resolve()))
-
-            recognition_ms = 0.0
-            if crop_paths:
-                recognition_started = time.perf_counter()
-                recognized = _recognize_crops(
-                    paddleocr_root=Path(args.paddleocr_root).resolve(),
-                    config_path=recognizer["config"],
-                    checkpoint=recognizer["checkpoint"],
-                    crop_dir=crop_dir,
-                    output_path=output_dir / "recognition.txt",
-                    log_path=output_dir / "recognition.log",
-                    use_gpu=args.recognizer_device == "gpu",
-                )
-                recognition_ms = (time.perf_counter() - recognition_started) * 1000.0
-                regions = build_document_regions(predictions, crop_paths, recognized)
-                recognition_status = "ok"
-            else:
-                regions = []
-                recognition_status = "skipped_no_detections"
-
-            height, width = image.shape[:2]
-            result = {
-                "schema_version": 2,
-                "status": "ok",
-                "profile": profile,
-                "image": {
-                    "path": str(image_path),
-                    "sha256": profile["image_sha256"],
-                    "width": width,
-                    "height": height,
-                    "source_width": source_width,
-                    "source_height": source_height,
-                },
-                "stages": {
-                    "detection": {
-                        "status": "ok",
-                        "model": detector.model_name,
-                        "detector_edge": detector.detector_edge,
-                        "boxes": len(predictions),
-                        "latency_ms": round(detector_ms, 3),
-                        "model_bytes": detector.model_bytes,
-                    },
-                    "orientation": {
-                        "status": "ok",
-                        **orientation,
-                        "latency_ms": round(orientation_ms, 3),
-                    },
-                    "recognition": {
-                        "status": recognition_status,
-                        "model": "korean_PP-OCRv5_mobile_rec",
-                        "checkpoint_sha256": recognizer["checkpoint_sha256"],
-                        "regions": len(regions),
-                        "latency_ms": round(recognition_ms, 3),
-                        "device": args.recognizer_device,
-                    },
-                },
-                "regions": regions,
-                "text_lines": [region["text"] for region in regions],
-            }
-            _write_json_atomic(result_path, result)
-            _write_json_atomic(state_path, {
-                "schema_version": 2,
-                "status": "completed",
-                "profile": profile,
-                "result_sha256": _sha256_file(result_path),
-            })
-            return result
-        except Exception as exc:
-            _write_json_atomic(
-                state_path,
-                {"schema_version": 2, "status": "failed", "profile": profile, "error": str(exc)},
-            )
-            raise
+    runtime = FullDocumentRuntime(args)
+    return runtime.run(image_path=args.image, output_dir=args.output_dir)
 
 
 def main(argv: list[str] | None = None) -> int:

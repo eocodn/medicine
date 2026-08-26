@@ -124,7 +124,7 @@ def prepare_candidate_conversion(
     stage_profile = verified["profile"]
     profile = {
         "schema_version": 1,
-        "runner": "ppocrv5-mobile-detector-onnx-convert-v1",
+        "runner": "ppocrv5-mobile-detector-onnx-convert-v2",
         "stage_manifest_sha256": verified["stage_manifest_sha256"],
         "training_result_sha256": stage_profile["training_result_sha256"],
         "checkpoint_sha256": stage_profile["checkpoint_sha256"],
@@ -278,7 +278,7 @@ def _verify_onnx_and_parity(*, paddle_dir: Path, onnx_path: Path) -> dict[str, o
     return {"toolchain": toolchain, "checks": checks, "max_abs_error": maximum}
 
 
-def _benchmark_manifest(*, key: str, onnx_sha: str, runtime_spec: Mapping[str, object]) -> dict[str, object]:
+def _benchmark_manifest(*, key: str, onnx_sha: str, config_sha: str, runtime_spec: Mapping[str, object]) -> dict[str, object]:
     return {
         "schema_version": 1,
         "source": "medicine trained detector candidate",
@@ -289,6 +289,7 @@ def _benchmark_manifest(*, key: str, onnx_sha: str, runtime_spec: Mapping[str, o
                 "config_file": "inference.yml",
                 "sha256": onnx_sha,
                 "onnx_sha256": onnx_sha,
+                "config_sha256": config_sha,
                 "config_model_name": runtime_spec["model_name"],
                 "preprocess": runtime_spec["preprocess"],
                 "postprocess": runtime_spec["postprocess"],
@@ -370,8 +371,11 @@ def run_candidate_conversion(
             shutil.copyfile(paddle_dir / "inference.yml", output_dir / "inference.yml")
             runtime_spec = load_detector_runtime_spec(output_dir / "inference.yml")
             onnx_sha = _sha256_file(onnx_path)
+            config_sha = _sha256_file(output_dir / "inference.yml")
             model_key = f"PP-OCRv5_mobile_det_candidate_{str(profile['checkpoint_sha256'])[:12]}"
-            benchmark = _benchmark_manifest(key=model_key, onnx_sha=onnx_sha, runtime_spec=runtime_spec)
+            benchmark = _benchmark_manifest(
+                key=model_key, onnx_sha=onnx_sha, config_sha=config_sha, runtime_spec=runtime_spec
+            )
             benchmark_path = output_dir / "benchmark-models.json"
             _write_json_atomic(benchmark_path, benchmark)
             result = {
@@ -381,7 +385,7 @@ def run_candidate_conversion(
                 "benchmark_model_key": model_key,
                 "onnx_sha256": onnx_sha,
                 "onnx_size_bytes": onnx_path.stat().st_size,
-                "inference_config_sha256": _sha256_file(output_dir / "inference.yml"),
+                "inference_config_sha256": config_sha,
                 "benchmark_manifest_sha256": _sha256_file(benchmark_path),
                 "runtime_spec": runtime_spec,
                 "parity": parity,
