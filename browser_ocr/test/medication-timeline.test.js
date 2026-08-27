@@ -8,7 +8,7 @@ function timelineContext() {
   const context = {};
   vm.createContext(context);
   vm.runInContext(
-    fs.readFileSync(path.join(__dirname, "../../medicine_app/static/timeline.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "../../ui/dist/timeline.js"), "utf8"),
     context,
   );
   return context;

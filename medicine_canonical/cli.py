@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .build import (
@@ -18,10 +17,9 @@ from .inspection import canonical_product_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .mobile import build_mobile_database
 from .reference_contracts.registry import build_supported_contract_window
-from medicine_app.reference_update import verify_reference_database
-from .release import apply_chunk_patch, prepare_release
-from .release_r2 import download_object_from_env
+from medicine_reference.reference_update import verify_reference_database
 from .release_r2_public import audit_public_bucket_from_env
+from .release_r2_runtime import download_object_from_env
 from .release_window import (
     build_and_publish_contract_window_from_env,
     publish_contract_directory_from_env,
@@ -59,6 +57,14 @@ def _emit(payload: dict, as_json: bool) -> None:
 def _reference_progress(event: dict[str, object]) -> None:
     print(
         json.dumps({"reference_progress": event}, ensure_ascii=False, separators=(",", ":")),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _canonical_progress(event: dict[str, object]) -> None:
+    print(
+        json.dumps({"canonical_progress": event}, ensure_ascii=False, separators=(",", ":")),
         file=sys.stderr,
         flush=True,
     )
@@ -234,21 +240,6 @@ def build_parser() -> argparse.ArgumentParser:
     substance_verify.add_argument("--db", type=Path, default=DEFAULT_SUBSTANCE_DB)
     substance_verify.add_argument("--json", action="store_true")
 
-    release_create = sub.add_parser("release-create", help="Build verified full and exact-byte delta mobile DB artifacts")
-    release_create.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
-    release_create.add_argument("--mobile-manifest", type=Path, default=Path("data/db/mobile.manifest.json"))
-    release_create.add_argument("--output-dir", type=Path, default=Path("artifacts/reference-release"))
-    release_create.add_argument("--previous-db", type=Path)
-    release_create.add_argument("--previous-dataset-id")
-    release_create.add_argument("--created-at")
-    release_create.add_argument("--json", action="store_true")
-
-    release_apply = sub.add_parser("release-apply", help="Apply and verify an exact-byte mobile DB delta")
-    release_apply.add_argument("--source", type=Path, required=True)
-    release_apply.add_argument("--patch", type=Path, required=True)
-    release_apply.add_argument("--output", type=Path, required=True)
-    release_apply.add_argument("--json", action="store_true")
-
     release_verify = sub.add_parser(
         "release-verify-envelope",
         help="Verify a signed reference release manifest envelope",
@@ -307,10 +298,13 @@ def main(argv=None) -> int:
             ingredient_page_size=args.ingredient_page_size,
             workers=args.workers,
             progress=not args.quiet,
+            job_progress=None if args.quiet else _canonical_progress,
         )
     elif args.command == "build":
         payload = assemble_canonical_database(
-            args.db, _mfds_source_layout(args)
+            args.db,
+            _mfds_source_layout(args),
+            progress=_canonical_progress,
         )
     elif args.command == "rebuild":
         payload = build_canonical_database(
@@ -322,6 +316,7 @@ def main(argv=None) -> int:
             ingredient_page_size=args.ingredient_page_size,
             api_workers=args.workers,
             progress=not args.quiet,
+            job_progress=None if args.quiet else _canonical_progress,
         )
     elif args.command == "integrated-build":
         payload = assemble_integrated_databases(
@@ -329,6 +324,7 @@ def main(argv=None) -> int:
             args.substance_db,
             _mfds_source_layout(args),
             args.substance_raw_dir,
+            progress=_canonical_progress,
         )
     elif args.command == "integrated-rebuild":
         payload = build_integrated_databases(
@@ -342,6 +338,7 @@ def main(argv=None) -> int:
             ingredient_page_size=args.ingredient_page_size,
             api_workers=args.workers,
             progress=not args.quiet,
+            job_progress=None if args.quiet else _canonical_progress,
         )
     elif args.command == "stats":
         payload = canonical_stats(args.db)
@@ -355,7 +352,10 @@ def main(argv=None) -> int:
 
     elif args.command == "mobile-build":
         payload = build_mobile_database(
-            args.db, args.output, manifest_path=args.manifest
+            args.db,
+            args.output,
+            manifest_path=args.manifest,
+            progress=_reference_progress,
         )
     elif args.command == "reference-window-build":
         payload = build_supported_contract_window(
@@ -381,11 +381,24 @@ def main(argv=None) -> int:
             expected_dataset_id=args.dataset_id,
         )
     elif args.command == "substance-sync":
-        payload = sync_substance_identity_sources(args.raw_dir)
+        payload = sync_substance_identity_sources(
+            args.raw_dir,
+            job_progress=_canonical_progress,
+        )
     elif args.command == "substance-build":
-        payload = assemble_substance_database(args.db, args.canonical_db, args.raw_dir)
+        payload = assemble_substance_database(
+            args.db,
+            args.canonical_db,
+            args.raw_dir,
+            progress=_canonical_progress,
+        )
     elif args.command == "substance-rebuild":
-        payload = rebuild_substance_database(args.db, args.canonical_db, args.raw_dir)
+        payload = rebuild_substance_database(
+            args.db,
+            args.canonical_db,
+            args.raw_dir,
+            progress=_canonical_progress,
+        )
     elif args.command == "substance-stats":
         payload = substance_stats(args.db)
     elif args.command == "substance-unsolved":
@@ -396,18 +409,6 @@ def main(argv=None) -> int:
         payload = verify_substance_database(args.db)
         _emit(payload, args.json)
         return 0 if payload["status"] == "verified" else 2
-    elif args.command == "release-create":
-        created_at = args.created_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        payload = prepare_release(
-            args.db,
-            args.mobile_manifest,
-            args.output_dir,
-            previous_db=args.previous_db,
-            previous_dataset_id=args.previous_dataset_id,
-            created_at=created_at,
-        )
-    elif args.command == "release-apply":
-        payload = apply_chunk_patch(args.source, args.patch, args.output)
     elif args.command == "release-verify-envelope":
         verified = verify_signed_envelope(
             args.envelope.read_bytes(),

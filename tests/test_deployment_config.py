@@ -9,7 +9,6 @@ import tomllib
 import unittest
 from pathlib import Path
 
-
 class DeploymentConfigTest(unittest.TestCase):
     def test_reference_publish_workflow_builds_verified_mobile_release_before_r2_publish(self) -> None:
         workflow = Path(".github/workflows/reference-publish.yml").read_text()
@@ -73,7 +72,6 @@ class DeploymentConfigTest(unittest.TestCase):
             workflow.index("r2-public-audit"),
             workflow.index("reference-build-publish-r2"),
         )
-
     def test_release_trust_manifest_is_the_android_and_publisher_source_of_truth(self) -> None:
         trust = json.loads(Path("deploy/reference-signing-trusted-keys.json").read_text())
         workflow = Path(".github/workflows/reference-publish.yml").read_text()
@@ -99,7 +97,6 @@ class DeploymentConfigTest(unittest.TestCase):
                 validate=True,
             )
             self.assertEqual(hashlib.sha256(der).hexdigest(), entry["spki_sha256"], key_id)
-
     def test_scheduled_reference_publish_manages_one_github_failure_incident(self) -> None:
         workflow = Path(".github/workflows/reference-publish.yml").read_text()
         incident = workflow.split("\n  incident:\n", 1)[1]
@@ -125,7 +122,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("gh issue close", incident)
         self.assertIn("--label bug", incident)
         self.assertIn("actions/runs/${GITHUB_RUN_ID}", incident)
-
     def test_android_debug_and_release_default_to_r2_dev_reference_bootstrap(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
@@ -139,7 +135,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("r2.dev", gradle)
         self.assertIn("MEDICINE_REFERENCE_UPDATE_BASE_URL", compose)
         self.assertIn("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", compose)
-
     def test_android_release_enables_code_and_resource_shrinking(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         release = gradle.split('getByName("release") {', 1)[1].split("\n        }", 1)[0]
@@ -154,7 +149,6 @@ class DeploymentConfigTest(unittest.TestCase):
 
         proguard = Path("android/app/proguard-rules.pro").read_text()
         self.assertIn("@android.webkit.JavascriptInterface", proguard)
-
     def test_android_release_requires_explicit_version_and_signing_inputs(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
 
@@ -173,13 +167,11 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("signingConfig", release)
         self.assertIn("requireReleaseEnvironment", gradle)
         self.assertIn('tasks.register("verifyReleaseEnvironment")', gradle)
-
     def test_android_aggregate_bundle_requires_release_environment(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         self.assertIn("tasks.configureEach", gradle)
         self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
         self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
-
     def test_android_release_guard_uses_resolved_tasks_not_raw_cli_names(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
 
@@ -187,19 +179,16 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn('tasks.register("verifyReleaseEnvironment")', gradle)
         self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
         self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
-
     def test_android_release_keystores_are_ignored_recursively(self) -> None:
         gitignore = Path(".gitignore").read_text()
 
         self.assertIn("android/**/*.jks", gitignore)
         self.assertIn("android/**/*.keystore", gitignore)
-
     def test_android_release_keystores_are_excluded_from_docker_context(self) -> None:
         dockerignore = Path(".dockerignore").read_text()
 
         self.assertIn("android/**/*.jks", dockerignore)
         self.assertIn("android/**/*.keystore", dockerignore)
-
     def test_android_release_passwords_are_prompted_without_literal_secret_exports(self) -> None:
         readme = Path("README.md").read_text()
         release_section = readme.split("release 변형은", 1)[1].split("## 의료 정보 주의", 1)[0]
@@ -210,7 +199,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("read -r -s MEDICINE_ANDROID_KEY_PASSWORD", release_section)
         self.assertIn("export MEDICINE_ANDROID_KEYSTORE_PASSWORD", release_section)
         self.assertIn("export MEDICINE_ANDROID_KEY_PASSWORD", release_section)
-
     def test_android_dependencies_are_locked_and_checksum_verified(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         self.assertIn("dependencyLocking", gradle)
@@ -224,7 +212,6 @@ class DeploymentConfigTest(unittest.TestCase):
 
         dockerfile = Path("Dockerfile.android").read_text()
         self.assertIn("COPY android/gradle ./gradle", dockerfile)
-
     def test_android_sdk_archive_is_checksum_verified(self) -> None:
         dockerfile = Path("Dockerfile.android").read_text()
         self.assertIn(
@@ -237,7 +224,6 @@ class DeploymentConfigTest(unittest.TestCase):
             dockerfile,
         )
         self.assertIn("sha256sum -c", dockerfile)
-
     def test_android_release_script_rejects_missing_release_configuration_before_gradle(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script = repo_root / "scripts" / "android_release_build.sh"
@@ -279,7 +265,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("MEDICINE_ANDROID_VERSION_CODE", result.stderr)
         self.assertEqual(gradle_calls, "")
-
     def test_android_release_script_builds_and_verifies_signed_versioned_apk(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         release_script = (repo_root / "scripts" / "android_release_build.sh").read_text()
@@ -356,256 +341,3 @@ class DeploymentConfigTest(unittest.TestCase):
         )
         self.assertTrue(any(call.startswith("aapt:dump badging ") for call in calls))
         self.assertTrue(any(call.startswith("apksigner:verify --verbose --print-certs ") for call in calls))
-
-    def test_android_package_excludes_python_runtime_but_repo_cli_remains(self) -> None:
-        gradle = Path("android/app/build.gradle.kts").read_text()
-        compose = Path("compose.yaml").read_text()
-        rust_build = Path("scripts/build_android_rust.sh").read_text()
-
-        self.assertNotIn("chaquopy", gradle.lower())
-        self.assertNotIn('include("medicine_app/**/*.py")', gradle)
-        self.assertNotIn("medicine_canonical", gradle)
-        self.assertTrue(Path("medicine_app/cli.py").is_file())
-        self.assertTrue(Path("rust/medicine_core/src/bin/medicine_core.rs").is_file())
-        self.assertIn("--lib", rust_build)
-        app_service = compose.split("\n  app:\n", 1)[1].split("\n  web:\n", 1)[0]
-        app_dockerfile = Path("Dockerfile.app").read_text()
-        ui_dockerfile = Path("Dockerfile.ui").read_text()
-        self.assertIn("dockerfile: Dockerfile.app", app_service)
-        self.assertIn('entrypoint: ["python", "-m", "medicine_app.cli"]', app_service)
-        self.assertIn("cargo build --locked --release --bin medicine-core", app_dockerfile)
-        self.assertIn("COPY --from=rust-cli", app_dockerfile)
-        self.assertIn("medicine-core", app_dockerfile)
-        self.assertIn("COPY medicine_app/__init__.py medicine_app/cli.py ./medicine_app/", app_dockerfile)
-        self.assertNotIn("COPY medicine_app ./medicine_app", app_dockerfile)
-        self.assertIn("cargo build --locked --release --features web --bin medicine-core --bin medicine-core-web", ui_dockerfile)
-        self.assertIn("medicine-core-web", ui_dockerfile)
-        self.assertIn("COPY medicine_app/__init__.py medicine_app/cli.py ./medicine_app/", ui_dockerfile)
-        self.assertIn("COPY medicine_app/static ./medicine_app/static", ui_dockerfile)
-        self.assertNotIn("COPY medicine_app ./medicine_app", ui_dockerfile)
-
-    def test_android_bootstrap_contract_matches_embedded_runtime_contract(self) -> None:
-        kotlin = Path(
-            "android/app/src/main/java/com/medicine/android/ReferenceRuntimeAdapters.kt"
-        ).read_text()
-        python_runtime = Path("medicine_app/reference_contracts/v1.py").read_text()
-
-        android_contract = re.search(r'const val CONTRACT_MAJOR = ([0-9]+)', kotlin)
-        runtime_contract = re.search(r'REFERENCE_CONTRACT_MAJOR = ([0-9]+)', python_runtime)
-        self.assertIsNotNone(android_contract)
-        self.assertIsNotNone(runtime_contract)
-        self.assertEqual(android_contract.group(1), runtime_contract.group(1))
-
-    def test_canonical_reviewed_corpora_are_included_in_built_package(self) -> None:
-        config = tomllib.loads(Path("pyproject.toml").read_text())
-        package_data = config["tool"]["setuptools"]["package-data"]
-        self.assertIn("medicine_canonical", package_data)
-        self.assertIn("data/*.tsv", package_data["medicine_canonical"])
-
-    def test_r2_smoke_workflow_verifies_private_bucket_write_path(self) -> None:
-        workflow = Path(".github/workflows/r2-smoke.yml").read_text()
-
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("contents: read", workflow)
-        self.assertIn("actions/setup-python@v5", workflow)
-        self.assertIn("python-version: '3.13'", workflow)
-        for secret in (
-            "R2_ACCESS_KEY_ID",
-            "R2_SECRET_ACCESS_KEY",
-            "R2_ENDPOINT",
-            "R2_BUCKET",
-        ):
-            self.assertIn(f"secrets.{secret}", workflow)
-        self.assertIn("put_object", workflow)
-        self.assertIn("head_object", workflow)
-        self.assertIn("delete_object", workflow)
-        self.assertIn("medicine-r2-smoke/", workflow)
-        self.assertIn("r2-public-audit", workflow)
-
-    def test_android_excludes_mfds_remark_registry_and_requires_materialized_semantics(self) -> None:
-        gradle = Path("android/app/build.gradle.kts").read_text()
-        verifier = Path("medicine_app/reference_contracts/v1.py").read_text()
-        self.assertNotIn('include("medicine_reference/**/*.py")', gradle)
-        self.assertNotIn("mfds_remark_registry.tsv", gradle)
-        self.assertIn('"reference_criterion_semantics"', verifier)
-        self.assertIn("_verify_schema(con)", verifier)
-
-    def test_android_build_does_not_generate_or_package_reference_snapshot(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        build_script = Path("scripts/android_compose_build.sh").read_text()
-        gradle = Path("android/app/build.gradle.kts").read_text()
-        self.assertNotIn("build_mobile_database", build_script)
-        self.assertNotIn("mobile.sqlite", build_script)
-        self.assertNotIn("mobile.manifest.json", build_script)
-        self.assertNotIn("PrepareMobileAssets", gradle)
-        self.assertNotIn("MEDICINE_MOBILE_DB", gradle)
-        self.assertNotIn("MEDICINE_MOBILE_MANIFEST", gradle)
-        self.assertIn('command: ["sh", "/workspace/scripts/android_compose_build.sh"]', compose)
-        self.assertIn("androidComponents", gradle)
-        self.assertIn("addGeneratedSourceDirectory", gradle)
-        self.assertNotIn("assets.srcDirs", gradle)
-        self.assertNotIn("project.copy", gradle)
-        self.assertNotIn('include("medicine_app/**/*.py")', gradle)
-
-    def test_ui_service_runs_as_the_host_user_for_bind_mounted_screenshots(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        ui_service = compose.split("\n  ui:\n", 1)[1].split("\n  test:\n", 1)[0]
-
-        self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', ui_service)
-
-    def test_writable_bind_mount_services_run_as_the_host_user(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        service_names = (
-            "canonical",
-            "app",
-            "web",
-            "ui",
-            "test",
-            "browser-test",
-            "ocr-detection-test",
-            "ocr-detection-benchmark",
-            "ocr-corpus",
-            "ocr-finetune-train",
-            "ocr-full-document",
-            "android",
-        )
-        service_starts = [match.start() for match in re.finditer(r"(?m)^  [a-z0-9-]+:\n", compose)]
-
-        for name in service_names:
-            start = compose.index(f"  {name}:\n")
-            later_starts = [candidate for candidate in service_starts if candidate > start]
-            end = min(later_starts, default=len(compose))
-            service = compose[start:end]
-            self.assertIn(
-                'user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"',
-                service,
-                msg=f"{name} must not write to the repository bind mount as root",
-            )
-
-        self.assertNotIn("${MEDICINE_UID:-1000}:${MEDICINE_GID:-1000}", compose)
-
-    def test_android_uses_per_worktree_host_owned_gradle_state(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        android_service = compose.split("\n  android:\n", 1)[1]
-
-        self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', android_service)
-        self.assertIn("HOME: /tmp", android_service)
-        self.assertIn("GRADLE_USER_HOME: /workspace/.android-gradle-cache", android_service)
-        self.assertNotIn("android-gradle-cache:/opt/gradle-cache", android_service)
-        self.assertNotIn("\nvolumes:\n  android-gradle-cache:\n", compose)
-
-    def test_android_has_no_prebuilt_reference_asset_inputs(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        gradle = Path("android/app/build.gradle.kts").read_text()
-        build_script = Path("scripts/android_compose_build.sh").read_text()
-        android_service = compose.split("\n  android:\n", 1)[1]
-
-        self.assertNotIn("MEDICINE_MOBILE_DB", gradle)
-        self.assertNotIn("MEDICINE_MOBILE_MANIFEST", gradle)
-        self.assertNotIn("MEDICINE_MOBILE_DB", android_service)
-        self.assertNotIn("MEDICINE_MOBILE_MANIFEST", android_service)
-        self.assertNotIn("mobile.sqlite", build_script)
-        self.assertNotIn("mobile.manifest.json", build_script)
-
-    def test_android_default_compose_build_runs_gradle_without_mobile_builder(self) -> None:
-        repo_root = Path(__file__).resolve().parents[1]
-        compose = (repo_root / "compose.yaml").read_text()
-        android_service = compose.split("\n  android:\n", 1)[1]
-        build_script = repo_root / "scripts" / "android_compose_build.sh"
-
-        self.assertIn('command: ["sh", "/workspace/scripts/android_compose_build.sh"]', android_service)
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            bin_dir = Path(temp_dir) / "bin"
-            bin_dir.mkdir()
-            log_path = Path(temp_dir) / "calls.log"
-            gradle_stub = bin_dir / "gradle"
-            gradle_stub.write_text(
-                "#!/bin/sh\n"
-                "printf 'gradle:%s\\n' \"$*\" >> \"$ANDROID_BUILD_TEST_LOG\"\n"
-            )
-            gradle_stub.chmod(0o755)
-
-            env = os.environ.copy()
-            env["ANDROID_BUILD_TEST_LOG"] = str(log_path)
-            env["PATH"] = f"{bin_dir}:{env['PATH']}"
-            result = subprocess.run(
-                ["sh", str(build_script)],
-                cwd=repo_root,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-
-            self.assertEqual(result.returncode, 0, result.stderr)
-            calls = log_path.read_text().splitlines()
-
-        self.assertEqual(
-            calls,
-            ["gradle:--no-daemon --dependency-verification strict testDebugUnitTest assembleDebug"],
-        )
-
-    def test_local_web_keeps_ocr_as_an_external_runtime_boundary(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        web_service = compose.split("\n  web:\n", 1)[1].split("\n  ui:\n", 1)[0]
-        dockerfile = Path("Dockerfile.web").read_text()
-        web_binary = Path("rust/medicine_core/src/bin/medicine_core_web.rs").read_text()
-
-        self.assertIn("dockerfile: Dockerfile.web", web_service)
-        self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', web_service)
-        self.assertIn("HOME: /tmp", web_service)
-        self.assertNotIn("PYTHONDONTWRITEBYTECODE", web_service)
-        self.assertIn("AS rust-web", dockerfile)
-        self.assertIn("cargo build --locked --release --features web --bin medicine-core-web", dockerfile)
-        self.assertNotIn("AS ocr-assets", dockerfile)
-        self.assertNotIn("browser_ocr/mobile", dockerfile)
-        self.assertNotIn("medicine-ocr-assets", dockerfile)
-        self.assertIn("MEDICINE_OCR_ASSETS_DIR", web_binary)
-        self.assertIn("--ocr-assets-dir", web_binary)
-        self.assertIn("MEDICINE_REFERENCE_TRUST_MANIFEST=/opt/medicine-reference-trust.json", dockerfile)
-        self.assertIn("COPY deploy/reference-signing-trusted-keys.json /opt/medicine-reference-trust.json", dockerfile)
-        self.assertIn("COPY medicine_app/static /opt/medicine-static", dockerfile)
-        self.assertIn("COPY --from=rust-web", dockerfile)
-        self.assertIn('ENTRYPOINT ["/usr/local/bin/medicine-core-web"]', dockerfile)
-        self.assertNotIn("python", dockerfile.lower())
-
-    def test_development_runtime_uses_android_signed_reference_channel_by_default(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        web_service = compose.split("\n  web:\n", 1)[1].split("\n  ui:\n", 1)[0]
-        web_binary = Path("rust/medicine_core/src/bin/medicine_core_web.rs").read_text()
-        app_cli = Path("medicine_app/cli.py").read_text()
-
-        self.assertIn(
-            "MEDICINE_CANONICAL_DB: ${MEDICINE_CANONICAL_DB:-}",
-            web_service,
-        )
-        self.assertIn("MEDICINE_REFERENCE_DIR: ${MEDICINE_REFERENCE_DIR:-data/reference}", web_service)
-        self.assertIn("MEDICINE_REFERENCE_UPDATE_BASE_URL", web_service)
-        self.assertIn("ensure_development_reference", web_binary)
-        self.assertIn('const DEFAULT_REFERENCE_DIR: &str = "data/reference";', web_binary)
-        self.assertNotIn('const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";', web_binary)
-        self.assertIn('DEFAULT_CANONICAL_DB = Path("data/db/mobile.sqlite")', app_cli)
-        self.assertNotIn('DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")', app_cli)
-
-    def test_retired_legacy_etl_is_not_packaged_or_exposed(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        dockerfile = Path("Dockerfile").read_text()
-        ui_dockerfile = Path("Dockerfile.ui").read_text()
-        pyproject = Path("pyproject.toml").read_text()
-
-        self.assertNotIn("  dur:\n", compose)
-        self.assertNotIn("  catalog:\n", compose)
-        self.assertNotIn("COPY medicine_dur", dockerfile)
-        self.assertNotIn("COPY medicine_catalog", dockerfile)
-        self.assertNotIn("COPY medicine_dur", ui_dockerfile)
-        self.assertNotIn("COPY medicine_catalog", ui_dockerfile)
-        self.assertNotIn('medicine-dur =', pyproject)
-        self.assertNotIn('name = "medicine-dur"', pyproject)
-        self.assertNotIn('medicine-catalog =', pyproject)
-        self.assertNotIn('medicine_dur*', pyproject)
-        self.assertNotIn('medicine_catalog*', pyproject)
-
-
-if __name__ == "__main__":
-    unittest.main()

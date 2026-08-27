@@ -5,12 +5,12 @@ const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const index = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/index.html"), "utf8");
-const app = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/app.js"), "utf8");
-const productSearch = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/product-search.js"), "utf8");
-const prescription = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/prescription.js"), "utf8");
-const doseActions = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/dose-actions.js"), "utf8");
-const dialog = fs.readFileSync(path.join(__dirname, "../../medicine_app/static/dialog.js"), "utf8");
+const index = fs.readFileSync(path.join(__dirname, "../../ui/dist/index.html"), "utf8");
+const app = fs.readFileSync(path.join(__dirname, "../../ui/dist/app.js"), "utf8");
+const productSearch = fs.readFileSync(path.join(__dirname, "../../ui/dist/product-search.js"), "utf8");
+const prescription = fs.readFileSync(path.join(__dirname, "../../ui/dist/prescription.js"), "utf8");
+const doseActions = fs.readFileSync(path.join(__dirname, "../../ui/dist/dose-actions.js"), "utf8");
+const dialog = fs.readFileSync(path.join(__dirname, "../../ui/dist/dialog.js"), "utf8");
 
 
 test("profile form only offers male/female and binary female reproductive states", () => {

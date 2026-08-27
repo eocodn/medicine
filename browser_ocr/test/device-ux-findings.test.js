@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 
-const staticRoot = path.join(__dirname, "../../medicine_app/static");
+const staticRoot = path.join(__dirname, "../../ui/dist");
 
 function source(name) {
   return fs.readFileSync(path.join(staticRoot, name), "utf8");

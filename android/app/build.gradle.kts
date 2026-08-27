@@ -3,10 +3,13 @@ import org.gradle.api.artifacts.dsl.LockMode
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecOperations
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import java.io.File
@@ -30,6 +33,47 @@ abstract class PrepareOcrAssets : DefaultTask() {
     fun prepare() {
         fileSystemOperations.sync {
             from(sourceDirectory)
+            into(outputDirectory)
+        }
+    }
+}
+
+abstract class PrepareSharedUiAssets : DefaultTask() {
+    @get:Inject
+    abstract val execOperations: ExecOperations
+
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
+    @get:Input
+    abstract val tscBinary: Property<String>
+
+    @get:InputDirectory
+    abstract val sourceDirectory: DirectoryProperty
+
+    @get:InputDirectory
+    abstract val publicDirectory: DirectoryProperty
+
+    @get:InputFile
+    abstract val tsconfigFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun prepare() {
+        fileSystemOperations.delete { delete(outputDirectory) }
+        execOperations.exec {
+            commandLine(
+                tscBinary.get(),
+                "-p",
+                tsconfigFile.get().asFile.absolutePath,
+                "--outDir",
+                outputDirectory.get().asFile.absolutePath,
+            )
+        }
+        fileSystemOperations.copy {
+            from(publicDirectory)
             into(outputDirectory)
         }
     }
@@ -249,6 +293,17 @@ val prepareOcrAssets = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
     }
 }
 
+val sharedUiRoot = rootProject.file("../ui")
+val sharedUiTscBinary = providers.environmentVariable("MEDICINE_TSC_BINARY")
+    .orElse(sharedUiRoot.resolve("node_modules/.bin/tsc").absolutePath)
+val prepareSharedUiAssets = tasks.register<PrepareSharedUiAssets>("prepareSharedUiAssets") {
+    tscBinary.set(sharedUiTscBinary)
+    sourceDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("src") }))
+    publicDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("public") }))
+    tsconfigFile.set(layout.file(providers.provider { sharedUiRoot.resolve("tsconfig.json") }))
+    outputDirectory.set(layout.buildDirectory.dir("generated/sharedUiAssets"))
+}
+
 val rustNdkVersion = "29.0.14206865"
 val rustTargetDirectory = layout.buildDirectory.dir("rust-target")
 val rustLibrary = rustTargetDirectory.map {
@@ -343,7 +398,7 @@ androidComponents {
         val assets = checkNotNull(variant.sources.assets) {
             "Android assets source API is unavailable for ${variant.name}"
         }
-        assets.addStaticSourceDirectory(rootProject.file("../medicine_app/static").absolutePath)
+        assets.addGeneratedSourceDirectory(prepareSharedUiAssets, PrepareSharedUiAssets::outputDirectory)
         prepareOcrAssets?.let { task ->
             assets.addGeneratedSourceDirectory(task, PrepareOcrAssets::outputDirectory)
         }

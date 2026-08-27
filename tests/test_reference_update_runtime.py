@@ -8,7 +8,7 @@ from contextlib import closing, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
+from medicine_reference.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.mobile import REFERENCE_CONTRACT_MAJOR as BUILDER_CONTRACT_MAJOR, build_mobile_database
 from tests.canonical_fixture_support import make_canonical_db

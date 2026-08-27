@@ -1,3 +1,9 @@
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS ui-toolchain
+
+WORKDIR /opt/medicine-ui-tools
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+
 FROM rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS rust-toolchain
 
 RUN rustup target add aarch64-linux-android
@@ -8,6 +14,7 @@ ENV ANDROID_HOME=/opt/android-sdk \
     ANDROID_SDK_ROOT=/opt/android-sdk \
     CARGO_HOME=/tmp/cargo-home \
     GRADLE_USER_HOME=/opt/gradle-cache \
+    MEDICINE_TSC_BINARY=/opt/medicine-ui-tools/node_modules/.bin/tsc \
     MEDICINE_ANDROID_NDK_VERSION=29.0.14206865 \
     RUSTUP_HOME=/usr/local/rustup \
     PATH=/usr/local/cargo/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:$PATH
@@ -27,6 +34,8 @@ RUN apt-get update \
 
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+COPY --from=ui-toolchain /usr/local/bin/node /usr/local/bin/node
+COPY --from=ui-toolchain /opt/medicine-ui-tools/node_modules /opt/medicine-ui-tools/node_modules
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*

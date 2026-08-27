@@ -40,17 +40,26 @@ def _delimited(values: set[str]) -> str:
 
 def materialize_product_search_fts(con: sqlite3.Connection) -> int:
     """Rebuild the contentless trigram accelerator from authoritative documents."""
-    con.execute("DROP TABLE IF EXISTS product_search_fts")
-    con.execute(PRODUCT_SEARCH_FTS_DDL)
+    # Callers may have an authoritative source database attached while building
+    # a derived runtime database. Pin the accelerator to `main` so unqualified
+    # SQLite name resolution can never drop or recreate the attached source FTS.
+    con.execute("DROP TABLE IF EXISTS main.product_search_fts")
     con.execute(
-        """INSERT INTO product_search_fts(rowid,searchable_text)
+        PRODUCT_SEARCH_FTS_DDL.replace(
+            "CREATE VIRTUAL TABLE product_search_fts",
+            "CREATE VIRTUAL TABLE main.product_search_fts",
+            1,
+        )
+    )
+    con.execute(
+        """INSERT INTO main.product_search_fts(rowid,searchable_text)
            SELECT rowid,
                   normalized_product_name || char(10) || normalized_manufacturer ||
                   normalized_ingredient_names
-           FROM product_search_documents
+           FROM main.product_search_documents
            ORDER BY rowid"""
     )
-    return int(con.execute("SELECT COUNT(*) FROM product_search_fts").fetchone()[0])
+    return int(con.execute("SELECT COUNT(*) FROM main.product_search_fts").fetchone()[0])
 
 
 def _load_substance_aliases(

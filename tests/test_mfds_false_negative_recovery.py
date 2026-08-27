@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR as RUNTIME_CONTRACT_MAJOR
+from medicine_reference.reference_update import REFERENCE_CONTRACT_MAJOR as RUNTIME_CONTRACT_MAJOR
 from medicine_canonical import linking
 from medicine_canonical.mobile import REFERENCE_CONTRACT_MAJOR as BUILDER_CONTRACT_MAJOR
 from medicine_canonical.preprocessing import IdentityResolver

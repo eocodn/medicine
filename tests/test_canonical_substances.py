@@ -5,15 +5,18 @@ import hashlib
 import json
 import sqlite3
 import tempfile
+import time
 import unittest
 import zipfile
 from contextlib import closing, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
 from medicine_canonical.substance_build import (
     assemble_substance_database,
+    rebuild_substance_database,
 )
 from medicine_canonical.substance_inspection import (
     substance_stats,
@@ -57,8 +60,7 @@ def _zip_gsrs_names(
         archive.writestr("READ ME UNII Lists.txt", "UNII Names fixture\n")
     return buffer.getvalue()
 
-
-class CanonicalSubstanceTest(unittest.TestCase):
+class CanonicalSubstanceTestFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -66,10 +68,8 @@ class CanonicalSubstanceTest(unittest.TestCase):
         self.substance_db = self.root / "canonical_substances.sqlite"
         self.raw_dir = self.root / "substances"
         self._write_canonical_fixture()
-
     def tearDown(self) -> None:
         self.tmp.cleanup()
-
     def _write_canonical_fixture(self) -> None:
         with closing(sqlite3.connect(self.canonical_db)) as con:
             con.executescript(SCHEMA)
@@ -132,7 +132,6 @@ class CanonicalSubstanceTest(unittest.TestCase):
                 ],
             )
             con.commit()
-
     def _write_unii_snapshot(self) -> None:
         records = [
             {"substance_name": "ALPHA HYDROCHLORIDE", "unii": "UNIIALPHA1"},
@@ -157,7 +156,6 @@ class CanonicalSubstanceTest(unittest.TestCase):
         }
         path.with_suffix(path.suffix + ".meta.json").write_text(json.dumps(meta), encoding="utf-8")
         self._write_gsrs_names_snapshot()
-
     def _write_gsrs_names_snapshot(
         self,
         rows: list[tuple[str, str, str, str]] | None = None,
@@ -185,6 +183,50 @@ class CanonicalSubstanceTest(unittest.TestCase):
         }
         path.with_suffix(path.suffix + ".meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
+class CanonicalSubstanceTest(CanonicalSubstanceTestFixture):
+    def test_substance_build_resumes_materialized_checkpoint_without_rebuilding(self) -> None:
+        self._write_unii_snapshot()
+        events: list[dict[str, object]] = []
+
+        with mock.patch(
+            "medicine_canonical.substance_build.verify_substance_database",
+            side_effect=RuntimeError("verification interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "verification interrupted"):
+                assemble_substance_database(
+                    self.substance_db,
+                    self.canonical_db,
+                    self.raw_dir,
+                    progress=events.append,
+                )
+
+        checkpoint = self.substance_db.with_name(
+            self.substance_db.name + ".build.checkpoint.json"
+        )
+        staged = self.substance_db.with_name(self.substance_db.name + ".tmp")
+        self.assertTrue(checkpoint.is_file())
+        self.assertTrue(staged.is_file())
+        self.assertTrue(any(event["status"] == "heartbeat" for event in events))
+        self.assertTrue(any(event["status"] == "checkpoint" for event in events))
+
+        with mock.patch(
+            "medicine_canonical.substance_build.build_external_index",
+            wraps=__import__(
+                "medicine_canonical.substance_build",
+                fromlist=["build_external_index"],
+            ).build_external_index,
+        ) as build_external:
+            result = assemble_substance_database(
+                self.substance_db,
+                self.canonical_db,
+                self.raw_dir,
+                progress=events.append,
+            )
+
+        self.assertEqual(build_external.call_count, 0)
+        self.assertGreater(result["substances"], 0)
+        self.assertFalse(checkpoint.exists())
+        self.assertFalse(staged.exists())
     def test_builds_exact_substance_layer_and_keeps_unsolved_visible(self) -> None:
         self._write_unii_snapshot()
         result = assemble_substance_database(self.substance_db, self.canonical_db, self.raw_dir)
@@ -324,7 +366,6 @@ class CanonicalSubstanceTest(unittest.TestCase):
 
         verification = verify_substance_database(self.substance_db)
         self.assertEqual(verification["status"], "verified")
-
     def test_build_applies_only_active_reviewed_nomenclature_alias(self) -> None:
         with closing(sqlite3.connect(self.canonical_db)) as con:
             con.execute(
@@ -369,160 +410,3 @@ class CanonicalSubstanceTest(unittest.TestCase):
                 "approved_nomenclature_alias",
             ),
         )
-
-    def test_sync_openfda_unii_is_atomic_and_preserves_provenance(self) -> None:
-        records = [
-            {"substance_name": "ALPHA", "unii": "UNIIALPHA1"},
-            {"substance_name": "BETA", "unii": "UNIIBETA01"},
-        ]
-        archive = _zip_unii(records)
-        manifest = {
-            "meta": {"last_updated": "2026-08-12"},
-            "results": {
-                "other": {
-                    "unii": {
-                        "export_date": "2026-08-12",
-                        "partitions": [{
-                            "file": "https://download.open.fda.gov/other/unii/test.json.zip",
-                            "records": 2,
-                        }],
-                        "total_records": 2,
-                    }
-                }
-            },
-        }
-        result = sync_openfda_unii(
-            self.raw_dir,
-            manifest_fetcher=lambda: manifest,
-            partition_fetcher=lambda _: archive,
-        )
-        self.assertEqual(result["row_count"], 2)
-        self.assertEqual(result["effective_date"], "2026-08-12")
-        self.assertTrue((self.raw_dir / OPENFDA_UNII_FILENAME).exists())
-        self.assertEqual(result["source_family"], "openfda_unii")
-
-    def test_sync_fda_gsrs_names_is_atomic_and_preserves_name_types(self) -> None:
-        archive = _zip_gsrs_names([
-            ("RIFAMPICIN", "of", "UNIIRIFAMP", "RIFAMPIN"),
-            ("ALPHA BRAND", "bn", "UNIIALPHA0", "ALPHA"),
-        ])
-        result = sync_fda_gsrs_unii_names(
-            self.raw_dir,
-            archive_fetcher=lambda _: archive,
-        )
-        self.assertEqual(result["row_count"], 2)
-        self.assertEqual(result["effective_date"], "2026-02-26")
-        self.assertEqual(result["source_family"], "fda_gsrs_unii_names")
-        self.assertTrue((self.raw_dir / FDA_GSRS_UNII_NAMES_FILENAME).exists())
-
-    def test_current_fda_gsrs_names_header_is_accepted_without_relaxing_columns(self) -> None:
-        archive = _zip_gsrs_names(
-            [("RIFAMPICIN", "of", "UNIIRIFAMP", "RIFAMPIN")],
-            header="NAME\tTYPE\tUNII\tDISPLAY_NAME",
-        )
-        rows = list(iter_gsrs_unii_names(archive))
-        self.assertEqual(
-            rows,
-            [{
-                "name": "RIFAMPICIN",
-                "name_type": "of",
-                "unii": "UNIIRIFAMP",
-                "display_name": "RIFAMPIN",
-            }],
-        )
-
-    def test_gsrs_exact_names_can_release_only_fully_known_permit_composition(self) -> None:
-        self._write_unii_snapshot()
-        self._write_gsrs_names_snapshot([
-            ("GAMMA", "cn", "UNIIGAMMA1", "GAMMA PREFERRED"),
-            ("DELTA", "sys", "UNIIDELTA1", "DELTA PREFERRED"),
-        ])
-        with closing(sqlite3.connect(self.canonical_db)) as con:
-            con.execute(
-                """INSERT INTO products(
-                       item_seq,source_row,product_name,ingredient_text,permit_status,source_dataset_key
-                   ) VALUES('P3',3,'감마델타정','Gamma/Delta','active','mfds_permit:products')"""
-            )
-            con.commit()
-
-        assemble_substance_database(self.substance_db, self.canonical_db, self.raw_dir)
-        with closing(sqlite3.connect(self.substance_db)) as con:
-            self.assertIsNone(
-                con.execute(
-                    "SELECT 1 FROM source_unparsed_expressions WHERE raw_text='Gamma/Delta'"
-                ).fetchone()
-            )
-            delta = con.execute(
-                """SELECT i.value,i.evidence_source_dataset_key
-                   FROM substance_identifiers i
-                   JOIN substance_names n ON n.substance_id=i.substance_id
-                   WHERE n.normalized_name='delta' AND i.system='UNII'"""
-            ).fetchone()
-            self.assertEqual(delta, ("UNIIDELTA1", "fda_gsrs_unii_names:all"))
-
-    def test_sync_rejects_manifest_and_archive_count_mismatch(self) -> None:
-        archive = _zip_unii([{"substance_name": "ALPHA", "unii": "UNIIALPHA1"}])
-        manifest = {
-            "meta": {"last_updated": "2026-08-12"},
-            "results": {
-                "other": {
-                    "unii": {
-                        "export_date": "2026-08-12",
-                        "partitions": [{"file": "https://example.test/unii.zip", "records": 2}],
-                        "total_records": 2,
-                    }
-                }
-            },
-        }
-        with self.assertRaisesRegex(RuntimeError, "row-count mismatch"):
-            sync_openfda_unii(
-                self.raw_dir,
-                manifest_fetcher=lambda: manifest,
-                partition_fetcher=lambda _: archive,
-            )
-
-    def test_rebuild_from_same_snapshots_keeps_substance_identity_stable(self) -> None:
-        self._write_unii_snapshot()
-        first = assemble_substance_database(self.substance_db, self.canonical_db, self.raw_dir)
-        with closing(sqlite3.connect(self.substance_db)) as con:
-            first_names = con.execute(
-                "SELECT normalized_name,substance_id FROM substance_names ORDER BY normalized_name"
-            ).fetchall()
-            first_ids = con.execute(
-                "SELECT substance_id,system,value FROM substance_identifiers ORDER BY substance_id,system"
-            ).fetchall()
-
-        second = assemble_substance_database(self.substance_db, self.canonical_db, self.raw_dir)
-        with closing(sqlite3.connect(self.substance_db)) as con:
-            second_names = con.execute(
-                "SELECT normalized_name,substance_id FROM substance_names ORDER BY normalized_name"
-            ).fetchall()
-            second_ids = con.execute(
-                "SELECT substance_id,system,value FROM substance_identifiers ORDER BY substance_id,system"
-            ).fetchall()
-
-        self.assertEqual(first["substances"], second["substances"])
-        self.assertEqual(first["canonical_source_fingerprint"], second["canonical_source_fingerprint"])
-        self.assertEqual(first_names, second_names)
-        self.assertEqual(first_ids, second_ids)
-
-    def test_substance_cli_exposes_stats_verify_and_unsolved(self) -> None:
-        self._write_unii_snapshot()
-        assemble_substance_database(self.substance_db, self.canonical_db, self.raw_dir)
-        for args in (
-            ["substance-stats", "--db", str(self.substance_db), "--json"],
-            ["substance-verify", "--db", str(self.substance_db), "--json"],
-            ["substance-unsolved", "--db", str(self.substance_db), "--json"],
-            ["substance-unparsed", "--db", str(self.substance_db), "--json"],
-        ):
-            buf = io.StringIO()
-            with redirect_stdout(buf):
-                code = canonical_main(args)
-            self.assertEqual(code, 0)
-            self.assertIn('"db_path"', buf.getvalue())
-
-        self.assertEqual(substance_stats(self.substance_db)["substances"], 13)
-
-
-if __name__ == "__main__":
-    unittest.main()

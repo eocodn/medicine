@@ -253,6 +253,35 @@ fn safety_basis_reports_verified_manifest_and_quantitative_boundaries() {
 }
 
 #[test]
+fn safety_basis_surfaces_reference_semantic_storage_failure() {
+    let reference = temp_reference_db();
+    let con = Connection::open(&reference).expect("open safety basis fixture");
+    con.execute("DROP TABLE reference_semantic_expectations", [])
+        .expect("break semantic storage");
+    drop(con);
+
+    let result = inspect(
+        &reference,
+        "P-Z",
+        json!({
+            "birth_date": "1990-01-01",
+            "sex": "female",
+            "pregnancy_status": "not_pregnant"
+        }),
+        json!({
+            "dose_amount": "20",
+            "dose_unit": "mg",
+            "frequency_per_day": 4,
+            "prescription_days": 35,
+            "start_date": "2026-08-20"
+        }),
+    );
+
+    assert_eq!(result["status"], 500);
+    fs::remove_file(reference).ok();
+}
+
+#[test]
 fn safety_basis_fails_closed_for_unlinked_rules_and_relevant_profile_gaps() {
     let reference = temp_reference_db();
     let result = inspect(

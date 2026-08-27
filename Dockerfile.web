@@ -1,3 +1,11 @@
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS ui-builder
+
+WORKDIR /build/ui
+COPY ui/package.json ui/package-lock.json ui/tsconfig.json ./
+COPY ui/src ./src
+COPY ui/public ./public
+RUN npm ci && npm run build
+
 FROM rust:1.89-slim@sha256:8cffb8fe4e8a95cf0d6a2060375e5a28aff4c752155aa9f1f9193530769bdf66 AS rust-web
 
 WORKDIR /build
@@ -5,7 +13,7 @@ COPY rust/medicine_core/Cargo.toml rust/medicine_core/Cargo.lock ./
 COPY rust/medicine_core/src ./src
 RUN cargo build --locked --release --features web --bin medicine-core-web
 
-FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 ENV HOME=/tmp \
     MEDICINE_REFERENCE_TRUST_MANIFEST=/opt/medicine-reference-trust.json \
@@ -14,7 +22,7 @@ ENV HOME=/tmp \
 
 WORKDIR /app
 
-COPY medicine_app/static /opt/medicine-static
+COPY --from=ui-builder /build/ui/dist /opt/medicine-static
 COPY deploy/reference-signing-trusted-keys.json /opt/medicine-reference-trust.json
 RUN chmod -R a+rX /opt/medicine-static /opt/medicine-reference-trust.json
 COPY --from=rust-web /build/target/release/medicine-core-web /usr/local/bin/medicine-core-web

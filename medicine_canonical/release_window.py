@@ -12,7 +12,7 @@ from .reference_contracts.registry import (
     implementation_for,
     supported_contract_majors,
 )
-from .release_r2 import _put_immutable, client_from_env
+from .release_r2_runtime import client_from_env
 from .release_signing import (
     KmsReleaseSigner,
     ReleaseSigner,
@@ -54,6 +54,7 @@ from .release_window_remote import (
     unchanged_publication_result as _unchanged_publication_result,
     validate_support_window_progression as _validate_support_window_progression,
 )
+from .release_window_transfer import upload_prepared_contracts as _upload_prepared_contracts
 
 
 def _validate_release_sequence(release_sequence: int) -> None:
@@ -86,6 +87,7 @@ def _prepare_contract_window(
     candidates: dict[int, _CandidateMetadata],
     previous_root: dict | None,
     output_dir: Path,
+    progress=None,
 ) -> dict[int, _PreparedContract]:
     prepared: dict[int, _PreparedContract] = {}
     previous_contracts = (previous_root or {}).get("contracts") or {}
@@ -110,32 +112,9 @@ def _prepare_contract_window(
                 previous_entry if isinstance(previous_entry, dict) else None,
                 output_dir,
                 temporary_root,
+                progress=progress,
             )
     return prepared
-
-
-def _upload_prepared_contracts(client, bucket: str, prepared: dict[int, _PreparedContract]) -> None:
-    for _, contract in sorted(prepared.items()):
-        if contract.full_path is not None:
-            full = contract.entry["full"]
-            _put_immutable(
-                client,
-                bucket,
-                full["key"],
-                contract.full_path,
-                content_type="application/gzip",
-            )
-        for patch in contract.entry["patches"]:
-            path = contract.patch_paths.get(patch["key"])
-            if path is not None:
-                _put_immutable(
-                    client,
-                    bucket,
-                    patch["key"],
-                    path,
-                    content_type="application/octet-stream",
-                )
-
 
 
 def _build_root(
@@ -178,6 +157,7 @@ def _publish_loaded_contract_window(
     trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
+    progress=None,
 ) -> dict:
     if not str(bucket).strip():
         raise ValueError("R2 bucket is required")
@@ -234,6 +214,7 @@ def _publish_loaded_contract_window(
             candidates=by_major,
             entries=entries,
             output_dir=root_dir,
+            progress=progress,
         )
         _assert_root_unchanged(
             client,
@@ -276,6 +257,7 @@ def _publish_loaded_contract_window(
         initial_inventory=initial_inventory,
         trusted_public_keys=trusted_public_keys,
         output_dir=root_dir,
+        progress=progress,
     )
     if unchanged is not None:
         return unchanged
@@ -289,8 +271,15 @@ def _publish_loaded_contract_window(
         candidates=by_major,
         previous_root=previous_root,
         output_dir=root_dir,
+        progress=progress,
     )
-    _upload_prepared_contracts(client, bucket, prepared)
+    _upload_prepared_contracts(
+        client,
+        bucket,
+        prepared,
+        root_dir,
+        progress=progress,
+    )
 
     # A root update can reuse one contract target while another contract changes
     # (for example C1 unchanged when C2 is introduced). Verify every mandatory
@@ -302,6 +291,7 @@ def _publish_loaded_contract_window(
         candidates=by_major,
         entries={major: contract.entry for major, contract in prepared.items()},
         output_dir=root_dir,
+        progress=progress,
     )
     _assert_root_unchanged(
         client,
@@ -353,6 +343,7 @@ def publish_contract_window(
     trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
+    progress=None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
@@ -366,6 +357,7 @@ def publish_contract_window(
         created_at=created_at,
         allow_early_retirement=allow_early_retirement,
         trusted_public_keys=trusted_public_keys,
+        progress=progress,
     )
 
 
@@ -382,6 +374,7 @@ def publish_verified_contract_window(
     trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
+    progress=None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
@@ -395,6 +388,7 @@ def publish_verified_contract_window(
         created_at=created_at,
         allow_early_retirement=allow_early_retirement,
         trusted_public_keys=trusted_public_keys,
+        progress=progress,
     )
 
 
@@ -439,6 +433,7 @@ def publish_contract_window_from_env(
         current_contract_major=major,
         minimum_supported_contract_major=major,
         created_at=created_at,
+        progress=progress,
     )
 
 
@@ -476,6 +471,7 @@ def publish_contract_directory_from_env(
         minimum_supported_contract_major=minimum_supported,
         created_at=created_at,
         allow_early_retirement=effective_retirement,
+        progress=progress,
     )
 
 
@@ -555,6 +551,7 @@ def build_and_publish_contract_window_from_env(
         minimum_supported_contract_major=minimum_supported,
         created_at=created_at,
         allow_early_retirement=effective_retirement,
+        progress=progress,
     )
     return {**published, "build": build}
 

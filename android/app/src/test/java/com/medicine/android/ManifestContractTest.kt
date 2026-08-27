@@ -9,7 +9,7 @@ class ManifestContractTest {
     fun nativeReferenceUpdaterHasInternetButWebViewRemainsLocalAndCleartextDisabled() {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
-        val index = java.io.File("../../medicine_app/static/index.html").readText()
+        val index = java.io.File("../../ui/dist/index.html").readText()
         assertTrue(manifest.contains("android.permission.INTERNET"))
         assertFalse(manifest.contains("usesCleartextTraffic"))
         assertFalse(manifest.contains("com.chaquo.python"))
@@ -58,7 +58,7 @@ class ManifestContractTest {
     fun productShellPackagesAndRoutesOnDeviceOcrAssets() {
         val build = java.io.File("build.gradle.kts").readText()
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
-        val index = java.io.File("../../medicine_app/static/index.html").readText()
+        val index = java.io.File("../../ui/dist/index.html").readText()
         assertTrue(build.contains("PrepareOcrAssets"))
         assertTrue(build.contains("MEDICINE_OCR_ASSETS_DIR"))
         assertTrue(activity.contains("/ocr-assets/"))
@@ -186,7 +186,7 @@ class ManifestContractTest {
     @Test
     fun androidBackDelegatesToOpenSharedModalBeforeActivityExit() {
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
-        val dialog = java.io.File("../../medicine_app/static/dialog.js").readText()
+        val dialog = java.io.File("../../ui/src/dialog.ts").readText()
         assertTrue(activity.contains("OnBackPressedCallback"))
         assertTrue(activity.contains("MedicineDialog?.handleNativeBack"))
         assertTrue(activity.contains("evaluateJavascript"))

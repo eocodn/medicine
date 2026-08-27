@@ -103,6 +103,7 @@ def sync_mfds_ingredient_sources(
     page_size: int = MFDS_INGREDIENT_PAGE_SIZE_MAX,
     workers: int = 8,
     progress: bool = True,
+    job_progress=None,
     fetch_page: IngredientFetchPage | None = None,
 ) -> dict:
     key = service_key.strip()
@@ -132,6 +133,7 @@ def sync_mfds_ingredient_sources(
                 workers=workers,
                 fetch_page=lambda page, size, operation=operation: fetcher(operation, page, size),
                 progress=progress,
+                job_progress=job_progress,
             )
         )
     return {

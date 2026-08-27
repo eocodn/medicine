@@ -68,7 +68,7 @@ function appContext() {
   vm.createContext(context);
   for (const file of ["prescription-dur.js", "prescription.js", "app.js"]) {
     vm.runInContext(
-      fs.readFileSync(path.join(__dirname, `../../medicine_app/static/${file}`), "utf8"),
+      fs.readFileSync(path.join(__dirname, `../../ui/dist/${file}`), "utf8"),
       context,
     );
   }

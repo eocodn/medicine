@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 
 from .inspection import verify_canonical_database
+from .job_lifecycle import JobLifecycle, sqlite_heartbeat
+from .mobile_job import mobile_build_input_fingerprint, write_manifest_atomic
 from .product_search_documents import materialize_product_search_fts
+from .snapshot_io import sha256_file
 
 
 def _build_progress(progress, phase: str, status: str, started: float | None = None, **extra) -> None:
@@ -22,6 +24,10 @@ def _build_progress(progress, phase: str, status: str, started: float | None = N
 
 
 MOBILE_PHYSICAL_POLICY_VERSION = "9"
+# This value describes runtime-relevant physical schema/capability, not a build
+# history or exact-byte generation. Release artifact identity is the signed
+# SHA-256/size; the publisher intentionally treats a new SHA for the same
+# logical dataset as a new physical release.
 # Compatibility alias for server-side callers while the old name is retired.
 # It is intentionally not part of dataset identity anymore.
 MOBILE_DATA_POLICY_VERSION = MOBILE_PHYSICAL_POLICY_VERSION
@@ -166,14 +172,6 @@ def _write_build_meta(
     )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _assert_product_rule_source_identity_unique(con: sqlite3.Connection) -> None:
     duplicate = con.execute(
         """SELECT source_dataset_key,source_row,COUNT(*) AS row_count
@@ -272,23 +270,32 @@ def _build_mobile_database(
     manifest = Path(manifest_path) if manifest_path else output.with_name("mobile.manifest.json")
     if not source.is_file():
         raise FileNotFoundError(f"canonical database not found: {source}")
-    phase_started = time.monotonic()
-    _build_progress(progress, "canonical_verify", "started")
-    verification = verify_canonical_database(source)
-    if verification["status"] != "verified":
-        details = "; ".join(verification["errors"]) or "unknown verification failure"
-        raise ValueError(f"canonical verification failed: {details}")
-    _build_progress(progress, "canonical_verify", "completed", phase_started)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(output.name + ".tmp")
-    temporary.unlink(missing_ok=True)
-
     physical_policy_version = str(physical_policy_version).strip()
     if not physical_policy_version:
         raise ValueError("mobile physical policy version is required")
-
-    dataset_id: str | None = None
+    output.parent.mkdir(parents=True, exist_ok=True)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(output.name + ".tmp")
+    checkpoint = output.with_name(output.name + ".build.checkpoint.json")
+    input_fingerprint = mobile_build_input_fingerprint(
+        source,
+        contract_major=contract_major,
+        physical_policy_version=physical_policy_version,
+        product_rule_criteria_view_ddl=product_rule_criteria_view_ddl,
+    )
+    try:
+        lifecycle = JobLifecycle(
+            "mobile-reference-build",
+            checkpoint,
+            input_fingerprint=input_fingerprint,
+            progress=progress,
+            total_steps=5,
+        )
+    except RuntimeError:
+        temporary.unlink(missing_ok=True)
+        raise
+    lifecycle.started()
+    current_phase = "startup"
     src = sqlite3.connect(f"file:{source.resolve()}?mode=ro", uri=True)
     try:
         schema_version = src.execute(
@@ -307,113 +314,235 @@ def _build_mobile_database(
             )
         }
 
-        dst = sqlite3.connect(temporary)
-        try:
+        phase = lifecycle.completed_phase
+        if phase not in {
+            None,
+            "canonical_verified",
+            "runtime_copied",
+            "materialized",
+            "finalized",
+        }:
+            lifecycle.discard(f"unknown completed phase {phase!r}")
+        if phase is not None:
+            if lifecycle.artifacts.get("staged_db") != str(temporary):
+                lifecycle.discard("staged mobile database path changed")
+            if lifecycle.artifacts.get("output_db") != str(output):
+                lifecycle.discard("mobile output database path changed")
+            if lifecycle.artifacts.get("manifest_path") != str(manifest):
+                lifecycle.discard("mobile manifest path changed")
+
+        if phase is None:
+            current_phase = "canonical_verified"
+            lifecycle.step_started(current_phase, 1)
+            phase_started = time.monotonic()
+            _build_progress(progress, "canonical_verify", "started")
+            lifecycle.heartbeat(current_phase, force=True)
+            verification = verify_canonical_database(source)
+            if verification["status"] != "verified":
+                details = "; ".join(verification["errors"]) or "unknown verification failure"
+                raise ValueError(f"canonical verification failed: {details}")
+            _build_progress(progress, "canonical_verify", "completed", phase_started)
+            lifecycle.checkpoint(
+                current_phase,
+                {
+                    "staged_db": str(temporary),
+                    "output_db": str(output),
+                    "manifest_path": str(manifest),
+                    "canonical_schema_version": str(schema_version[0]),
+                },
+            )
+            lifecycle.step_completed(current_phase, 1)
+            phase = lifecycle.completed_phase
+
+        if phase == "canonical_verified":
+            temporary.unlink(missing_ok=True)
+            current_phase = "runtime_copied"
+            lifecycle.step_started(current_phase, 2)
             phase_started = time.monotonic()
             _build_progress(progress, "runtime_table_copy", "started")
-            dst.execute("PRAGMA foreign_keys=OFF")
-            for table in COPIED_RUNTIME_TABLES:
-                ddl = objects.get(("table", table))
-                if not ddl:
-                    raise ValueError(f"canonical runtime table missing: {table}")
-                dst.execute(ddl)
-            escaped = str(source.resolve()).replace("'", "''")
-            dst.execute(f"ATTACH DATABASE '{escaped}' AS source_db")
-            for table in COPIED_RUNTIME_TABLES:
-                dst.execute(f'INSERT INTO "{table}" SELECT * FROM source_db."{table}"')
+            with closing(sqlite3.connect(temporary)) as dst, dst, sqlite_heartbeat(
+                dst, lifecycle, current_phase
+            ):
+                dst.execute("PRAGMA foreign_keys=OFF")
+                for table in COPIED_RUNTIME_TABLES:
+                    ddl = objects.get(("table", table))
+                    if not ddl:
+                        raise ValueError(f"canonical runtime table missing: {table}")
+                    dst.execute(ddl)
+                escaped = str(source.resolve()).replace("'", "''")
+                dst.execute(f"ATTACH DATABASE '{escaped}' AS source_db")
+                for table in COPIED_RUNTIME_TABLES:
+                    dst.execute(f'INSERT INTO "{table}" SELECT * FROM source_db."{table}"')
+                dst.commit()
+                dst.execute("DETACH DATABASE source_db")
+                dst.commit()
             _build_progress(progress, "runtime_table_copy", "completed", phase_started)
-
-            phase_started = time.monotonic()
-            _build_progress(progress, "compact_product_rules", "started")
-            _populate_compact_product_rules(dst)
-            _build_progress(progress, "compact_product_rules", "completed", phase_started)
-
-            phase_started = time.monotonic()
-            _build_progress(progress, "semantic_materialization", "started")
-            semantic_rows = materialize_semantics(src, dst)
-            _build_progress(
-                progress,
-                "semantic_materialization",
-                "completed",
-                phase_started,
-                rows=semantic_rows,
+            staged_sha256 = sha256_file(temporary)
+            lifecycle.checkpoint(
+                current_phase,
+                {
+                    **lifecycle.artifacts,
+                    "staged_sha256": staged_sha256,
+                },
             )
-            dst.commit()
-            dst.execute("DETACH DATABASE source_db")
-            # Build the physical accelerator only after detaching the canonical
-            # source. An unqualified DROP/CREATE while the source is attached
-            # can otherwise resolve to source_db when main has no FTS table yet.
-            materialize_product_search_fts(dst)
-            source_indexes = {
-                name: sql
-                for name, sql in src.execute(
-                    "SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
+            lifecycle.step_completed(current_phase, 2)
+            phase = lifecycle.completed_phase
+        elif phase in {"runtime_copied", "materialized"}:
+            staged_sha256 = lifecycle.artifacts.get("staged_sha256")
+            if not isinstance(staged_sha256, str) or not staged_sha256:
+                lifecycle.discard("mobile checkpoint is missing staged sha256")
+            if not temporary.exists() or sha256_file(temporary) != staged_sha256:
+                lifecycle.discard("checkpointed mobile database bytes changed")
+
+        if phase == "runtime_copied":
+            current_phase = "materialized"
+            lifecycle.step_started(current_phase, 3)
+            with sqlite_heartbeat(src, lifecycle, current_phase), closing(
+                sqlite3.connect(temporary)
+            ) as dst, dst, sqlite_heartbeat(dst, lifecycle, current_phase):
+                escaped = str(source.resolve()).replace("'", "''")
+                dst.execute(f"ATTACH DATABASE '{escaped}' AS source_db")
+                dst.execute("BEGIN")
+                phase_started = time.monotonic()
+                _build_progress(progress, "compact_product_rules", "started")
+                _populate_compact_product_rules(dst)
+                _build_progress(progress, "compact_product_rules", "completed", phase_started)
+
+                phase_started = time.monotonic()
+                _build_progress(progress, "semantic_materialization", "started")
+                semantic_rows = materialize_semantics(src, dst)
+                _build_progress(
+                    progress,
+                    "semantic_materialization",
+                    "completed",
+                    phase_started,
+                    rows=semantic_rows,
                 )
-            }
-            missing_indexes = [
-                name
-                for name in RUNTIME_INDEXES
-                if name not in MOBILE_RUNTIME_INDEX_DDL and name not in source_indexes
-            ]
-            if missing_indexes:
-                raise ValueError(
-                    f"canonical runtime index missing: {', '.join(missing_indexes)}"
+                materialize_product_search_fts(dst)
+                source_indexes = {
+                    name: sql
+                    for name, sql in src.execute(
+                        "SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL"
+                    )
+                }
+                missing_indexes = [
+                    name
+                    for name in RUNTIME_INDEXES
+                    if name not in MOBILE_RUNTIME_INDEX_DDL and name not in source_indexes
+                ]
+                if missing_indexes:
+                    raise ValueError(
+                        f"canonical runtime index missing: {', '.join(missing_indexes)}"
+                    )
+                for name in RUNTIME_INDEXES:
+                    dst.execute(MOBILE_RUNTIME_INDEX_DDL.get(name, source_indexes.get(name)))
+                for view in RUNTIME_VIEWS:
+                    ddl = objects.get(("view", view))
+                    if not ddl:
+                        raise ValueError(f"canonical runtime view missing: {view}")
+                    dst.execute(ddl)
+                dst.execute(product_rule_criteria_view_ddl)
+                phase_started = time.monotonic()
+                _build_progress(progress, "logical_identity", "started")
+                dataset_id = logical_dataset_id(dst)
+                _build_progress(progress, "logical_identity", "completed", phase_started)
+                write_contract_meta(dst, dataset_id)
+                _write_build_meta(
+                    dst,
+                    canonical_schema_version=str(schema_version[0]),
+                    physical_policy_version=physical_policy_version,
                 )
-            for name in RUNTIME_INDEXES:
-                dst.execute(MOBILE_RUNTIME_INDEX_DDL.get(name, source_indexes.get(name)))
-            for view in RUNTIME_VIEWS:
-                ddl = objects.get(("view", view))
-                if not ddl:
-                    raise ValueError(f"canonical runtime view missing: {view}")
-                dst.execute(ddl)
-            dst.execute(product_rule_criteria_view_ddl)
-            phase_started = time.monotonic()
-            _build_progress(progress, "logical_identity", "started")
-            dataset_id = logical_dataset_id(dst)
-            _build_progress(progress, "logical_identity", "completed", phase_started)
-            write_contract_meta(dst, dataset_id)
-            _write_build_meta(
-                dst,
-                canonical_schema_version=str(schema_version[0]),
-                physical_policy_version=physical_policy_version,
+                dst.commit()
+                dst.execute("DETACH DATABASE source_db")
+            staged_sha256 = sha256_file(temporary)
+            lifecycle.checkpoint(
+                current_phase,
+                {
+                    **lifecycle.artifacts,
+                    "staged_sha256": staged_sha256,
+                    "dataset_id": dataset_id,
+                },
             )
-            dst.commit()
-            # Bulk loading millions of WITHOUT ROWID links leaves measurable
-            # page slack even in a freshly created database. Compact once on
-            # the build host so the installed artifact does not carry it.
+            lifecycle.step_completed(current_phase, 3)
+            phase = lifecycle.completed_phase
+
+        dataset_id = lifecycle.artifacts.get("dataset_id")
+        if phase in {"materialized", "finalized"} and (
+            not isinstance(dataset_id, str) or not dataset_id
+        ):
+            lifecycle.discard("mobile checkpoint dataset identity is missing")
+
+        if phase == "materialized":
+            current_phase = "finalized"
+            lifecycle.step_started(current_phase, 4)
             phase_started = time.monotonic()
             _build_progress(progress, "sqlite_finalize", "started")
-            dst.execute("VACUUM")
-            dst.execute("PRAGMA foreign_keys=ON")
-            if dst.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-                raise RuntimeError("mobile canonical integrity check failed")
-            fk_errors = dst.execute("PRAGMA foreign_key_check").fetchall()
-            if fk_errors:
-                raise RuntimeError(f"mobile canonical foreign key violations: {len(fk_errors)}")
-            dst.execute("ANALYZE")
-            dst.execute("PRAGMA optimize")
-            dst.commit()
+            with closing(sqlite3.connect(temporary)) as dst, dst, sqlite_heartbeat(
+                dst, lifecycle, current_phase
+            ):
+                # Bulk loading millions of WITHOUT ROWID links leaves measurable
+                # page slack even in a freshly created database. Compact once on
+                # the build host so the installed artifact does not carry it.
+                dst.execute("VACUUM")
+                dst.execute("PRAGMA foreign_keys=ON")
+                if dst.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                    raise RuntimeError("mobile canonical integrity check failed")
+                fk_errors = dst.execute("PRAGMA foreign_key_check").fetchall()
+                if fk_errors:
+                    raise RuntimeError(
+                        f"mobile canonical foreign key violations: {len(fk_errors)}"
+                    )
+                dst.execute("ANALYZE")
+                dst.execute("PRAGMA optimize")
+                dst.commit()
             _build_progress(progress, "sqlite_finalize", "completed", phase_started)
-        finally:
-            dst.close()
-        os.replace(temporary, output)
-    except Exception:
-        temporary.unlink(missing_ok=True)
+            output_sha256 = sha256_file(temporary)
+            output_size = temporary.stat().st_size
+            lifecycle.checkpoint(
+                current_phase,
+                {
+                    **lifecycle.artifacts,
+                    "staged_sha256": output_sha256,
+                    "output_sha256": output_sha256,
+                    "output_size": output_size,
+                },
+            )
+            lifecycle.step_completed(current_phase, 4)
+            phase = lifecycle.completed_phase
+
+        if phase != "finalized":
+            lifecycle.discard(f"cannot commit mobile database from completed phase {phase!r}")
+        output_sha256 = lifecycle.artifacts.get("output_sha256")
+        output_size = lifecycle.artifacts.get("output_size")
+        if not isinstance(output_sha256, str) or not isinstance(output_size, int):
+            lifecycle.discard("finalized mobile checkpoint output identity is missing")
+        current_phase = "commit"
+        lifecycle.step_started(current_phase, 5)
+        if temporary.exists():
+            if sha256_file(temporary) != output_sha256:
+                lifecycle.discard("finalized staged mobile database bytes changed")
+            os.replace(temporary, output)
+        elif not output.exists() or sha256_file(output) != output_sha256:
+            lifecycle.discard("committed mobile database does not match finalized sha256")
+        payload = {
+            "contract_major": contract_major,
+            "dataset_id": dataset_id,
+            "sha256": output_sha256,
+            "size_bytes": output_size,
+            "canonical_schema_version": str(schema_version[0]),
+            "physical_policy_version": physical_policy_version,
+        }
+        write_manifest_atomic(manifest, payload)
+        lifecycle.step_completed(current_phase, 5)
+        lifecycle.completed()
+    except Exception as exc:
+        lifecycle.failed(current_phase, exc)
+        if lifecycle.completed_phase in {None, "canonical_verified"}:
+            temporary.unlink(missing_ok=True)
         raise
     finally:
         src.close()
 
-    if dataset_id is None:
-        raise RuntimeError("reference contract dataset identity was not materialized")
-    payload = {
-        "contract_major": contract_major,
-        "dataset_id": dataset_id,
-        "sha256": _sha256(output),
-        "size_bytes": output.stat().st_size,
-        "canonical_schema_version": str(schema_version[0]),
-        "physical_policy_version": physical_policy_version,
-    }
-    manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"db_path": str(output), "manifest_path": str(manifest), **payload}
 
 
@@ -423,6 +552,7 @@ def build_mobile_database(
     *,
     manifest_path: str | Path | None = None,
     physical_policy_version: str = MOBILE_PHYSICAL_POLICY_VERSION,
+    progress=None,
 ) -> dict:
     """Build the current default contract through its versioned exporter."""
     from .reference_contracts.v1 import export_reference_database
@@ -432,6 +562,7 @@ def build_mobile_database(
         output_db,
         manifest_path=manifest_path,
         physical_policy_version=physical_policy_version,
+        progress=progress,
     )
 
 

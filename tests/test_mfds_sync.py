@@ -4,6 +4,7 @@ import io
 import inspect
 import json
 import tempfile
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -42,6 +43,38 @@ class MfdsSyncEngineTest(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "returned an invalid response envelope"),
         ):
             request_json("https://example.invalid", label="MFDS permit API", attempts=1)
+
+    def test_slow_first_page_fetch_emits_heartbeat_while_waiting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            events: list[dict[str, object]] = []
+
+            def slow_fetch(_page: int, _page_size: int) -> tuple[list[dict], int]:
+                time.sleep(0.04)
+                return [{"id": 1}], 1
+
+            with mock.patch(
+                "medicine_canonical.mfds_sync.SYNC_HEARTBEAT_INTERVAL_SECONDS",
+                0.01,
+            ):
+                sync_paginated_jsonl(
+                    Path(temp_dir) / "slow.jsonl",
+                    dataset_key="mfds_dur:slow",
+                    source_family="mfds_dur_item_api",
+                    source_locator="https://apis.data.go.kr/example",
+                    page_size=1,
+                    workers=1,
+                    fetch_page=slow_fetch,
+                    progress=False,
+                    job_progress=events.append,
+                )
+
+            self.assertTrue(
+                any(
+                    event.get("status") == "heartbeat"
+                    and event.get("phase") == "fetch_page_1"
+                    for event in events
+                )
+            )
 
     def test_total_count_change_discards_partial_checkpoint_for_clean_retry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -150,6 +183,7 @@ class MfdsSyncEngineTest(unittest.TestCase):
     def test_transient_page_failure_keeps_checkpoint_for_resume(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "dur.jsonl"
+            first_events: list[dict[str, object]] = []
 
             def interrupted_fetch(page: int, _page_size: int) -> tuple[list[dict], int]:
                 if page == 1:
@@ -166,10 +200,24 @@ class MfdsSyncEngineTest(unittest.TestCase):
                     workers=1,
                     fetch_page=interrupted_fetch,
                     progress=False,
+                    job_progress=first_events.append,
                 )
 
             self.assertTrue(output.with_name(output.name + ".pages").exists())
+            self.assertEqual(first_events[0]["job"], "mfds-source-sync")
+            self.assertEqual(first_events[0]["status"], "started")
+            self.assertFalse(first_events[0]["resumed"])
+            self.assertTrue(
+                any(
+                    event.get("status") == "checkpoint"
+                    and event.get("completed_pages") == 1
+                    and str(event.get("checkpoint_path", "")).endswith("dur.jsonl.pages/state.json")
+                    for event in first_events
+                )
+            )
+            self.assertEqual(first_events[-1]["status"], "failed")
             resumed_pages: list[int] = []
+            resumed_events: list[dict[str, object]] = []
 
             def resumed_fetch(page: int, _page_size: int) -> tuple[list[dict], int]:
                 resumed_pages.append(page)
@@ -186,10 +234,22 @@ class MfdsSyncEngineTest(unittest.TestCase):
                 workers=1,
                 fetch_page=resumed_fetch,
                 progress=False,
+                job_progress=resumed_events.append,
             )
 
             self.assertEqual(resumed_pages, [2])
             self.assertEqual(metadata["row_count"], 4)
+            self.assertTrue(resumed_events[0]["resumed"])
+            self.assertTrue(
+                any(
+                    event.get("status") == "progress"
+                    and event.get("current") == 2
+                    and event.get("total") == 2
+                    and "bar" in event
+                    for event in resumed_events
+                )
+            )
+            self.assertEqual(resumed_events[-1]["status"], "completed")
 
 
 if __name__ == "__main__":

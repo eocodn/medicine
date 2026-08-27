@@ -1,41 +1,26 @@
 from __future__ import annotations
 
-import gzip
-import hashlib
 import json
 import os
-import shutil
 import struct
 import zlib
 from pathlib import Path
 from typing import BinaryIO
+
+from .release_io import (
+    IoProgress,
+    compress_snapshot,
+    copy_stream,
+    decompress_snapshot,
+    maybe_report_progress,
+    sha256_file,
+)
 
 PATCH_FORMAT = "medicine-chunk-v1"
 _PATCH_MAGIC = b"MEDPATCH1"
 _HEADER_LENGTH = struct.Struct(">I")
 _RECORD_HEADER = struct.Struct(">QII")
 DEFAULT_CHUNK_SIZE = 64 * 1024
-RELEASE_PREFIX = "reference/v1"
-
-
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
-
-
 def _read_exact(handle: BinaryIO, size: int) -> bytes:
     data = handle.read(size)
     if len(data) != size:
@@ -49,6 +34,7 @@ def create_chunk_patch(
     output_path: str | Path,
     *,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    progress: IoProgress | None = None,
 ) -> dict:
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
@@ -86,6 +72,8 @@ def create_chunk_patch(
             patch.write(_HEADER_LENGTH.pack(len(header_bytes)))
             patch.write(header_bytes)
             chunk_index = 0
+            processed = 0
+            last_reported = 0
             while True:
                 target_chunk = new.read(chunk_size)
                 if not target_chunk:
@@ -97,6 +85,13 @@ def create_chunk_patch(
                     patch.write(compressed)
                     changed_chunks += 1
                 chunk_index += 1
+                processed += len(target_chunk)
+                last_reported = maybe_report_progress(
+                    progress,
+                    processed,
+                    target_size,
+                    last_reported,
+                )
         os.replace(temporary, output)
     except Exception:
         temporary.unlink(missing_ok=True)
@@ -139,6 +134,8 @@ def apply_chunk_patch(
     source_path: str | Path,
     patch_path: str | Path,
     output_path: str | Path,
+    *,
+    progress: IoProgress | None = None,
 ) -> dict:
     source = Path(source_path)
     patch = Path(patch_path)
@@ -159,7 +156,13 @@ def apply_chunk_patch(
         temporary = output.with_name(output.name + ".tmp")
         temporary.unlink(missing_ok=True)
         try:
-            shutil.copyfile(source, temporary)
+            with source.open("rb") as original, temporary.open("wb") as rebuilt_copy:
+                copy_stream(
+                    original,
+                    rebuilt_copy,
+                    total=source.stat().st_size,
+                    progress=progress,
+                )
             with temporary.open("r+b") as rebuilt:
                 rebuilt.truncate(header["target_size_bytes"])
                 seen: set[int] = set()
@@ -218,154 +221,12 @@ def apply_chunk_patch(
     }
 
 
-def compress_snapshot(source_path: str | Path, output_path: str | Path) -> dict:
-    source = Path(source_path)
-    output = Path(output_path)
-    if not source.is_file():
-        raise FileNotFoundError(f"snapshot source not found: {source}")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(output.name + ".tmp")
-    temporary.unlink(missing_ok=True)
-    try:
-        with source.open("rb") as src, temporary.open("wb") as raw:
-            with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=9, mtime=0) as zipped:
-                shutil.copyfileobj(src, zipped, length=1024 * 1024)
-        os.replace(temporary, output)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-    return {
-        "compression": "gzip",
-        "sha256": sha256_file(output),
-        "size_bytes": output.stat().st_size,
-        "uncompressed_sha256": sha256_file(source),
-        "uncompressed_size_bytes": source.stat().st_size,
-    }
-
-
-def decompress_snapshot(source_path: str | Path, output_path: str | Path) -> dict:
-    source = Path(source_path)
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(output.name + ".tmp")
-    temporary.unlink(missing_ok=True)
-    try:
-        with gzip.open(source, "rb") as zipped, temporary.open("wb") as raw:
-            shutil.copyfileobj(zipped, raw, length=1024 * 1024)
-        os.replace(temporary, output)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-    return {"sha256": sha256_file(output), "size_bytes": output.stat().st_size}
-
-
-def prepare_release(
-    target_db: str | Path,
-    mobile_manifest_path: str | Path,
-    output_dir: str | Path,
-    *,
-    previous_db: str | Path | None = None,
-    previous_dataset_id: str | None = None,
-    previous_bases: list[dict] | None = None,
-    history: list[dict] | None = None,
-    created_at: str,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> dict:
-    target = Path(target_db)
-    mobile_manifest_file = Path(mobile_manifest_path)
-    root = Path(output_dir)
-    mobile_manifest = json.loads(mobile_manifest_file.read_text(encoding="utf-8"))
-    target_sha = sha256_file(target)
-    target_size = target.stat().st_size
-    if mobile_manifest.get("sha256") != target_sha:
-        raise ValueError("mobile manifest SHA-256 does not match target DB")
-    if mobile_manifest.get("size_bytes") != target_size:
-        raise ValueError("mobile manifest size does not match target DB")
-    dataset_id = mobile_manifest.get("dataset_id")
-    if not isinstance(dataset_id, str) or not dataset_id:
-        raise ValueError("mobile manifest dataset_id is required")
-
-    full_key = f"{RELEASE_PREFIX}/full/{target_sha}.sqlite.gz"
-    full_path = root / full_key
-    full = compress_snapshot(target, full_path)
-    full_entry = {
-        "key": full_key,
-        "compression": "gzip",
-        "sha256": full["sha256"],
-        "size_bytes": full["size_bytes"],
-    }
-
-    patches: list[dict] = []
-    patch_paths: list[Path] = []
-    bases = list(previous_bases or [])
-    if previous_db is not None:
-        bases.insert(0, {"db_path": str(previous_db), "dataset_id": previous_dataset_id})
-    seen_sources: set[str] = set()
-    for base in bases:
-        previous = Path(base["db_path"])
-        previous_sha = sha256_file(previous)
-        previous_size = previous.stat().st_size
-        if previous_sha == target_sha or previous_sha in seen_sources:
-            continue
-        seen_sources.add(previous_sha)
-        patch_key = f"{RELEASE_PREFIX}/patch/{previous_sha}-{target_sha}.mpatch"
-        candidate = root / patch_key
-        patch = create_chunk_patch(previous, target, candidate, chunk_size=chunk_size)
-        verification_target = root / f".verify-{previous_sha[:12]}-{target_sha[:12]}.sqlite"
-        try:
-            apply_chunk_patch(previous, candidate, verification_target)
-        finally:
-            verification_target.unlink(missing_ok=True)
-        if patch["patch_size_bytes"] < full["size_bytes"]:
-            patches.append(
-                {
-                    "key": patch_key,
-                    "format": PATCH_FORMAT,
-                    "chunk_size": chunk_size,
-                    "from_dataset_id": base.get("dataset_id"),
-                    "from_sha256": previous_sha,
-                    "from_size_bytes": previous_size,
-                    "sha256": patch["patch_sha256"],
-                    "size_bytes": patch["patch_size_bytes"],
-                    "changed_chunks": patch["changed_chunks"],
-                }
-            )
-            patch_paths.append(candidate)
-        else:
-            candidate.unlink(missing_ok=True)
-
-    manifest = {
-        "schema_version": 1,
-        "created_at": created_at,
-        "dataset_id": dataset_id,
-        "target": {
-            "schema_version": str(mobile_manifest.get("schema_version")),
-            "sha256": target_sha,
-            "size_bytes": target_size,
-        },
-        "full": full_entry,
-        "patches": patches,
-        "history": list(history or []),
-    }
-    manifest_path = root / RELEASE_PREFIX / "latest.json"
-    _write_json(manifest_path, manifest)
-    return {
-        "manifest_path": str(manifest_path),
-        "full_path": str(full_path),
-        "patch_path": str(patch_paths[0]) if patch_paths else None,
-        "patch_paths": [str(path) for path in patch_paths],
-        "manifest": manifest,
-    }
-
-
 __all__ = [
     "DEFAULT_CHUNK_SIZE",
     "PATCH_FORMAT",
-    "RELEASE_PREFIX",
     "apply_chunk_patch",
     "compress_snapshot",
     "create_chunk_patch",
     "decompress_snapshot",
-    "prepare_release",
     "sha256_file",
 ]

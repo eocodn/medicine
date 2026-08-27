@@ -29,3 +29,6 @@ android/.kotlin/
 
 # Rust build outputs are worktree-local and reproducible.
 rust/**/target/
+
+# Shared UI build dependencies are reproducible from ui/package-lock.json.
+ui/node_modules/

@@ -12,14 +12,16 @@ from unittest.mock import patch
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 
-from medicine_canonical.release_r2 import release_signer_from_env
 from medicine_canonical.release_signing import (
     KmsReleaseSigner,
     ReleaseSigner,
     encode_signed_envelope,
     verify_signed_envelope,
 )
-from medicine_canonical.release_signing_runtime import trusted_public_keys_from_env
+from medicine_canonical.release_signing_runtime import (
+    release_signer_from_env,
+    trusted_public_keys_from_env,
+)
 
 from tests.test_release_signing import TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM
 

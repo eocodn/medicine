@@ -184,7 +184,8 @@ Reference DB 배포 workflow는 fresh source run에서 MFDS API snapshot과 subs
 정기 실행은 매일 03:17 `Asia/Seoul`에 항상 fresh source sync를 수행합니다. 정기 실행은 repository variable
 `REFERENCE_PUBLISH_SCHEDULE_ENABLED=true`일 때만 실제 job을 실행하므로 rollout 검증 전에는 `false`로 둡니다.
 R2 bucket은 public 개발 URL을 켜기 전에 `medicine-canonical r2-public-audit --json`으로
-`reference/v1/` 외 객체가 없는지 확인합니다.
+`reference/v1/` 또는 `reference/v2/` 외 객체가 없는지 확인합니다. 기존 v1 객체는 protocol migration
+기간의 실제 배포 상태라 읽기 전용 coexistence 대상으로 허용하고, 신규 publication은 v2 root를 사용합니다.
 
 개발 단계의 Android 앱과 standalone development web은 Cloudflare R2의 동일한 non-production `r2.dev`
 reference channel을 사용합니다. 현재 개발 endpoint는
@@ -200,8 +201,8 @@ APK 자체에는 해당 DB나 manifest를 포함하지 않습니다. APK에는 r
 
 ## 앱 제어 CLI
 
-`app` 서비스의 Python 코드는 CLI 인자와 출력 형식만 담당하며, 개인 DB 초기화와 모든 앱 도메인 요청은
-동일 이미지의 Rust `medicine-core` Agent Control CLI로 전달합니다.
+`app` 서비스는 Rust `medicine-agentctl`을 직접 실행합니다. 개인 DB 초기화와 모든 앱 도메인 요청은
+Android/WebView와 동일한 `MedicineEngine` 코어를 사용하며 Python 앱 런타임을 거치지 않습니다.
 
 ```bash
 # 사람 목록

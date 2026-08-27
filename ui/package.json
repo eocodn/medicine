@@ -1,0 +1,14 @@
+{
+  "name": "medicine-shared-ui",
+  "private": true,
+  "version": "1.0.0",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json && cp -R public/. dist/",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "verify-dist": "tmp=$(mktemp -d) && trap 'rm -rf \"$tmp\"' EXIT && tsc -p tsconfig.json --outDir \"$tmp\" && cp -R public/. \"$tmp\"/ && diff -ru \"$tmp\" dist"
+  },
+  "devDependencies": {
+    "typescript": "5.9.2"
+  }
+}

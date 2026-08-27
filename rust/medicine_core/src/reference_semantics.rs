@@ -73,28 +73,24 @@ pub(crate) fn dedupe_qualifiers(values: Vec<Value>) -> Vec<Value> {
 
 fn semantics(con: &Connection, row: &Map<String, Value>) -> Result<Vec<Map<String, Value>>, ()> {
     let Some(criterion_rule_id) = row.get("criterion_rule_id").and_then(Value::as_i64) else {
-        return Ok(legacy_dev_semantics(row));
+        return Ok(direct_rule_semantics(row));
     };
-    let expectation = match con
+    let expectation = con
         .query_row(
             "SELECT expected_fact_count FROM reference_semantic_expectations WHERE criterion_rule_id=?",
             [criterion_rule_id],
             |record| record.get::<_, i64>(0),
         )
         .optional()
-    {
-        Ok(value) => value,
-        Err(_) => return Ok(legacy_dev_semantics(row)),
-    };
-    let mut statement = match con.prepare(
-        "SELECT semantic_role,evaluation_mode,evaluator_kind,fallback_action,
-                qualifier_type,display_text,structured_payload_json,source_remark
-         FROM reference_criterion_semantics
-         WHERE criterion_rule_id=? ORDER BY ordinal",
-    ) {
-        Ok(statement) => statement,
-        Err(_) => return Ok(legacy_dev_semantics(row)),
-    };
+        .map_err(|_| ())?;
+    let mut statement = con
+        .prepare(
+            "SELECT semantic_role,evaluation_mode,evaluator_kind,fallback_action,
+                    qualifier_type,display_text,structured_payload_json,source_remark
+             FROM reference_criterion_semantics
+             WHERE criterion_rule_id=? ORDER BY ordinal",
+        )
+        .map_err(|_| ())?;
     let records = statement
         .query_map([criterion_rule_id], |record| {
             Ok((
@@ -215,7 +211,7 @@ fn semantic_record_is_valid(
     }
 }
 
-fn legacy_dev_semantics(row: &Map<String, Value>) -> Vec<Map<String, Value>> {
+fn direct_rule_semantics(row: &Map<String, Value>) -> Vec<Map<String, Value>> {
     let dataset_key = text(row, "criterion_source_dataset_key")
         .or_else(|| text(row, "dataset_key"))
         .unwrap_or("");
