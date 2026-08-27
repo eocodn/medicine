@@ -279,13 +279,31 @@ def evaluate_parser_v5(
 
 
 def _selection(metrics: Mapping[str, Any]) -> float:
-    # This is intentionally only a trainer smoke-selection score. Chronicle 624
-    # reserves final model selection for the multi-axis worst-slice matrix (J).
-    return (
-        float(metrics["role_micro_f1"])
-        + float(metrics["candidate_accuracy"])
-        + float(metrics["assignment_accuracy"])
-    ) / 3.0
+    return float(metrics["worst_view_score"])
+
+
+def evaluate_parser_v5_views(
+    model: ParserV5Model,
+    datasets: Sequence[ParserV5Dataset],
+    config: ParserV5TrainingConfig,
+) -> dict[str, Any]:
+    overall = evaluate_parser_v5(model, datasets, config)
+    views: dict[str, dict[str, float | int]] = {}
+    scores: list[float] = []
+    for dataset in datasets:
+        metrics = evaluate_parser_v5(model, [dataset], config)
+        views[dataset.dataset_id] = metrics
+        applicable = [float(metrics["role_micro_f1"]), float(metrics["candidate_accuracy"])]
+        if int(metrics["assignment_supervised"]) > 0:
+            applicable.append(float(metrics["assignment_accuracy"]))
+        scores.append(sum(applicable) / len(applicable))
+    if not scores:
+        raise ValueError("Parser v5 validation produced no development views")
+    return {
+        **overall,
+        "views": views,
+        "worst_view_score": min(scores),
+    }
 
 
 def _checkpoint_record(root: Path, epoch: int, profile_sha256: str) -> dict[str, Any] | None:
@@ -455,7 +473,7 @@ def train_parser_v5(
 
         for epoch in range(len(history) + 1, config.epochs + 1):
             training_loss, steps = _train_epoch(model, optimizer, train, config, epoch=epoch)
-            metrics = evaluate_parser_v5(model, validation, config)
+            metrics = evaluate_parser_v5_views(model, validation, config)
             record = _save_checkpoint(
                 root,
                 epoch=epoch,
@@ -494,5 +512,6 @@ __all__ = [
     "ParserV5Model",
     "ParserV5TrainingConfig",
     "evaluate_parser_v5",
+    "evaluate_parser_v5_views",
     "train_parser_v5",
 ]

@@ -62,6 +62,8 @@ class ParserV5TrainingTest(unittest.TestCase):
             self.assertIn("role_micro_f1", first["best_validation"])
             self.assertIn("assignment_accuracy", first["best_validation"])
             self.assertIn("candidate_accuracy", first["best_validation"])
+            self.assertIn("worst_view_score", first["best_validation"])
+            self.assertEqual(set(first["best_validation"]["views"]), {"v5-val"})
 
     def test_training_resumes_from_last_complete_epoch_after_failure(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
