@@ -262,6 +262,40 @@ def _scramble_geometry(
         span["polygon"] = _rect(x, y, width, height)
 
 
+def _section_bounds(
+    kinds: list[str],
+    *,
+    medication_count: int,
+    top: float,
+    bottom: float,
+    rng: random.Random,
+) -> list[tuple[float, float]]:
+    if not kinds:
+        return []
+    minimums = [
+        54.0 * medication_count + 24.0 if kind == "medications" else 72.0
+        for kind in kinds
+    ]
+    available = bottom - top
+    required = sum(minimums)
+    if required > available:
+        raise ValueError("parser world content cannot fit inside configured page height")
+    remaining = available - required
+    weights = [rng.uniform(0.5, 1.5) for _ in kinds]
+    weight_total = sum(weights)
+    heights = [
+        minimum + remaining * weight / weight_total
+        for minimum, weight in zip(minimums, weights, strict=True)
+    ]
+    bounds: list[tuple[float, float]] = []
+    cursor = top
+    for index, height in enumerate(heights):
+        end = bottom if index == len(heights) - 1 else cursor + height
+        bounds.append((cursor, end))
+        cursor = end
+    return bounds
+
+
 def generate_parser_world(
     *,
     seed: int,
@@ -287,12 +321,17 @@ def generate_parser_world(
     spans: list[dict[str, Any]] = []
     top = 54.0
     bottom = selected.height - 54.0
-    section_height = (bottom - top) / max(1, len(kinds))
+    section_bounds = _section_bounds(
+        kinds,
+        medication_count=medication_count,
+        top=top,
+        bottom=bottom,
+        rng=rng,
+    )
     medication_section_seen = False
     for section_index, kind in enumerate(kinds):
         section_id = f"section-{section_index + 1:02d}"
-        y1 = top + section_index * section_height
-        y2 = top + (section_index + 1) * section_height
+        y1, y2 = section_bounds[section_index]
         sections.append({"section_id": section_id, "kind": kind})
         if kind == "medications" and not medication_section_seen:
             medication_section_seen = True

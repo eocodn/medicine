@@ -105,6 +105,15 @@ class ParserV5WorldTest(unittest.TestCase):
         self.assertTrue(all(span["association_group"] is None for span in document["spans"]))
         validate_parser_v5_document(document)
 
+    def test_many_medication_high_distractor_worlds_always_fit_page(self) -> None:
+        profile = ParserWorldProfile(
+            medication_count=(7, 7),
+            distractor_section_count=(10, 12),
+        )
+        for seed in range(40):
+            document = generate_parser_world(seed=seed, document_index=seed, profile=profile)
+            validate_parser_v5_document(document)
+
     def test_semantic_truth_exposes_span_level_roles_and_medication_groups(self) -> None:
         document = generate_parser_world(
             seed=29,
