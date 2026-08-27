@@ -212,10 +212,13 @@ def _corrupt_text(text: str, *, rng: random.Random) -> str:
     index = rng.randrange(len(text))
     replacement = substitutions.get(text[index])
     if replacement is not None:
-        return text[:index] + replacement + text[index + 1 :]
+        candidate = text[:index] + replacement + text[index + 1 :]
+        return candidate if candidate.strip() else "?"
     if len(text) > 1 and rng.random() < 0.5:
-        return text[:index] + text[index + 1 :]
-    return text[:index] + "?" + text[index + 1 :]
+        candidate = text[:index] + text[index + 1 :]
+        return candidate if candidate.strip() else "?"
+    candidate = text[:index] + "?" + text[index + 1 :]
+    return candidate if candidate.strip() else "?"
 
 
 def _false_positive(*, rng: random.Random, width: int, height: int) -> dict[str, Any]:

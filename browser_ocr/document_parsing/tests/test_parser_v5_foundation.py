@@ -247,6 +247,13 @@ class ParserV5ObservationTest(unittest.TestCase):
         self.assertTrue(all("semantic_role" not in node for node in observation["nodes"]))
         self.assertTrue(all("association_group" not in node for node in observation["nodes"]))
 
+    def test_text_corruption_never_emits_empty_or_whitespace_only_node_text(self) -> None:
+        document = generate_parser_world(seed=4402, document_index=0, profile=ParserWorldProfile())
+        observation = simulate_observations(document, seed=4402, profile=ObservationProfile())
+
+        self.assertTrue(observation["nodes"])
+        self.assertTrue(all(str(node["text"]).strip() for node in observation["nodes"]))
+
 
 if __name__ == "__main__":
     unittest.main()
