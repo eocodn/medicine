@@ -487,6 +487,24 @@ class CanonicalDatabaseTest(unittest.TestCase):
         self.assertEqual(result["source_rows"], sum(int(event["row_count"]) for event in completed))
         self.assertTrue(all(event.get("job") == "mfds-source-sync" for event in events))
 
+    def test_sync_cli_enables_structured_progress_unless_quiet(self) -> None:
+        payload = {"source_rows": 0, "product_sources": {}, "ingredient_sources": {}}
+        for quiet in (False, True):
+            args = ["sync", "--service-key", "test-key", "--json"]
+            if quiet:
+                args.append("--quiet")
+            with (
+                mock.patch("medicine_canonical.cli.sync_reference_sources", return_value=payload) as sync,
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(canonical_main(args), 0)
+            kwargs = sync.call_args.kwargs
+            self.assertEqual(kwargs["progress"], not quiet)
+            if quiet:
+                self.assertIsNone(kwargs["job_progress"])
+            else:
+                self.assertTrue(callable(kwargs["job_progress"]))
+
     def test_link_code_preprocessing_has_only_reviewed_explicit_equivalences(self) -> None:
         cases = {
             "D001289": "D000274",
