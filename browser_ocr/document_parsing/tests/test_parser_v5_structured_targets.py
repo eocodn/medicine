@@ -38,10 +38,26 @@ class ParserV5StructuredTargetsTest(unittest.TestCase):
         targets = build_parser_v5_structured_targets(document, observation)
         self.assertEqual([slot.medication_id for slot in targets.product_slots], ["med-01", "med-02"])
         self.assertTrue(all(slot.member_node_indices for slot in targets.product_slots))
-        supervised = [target for target in targets.field_spans if target.supervised]
+        self.assertTrue(targets.negative_product_node_indices)
+        product_nodes = {index for slot in targets.product_slots for index in slot.member_node_indices}
+        self.assertTrue(product_nodes.isdisjoint(targets.negative_product_node_indices))
+        supervised = [target for target in targets.field_spans if target.supervised and not target.synthetic_negative]
         self.assertTrue(supervised)
         self.assertTrue(all(target.target_slot_index in {0, 1} for target in supervised))
         self.assertTrue(all(target.none_target is False for target in supervised))
+
+    def test_non_field_nodes_create_role_conditioned_none_training_instances(self) -> None:
+        document, observation = self._pair(1)
+        targets = build_parser_v5_structured_targets(document, observation)
+        negatives = [target for target in targets.field_spans if target.synthetic_negative]
+        self.assertTrue(negatives)
+        roles_by_node: dict[int, set[str]] = {}
+        for target in negatives:
+            self.assertTrue(target.supervised)
+            self.assertTrue(target.none_target)
+            self.assertIsNone(target.target_slot_index)
+            roles_by_node.setdefault(target.node_index, set()).add(target.semantic_role)
+        self.assertTrue(all(roles == {"dose", "frequency", "duration", "instruction", "schedule"} for roles in roles_by_node.values()))
 
     def test_merged_multi_role_node_keeps_separate_span_assignments(self) -> None:
         document, observation = self._pair(1)
@@ -72,11 +88,13 @@ class ParserV5StructuredTargetsTest(unittest.TestCase):
         self.assertTrue(all(not target.supervised for target in medication_fields))
         self.assertTrue(all(not target.none_target for target in medication_fields))
 
-    def test_zero_medication_document_has_no_product_or_field_targets(self) -> None:
+    def test_zero_medication_document_has_only_negative_assignment_training_instances(self) -> None:
         document, observation = self._pair(0)
         targets = build_parser_v5_structured_targets(document, observation)
         self.assertEqual(targets.product_slots, ())
-        self.assertEqual(targets.field_spans, ())
+        self.assertEqual(targets.negative_product_node_indices, tuple(range(len(observation["nodes"]))))
+        self.assertTrue(targets.field_spans)
+        self.assertTrue(all(target.synthetic_negative and target.none_target for target in targets.field_spans))
 
 
 if __name__ == "__main__":

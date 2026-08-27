@@ -65,8 +65,23 @@ class ParserV5HeadTest(unittest.TestCase):
         hidden, _ = encoder(tensors)
         candidate_logits, assignment_logits = head(hidden, tensors.relation_features, targets)
         self.assertEqual(list(candidate_logits.shape), [len(model_input.node_ids)])
-        self.assertEqual(list(assignment_logits.shape), [len(structured.field_spans), len(structured.product_slots) + 1])
+        expected_slots = len(structured.product_slots) + len(structured.negative_product_node_indices)
+        self.assertEqual(list(assignment_logits.shape), [len(structured.field_spans), expected_slots + 1])
+        self.assertEqual(list(targets.product_membership.shape), [expected_slots, len(model_input.node_ids)])
+        self.assertGreater(int(targets.assignment_none_mask.sum().item()), 0)
+        self.assertGreater(int(targets.assignment_positive_mask.sum().item()), 0)
         self.assertTrue(bool(paddle.isfinite(parser_v5_head_loss(candidate_logits, assignment_logits, targets)).item()))
+
+    def test_assignment_targets_include_none_examples_without_removing_positive_supervision(self) -> None:
+        document, observation = self._pair()
+        model_input = build_parser_v5_model_input(document, observation, max_text_bytes=48)
+        structured = build_parser_v5_structured_targets(document, observation)
+        targets = parser_v5_head_targets(structured, node_count=len(model_input.node_ids))
+        none_index = int(targets.product_membership.shape[0])
+        active = targets.assignment_mask.numpy().tolist()
+        values = targets.assignment_targets.numpy().tolist()
+        self.assertTrue(any(enabled and value == none_index for enabled, value in zip(active, values, strict=True)))
+        self.assertTrue(any(enabled and value < len(structured.product_slots) for enabled, value in zip(active, values, strict=True)))
 
     def test_missing_product_slot_masks_fields_instead_of_relabeling_them_none(self) -> None:
         document, observation = self._pair()
@@ -78,7 +93,7 @@ class ParserV5HeadTest(unittest.TestCase):
         masked = [index for index, field in enumerate(structured.field_spans) if field.association_group == "med-01"]
         self.assertTrue(masked)
         self.assertTrue(all(float(targets.assignment_mask[index].item()) == 0.0 for index in masked))
-        none_index = len(structured.product_slots)
+        none_index = int(targets.product_membership.shape[0])
         self.assertTrue(all(int(targets.assignment_targets[index].item()) != none_index for index in masked))
 
     def test_assignment_scorer_accepts_truth_free_predicted_instances(self) -> None:

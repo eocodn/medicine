@@ -24,10 +24,13 @@ class ParserV5HeadTargets:
     field_role_index: paddle.Tensor
     assignment_targets: paddle.Tensor
     assignment_mask: paddle.Tensor
+    assignment_positive_mask: paddle.Tensor
+    assignment_none_mask: paddle.Tensor
 
 
 def parser_v5_head_targets(value: ParserV5StructuredTargets, *, node_count: int) -> ParserV5HeadTargets:
-    product_count = len(value.product_slots)
+    true_product_count = len(value.product_slots)
+    product_count = true_product_count + len(value.negative_product_node_indices)
     membership = [[0.0] * node_count for _ in range(product_count)]
     available: list[bool] = []
     for slot_index, slot in enumerate(value.product_slots):
@@ -37,9 +40,15 @@ def parser_v5_head_targets(value: ParserV5StructuredTargets, *, node_count: int)
             weight = 1.0 / len(members)
             for node_index in members:
                 membership[slot_index][node_index] = weight
+    for negative_offset, node_index in enumerate(value.negative_product_node_indices):
+        slot_index = true_product_count + negative_offset
+        membership[slot_index][node_index] = 1.0
+        available.append(True)
 
     assignment_targets: list[int] = []
     assignment_mask: list[float] = []
+    assignment_positive_mask: list[float] = []
+    assignment_none_mask: list[float] = []
     field_node_index: list[int] = []
     field_role_index: list[int] = []
     none_index = product_count
@@ -53,6 +62,8 @@ def parser_v5_head_targets(value: ParserV5StructuredTargets, *, node_count: int)
         else:
             assignment_targets.append(0 if product_count else none_index)
         assignment_mask.append(1.0 if field.supervised else 0.0)
+        assignment_positive_mask.append(1.0 if field.supervised and not field.none_target else 0.0)
+        assignment_none_mask.append(1.0 if field.supervised and field.none_target else 0.0)
 
     field_count = len(value.field_spans)
     return ParserV5HeadTargets(
@@ -64,6 +75,8 @@ def parser_v5_head_targets(value: ParserV5StructuredTargets, *, node_count: int)
         field_role_index=paddle.to_tensor(field_role_index, dtype="int64").reshape([field_count]),
         assignment_targets=paddle.to_tensor(assignment_targets, dtype="int64").reshape([field_count]),
         assignment_mask=paddle.to_tensor(assignment_mask, dtype="float32").reshape([field_count]),
+        assignment_positive_mask=paddle.to_tensor(assignment_positive_mask, dtype="float32").reshape([field_count]),
+        assignment_none_mask=paddle.to_tensor(assignment_none_mask, dtype="float32").reshape([field_count]),
     )
 
 
@@ -149,7 +162,18 @@ def parser_v5_head_loss(
     if targets.assignment_targets.shape[0] == 0 or float(targets.assignment_mask.sum().item()) == 0.0:
         return candidate_loss
     assignment = F.cross_entropy(assignment_logits, targets.assignment_targets, reduction="none")
-    assignment_loss = (assignment * targets.assignment_mask).sum() / paddle.clip(targets.assignment_mask.sum(), min=1.0)
+    assignment_components: list[paddle.Tensor] = []
+    if float(targets.assignment_positive_mask.sum().item()) > 0.0:
+        assignment_components.append(
+            (assignment * targets.assignment_positive_mask).sum()
+            / paddle.clip(targets.assignment_positive_mask.sum(), min=1.0)
+        )
+    if float(targets.assignment_none_mask.sum().item()) > 0.0:
+        assignment_components.append(
+            (assignment * targets.assignment_none_mask).sum()
+            / paddle.clip(targets.assignment_none_mask.sum(), min=1.0)
+        )
+    assignment_loss = sum(assignment_components) / len(assignment_components)
     return candidate_loss + assignment_loss
 
 

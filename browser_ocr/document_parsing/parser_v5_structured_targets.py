@@ -25,6 +25,7 @@ class FieldSpanTarget:
     target_slot_index: int | None
     none_target: bool
     supervised: bool
+    synthetic_negative: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class ParserV5StructuredTargets:
     candidate_targets: tuple[float, ...]
     candidate_mask: tuple[float, ...]
     product_slots: tuple[ProductSlotTarget, ...]
+    negative_product_node_indices: tuple[int, ...]
     field_spans: tuple[FieldSpanTarget, ...]
 
 
@@ -48,6 +50,8 @@ def build_parser_v5_structured_targets(
     medication_ids = [str(medication["medication_id"]) for medication in medications]
     slot_index = {medication_id: index for index, medication_id in enumerate(medication_ids)}
     product_members: list[list[int]] = [[] for _ in medication_ids]
+    labeled_roles_by_node: list[set[str]] = []
+    ambiguous_by_node: list[bool] = []
 
     for node_index, raw_node in enumerate(raw_nodes):
         if not isinstance(raw_node, Mapping):
@@ -55,18 +59,32 @@ def build_parser_v5_structured_targets(
         targets = raw_node.get("targets")
         if not isinstance(targets, list):
             raise ValueError("Parser v5 observation targets must be a list")
+        labeled_roles: set[str] = set()
+        has_ambiguous = False
         for target in targets:
             if not isinstance(target, Mapping):
                 raise ValueError("Parser v5 observation target must be an object")
-            if target.get("label_status") != "labeled" or target.get("semantic_role") != "product":
+            if target.get("label_status") != "labeled":
+                has_ambiguous = True
+                continue
+            role = str(target.get("semantic_role") or "")
+            labeled_roles.add(role)
+            if role != "product":
                 continue
             group = target.get("association_group")
             if group in slot_index and node_index not in product_members[slot_index[str(group)]]:
                 product_members[slot_index[str(group)]].append(node_index)
+        labeled_roles_by_node.append(labeled_roles)
+        ambiguous_by_node.append(has_ambiguous)
 
     product_slots = tuple(
         ProductSlotTarget(medication_id=medication_id, member_node_indices=tuple(product_members[index]))
         for index, medication_id in enumerate(medication_ids)
+    )
+    negative_product_node_indices = tuple(
+        node_index
+        for node_index, labeled_roles in enumerate(labeled_roles_by_node)
+        if "product" not in labeled_roles and not ambiguous_by_node[node_index]
     )
 
     candidate_targets = tuple(
@@ -116,10 +134,36 @@ def build_parser_v5_structured_targets(
                 )
             )
 
+    # Inference proposes field-role instances from model outputs rather than
+    # semantic truth. Train the structured head on generic NONE instances for
+    # every unambiguous OCR node that has no true medication-field role, so a
+    # role false-positive does not become an untrained assignment case.
+    for node_index, raw_node in enumerate(raw_nodes):
+        if not isinstance(raw_node, Mapping):
+            continue
+        if ambiguous_by_node[node_index] or labeled_roles_by_node[node_index] & FIELD_ROLES:
+            continue
+        node_id = str(raw_node.get("node_id") or "")
+        for role in sorted(FIELD_ROLES):
+            field_spans.append(
+                FieldSpanTarget(
+                    node_index=node_index,
+                    node_id=node_id,
+                    source_span_id="",
+                    semantic_role=role,
+                    association_group=None,
+                    target_slot_index=None,
+                    none_target=True,
+                    supervised=True,
+                    synthetic_negative=True,
+                )
+            )
+
     return ParserV5StructuredTargets(
         candidate_targets=candidate_targets,
         candidate_mask=candidate_mask,
         product_slots=product_slots,
+        negative_product_node_indices=negative_product_node_indices,
         field_spans=tuple(field_spans),
     )
 

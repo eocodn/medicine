@@ -61,6 +61,8 @@ class ParserV5TrainingTest(unittest.TestCase):
             self.assertEqual(len(first["best_checkpoint_sha256"]), 64)
             self.assertIn("role_micro_f1", first["best_validation"])
             self.assertIn("assignment_accuracy", first["best_validation"])
+            self.assertIn("assignment_none_accuracy", first["best_validation"])
+            self.assertGreater(first["best_validation"]["assignment_none_supervised"], 0)
             self.assertIn("candidate_accuracy", first["best_validation"])
             self.assertIn("worst_view_score", first["best_validation"])
             self.assertIn("decoded_product_recall", first["best_validation"])
