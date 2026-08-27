@@ -64,19 +64,51 @@ fn run(args: Vec<String>) -> Result<i32, String> {
 #[cfg(feature = "agentctl")]
 fn agentctl_capabilities(args: &[String]) -> Result<(), String> {
     let json_output = agentctl_json_flag(args)?;
+    #[cfg(not(feature = "web"))]
+    let observation = vec!["health", "reference-state", "scenario-events"];
+    #[cfg(feature = "web")]
+    let observation = vec!["health", "reference-state", "scenario-events", "screenshot"];
+    #[cfg(not(feature = "web"))]
+    let control = vec![
+        "request",
+        "personal-schema",
+        "personal-checkpoint",
+        "reference-verify",
+        "reference-apply",
+        "product",
+        "draft-normalize",
+        "safety-basis",
+        "dur-display",
+        "profile-risks",
+        "interaction-risks",
+        "scenario",
+        "app-commands",
+    ];
+    #[cfg(feature = "web")]
+    let control = vec![
+        "request",
+        "personal-schema",
+        "personal-checkpoint",
+        "reference-verify",
+        "reference-apply",
+        "product",
+        "draft-normalize",
+        "safety-basis",
+        "dur-display",
+        "profile-risks",
+        "interaction-risks",
+        "scenario",
+        "app-commands",
+        "screenshot",
+    ];
     let payload = json!({
         "agentctl": true,
         "structured_output": true,
         "scheduled_operations": true,
         "max_scheduled_operations": 64,
         "max_schedule_horizon_ms": 60_000,
-        "observation": ["health", "reference-state", "scenario-events", "screenshot"],
-        "control": [
-            "request", "personal-schema", "personal-checkpoint", "reference-verify",
-            "reference-apply", "product", "draft-normalize", "safety-basis",
-            "dur-display", "profile-risks", "interaction-risks", "scenario",
-            "app-commands", "screenshot"
-        ]
+        "observation": observation,
+        "control": control,
     });
     emit_agentctl_payload(&payload, json_output)
 }
@@ -84,28 +116,43 @@ fn agentctl_capabilities(args: &[String]) -> Result<(), String> {
 #[cfg(feature = "agentctl")]
 fn agentctl_targets(args: &[String]) -> Result<(), String> {
     let json_output = agentctl_json_flag(args)?;
-    let payload = json!({
-        "targets": [
-            {
-                "id": "medicine-engine",
-                "kind": "headless-core",
-                "controls": ["request", "scenario"],
-                "observations": ["health"]
-            },
-            {
-                "id": "reference-store",
-                "kind": "state-store",
-                "controls": ["reference-apply"],
-                "observations": ["reference-state"]
-            },
-            {
-                "id": "shared-ui",
-                "kind": "gui",
-                "controls": ["screenshot"],
-                "observations": ["screenshot"]
-            }
-        ]
-    });
+    #[cfg(not(feature = "web"))]
+    let targets = vec![
+        json!({
+            "id": "medicine-engine",
+            "kind": "headless-core",
+            "controls": ["request", "scenario"],
+            "observations": ["health"]
+        }),
+        json!({
+            "id": "reference-store",
+            "kind": "state-store",
+            "controls": ["reference-apply"],
+            "observations": ["reference-state"]
+        }),
+    ];
+    #[cfg(feature = "web")]
+    let targets = vec![
+        json!({
+            "id": "medicine-engine",
+            "kind": "headless-core",
+            "controls": ["request", "scenario"],
+            "observations": ["health"]
+        }),
+        json!({
+            "id": "reference-store",
+            "kind": "state-store",
+            "controls": ["reference-apply"],
+            "observations": ["reference-state"]
+        }),
+        json!({
+            "id": "shared-ui",
+            "kind": "gui",
+            "controls": ["screenshot"],
+            "observations": ["screenshot"]
+        }),
+    ];
+    let payload = json!({"targets": targets});
     emit_agentctl_payload(&payload, json_output)
 }
 

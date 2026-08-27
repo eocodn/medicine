@@ -5,6 +5,7 @@ mod common;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::fs;
+#[cfg(feature = "web")]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
@@ -72,6 +73,7 @@ fn search_reference() -> std::path::PathBuf {
     path
 }
 
+#[cfg(feature = "web")]
 #[test]
 fn capabilities_and_targets_expose_exploratory_surface() {
     let capabilities = agentctl()
@@ -111,6 +113,41 @@ fn capabilities_and_targets_expose_exploratory_surface() {
         .filter_map(|item| item["id"].as_str())
         .collect::<Vec<_>>();
     assert_eq!(ids, vec!["medicine-engine", "reference-store", "shared-ui"]);
+}
+
+#[cfg(not(feature = "web"))]
+#[test]
+fn capabilities_without_web_do_not_advertise_shared_ui_screenshots() {
+    let capabilities = agentctl()
+        .args(["capabilities", "--json"])
+        .output()
+        .expect("run agentctl capabilities without web");
+    assert!(capabilities.status.success());
+    let value: Value = serde_json::from_slice(&capabilities.stdout).expect("capabilities json");
+    assert!(!value["control"]
+        .as_array()
+        .expect("control list")
+        .iter()
+        .any(|item| item == "screenshot"));
+    assert!(!value["observation"]
+        .as_array()
+        .expect("observation list")
+        .iter()
+        .any(|item| item == "screenshot"));
+
+    let targets = agentctl()
+        .args(["targets", "--json"])
+        .output()
+        .expect("run agentctl targets without web");
+    assert!(targets.status.success());
+    let value: Value = serde_json::from_slice(&targets.stdout).expect("targets json");
+    let ids = value["targets"]
+        .as_array()
+        .expect("targets array")
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["medicine-engine", "reference-store"]);
 }
 
 #[test]
@@ -381,6 +418,7 @@ fn app_meds_command_remains_read_only_for_daily_plan_state() {
     remove_sqlite(&reference);
 }
 
+#[cfg(feature = "web")]
 #[test]
 fn screenshot_uses_read_only_personal_snapshot_and_local_rust_web() {
     let root = common::temp_sqlite_path("agentctl-screenshot-root");

@@ -1,5 +1,6 @@
 #[path = "app_commands/commands.rs"]
 mod commands;
+#[cfg(feature = "web")]
 #[path = "app_commands/screenshot.rs"]
 mod screenshot;
 #[path = "app_commands/support.rs"]
@@ -23,6 +24,7 @@ const APP_COMMANDS: &[&str] = &[
     "dose-instance",
     "dose-instance-cancel",
     "prn-intake",
+    #[cfg(feature = "web")]
     "screenshot",
 ];
 
@@ -38,11 +40,14 @@ pub fn try_run(args: &[String], usage: fn() -> String) -> Result<Option<i32>, St
         return Err(usage());
     }
     let command_args = &args[command_index + 1..];
+    #[cfg(feature = "web")]
     let envelope = if command == "screenshot" {
         screenshot::capture(&config, command_args, usage)?
     } else {
         commands::dispatch(&config, command, command_args, usage)?
     };
+    #[cfg(not(feature = "web"))]
+    let envelope = commands::dispatch(&config, command, command_args, usage)?;
     emit_body(&envelope, command_args.iter().any(|arg| arg == "--json"))?;
     Ok(Some(exit_code(&envelope)))
 }
