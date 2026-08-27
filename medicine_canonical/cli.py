@@ -431,6 +431,7 @@ def main(argv=None) -> int:
             previous_db=args.previous_db,
             previous_dataset_id=args.previous_dataset_id,
             created_at=created_at,
+            progress=_reference_progress,
         )
     elif args.command == "release-apply":
         payload = apply_chunk_patch(args.source, args.patch, args.output)

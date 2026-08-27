@@ -25,6 +25,7 @@ from medicine_canonical.release_window import (
     publish_contract_window,
     publish_verified_contract_window,
 )
+from medicine_canonical.release_window_artifacts import load_candidate, prepare_contract
 from tests.test_release_r2 import FakeS3, TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM
 
 
@@ -113,6 +114,130 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         self.assertEqual(entry["dataset_id"], "sha256:" + "1" * 64)
         self.assertEqual(entry["target"]["sha256"], sha256_file(c1.database))
         self.assertTrue(entry["full"]["key"].startswith("reference/v2/contracts/1/full/"))
+
+    def test_contract_window_publish_threads_artifact_lifecycle_progress(self) -> None:
+        c1 = self.candidate(1, "progress", b"P" * 500_000, "sha256:" + "1" * 64)
+        events: list[dict[str, object]] = []
+
+        result = publish_contract_window(
+            self.client,
+            self.bucket,
+            [c1],
+            self.root / "dist-progress",
+            signer=self.signer,
+            release_sequence=100,
+            current_contract_major=1,
+            minimum_supported_contract_major=1,
+            trusted_public_keys={"test-2026": TEST_PUBLIC_KEY_PEM},
+            created_at="2026-08-20T00:00:00Z",
+            progress=events.append,
+        )
+
+        self.assertEqual(result["status"], "published")
+        contract_events = [
+            event for event in events if event.get("job") == "contract-release-prepare-1"
+        ]
+        self.assertEqual(contract_events[0]["status"], "started")
+        self.assertTrue(any(event.get("status") == "checkpoint" for event in contract_events))
+        self.assertEqual(contract_events[-1]["status"], "completed")
+        transfer_events = [
+            event for event in events if event.get("job") == "reference-publish-transfer"
+        ]
+        self.assertEqual(transfer_events[0]["status"], "started")
+        self.assertTrue(
+            any(
+                event.get("status") == "progress"
+                and str(event.get("phase", "")).endswith("_upload")
+                and event.get("current") == event.get("total")
+                and isinstance(event.get("bar"), str)
+                for event in transfer_events
+            )
+        )
+        self.assertTrue(any(event.get("status") == "checkpoint" for event in transfer_events))
+        self.assertEqual(transfer_events[-1]["status"], "completed")
+
+    def test_contract_artifact_preparation_resumes_full_without_recompression(self) -> None:
+        first = self.candidate(1, "resume-first", b"A" * 500_000, "sha256:" + "1" * 64)
+        self.publish([first], current=1, minimum=1, sequence=100, suffix="resume-seed")
+        previous = self.verified_root()["manifest"]["contracts"]["1"]
+        second = self.candidate(
+            1,
+            "resume-second",
+            b"A" * 450_000 + b"B" * 50_000,
+            "sha256:" + "2" * 64,
+        )
+        metadata = load_candidate(second)
+        output = self.root / "dist-resume-contract"
+        temporary = self.root / "tmp-resume-contract"
+        temporary.mkdir()
+        events: list[dict[str, object]] = []
+
+        with mock.patch(
+            "medicine_canonical.release_window_artifacts.create_chunk_patch",
+            side_effect=RuntimeError("historical patch interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "historical patch interrupted"):
+                prepare_contract(
+                    self.client,
+                    self.bucket,
+                    metadata,
+                    previous,
+                    output,
+                    temporary,
+                    progress=events.append,
+                )
+
+        checkpoint = output / "reference/v2/contracts/1/.prepare.checkpoint.json"
+        full = output / (
+            f"reference/v2/contracts/1/full/{metadata.target_sha256}.sqlite.gz"
+        )
+        self.assertTrue(checkpoint.is_file())
+        self.assertTrue(full.is_file())
+        self.assertTrue(
+            any(
+                event.get("job") == "contract-release-prepare-1"
+                and event.get("status") == "checkpoint"
+                and event.get("phase") == "full"
+                for event in events
+            )
+        )
+        self.assertTrue(
+            any(
+                event.get("status") == "progress"
+                and event.get("phase") == "base_download_1"
+                and event.get("current") == event.get("total")
+                and isinstance(event.get("bar"), str)
+                for event in events
+            )
+        )
+        self.assertTrue(
+            any(
+                event.get("status") == "progress"
+                and event.get("phase") == "base_decompress_1"
+                and event.get("current") == event.get("total")
+                and isinstance(event.get("bar"), str)
+                for event in events
+            )
+        )
+
+        retry_tmp = self.root / "tmp-resume-contract-retry"
+        retry_tmp.mkdir()
+        with mock.patch(
+            "medicine_canonical.release_window_artifacts.compress_snapshot",
+            side_effect=AssertionError("completed v2 full must not be recompressed"),
+        ):
+            prepared = prepare_contract(
+                self.client,
+                self.bucket,
+                metadata,
+                previous,
+                output,
+                retry_tmp,
+                progress=events.append,
+            )
+
+        self.assertFalse(checkpoint.exists())
+        self.assertEqual(prepared.entry["dataset_id"], "sha256:" + "2" * 64)
 
     def test_candidate_must_pass_frozen_contract_verifier_before_any_upload(self) -> None:
         def reject(_database, _major, _dataset_id):

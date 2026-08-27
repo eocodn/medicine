@@ -6,7 +6,10 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
+from unittest import mock
 
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.release import (
@@ -115,6 +118,161 @@ class ReleaseArtifactTest(unittest.TestCase):
         apply_chunk_patch(old, patch_path, rebuilt)
         self.assertEqual(sha256_file(rebuilt), latest["target"]["sha256"])
 
+    def test_prepare_release_resumes_completed_full_without_recompression(self) -> None:
+        old = self.write("resume-old.sqlite", b"A" * 2_000_000)
+        new = self.write("resume-new.sqlite", b"A" * 1_900_000 + b"B" * 100_000)
+        mobile_manifest = self.root / "resume-mobile.manifest.json"
+        mobile_manifest.write_text(
+            json.dumps(
+                {
+                    "dataset_id": "sha256:resume-new",
+                    "schema_version": "8",
+                    "sha256": sha256_file(new),
+                    "size_bytes": new.stat().st_size,
+                }
+            ),
+            encoding="utf-8",
+        )
+        dist = self.root / "resume-dist"
+        events: list[dict[str, object]] = []
+
+        with mock.patch(
+            "medicine_canonical.release.create_chunk_patch",
+            side_effect=RuntimeError("patch interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "patch interrupted"):
+                prepare_release(
+                    new,
+                    mobile_manifest,
+                    dist,
+                    previous_db=old,
+                    previous_dataset_id="sha256:resume-old",
+                    created_at="2026-08-16T11:00:00Z",
+                    chunk_size=64 * 1024,
+                    progress=events.append,
+                )
+
+        checkpoint = dist / "reference/v1/.prepare-release.checkpoint.json"
+        full = dist / f"reference/v1/full/{sha256_file(new)}.sqlite.gz"
+        self.assertTrue(checkpoint.is_file())
+        self.assertTrue(full.is_file())
+        self.assertTrue(
+            any(
+                event.get("job") == "release-prepare"
+                and event.get("status") == "checkpoint"
+                and event.get("phase") == "full"
+                for event in events
+            )
+        )
+        self.assertTrue(
+            any(
+                event.get("status") == "progress"
+                and event.get("phase") == "full_compression"
+                and "bar" in event
+                for event in events
+            )
+        )
+        self.assertTrue(any(event.get("status") == "heartbeat" for event in events))
+
+        with mock.patch(
+            "medicine_canonical.release.compress_snapshot",
+            side_effect=AssertionError("completed full must not be recompressed"),
+        ):
+            resumed = prepare_release(
+                new,
+                mobile_manifest,
+                dist,
+                previous_db=old,
+                previous_dataset_id="sha256:resume-old",
+                created_at="2026-08-16T11:05:00Z",
+                chunk_size=64 * 1024,
+                progress=events.append,
+            )
+
+        fresh = prepare_release(
+            new,
+            mobile_manifest,
+            self.root / "resume-fresh",
+            previous_db=old,
+            previous_dataset_id="sha256:resume-old",
+            created_at="2026-08-16T11:05:00Z",
+            chunk_size=64 * 1024,
+        )
+        self.assertFalse(checkpoint.exists())
+        self.assertEqual(
+            Path(resumed["full_path"]).read_bytes(),
+            Path(fresh["full_path"]).read_bytes(),
+        )
+        self.assertEqual(resumed["manifest"], fresh["manifest"])
+
+    def test_prepare_release_resumes_after_each_completed_patch_base(self) -> None:
+        first = self.write("patch-first.sqlite", b"A" * 1_000_000)
+        second = self.write("patch-second.sqlite", b"A" * 900_000 + b"C" * 100_000)
+        target = self.write("patch-target.sqlite", b"A" * 900_000 + b"B" * 100_000)
+        mobile_manifest = self.root / "patch-mobile.manifest.json"
+        mobile_manifest.write_text(
+            json.dumps(
+                {
+                    "dataset_id": "sha256:patch-target",
+                    "schema_version": "8",
+                    "sha256": sha256_file(target),
+                    "size_bytes": target.stat().st_size,
+                }
+            ),
+            encoding="utf-8",
+        )
+        dist = self.root / "patch-resume-dist"
+        real_create = create_chunk_patch
+
+        def interrupt_second(source, *args, **kwargs):
+            if Path(source) == second:
+                raise RuntimeError("second patch interrupted")
+            return real_create(source, *args, **kwargs)
+
+        with mock.patch(
+            "medicine_canonical.release.create_chunk_patch",
+            side_effect=interrupt_second,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "second patch interrupted"):
+                prepare_release(
+                    target,
+                    mobile_manifest,
+                    dist,
+                    previous_bases=[
+                        {"db_path": str(first), "dataset_id": "sha256:first"},
+                        {"db_path": str(second), "dataset_id": "sha256:second"},
+                    ],
+                    created_at="2026-08-16T11:00:00Z",
+                )
+
+        checkpoint = dist / "reference/v1/.prepare-release.checkpoint.json"
+        checkpoint_payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual(checkpoint_payload["completed_phase"], "patches")
+        self.assertEqual(checkpoint_payload["artifacts"]["next_base_index"], 1)
+
+        def reject_repeated_first(source, *args, **kwargs):
+            if Path(source) == first:
+                raise AssertionError("completed first patch must not rerun")
+            return real_create(source, *args, **kwargs)
+
+        with mock.patch(
+            "medicine_canonical.release.create_chunk_patch",
+            side_effect=reject_repeated_first,
+        ):
+            resumed = prepare_release(
+                target,
+                mobile_manifest,
+                dist,
+                previous_bases=[
+                    {"db_path": str(first), "dataset_id": "sha256:first"},
+                    {"db_path": str(second), "dataset_id": "sha256:second"},
+                ],
+                created_at="2026-08-16T11:00:00Z",
+            )
+
+        self.assertFalse(checkpoint.exists())
+        self.assertEqual(resumed["manifest"]["dataset_id"], "sha256:patch-target")
+
     def test_release_cli_create_and_apply_round_trip(self) -> None:
         base = bytearray(os.urandom(300_000))
         old = self.write("cli-old.sqlite", bytes(base))
@@ -149,6 +307,45 @@ class ReleaseArtifactTest(unittest.TestCase):
             0,
         )
         self.assertEqual(rebuilt.read_bytes(), new.read_bytes())
+
+    def test_release_cli_emits_structured_prepare_progress(self) -> None:
+        target = self.write("progress.sqlite", b"reference-progress" * 20_000)
+        mobile_manifest = self.root / "progress.manifest.json"
+        mobile_manifest.write_text(
+            json.dumps(
+                {
+                    "dataset_id": "sha256:progress",
+                    "schema_version": "8",
+                    "sha256": sha256_file(target),
+                    "size_bytes": target.stat().st_size,
+                }
+            ),
+            encoding="utf-8",
+        )
+        stderr = StringIO()
+
+        with redirect_stderr(stderr):
+            result = canonical_main(
+                [
+                    "release-create",
+                    "--db",
+                    str(target),
+                    "--mobile-manifest",
+                    str(mobile_manifest),
+                    "--output-dir",
+                    str(self.root / "progress-dist"),
+                    "--created-at",
+                    "2026-08-16T11:00:00Z",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        events = [json.loads(line)["reference_progress"] for line in stderr.getvalue().splitlines()]
+        self.assertEqual(events[0]["job"], "release-prepare")
+        self.assertEqual(events[0]["status"], "started")
+        self.assertTrue(any(event.get("status") == "checkpoint" for event in events))
+        self.assertEqual(events[-1]["status"], "completed")
 
     def test_prepare_release_omits_nonbeneficial_patch(self) -> None:
         old = self.write("old.sqlite", os.urandom(350_000))

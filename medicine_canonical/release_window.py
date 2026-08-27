@@ -86,6 +86,7 @@ def _prepare_contract_window(
     candidates: dict[int, _CandidateMetadata],
     previous_root: dict | None,
     output_dir: Path,
+    progress=None,
 ) -> dict[int, _PreparedContract]:
     prepared: dict[int, _PreparedContract] = {}
     previous_contracts = (previous_root or {}).get("contracts") or {}
@@ -110,6 +111,7 @@ def _prepare_contract_window(
                 previous_entry if isinstance(previous_entry, dict) else None,
                 output_dir,
                 temporary_root,
+                progress=progress,
             )
     return prepared
 
@@ -178,6 +180,7 @@ def _publish_loaded_contract_window(
     trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
+    progress=None,
 ) -> dict:
     if not str(bucket).strip():
         raise ValueError("R2 bucket is required")
@@ -289,6 +292,7 @@ def _publish_loaded_contract_window(
         candidates=by_major,
         previous_root=previous_root,
         output_dir=root_dir,
+        progress=progress,
     )
     _upload_prepared_contracts(client, bucket, prepared)
 
@@ -353,6 +357,7 @@ def publish_contract_window(
     trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
+    progress=None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
@@ -366,6 +371,7 @@ def publish_contract_window(
         created_at=created_at,
         allow_early_retirement=allow_early_retirement,
         trusted_public_keys=trusted_public_keys,
+        progress=progress,
     )
 
 
@@ -382,6 +388,7 @@ def publish_verified_contract_window(
     trusted_public_keys: dict[str, bytes],
     created_at: str | None = None,
     allow_early_retirement: bool = False,
+    progress=None,
 ) -> dict:
     return _publish_loaded_contract_window(
         client,
@@ -395,6 +402,7 @@ def publish_verified_contract_window(
         created_at=created_at,
         allow_early_retirement=allow_early_retirement,
         trusted_public_keys=trusted_public_keys,
+        progress=progress,
     )
 
 
@@ -439,6 +447,7 @@ def publish_contract_window_from_env(
         current_contract_major=major,
         minimum_supported_contract_major=major,
         created_at=created_at,
+        progress=progress,
     )
 
 
@@ -476,6 +485,7 @@ def publish_contract_directory_from_env(
         minimum_supported_contract_major=minimum_supported,
         created_at=created_at,
         allow_early_retirement=effective_retirement,
+        progress=progress,
     )
 
 
@@ -555,6 +565,7 @@ def build_and_publish_contract_window_from_env(
         minimum_supported_contract_major=minimum_supported,
         created_at=created_at,
         allow_early_retirement=effective_retirement,
+        progress=progress,
     )
     return {**published, "build": build}
 

@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from medicine_canonical.release import prepare_release, sha256_file
 from medicine_canonical.release_r2 import _read_latest, publish_release as publish_release_to_r2
+from medicine_canonical.release_r2_object_io import _download_to_file
 from medicine_canonical.release_signing import (
     ReleaseSigner,
     encode_signed_envelope,
@@ -137,6 +138,33 @@ class R2ReleasePublisherTest(unittest.TestCase):
         self.bucket = "medicine-reference"
         self.signer = ReleaseSigner.from_private_pem("test-2026", TEST_PRIVATE_KEY_PEM)
         self.next_release_sequence = 1000
+
+    def test_object_download_reports_bounded_streaming_progress(self) -> None:
+        payload = b"A" * (17 * 1024 * 1024)
+        key = "reference/v2/contracts/1/full/large.sqlite.gz"
+        self.client.objects[(self.bucket, key)] = {
+            "Body": payload,
+            "Metadata": {"sha256": hashlib.sha256(payload).hexdigest()},
+        }
+        progress: list[tuple[int, int]] = []
+
+        result = _download_to_file(
+            self.client,
+            self.bucket,
+            key,
+            self.root / "large.sqlite.gz",
+            progress=lambda current, total: progress.append((current, total)),
+        )
+
+        self.assertEqual(result["size_bytes"], len(payload))
+        self.assertEqual(
+            progress,
+            [
+                (8 * 1024 * 1024, len(payload)),
+                (16 * 1024 * 1024, len(payload)),
+                (17 * 1024 * 1024, len(payload)),
+            ],
+        )
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
