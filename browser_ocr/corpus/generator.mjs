@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { acquireAdvisoryLock, releaseAdvisoryLock } from "./advisory_lock.mjs";
+import { acquireAdvisoryLock, releaseAdvisoryLock } from "./advisory_lock.mts";
 import { validateCorpus } from "./contract.mjs";
 import {
   assignDrugPools,
