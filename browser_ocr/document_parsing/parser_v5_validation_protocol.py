@@ -324,8 +324,38 @@ def authorize_parser_v5_holdout_open(
     return record
 
 
+def validate_parser_v5_holdout_authorization(
+    *,
+    candidate_freeze: str | Path,
+    holdout_envelope: str | Path,
+    open_record: str | Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    freeze = load_parser_v5_candidate_freeze(candidate_freeze)
+    envelope, envelope_sha256 = _holdout_envelope(holdout_envelope)
+    opened = _load_open_record(Path(open_record).resolve())
+    if opened["candidate_freeze_fingerprint"] != freeze["freeze_fingerprint"]:
+        raise ValueError("Parser v5 holdout open record candidate freeze mismatch")
+    if opened["holdout_id"] != envelope["holdout_id"]:
+        raise ValueError("Parser v5 holdout open record holdout id mismatch")
+    if opened["holdout_envelope_sha256"] != envelope_sha256:
+        raise ValueError("Parser v5 holdout open record envelope SHA-256 mismatch")
+    if opened["holdout_samples_sha256"] != envelope["samples_sha256"]:
+        raise ValueError("Parser v5 holdout open record samples SHA-256 mismatch")
+    if opened["partition_fingerprint"] != envelope["partition_fingerprint"]:
+        raise ValueError("Parser v5 holdout open record partition fingerprint mismatch")
+    return freeze, envelope, opened
+
+
+def validate_parser_v5_frozen_implementation(freeze: Mapping[str, Any]) -> None:
+    current = _implementation_hashes()
+    if freeze.get("implementation_sha256") != current:
+        raise ValueError("Parser v5 implementation changed after candidate freeze; use a fresh candidate freeze")
+
+
 __all__ = [
     "authorize_parser_v5_holdout_open",
     "freeze_parser_v5_candidate",
     "load_parser_v5_candidate_freeze",
+    "validate_parser_v5_frozen_implementation",
+    "validate_parser_v5_holdout_authorization",
 ]
