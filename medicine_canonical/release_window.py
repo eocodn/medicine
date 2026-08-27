@@ -12,7 +12,7 @@ from .reference_contracts.registry import (
     implementation_for,
     supported_contract_majors,
 )
-from .release_r2 import _put_immutable, client_from_env
+from .release_r2 import client_from_env
 from .release_signing import (
     KmsReleaseSigner,
     ReleaseSigner,
@@ -54,6 +54,7 @@ from .release_window_remote import (
     unchanged_publication_result as _unchanged_publication_result,
     validate_support_window_progression as _validate_support_window_progression,
 )
+from .release_window_transfer import upload_prepared_contracts as _upload_prepared_contracts
 
 
 def _validate_release_sequence(release_sequence: int) -> None:
@@ -114,30 +115,6 @@ def _prepare_contract_window(
                 progress=progress,
             )
     return prepared
-
-
-def _upload_prepared_contracts(client, bucket: str, prepared: dict[int, _PreparedContract]) -> None:
-    for _, contract in sorted(prepared.items()):
-        if contract.full_path is not None:
-            full = contract.entry["full"]
-            _put_immutable(
-                client,
-                bucket,
-                full["key"],
-                contract.full_path,
-                content_type="application/gzip",
-            )
-        for patch in contract.entry["patches"]:
-            path = contract.patch_paths.get(patch["key"])
-            if path is not None:
-                _put_immutable(
-                    client,
-                    bucket,
-                    patch["key"],
-                    path,
-                    content_type="application/octet-stream",
-                )
-
 
 
 def _build_root(
@@ -237,6 +214,7 @@ def _publish_loaded_contract_window(
             candidates=by_major,
             entries=entries,
             output_dir=root_dir,
+            progress=progress,
         )
         _assert_root_unchanged(
             client,
@@ -279,6 +257,7 @@ def _publish_loaded_contract_window(
         initial_inventory=initial_inventory,
         trusted_public_keys=trusted_public_keys,
         output_dir=root_dir,
+        progress=progress,
     )
     if unchanged is not None:
         return unchanged
@@ -294,7 +273,13 @@ def _publish_loaded_contract_window(
         output_dir=root_dir,
         progress=progress,
     )
-    _upload_prepared_contracts(client, bucket, prepared)
+    _upload_prepared_contracts(
+        client,
+        bucket,
+        prepared,
+        root_dir,
+        progress=progress,
+    )
 
     # A root update can reuse one contract target while another contract changes
     # (for example C1 unchanged when C2 is introduced). Verify every mandatory
@@ -306,6 +291,7 @@ def _publish_loaded_contract_window(
         candidates=by_major,
         entries={major: contract.entry for major, contract in prepared.items()},
         output_dir=root_dir,
+        progress=progress,
     )
     _assert_root_unchanged(
         client,

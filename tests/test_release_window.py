@@ -80,6 +80,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         sequence: int,
         suffix: str,
         allow_early_retirement: bool = False,
+        progress=None,
     ) -> dict:
         return publish_contract_window(
             self.client,
@@ -93,6 +94,7 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
             trusted_public_keys={"test-2026": TEST_PUBLIC_KEY_PEM},
             created_at=f"2026-08-20T00:{sequence % 60:02d}:00Z",
             allow_early_retirement=allow_early_retirement,
+            progress=progress,
         )
 
     def verified_root(self) -> dict:
@@ -445,13 +447,35 @@ class ReferenceContractWindowPublisherTest(unittest.TestCase):
         full_key = root["contracts"]["1"]["full"]["key"]
         self.client.objects.pop((self.bucket, full_key))
         self.client.put_order.clear()
+        events: list[dict[str, object]] = []
 
-        result = self.publish([c1], current=1, minimum=1, sequence=101, suffix="repair-b")
+        result = self.publish(
+            [c1],
+            current=1,
+            minimum=1,
+            sequence=101,
+            suffix="repair-b",
+            progress=events.append,
+        )
 
         self.assertEqual(result["status"], "unchanged")
         self.assertEqual(self.verified_root()["release_sequence"], 100)
         self.assertIn((self.bucket, full_key), self.client.objects)
         self.assertEqual(self.client.put_order, [full_key])
+        repair_events = [
+            event for event in events if event.get("job") == "contract-full-repair-1"
+        ]
+        self.assertEqual(repair_events[0]["status"], "started")
+        self.assertTrue(any(event.get("status") == "checkpoint" for event in repair_events))
+        self.assertTrue(
+            any(
+                event.get("status") == "progress"
+                and str(event.get("phase", "")).endswith("_upload")
+                and event.get("current") == event.get("total")
+                for event in repair_events
+            )
+        )
+        self.assertEqual(repair_events[-1]["status"], "completed")
 
     def test_missing_historical_full_does_not_block_changed_target_publish(self) -> None:
         first = self.candidate(1, "missing-base", b"A" * 500_000, "sha256:" + "1" * 64)
