@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from browser_ocr.document_parsing.parser_v5_calibration import build_parser_v5_calibration
 from browser_ocr.document_parsing.parser_v5_dataset import build_parser_v5_dataset, load_parser_v5_dataset
 from browser_ocr.document_parsing.parser_v5_development_views import build_parser_v5_development_views
 from browser_ocr.document_parsing.parser_v5_observation import ObservationProfile
@@ -21,6 +20,44 @@ from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _calibration_artifact(path: Path) -> Path:
+    source_identity = {
+        "schema_version": 1,
+        "producer_fingerprint": "a" * 64,
+        "document_count": 7,
+        "external_train_source": "independent-runtime-calibration",
+    }
+    source_fingerprint = hashlib.sha256(
+        json.dumps(source_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    payload = {
+        "schema_version": 2,
+        "source_identity": source_identity,
+        "source_fingerprint": source_fingerprint,
+        "producer_fingerprint": "a" * 64,
+        "document_count": 7,
+        "summary": {},
+        "recommended_observation_profile": {
+            "text_corruption_rate": 0.1,
+            "drop_rate": 0.02,
+            "duplicate_rate": 0.01,
+            "split_rate": 0.03,
+            "merge_rate": 0.04,
+            "geometry_jitter": 0.005,
+            "false_positive_count": [0, 3],
+            "reading_order_shuffle_rate": 0.01,
+        },
+    }
+    artifact = {
+        **payload,
+        "calibration_fingerprint": hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+    path.write_text(json.dumps(artifact, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    return path
 
 
 class ParserV5ValidationProtocolTest(unittest.TestCase):
@@ -62,26 +99,7 @@ class ParserV5ValidationProtocolTest(unittest.TestCase):
             ),
         )
         train = load_parser_v5_dataset(train_manifest)
-        runtime_records = []
-        for sample in train.samples:
-            truth = sample["truth"]
-            runtime_records.append({
-                "document_id": truth["document_id"],
-                "source_split": "train",
-                "producer_fingerprint": "a" * 64,
-                "nodes": [{
-                    "index": index,
-                    "text": span["text"],
-                    "detector_confidence": 0.95,
-                    "recognizer_confidence": 0.94,
-                    "polygon": span["polygon"],
-                } for index, span in enumerate(truth["spans"], start=1)],
-            })
-        calibration = build_parser_v5_calibration(
-            dataset_manifest=train_manifest,
-            runtime_records=runtime_records,
-            output_path=root / "calibration.json",
-        )
+        calibration = _calibration_artifact(root / "calibration.json")
         dev_manifests = build_parser_v5_development_views(root / "dev", documents_per_view=1, seed=1902)
         checkpoint = root / "model.pdparams"
         checkpoint.write_bytes(b"frozen-parser-v5-checkpoint")
@@ -133,6 +151,10 @@ class ParserV5ValidationProtocolTest(unittest.TestCase):
             self.assertEqual(freeze["checkpoint_sha256"], _sha(root / "model.pdparams"))
             self.assertIn("assignment_margin", freeze["decode_policy"])
             self.assertEqual(freeze["calibration_fingerprint"], json.loads(calibration.read_text())["calibration_fingerprint"])
+            self.assertEqual(
+                freeze["calibration_source_fingerprint"],
+                json.loads(calibration.read_text())["source_fingerprint"],
+            )
 
     def test_holdout_open_requires_explicit_id_and_cannot_be_reused_by_modified_freeze(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

@@ -26,6 +26,7 @@ _FREEZE_FIELDS = {
     "train_datasets",
     "development_views",
     "calibration_fingerprint",
+    "calibration_source_fingerprint",
     "runtime_producer_fingerprint",
     "decode_policy",
     "implementation_sha256",
@@ -67,6 +68,7 @@ _IMPLEMENTATION_FILES = (
     "parser_v5_evaluation.py",
     "parser_v5_development_views.py",
     "parser_v5_calibration.py",
+    "parser_v5_calibration_source.py",
 )
 
 
@@ -192,9 +194,6 @@ def freeze_parser_v5_candidate(
         raise ValueError("Parser v5 freeze best validation does not cover the complete development matrix")
 
     calibration = load_parser_v5_calibration(calibration_artifact)
-    train_hashes = {item["samples_sha256"] for item in train_datasets}
-    if calibration["dataset_samples_sha256"] not in train_hashes:
-        raise ValueError("Parser v5 freeze calibration is not bound to a training dataset")
 
     payload = {
         "schema_version": 1,
@@ -206,6 +205,7 @@ def freeze_parser_v5_candidate(
         "train_datasets": train_datasets,
         "development_views": development_views,
         "calibration_fingerprint": str(calibration["calibration_fingerprint"]),
+        "calibration_source_fingerprint": str(calibration["source_fingerprint"]),
         "runtime_producer_fingerprint": str(calibration["producer_fingerprint"]),
         "decode_policy": asdict(ParserV5DecodeConfig()),
         "implementation_sha256": _implementation_hashes(),
@@ -227,6 +227,7 @@ def load_parser_v5_candidate_freeze(path: str | Path) -> dict[str, Any]:
         "training_profile_sha256",
         "checkpoint_sha256",
         "calibration_fingerprint",
+        "calibration_source_fingerprint",
         "runtime_producer_fingerprint",
         "freeze_fingerprint",
     ):
