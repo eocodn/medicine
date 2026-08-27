@@ -181,7 +181,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
         rust_verified = subprocess.run(
             [
-                "medicine-core", "reference-verify",
+                "medicine-agentctl", "reference-verify",
                 "--reference-db", str(self.mobile_db),
                 "--contract-major", str(REFERENCE_CONTRACT_MAJOR),
                 "--dataset-id", result["dataset_id"],
@@ -196,7 +196,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
         rust_product = subprocess.run(
             [
-                "medicine-core", "product",
+                "medicine-agentctl", "product",
                 "--canonical-db", str(self.mobile_db),
                 "--product-ref", "MFDS-Z",
                 "--json",
@@ -210,7 +210,7 @@ class MobileDatabaseTest(unittest.TestCase):
 
         rust_safety = subprocess.run(
             [
-                "medicine-core", "safety-basis",
+                "medicine-agentctl", "safety-basis",
                 "--canonical-db", str(self.mobile_db),
                 "--product-ref", "MFDS-Z",
                 "--person", json.dumps({

@@ -1,3 +1,5 @@
+#![cfg(feature = "agentctl")]
+
 mod common;
 
 use flate2::{write::GzEncoder, Compression};
@@ -85,18 +87,29 @@ fn temp_canonical_db() -> PathBuf {
 
 #[test]
 fn request_access_supports_json_for_agent_control() {
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args(["request-access", "GET", "/api/people", "--json"])
         .output()
-        .expect("run medicine-core");
+        .expect("run medicine-agentctl");
     assert!(output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).expect("json output");
     assert_eq!(value["access"], "personal_read");
 }
 
 #[test]
+fn usage_names_the_agentctl_control_surface() {
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
+        .arg("not-a-command")
+        .output()
+        .expect("run medicine-agentctl usage failure");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(stderr.contains("usage: medicine-agentctl"));
+}
+
+#[test]
 fn health_supports_json_for_agent_control() {
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "health",
             "--reference-unavailable-reason",
@@ -104,7 +117,7 @@ fn health_supports_json_for_agent_control() {
             "--json",
         ])
         .output()
-        .expect("run medicine-core");
+        .expect("run medicine-agentctl");
     assert!(output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).expect("json output");
     assert_eq!(value["status"], 200);
@@ -115,7 +128,7 @@ fn health_supports_json_for_agent_control() {
 #[test]
 fn personal_schema_command_initializes_the_shared_rust_schema() {
     let personal = temp_personal_db_path();
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "personal-schema",
             "--personal-db",
@@ -156,7 +169,7 @@ fn personal_schema_command_initializes_the_shared_rust_schema() {
     }
     drop(connection);
 
-    let second = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let second = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "personal-schema",
             "--personal-db",
@@ -177,7 +190,7 @@ fn personal_schema_command_initializes_the_shared_rust_schema() {
 #[test]
 fn personal_checkpoint_command_exposes_structured_success_and_usage_failure() {
     let personal = temp_personal_db_path();
-    let initialize = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let initialize = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "personal-schema",
             "--personal-db",
@@ -188,7 +201,7 @@ fn personal_checkpoint_command_exposes_structured_success_and_usage_failure() {
         .expect("initialize personal database");
     assert!(initialize.status.success());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "personal-checkpoint",
             "--personal-db",
@@ -206,7 +219,7 @@ fn personal_checkpoint_command_exposes_structured_success_and_usage_failure() {
     assert_eq!(value["status"], 200);
     assert_eq!(value["body"]["checkpointed"], true);
 
-    let missing_path = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let missing_path = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args(["personal-checkpoint", "--json"])
         .output()
         .expect("run checkpoint usage failure");
@@ -220,7 +233,7 @@ fn personal_checkpoint_command_exposes_structured_success_and_usage_failure() {
 #[test]
 fn generic_request_controls_the_same_people_core() {
     let personal = temp_personal_db();
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "request",
             "POST",
@@ -232,7 +245,7 @@ fn generic_request_controls_the_same_people_core() {
             "--json",
         ])
         .output()
-        .expect("run medicine-core request");
+        .expect("run medicine-agentctl request");
     assert!(
         output.status.success(),
         "{}",
@@ -249,7 +262,7 @@ fn generic_request_controls_the_same_people_core() {
 #[test]
 fn product_command_uses_the_same_canonical_product_core() {
     let canonical = temp_canonical_db();
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "product",
             "--canonical-db",
@@ -274,7 +287,7 @@ fn product_command_uses_the_same_canonical_product_core() {
 
 #[test]
 fn draft_normalize_command_exposes_python_compatible_hash() {
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "draft-normalize",
             "--body",
@@ -304,7 +317,7 @@ fn draft_normalize_command_exposes_python_compatible_hash() {
 #[test]
 fn safety_basis_command_exposes_reference_and_quantitative_core() {
     let canonical = temp_canonical_db();
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "safety-basis",
             "--canonical-db",
@@ -355,7 +368,7 @@ fn dur_display_command_uses_the_same_display_core() {
         "review_items":[],
         "as_of":"2026-08-22"
     }"#;
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args(["dur-display", "--input", payload, "--json"])
         .output()
         .expect("run dur-display command");
@@ -376,7 +389,7 @@ fn dur_display_command_uses_the_same_display_core() {
 #[test]
 fn profile_risks_command_uses_the_same_profile_safety_core() {
     let canonical = temp_canonical_db();
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "profile-risks",
             "--canonical-db",
@@ -408,7 +421,7 @@ fn profile_risks_command_uses_the_same_profile_safety_core() {
 #[test]
 fn interaction_risks_command_uses_the_same_interaction_core() {
     let canonical = temp_canonical_db();
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "interaction-risks",
             "--canonical-db",
@@ -515,7 +528,7 @@ fn reference_state_command_decodes_v3_and_reports_legacy_format() {
     )
     .expect("write v3 state");
 
-    let v3 = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let v3 = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-state",
             "--state-file",
@@ -537,7 +550,7 @@ fn reference_state_command_decodes_v3_and_reports_legacy_format() {
     assert_eq!(value["body"]["state"]["highestSeenRootSequence"], 8);
 
     fs::write(&state_path, legacy_state_bytes(&version)).expect("write v1 state");
-    let v1 = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let v1 = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-state",
             "--state-file",
@@ -563,7 +576,7 @@ fn reference_state_command_decodes_v3_and_reports_legacy_format() {
 fn reference_state_command_fails_closed_for_missing_malformed_or_trailing_state() {
     let state_path = common::temp_sqlite_path("cli-reference-state-invalid");
     fs::remove_file(&state_path).expect("remove reserved missing path");
-    let missing = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let missing = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-state",
             "--state-file",
@@ -576,7 +589,7 @@ fn reference_state_command_fails_closed_for_missing_malformed_or_trailing_state(
     assert!(String::from_utf8_lossy(&missing.stderr).contains("reference state"));
 
     fs::write(&state_path, b"not-a-reference-state").expect("write malformed state");
-    let malformed = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let malformed = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-state",
             "--state-file",
@@ -592,7 +605,7 @@ fn reference_state_command_fails_closed_for_missing_malformed_or_trailing_state(
     let mut trailing = valid;
     trailing.push(0xff);
     fs::write(&state_path, trailing).expect("write trailing state");
-    let trailing = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let trailing = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-state",
             "--state-file",
@@ -615,7 +628,7 @@ fn reference_apply_full_uses_shared_atomic_core_and_structured_observer_events()
     fs::write(&destination, b"old-reference").expect("write old destination");
     let target_sha = sha256_hex(target);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-apply",
             "--kind",
@@ -672,7 +685,7 @@ fn reference_apply_patch_requires_source_and_checks_signed_target_before_replace
     fs::write(&source, PATCH_SOURCE).expect("write patch source");
     fs::write(&destination, b"old-reference").expect("write old destination");
 
-    let missing_source = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let missing_source = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-apply",
             "--kind",
@@ -696,7 +709,7 @@ fn reference_apply_patch_requires_source_and_checks_signed_target_before_replace
         b"old-reference"
     );
 
-    let applied = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let applied = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-apply",
             "--kind",
@@ -729,7 +742,7 @@ fn reference_apply_patch_requires_source_and_checks_signed_target_before_replace
     );
 
     fs::write(&destination, b"old-reference").expect("restore old destination");
-    let mismatch = Command::new(env!("CARGO_BIN_EXE_medicine-core"))
+    let mismatch = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-apply",
             "--kind",

@@ -12,10 +12,6 @@ web = ["dep:axum", "dep:reqwest", "dep:tokio", "dep:tower", "dep:tower-http"]
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "medicine-core"
-path = "src/bin/medicine_core.rs"
-
-[[bin]]
 name = "medicine-agentctl"
 path = "src/bin/medicine_agentctl.rs"
 required-features = ["agentctl"]
