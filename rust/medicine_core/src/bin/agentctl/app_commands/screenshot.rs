@@ -100,6 +100,9 @@ pub(super) fn capture(
     emit_event(json!({"event":"screenshot_web_ready"}));
 
     let url = format!("{base_url}/?screen={screen}");
+    let browser_log = temp.path.join("browser.stderr.log");
+    let browser_log_file = File::create(&browser_log)
+        .map_err(|error| format!("cannot create Chromium diagnostic log: {error}"))?;
     let browser_status = Command::new(browser)
         .args([
             "--headless",
@@ -111,13 +114,16 @@ pub(super) fn capture(
             &format!("--screenshot={}", output.display()),
             &url,
         ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(browser_log_file))
         .status()
         .map_err(|error| format!("cannot run Chromium screenshot: {error}"));
     stop_child(&mut server);
     let browser_status = browser_status?;
     if !browser_status.success() {
         return Err(format!(
-            "Chromium screenshot failed with status {browser_status}"
+            "Chromium screenshot failed with status {browser_status}: {}",
+            read_log(&browser_log)
         ));
     }
 

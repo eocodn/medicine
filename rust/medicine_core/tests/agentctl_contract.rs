@@ -411,7 +411,7 @@ fn screenshot_uses_read_only_personal_snapshot_and_local_rust_web() {
     let url_log = root.join("browser-url.txt");
     fs::write(
         &browser,
-        "#!/bin/sh\nset -eu\nout=''\nurl=''\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    --screenshot=*) out=${arg#--screenshot=} ;;\n    http://*) url=$arg ;;\n  esac\ndone\nprintf '%s' \"$url\" > \"$MEDICINE_SCREENSHOT_URL_LOG\"\nprintf 'png' > \"$out\"\n",
+        "#!/bin/sh\nset -eu\nout=''\nurl=''\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    --screenshot=*) out=${arg#--screenshot=} ;;\n    http://*) url=$arg ;;\n  esac\ndone\necho 'browser diagnostic' >&2\nprintf '%s' \"$url\" > \"$MEDICINE_SCREENSHOT_URL_LOG\"\nprintf 'png' > \"$out\"\n",
     )
     .expect("write fake chromium");
     let mut browser_permissions = fs::metadata(&browser)
@@ -451,6 +451,19 @@ fn screenshot_uses_read_only_personal_snapshot_and_local_rust_web() {
         screenshot.status.success(),
         "{}",
         String::from_utf8_lossy(&screenshot.stderr)
+    );
+    let events = String::from_utf8(screenshot.stderr.clone())
+        .expect("screenshot event utf8")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("structured screenshot event"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        events.first().expect("first event")["event"],
+        "screenshot_started"
+    );
+    assert_eq!(
+        events.last().expect("last event")["event"],
+        "screenshot_completed"
     );
     let payload: Value = serde_json::from_slice(&screenshot.stdout).expect("screenshot json");
     assert_eq!(payload["width"], 390);
