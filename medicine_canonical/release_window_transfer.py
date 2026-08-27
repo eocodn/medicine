@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .job_lifecycle import JobLifecycle, fingerprint_inputs
-from .release_r2 import _put_immutable
+from .release_r2_object_io import _put_immutable
 from .release_window_artifacts import PreparedContract, RELEASE_PREFIX
 
 

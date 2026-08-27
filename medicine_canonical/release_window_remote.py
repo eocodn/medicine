@@ -4,15 +4,13 @@ from pathlib import Path
 
 from .job_lifecycle import JobLifecycle, fingerprint_inputs
 from .release import compress_snapshot
-from .release_r2 import (
-    LATEST_CACHE_CONTROL,
+from .release_r2_object_io import (
     _head_optional,
     _precondition_failed,
     _put_immutable,
-    _read_body_bytes,
-    _sha256_bytes,
     _verify_head,
 )
+from .release_r2_runtime import LATEST_CACHE_CONTROL, read_body_bytes, sha256_bytes
 from .release_job import validate_checkpointed_file
 from .release_signing import verify_signed_envelope
 from .release_window_artifacts import (
@@ -47,7 +45,7 @@ def read_root(
         if _not_found(exc):
             return None, None, None, None, None
         raise
-    raw = _read_body_bytes(response["Body"])
+    raw = read_body_bytes(response["Body"])
     verified = verify_signed_envelope(raw, trusted_public_keys)
     root = verified["manifest"]
     if not isinstance(root, dict) or root.get("protocol_version") != PROTOCOL_VERSION:
@@ -257,7 +255,7 @@ def put_root(client, bucket: str, body: bytes, *, previous_etag: str | None) -> 
             Body=body,
             ContentType="application/json",
             CacheControl=LATEST_CACHE_CONTROL,
-            Metadata={"sha256": _sha256_bytes(body)},
+            Metadata={"sha256": sha256_bytes(body)},
             custom_headers=conditional,
         )
     except Exception as exc:
@@ -265,10 +263,10 @@ def put_root(client, bucket: str, body: bytes, *, previous_etag: str | None) -> 
             raise RuntimeError("remote reference root changed during publication") from exc
         raise
     response = client.get_object(Bucket=bucket, Key=ROOT_KEY)
-    round_trip = _read_body_bytes(response["Body"])
+    round_trip = read_body_bytes(response["Body"])
     if round_trip != body:
         raise RuntimeError("remote reference root does not match published body")
-    if (response.get("Metadata") or {}).get("sha256") != _sha256_bytes(body):
+    if (response.get("Metadata") or {}).get("sha256") != sha256_bytes(body):
         raise RuntimeError("remote reference root hash metadata does not match")
 
 

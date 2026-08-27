@@ -7,7 +7,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 
 from medicine_canonical.release_signing import ReleaseSigner, encode_signed_envelope
-from tests.test_release_r2 import TEST_PRIVATE_KEY_PEM
+from tests.r2_fakes import TEST_PRIVATE_KEY_PEM
 
 
 ROOT = Path(__file__).resolve().parents[1]

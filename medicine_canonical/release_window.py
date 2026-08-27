@@ -12,7 +12,7 @@ from .reference_contracts.registry import (
     implementation_for,
     supported_contract_majors,
 )
-from .release_r2 import client_from_env
+from .release_r2_runtime import client_from_env
 from .release_signing import (
     KmsReleaseSigner,
     ReleaseSigner,

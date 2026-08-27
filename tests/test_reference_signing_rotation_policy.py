@@ -11,15 +11,14 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from medicine_canonical.release_r2 import publish_release
 from medicine_canonical.release_signing import ReleaseSigner, encode_signed_envelope
 from medicine_canonical.release_window import publish_contract_window, publish_verified_contract_window
-from tests.test_release_r2 import TEST_PRIVATE_KEY_PEM
+from tests.r2_fakes import TEST_PRIVATE_KEY_PEM
 
 
 class ReferenceSigningRotationPolicyTest(unittest.TestCase):
     def test_publishers_require_an_authoritative_trust_set(self) -> None:
-        for publisher in (publish_release, publish_contract_window, publish_verified_contract_window):
+        for publisher in (publish_contract_window, publish_verified_contract_window):
             parameter = inspect.signature(publisher).parameters["trusted_public_keys"]
             self.assertIs(parameter.default, inspect.Parameter.empty)
 

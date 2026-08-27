@@ -7,7 +7,6 @@ import zlib
 from pathlib import Path
 from typing import BinaryIO
 
-from .job_lifecycle import JobLifecycle
 from .release_io import (
     IoProgress,
     compress_snapshot,
@@ -16,24 +15,12 @@ from .release_io import (
     maybe_report_progress,
     sha256_file,
 )
-from .release_job import release_prepare_fingerprint, validate_checkpointed_file
 
 PATCH_FORMAT = "medicine-chunk-v1"
 _PATCH_MAGIC = b"MEDPATCH1"
 _HEADER_LENGTH = struct.Struct(">I")
 _RECORD_HEADER = struct.Struct(">QII")
 DEFAULT_CHUNK_SIZE = 64 * 1024
-RELEASE_PREFIX = "reference/v1"
-def _write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
-
-
 def _read_exact(handle: BinaryIO, size: int) -> bytes:
     data = handle.read(size)
     if len(data) != size:
@@ -234,260 +221,12 @@ def apply_chunk_patch(
     }
 
 
-def prepare_release(
-    target_db: str | Path,
-    mobile_manifest_path: str | Path,
-    output_dir: str | Path,
-    *,
-    previous_db: str | Path | None = None,
-    previous_dataset_id: str | None = None,
-    previous_bases: list[dict] | None = None,
-    history: list[dict] | None = None,
-    created_at: str,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-    progress=None,
-) -> dict:
-    if chunk_size <= 0:
-        raise ValueError("chunk_size must be positive")
-    target = Path(target_db)
-    mobile_manifest_file = Path(mobile_manifest_path)
-    root = Path(output_dir)
-    mobile_manifest = json.loads(mobile_manifest_file.read_text(encoding="utf-8"))
-    target_sha = sha256_file(target)
-    target_size = target.stat().st_size
-    if mobile_manifest.get("sha256") != target_sha:
-        raise ValueError("mobile manifest SHA-256 does not match target DB")
-    if mobile_manifest.get("size_bytes") != target_size:
-        raise ValueError("mobile manifest size does not match target DB")
-    dataset_id = mobile_manifest.get("dataset_id")
-    if not isinstance(dataset_id, str) or not dataset_id:
-        raise ValueError("mobile manifest dataset_id is required")
-
-    raw_bases = list(previous_bases or [])
-    if previous_db is not None:
-        raw_bases.insert(0, {"db_path": str(previous_db), "dataset_id": previous_dataset_id})
-    bases: list[dict] = []
-    for base in raw_bases:
-        previous = Path(base["db_path"])
-        if not previous.is_file():
-            raise FileNotFoundError(f"patch source not found: {previous}")
-        bases.append(
-            {
-                "db_path": str(previous),
-                "dataset_id": base.get("dataset_id"),
-                "sha256": sha256_file(previous),
-                "size_bytes": previous.stat().st_size,
-            }
-        )
-    release_history = list(history or [])
-    input_fingerprint = release_prepare_fingerprint(
-        target_sha256=target_sha,
-        target_size=target_size,
-        dataset_id=dataset_id,
-        schema_version=mobile_manifest.get("schema_version"),
-        bases=bases,
-        history=release_history,
-        chunk_size=chunk_size,
-        release_prefix=RELEASE_PREFIX,
-        patch_format=PATCH_FORMAT,
-    )
-
-    full_key = f"{RELEASE_PREFIX}/full/{target_sha}.sqlite.gz"
-    full_path = root / full_key
-    checkpoint = root / RELEASE_PREFIX / ".prepare-release.checkpoint.json"
-    lifecycle = JobLifecycle(
-        "release-prepare",
-        checkpoint,
-        input_fingerprint=input_fingerprint,
-        progress=progress,
-        total_steps=3,
-    )
-    lifecycle.started()
-    current_phase = "startup"
-
-    def io_progress(phase: str) -> IoProgress:
-        def report(processed: int, total: int) -> None:
-            lifecycle.progress_update(phase, processed, total=total)
-            lifecycle.heartbeat(phase)
-
-        return report
-
-    try:
-        phase = lifecycle.completed_phase
-        if phase not in {None, "full", "patches"}:
-            lifecycle.discard(f"unknown completed phase {phase!r}")
-
-        if phase is None:
-            current_phase = "full"
-            lifecycle.step_started(current_phase, 1)
-            full = compress_snapshot(
-                target,
-                full_path,
-                progress=io_progress("full_compression"),
-            )
-            lifecycle.checkpoint(
-                current_phase,
-                {
-                    "full_path": str(full_path),
-                    "full_sha256": full["sha256"],
-                    "full_size_bytes": full["size_bytes"],
-                    "next_base_index": 0,
-                    "patches": [],
-                },
-            )
-            lifecycle.step_completed(current_phase, 1)
-            phase = lifecycle.completed_phase
-        else:
-            if lifecycle.artifacts.get("full_path") != str(full_path):
-                lifecycle.discard("checkpointed full artifact path changed")
-            validate_checkpointed_file(
-                lifecycle,
-                full_path,
-                expected_sha256=lifecycle.artifacts.get("full_sha256"),
-                expected_size=lifecycle.artifacts.get("full_size_bytes"),
-                label="full artifact",
-            )
-
-        full_entry = {
-            "key": full_key,
-            "compression": "gzip",
-            "sha256": lifecycle.artifacts["full_sha256"],
-            "size_bytes": lifecycle.artifacts["full_size_bytes"],
-        }
-        next_base_index = lifecycle.artifacts.get("next_base_index", 0)
-        checkpointed_patches = lifecycle.artifacts.get("patches", [])
-        if not isinstance(next_base_index, int) or not 0 <= next_base_index <= len(bases):
-            lifecycle.discard("checkpointed patch base index is invalid")
-        if not isinstance(checkpointed_patches, list):
-            lifecycle.discard("checkpointed patch list is invalid")
-        patches = [dict(entry) for entry in checkpointed_patches if isinstance(entry, dict)]
-        if len(patches) != len(checkpointed_patches):
-            lifecycle.discard("checkpointed patch entry is invalid")
-        for patch in patches:
-            key = patch.get("key")
-            if not isinstance(key, str) or not key:
-                lifecycle.discard("checkpointed patch key is invalid")
-            validate_checkpointed_file(
-                lifecycle,
-                root / key,
-                expected_sha256=patch.get("sha256"),
-                expected_size=patch.get("size_bytes"),
-                label=f"patch artifact {key}",
-            )
-
-        current_phase = "patches"
-        lifecycle.step_started(current_phase, 2)
-        seen_sources: set[str] = set()
-        for base in bases[:next_base_index]:
-            previous_sha = str(base["sha256"])
-            if previous_sha != target_sha:
-                seen_sources.add(previous_sha)
-        for index in range(next_base_index, len(bases)):
-            base = bases[index]
-            previous = Path(base["db_path"])
-            previous_sha = str(base["sha256"])
-            previous_size = int(base["size_bytes"])
-            if previous_sha != target_sha and previous_sha not in seen_sources:
-                seen_sources.add(previous_sha)
-                patch_key = f"{RELEASE_PREFIX}/patch/{previous_sha}-{target_sha}.mpatch"
-                candidate = root / patch_key
-                patch = create_chunk_patch(
-                    previous,
-                    target,
-                    candidate,
-                    chunk_size=chunk_size,
-                    progress=io_progress(f"patch_{index + 1}"),
-                )
-                verification_target = (
-                    root / f".verify-{previous_sha[:12]}-{target_sha[:12]}.sqlite"
-                )
-                try:
-                    apply_chunk_patch(
-                        previous,
-                        candidate,
-                        verification_target,
-                        progress=lambda _processed, _total: lifecycle.heartbeat(
-                            f"patch_verify_{index + 1}"
-                        ),
-                    )
-                finally:
-                    verification_target.unlink(missing_ok=True)
-                if patch["patch_size_bytes"] < full_entry["size_bytes"]:
-                    patches.append(
-                        {
-                            "key": patch_key,
-                            "format": PATCH_FORMAT,
-                            "chunk_size": chunk_size,
-                            "from_dataset_id": base.get("dataset_id"),
-                            "from_sha256": previous_sha,
-                            "from_size_bytes": previous_size,
-                            "sha256": patch["patch_sha256"],
-                            "size_bytes": patch["patch_size_bytes"],
-                            "changed_chunks": patch["changed_chunks"],
-                        }
-                    )
-                else:
-                    candidate.unlink(missing_ok=True)
-            lifecycle.checkpoint(
-                current_phase,
-                {
-                    **lifecycle.artifacts,
-                    "next_base_index": index + 1,
-                    "patches": patches,
-                },
-            )
-        if lifecycle.completed_phase == "full":
-            lifecycle.checkpoint(
-                current_phase,
-                {
-                    **lifecycle.artifacts,
-                    "next_base_index": len(bases),
-                    "patches": patches,
-                },
-            )
-        lifecycle.step_completed(current_phase, 2)
-
-        current_phase = "manifest"
-        lifecycle.step_started(current_phase, 3)
-        manifest = {
-            "schema_version": 1,
-            "created_at": created_at,
-            "dataset_id": dataset_id,
-            "target": {
-                "schema_version": str(mobile_manifest.get("schema_version")),
-                "sha256": target_sha,
-                "size_bytes": target_size,
-            },
-            "full": full_entry,
-            "patches": patches,
-            "history": release_history,
-        }
-        manifest_path = root / RELEASE_PREFIX / "latest.json"
-        _write_json(manifest_path, manifest)
-        lifecycle.step_completed(current_phase, 3)
-        lifecycle.completed()
-    except Exception as exc:
-        lifecycle.failed(current_phase, exc)
-        raise
-
-    patch_paths = [root / patch["key"] for patch in patches]
-    return {
-        "manifest_path": str(manifest_path),
-        "full_path": str(full_path),
-        "patch_path": str(patch_paths[0]) if patch_paths else None,
-        "patch_paths": [str(path) for path in patch_paths],
-        "manifest": manifest,
-    }
-
-
 __all__ = [
     "DEFAULT_CHUNK_SIZE",
     "PATCH_FORMAT",
-    "RELEASE_PREFIX",
     "apply_chunk_patch",
     "compress_snapshot",
     "create_chunk_patch",
     "decompress_snapshot",
-    "prepare_release",
     "sha256_file",
 ]

@@ -26,7 +26,7 @@ from medicine_canonical.release_window import (
     publish_verified_contract_window,
 )
 from medicine_canonical.release_window_artifacts import load_candidate, prepare_contract
-from tests.test_release_r2 import FakeS3, TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM
+from tests.r2_fakes import FakeS3, TEST_PRIVATE_KEY_PEM, TEST_PUBLIC_KEY_PEM
 
 
 class ReferenceContractWindowPublisherTest(unittest.TestCase):

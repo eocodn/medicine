@@ -21,7 +21,7 @@ from .release import (
     sha256_file,
 )
 from .release_job import validate_checkpointed_file
-from .release_r2 import _download_to_file, _list_prefix_keys, _not_found
+from .release_r2_object_io import _download_to_file, _list_prefix_keys, _not_found
 
 
 RELEASE_PREFIX = "reference/v2"

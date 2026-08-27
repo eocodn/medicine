@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from medicine_canonical.cli import main as canonical_main
-from medicine_canonical.release_r2 import release_sequence_from_env
+from medicine_canonical.release_signing_runtime import release_sequence_from_env
 from medicine_canonical.release_signing import (
     RELEASE_SIGNATURE_ALGORITHM,
     RELEASE_SIGNATURE_ENVELOPE_VERSION,
@@ -48,7 +48,7 @@ class ReleaseSigningTest(unittest.TestCase):
                 "size_bytes": 1234,
             },
             "full": {
-                "key": "reference/v1/full/example.sqlite.gz",
+                "key": "reference/v2/contracts/1/full/example.sqlite.gz",
                 "compression": "gzip",
                 "sha256": "b" * 64,
                 "size_bytes": 321,

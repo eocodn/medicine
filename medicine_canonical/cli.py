@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .build import (
@@ -19,9 +18,8 @@ from .integrated_build import assemble_integrated_databases, build_integrated_da
 from .mobile import build_mobile_database
 from .reference_contracts.registry import build_supported_contract_window
 from medicine_reference.reference_update import verify_reference_database
-from .release import apply_chunk_patch, prepare_release
-from .release_r2 import download_object_from_env
 from .release_r2_public import audit_public_bucket_from_env
+from .release_r2_runtime import download_object_from_env
 from .release_window import (
     build_and_publish_contract_window_from_env,
     publish_contract_directory_from_env,
@@ -242,21 +240,6 @@ def build_parser() -> argparse.ArgumentParser:
     substance_verify.add_argument("--db", type=Path, default=DEFAULT_SUBSTANCE_DB)
     substance_verify.add_argument("--json", action="store_true")
 
-    release_create = sub.add_parser("release-create", help="Build verified full and exact-byte delta mobile DB artifacts")
-    release_create.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
-    release_create.add_argument("--mobile-manifest", type=Path, default=Path("data/db/mobile.manifest.json"))
-    release_create.add_argument("--output-dir", type=Path, default=Path("artifacts/reference-release"))
-    release_create.add_argument("--previous-db", type=Path)
-    release_create.add_argument("--previous-dataset-id")
-    release_create.add_argument("--created-at")
-    release_create.add_argument("--json", action="store_true")
-
-    release_apply = sub.add_parser("release-apply", help="Apply and verify an exact-byte mobile DB delta")
-    release_apply.add_argument("--source", type=Path, required=True)
-    release_apply.add_argument("--patch", type=Path, required=True)
-    release_apply.add_argument("--output", type=Path, required=True)
-    release_apply.add_argument("--json", action="store_true")
-
     release_verify = sub.add_parser(
         "release-verify-envelope",
         help="Verify a signed reference release manifest envelope",
@@ -426,19 +409,6 @@ def main(argv=None) -> int:
         payload = verify_substance_database(args.db)
         _emit(payload, args.json)
         return 0 if payload["status"] == "verified" else 2
-    elif args.command == "release-create":
-        created_at = args.created_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        payload = prepare_release(
-            args.db,
-            args.mobile_manifest,
-            args.output_dir,
-            previous_db=args.previous_db,
-            previous_dataset_id=args.previous_dataset_id,
-            created_at=created_at,
-            progress=_reference_progress,
-        )
-    elif args.command == "release-apply":
-        payload = apply_chunk_patch(args.source, args.patch, args.output)
     elif args.command == "release-verify-envelope":
         verified = verify_signed_envelope(
             args.envelope.read_bytes(),

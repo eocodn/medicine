@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 
-from .release_r2 import LATEST_KEY as LEGACY_LATEST_KEY
-from .release_r2 import client_from_env
+from .release_r2_runtime import client_from_env
 from .release_window import ROOT_KEY
 
 
+LEGACY_LATEST_KEY = "reference/v1/latest.json"
 PUBLIC_REFERENCE_PREFIXES = ("reference/v1/", "reference/v2/")
 
 
