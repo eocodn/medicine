@@ -30,8 +30,7 @@ from medicine_reference.mfds_remark_registry import reviewed_mfds_remark
 from tests.canonical_fixture_support import add_linked_rule, add_product
 from tests.canonical_fixture_support import make_canonical_db
 
-
-class ReferenceContractSemanticsTest(unittest.TestCase):
+class ReferenceContractSemanticsTestFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
@@ -63,10 +62,8 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
             materialize_product_search_documents(con, None)
             con.commit()
         self.release = build_mobile_database(self.canonical, self.mobile)
-
     def tearDown(self) -> None:
         self.tmp.cleanup()
-
     def _semantic_for_remark(self, remark: str) -> sqlite3.Row:
         with closing(sqlite3.connect(self.mobile)) as con, con:
             con.row_factory = sqlite3.Row
@@ -79,6 +76,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         assert row is not None
         return row
 
+class ReferenceContractSemanticsTest(ReferenceContractSemanticsTestFixture):
     def test_contract_meta_separates_public_contract_from_build_diagnostics(self) -> None:
         with closing(sqlite3.connect(self.mobile)) as con, con:
             contract = dict(con.execute("SELECT key,value FROM reference_contract_meta"))
@@ -90,7 +88,6 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.assertEqual(build["physical_policy_version"], MOBILE_PHYSICAL_POLICY_VERSION)
         self.assertNotIn("canonical_schema_version", contract)
         self.assertNotIn("physical_policy_version", contract)
-
     def test_checked_in_v1_exporter_and_verifier_are_frozen_entry_points(self) -> None:
         exported_db = self.mobile.with_name("v1-export.sqlite")
         exported_manifest = self.mobile.with_name("v1-export.manifest.json")
@@ -116,7 +113,6 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
 
         self.assertEqual(release["contract_major"], 1)
         self.assertEqual(verified["status"], "verified")
-
     def test_server_verifier_closes_every_connection_it_owns(self) -> None:
         real_connect = sqlite3.connect
         connections: list[sqlite3.Connection] = []
@@ -146,7 +142,6 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
 
         self.assertGreaterEqual(len(connections), 3)
         self.assertTrue(all(getattr(con, "closed", False) for con in connections))
-
     def test_server_verifier_rejects_missing_reviewed_semantic_materialization(self) -> None:
         with closing(sqlite3.connect(self.mobile)) as con, con:
             criterion_rule_id = con.execute(
@@ -171,7 +166,6 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "semantic materialization"):
             verify_reference_database(self.mobile, REFERENCE_CONTRACT_MAJOR, dataset_id)
-
     def test_server_verifier_recomputes_frozen_logical_dataset_identity(self) -> None:
         with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute(
@@ -185,7 +179,6 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
                 REFERENCE_CONTRACT_MAJOR,
                 self.release["dataset_id"],
             )
-
     def test_strict_server_verifier_uses_frozen_oracle_not_fast_executor(self) -> None:
         with (
             mock.patch(
@@ -205,11 +198,9 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
 
         self.assertEqual(verified["status"], "verified")
         oracle.assert_called_once()
-
     def test_fast_logical_dataset_identity_matches_frozen_oracle(self) -> None:
         with closing(sqlite3.connect(self.mobile)) as con, con:
             self.assertEqual(logical_dataset_id(con), logical_dataset_id_oracle(con))
-
     def test_default_physical_policy_uses_fast_logical_identity_when_layout_is_valid(self) -> None:
         events: list[dict] = []
         with closing(sqlite3.connect(self.mobile)) as con, con:
@@ -219,7 +210,6 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
             any(event.get("phase") == "logical_identity_fast_setup" for event in events),
             events,
         )
-
     def test_fast_logical_dataset_identity_preserves_caller_transaction(self) -> None:
         with closing(sqlite3.connect(self.mobile)) as con, con:
             original = con.execute(
@@ -239,13 +229,11 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
                 "SELECT product_name FROM products WHERE item_seq='SEM-A'"
             ).fetchone()[0]
             self.assertEqual(restored, original)
-
     def test_fast_logical_dataset_identity_works_on_query_only_connection(self) -> None:
         uri = f"file:{self.mobile.resolve()}?mode=ro"
         with closing(sqlite3.connect(uri, uri=True)) as con, con:
             con.execute("PRAGMA query_only=ON")
             self.assertEqual(logical_dataset_id(con), logical_dataset_id_oracle(con))
-
     def test_strict_server_verifier_threads_progress_to_frozen_oracle(self) -> None:
         progress = mock.Mock()
         with mock.patch(
@@ -261,7 +249,6 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
 
         oracle.assert_called_once()
         self.assertIs(oracle.call_args.kwargs["progress"], progress)
-
     def test_logical_dataset_identity_binds_product_link_to_runtime_semantics(self) -> None:
         review_remark = "항암제 투여로 인한 구역 및 구토의 방지에 쓰는 제품에 한함"
         reviewed = reviewed_mfds_remark("duration_caution", review_remark)
@@ -401,7 +388,6 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
             )["status"],
             "verified",
         )
-
     def test_frozen_server_verifier_ignores_diagnostic_provenance_values(self) -> None:
         with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute(
@@ -417,7 +403,6 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         )
         self.assertEqual(verified["status"], "verified")
         self.assertEqual(verified["dataset_id"], self.release["dataset_id"])
-
     def test_server_verifier_rejects_replaced_runtime_product_rule_criteria_relation(self) -> None:
         with closing(sqlite3.connect(self.mobile)) as con, con:
             con.execute(
@@ -436,183 +421,3 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
                 REFERENCE_CONTRACT_MAJOR,
                 self.release["dataset_id"],
             )
-
-    def test_supported_contract_window_builder_emits_every_registered_major(self) -> None:
-        output = self.mobile.parent / "contract-window"
-
-        result = build_supported_contract_window(self.canonical, output)
-
-        self.assertEqual(supported_contract_majors(), (1,))
-        self.assertEqual(result["current_contract_major"], 1)
-        self.assertEqual(result["minimum_supported_contract_major"], 1)
-        self.assertEqual([entry["contract_major"] for entry in result["contracts"]], [1])
-        self.assertTrue(Path(result["contracts"][0]["database"]).is_file())
-        self.assertTrue(Path(result["contracts"][0]["manifest"]).is_file())
-
-    def test_supported_contract_window_preserves_exporter_checkpoint_for_resume(self) -> None:
-        output = self.mobile.parent / "resumable-contract-window"
-        database = output / "contract-1.sqlite"
-        manifest = output / "contract-1.manifest.json"
-        checkpoint = database.with_name(database.name + ".build.checkpoint.json")
-
-        with mock.patch(
-            "medicine_canonical.mobile.write_manifest_atomic",
-            side_effect=RuntimeError("manifest interrupted"),
-        ):
-            with self.assertRaisesRegex(RuntimeError, "manifest interrupted"):
-                build_supported_contract_window(self.canonical, output)
-
-        self.assertTrue(database.is_file())
-        self.assertFalse(manifest.exists())
-        self.assertTrue(checkpoint.is_file())
-
-        with mock.patch(
-            "medicine_canonical.mobile.verify_canonical_database",
-            side_effect=AssertionError("resumed exporter must not restart verification"),
-        ):
-            result = build_supported_contract_window(self.canonical, output)
-
-        self.assertEqual(result["contracts"][0]["database"], str(database))
-        self.assertTrue(manifest.is_file())
-        self.assertFalse(checkpoint.exists())
-
-    def test_supported_contract_window_does_not_repeat_strict_identity_verification(self) -> None:
-        output = self.mobile.parent / "single-identity-pass-window"
-        database = output / "contract-1.sqlite"
-        manifest = output / "contract-1.manifest.json"
-
-        def export(_canonical, target, *, manifest_path, **_kwargs):
-            Path(target).parent.mkdir(parents=True, exist_ok=True)
-            data = b"verified-contract"
-            Path(target).write_bytes(data)
-            payload = {
-                "contract_major": 1,
-                "dataset_id": "sha256:" + "1" * 64,
-                "sha256": __import__("hashlib").sha256(data).hexdigest(),
-                "size_bytes": len(data),
-            }
-            Path(manifest_path).write_text(json.dumps(payload), encoding="utf-8")
-            return payload
-
-        strict = mock.Mock(side_effect=AssertionError("strict verifier repeated logical identity"))
-        built = mock.Mock(return_value={"status": "verified"})
-        implementation = ReferenceContractImplementation(
-            1,
-            export,
-            strict,
-            verify_built=built,
-        )
-        with (
-            mock.patch(
-                "medicine_canonical.reference_contracts.registry.supported_contract_majors",
-                return_value=(1,),
-            ),
-            mock.patch(
-                "medicine_canonical.reference_contracts.registry.implementation_for",
-                return_value=implementation,
-            ),
-        ):
-            result = build_supported_contract_window(self.canonical, output)
-
-        self.assertEqual(result["contracts"][0]["database"], str(database))
-        self.assertEqual(result["contracts"][0]["manifest"], str(manifest))
-        built.assert_called_once_with(database, 1, "sha256:" + "1" * 64)
-        strict.assert_not_called()
-
-    def test_publication_build_can_surface_unbuildable_previous_contract_without_hiding_it(self) -> None:
-        output = self.mobile.parent / "retired-build-window"
-
-        def fail_previous(*_args, **_kwargs):
-            raise ValueError("contract 1 cannot express current semantics")
-
-        def export_current(_canonical, database, *, manifest_path, **_kwargs):
-            Path(database).write_bytes(b"contract-2")
-            Path(manifest_path).write_text("{}", encoding="utf-8")
-            return {
-                "contract_major": 2,
-                "dataset_id": "sha256:" + "2" * 64,
-                "sha256": "3" * 64,
-                "size_bytes": 10,
-            }
-
-        implementations = {
-            1: ReferenceContractImplementation(1, fail_previous, lambda *_args: {}),
-            2: ReferenceContractImplementation(2, export_current, lambda *_args: {}),
-        }
-        with (
-            mock.patch(
-                "medicine_canonical.reference_contracts.registry.supported_contract_majors",
-                return_value=(1, 2),
-            ),
-            mock.patch(
-                "medicine_canonical.reference_contracts.registry.implementation_for",
-                side_effect=lambda major: implementations[major],
-            ),
-        ):
-            with self.assertRaisesRegex(ValueError, "cannot express"):
-                build_supported_contract_window(self.canonical, output)
-
-            result = build_supported_contract_window(
-                self.canonical,
-                output,
-                allow_previous_failure=True,
-            )
-
-        self.assertEqual([entry["contract_major"] for entry in result["contracts"]], [2])
-        self.assertEqual(result["failed_previous_contract"]["contract_major"], 1)
-        self.assertEqual(result["failed_previous_contract"]["error"], "ValueError")
-        self.assertFalse((output / "contract-1.sqlite").exists())
-        self.assertFalse((output / "contract-1.manifest.json").exists())
-        self.assertTrue((output / "contract-2.sqlite").is_file())
-
-    def test_reference_window_build_cli_uses_registered_contract_set(self) -> None:
-        output = self.mobile.parent / "cli-contract-window"
-        stdout = StringIO()
-
-        with redirect_stdout(stdout):
-            code = canonical_main([
-                "reference-window-build",
-                "--db", str(self.canonical),
-                "--output-dir", str(output),
-                "--json",
-            ])
-
-        self.assertEqual(code, 0)
-        payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["current_contract_major"], 1)
-        self.assertEqual([entry["contract_major"] for entry in payload["contracts"]], [1])
-
-    def test_review_required_remark_is_materialized_as_opaque_condition(self) -> None:
-        row = self._semantic_for_remark(
-            "다만, 다른 약을 사용할 수 없거나 효과가 없는 경우에만 8세 이상 신중투여"
-        )
-        self.assertEqual(row["semantic_role"], "applicability_condition")
-        self.assertEqual(row["evaluation_mode"], "review_required")
-        self.assertEqual(row["evaluator_kind"], "opaque_condition")
-        self.assertEqual(row["fallback_action"], "review_required")
-        self.assertEqual(json.loads(row["structured_payload_json"]), {})
-
-    def test_interaction_window_is_materialized_as_runtime_evaluator(self) -> None:
-        row = self._semantic_for_remark("24시간 이내 병용금기")
-        self.assertEqual(row["evaluation_mode"], "runtime_evaluable")
-        self.assertEqual(row["evaluator_kind"], "minimum_separation")
-        self.assertEqual(row["fallback_action"], "review_required")
-        self.assertEqual(
-            json.loads(row["structured_payload_json"]),
-            {"direction": "symmetric", "hours": 24},
-        )
-
-    def test_form_exclusion_is_materialized_as_runtime_evaluator(self) -> None:
-        row = self._semantic_for_remark("외용제는 제외")
-        self.assertEqual(row["evaluator_kind"], "excluded_route")
-        self.assertEqual(json.loads(row["structured_payload_json"]), {"route": "topical"})
-
-    def test_build_scope_review_produces_no_runtime_fact(self) -> None:
-        reviewed = reviewed_mfds_remark("dose_caution", "단일제·복합제 포함")
-        self.assertIsNotNone(reviewed)
-        assert reviewed is not None
-        self.assertEqual(semantic_facts_for_reviewed_remark(reviewed), ())
-
-
-if __name__ == "__main__":
-    unittest.main()

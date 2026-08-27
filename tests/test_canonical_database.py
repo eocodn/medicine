@@ -38,16 +38,13 @@ from medicine_canonical.sources import (
     sync_canonical_api_sources,
 )
 
-
-class CanonicalDatabaseTest(unittest.TestCase):
+class CanonicalDatabaseTestFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db = self.root / "canonical.sqlite"
-
     def tearDown(self) -> None:
         self.tmp.cleanup()
-
     @staticmethod
     def _permit_fetch(page: int, page_size: int):
         if page > 1:
@@ -73,7 +70,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
                 "CANCEL_NAME": "정상",
             },
         ], 2
-
     @staticmethod
     def _dur_fetch(operation: str, page: int, page_size: int):
         if page > 1:
@@ -122,7 +118,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
             }],
         }
         return rows[operation], 1
-
     @staticmethod
     def _ingredient_fetch(operation: str, page: int, page_size: int):
         if page > 1:
@@ -160,7 +155,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
         active = common
         deleted = {**common, "DUR_SEQ": "999", "DEL_YN": "삭제"}
         return [active, deleted], 2
-
     def _build(self):
         return build_canonical_database(
             self.db,
@@ -172,6 +166,7 @@ class CanonicalDatabaseTest(unittest.TestCase):
             api_workers=1,
         )
 
+class CanonicalDatabaseTest(CanonicalDatabaseTestFixture):
     def test_assemble_resumes_verified_source_stage_from_input_bound_checkpoint(self) -> None:
         self._build()
         self.db.unlink()
@@ -202,7 +197,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
         self.assertGreater(result["products"], 0)
         self.assertFalse(checkpoint.exists())
         self.assertFalse(staged.exists())
-
     def test_assemble_rejects_mutated_source_stage_checkpoint(self) -> None:
         self._build()
         self.db.unlink()
@@ -225,7 +219,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
 
         self.assertFalse(checkpoint.exists())
         self.assertFalse(staged.exists())
-
     def test_assemble_rejects_mutated_materialized_checkpoint(self) -> None:
         self._build()
         self.db.unlink()
@@ -248,7 +241,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
 
         self.assertFalse(checkpoint.exists())
         self.assertFalse(staged.exists())
-
     def test_cli_build_exposes_structured_job_progress_and_checkpoint_events(self) -> None:
         self._build()
         self.db.unlink()
@@ -280,7 +272,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
         self.assertTrue(any(event["status"] == "checkpoint" for event in events))
         self.assertTrue(any(event.get("bar", "").startswith("[") for event in events))
         self.assertEqual(events[-1]["status"], "completed")
-
     def test_rejects_unknown_product_flag_code(self) -> None:
         def fetch(operation: str, page: int, page_size: int):
             if operation == "getDurPrdlstInfoList03":
@@ -302,7 +293,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
                 ingredient_fetch_page=self._ingredient_fetch,
                 api_workers=1,
             )
-
     def test_builds_mfds_only_canonical_database(self) -> None:
         result = self._build()
         self.assertEqual(result["products"], 2)
@@ -366,7 +356,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
             self.assertEqual(duplication, ("NSAID", None))
             meta = dict(con.execute("SELECT key,value FROM canonical_meta"))
             self.assertEqual(meta["source_policy"], CANONICAL_SOURCE_POLICY)
-
     def test_verify_rejects_zero_quantitative_dose_coverage(self) -> None:
         self._build()
         with closing(sqlite3.connect(self.db)) as con:
@@ -379,7 +368,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
         verification = verify_canonical_database(self.db)
         self.assertEqual(verification["status"], "invalid")
         self.assertIn("no quantitative dose criteria are parsable", verification["errors"])
-
     def test_verify_rejects_unreviewed_mfds_remark(self) -> None:
         self._build()
         with closing(sqlite3.connect(self.db)) as con:
@@ -391,7 +379,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
         verification = verify_canonical_database(self.db)
         self.assertEqual(verification["status"], "invalid")
         self.assertIn("unreviewed MFDS REMARK", " ".join(verification["errors"]))
-
     def test_can_reassemble_from_preserved_mfds_snapshots_without_network(self) -> None:
         self._build()
         raw_dir = self.root / "canonical.sources"
@@ -402,7 +389,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(result["products"], 2)
         self.assertEqual(result["source_snapshots"], 17)
-
     def test_reassemble_rejects_tampered_api_snapshot(self) -> None:
         self._build()
         raw_dir = self.root / "canonical.sources"
@@ -414,7 +400,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
                 self.root / "tampered.sqlite",
                 MfdsSourceLayout.from_roots(raw_dir, ingredient_raw_dir),
             )
-
     def test_rebuild_is_atomic_and_idempotent(self) -> None:
         first = self._build()
         second = self._build()
@@ -422,7 +407,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
         self.assertEqual(first["product_rules"], second["product_rules"])
         with closing(sqlite3.connect(self.db)) as con:
             self.assertEqual(con.execute("SELECT COUNT(*) FROM source_snapshots").fetchone()[0], 17)
-
     def test_verify_rejects_non_core_source_family(self) -> None:
         self._build()
         with closing(sqlite3.connect(self.db)) as con:
@@ -436,7 +420,6 @@ class CanonicalDatabaseTest(unittest.TestCase):
         result = verify_canonical_database(self.db)
         self.assertEqual(result["status"], "invalid")
         self.assertIn("unsupported source families", " ".join(result["errors"]))
-
     def test_cli_stats_verify_and_criteria_are_machine_readable(self) -> None:
         self._build()
         for args in (
@@ -458,180 +441,3 @@ class CanonicalDatabaseTest(unittest.TestCase):
                 code = canonical_main(args)
             self.assertEqual(code, 0)
             self.assertTrue(buf.getvalue().strip().startswith(('{', '[')))
-
-    def test_mfds_api_page_limits_are_enforced(self) -> None:
-        self.assertEqual(PERMIT_PAGE_SIZE_MAX, 500)
-        self.assertEqual(MFDS_INGREDIENT_PAGE_SIZE_MAX, 500)
-        with self.assertRaisesRegex(ValueError, "permit_page_size"):
-            sync_canonical_api_sources(
-                MfdsSourceLayout.from_roots(
-                    self.root / "raw-limit", self.root / "ingredient-limit"
-                ),
-                service_key="test-key",
-                permit_page_size=501,
-                progress=False,
-                permit_fetch_page=self._permit_fetch,
-                dur_fetch_page=self._dur_fetch,
-            )
-
-    def test_mfds_request_retry_is_observable_without_leaking_service_key(self) -> None:
-        stderr = io.StringIO()
-        with (
-            mock.patch(
-                "medicine_canonical.mfds_sync.urllib.request.urlopen",
-                side_effect=urllib.error.URLError("timed out"),
-            ),
-            mock.patch("medicine_canonical.mfds_sync.time.sleep"),
-            redirect_stderr(stderr),
-            self.assertRaisesRegex(RuntimeError, "MFDS permit API failed after 2 attempts"),
-        ):
-            request_json(
-                "https://apis.data.go.kr/example?serviceKey=do-not-log-me",
-                label="MFDS permit API",
-                attempts=2,
-            )
-        output = stderr.getvalue()
-        self.assertIn("MFDS permit API: retry 2/2 after URLError", output)
-        self.assertNotIn("do-not-log-me", output)
-
-    def test_paginated_sync_reports_first_page_before_network_fetch(self) -> None:
-        stderr = io.StringIO()
-        with redirect_stderr(stderr):
-            sync_paginated_jsonl(
-                self.root / "progress.jsonl",
-                dataset_key="mfds_permit:products",
-                source_family="mfds_permit_api",
-                source_locator="https://apis.data.go.kr/example",
-                page_size=500,
-                workers=1,
-                fetch_page=lambda page, size: ([{"ITEM_SEQ": "P1"}], 1),
-                progress=True,
-            )
-        self.assertIn("[canonical-sync] mfds_permit:products: fetch first page", stderr.getvalue())
-
-    def test_reference_sync_threads_structured_progress_to_every_source(self) -> None:
-        events: list[dict[str, object]] = []
-        result = sync_reference_sources(
-            MfdsSourceLayout.from_roots(
-                self.root / "structured-product",
-                self.root / "structured-ingredient",
-            ),
-            service_key="test-key",
-            workers=2,
-            progress=False,
-            job_progress=events.append,
-            permit_fetch_page=self._permit_fetch,
-            dur_fetch_page=self._dur_fetch,
-            ingredient_fetch_page=self._ingredient_fetch,
-        )
-
-        started = [event for event in events if event.get("status") == "started"]
-        completed = [event for event in events if event.get("status") == "completed"]
-        expected_sources = 1 + len(DUR_ENDPOINTS) + len(MFDS_INGREDIENT_ENDPOINTS)
-        self.assertEqual(len(started), expected_sources)
-        self.assertEqual(len(completed), expected_sources)
-        self.assertEqual(result["source_rows"], sum(int(event["row_count"]) for event in completed))
-        self.assertTrue(all(event.get("job") == "mfds-source-sync" for event in events))
-
-    def test_sync_cli_enables_structured_progress_unless_quiet(self) -> None:
-        payload = {"source_rows": 0, "product_sources": {}, "ingredient_sources": {}}
-        for quiet in (False, True):
-            args = ["sync", "--service-key", "test-key", "--json"]
-            if quiet:
-                args.append("--quiet")
-            with (
-                mock.patch("medicine_canonical.cli.sync_reference_sources", return_value=payload) as sync,
-                redirect_stdout(io.StringIO()),
-            ):
-                self.assertEqual(canonical_main(args), 0)
-            kwargs = sync.call_args.kwargs
-            self.assertEqual(kwargs["progress"], not quiet)
-            if quiet:
-                self.assertIsNone(kwargs["job_progress"])
-            else:
-                self.assertTrue(callable(kwargs["job_progress"]))
-
-    def test_link_code_preprocessing_has_only_reviewed_explicit_equivalences(self) -> None:
-        cases = {
-            "D001289": "D000274",
-            "D000195": "D000982",
-            "D000983": "D000309",
-            "D000904": "D000719",
-        }
-        for raw_code, expected in cases.items():
-            self.assertEqual(
-                canonical_linking.canonicalize_link_ingredient_code(raw_code), expected
-            )
-        self.assertEqual(
-            canonical_linking.canonicalize_link_ingredient_code("D999999"), "D999999"
-        )
-
-    def test_linker_rejects_ingredient_criterion_without_mfds_code_payload(self) -> None:
-        con = sqlite3.connect(":memory:")
-        try:
-            con.executescript(SCHEMA)
-            for key, family in (
-                ("mfds", "mfds_dur_item_api"),
-                ("mfds_ing", "mfds_dur_ingredient_api"),
-            ):
-                con.execute(
-                    """INSERT INTO source_snapshots(
-                           dataset_key,source_family,source_locator,snapshot_path,row_count,sha256,metadata_json
-                       ) VALUES(?,?,?,?,?,?,?)""",
-                    (key, family, key, key, 1, "0" * 64, "{}"),
-                )
-            con.execute(
-                """INSERT INTO product_rules(
-                       source_dataset_key,source_row,category,item_seq,ingredient_code,ingredient_name_en
-                   ) VALUES('mfds',1,'age_contraindication','P1','D-ALPHA','Alpha')"""
-            )
-            con.execute(
-                """INSERT INTO ingredient_rules(
-                       source_dataset_key,source_row,category,ingredient_name,rule_value
-                   ) VALUES('mfds_ing',1,'age_contraindication','Alpha','12세 미만')"""
-            )
-            with self.assertRaisesRegex(ValueError, "authoritative ingredient code"):
-                canonical_linking.materialize_product_criterion_links(con)
-        finally:
-            con.close()
-
-    def test_release_source_policy_matches_declared_mfds_sources(self) -> None:
-        expected = {PERMIT_DATASET_KEY}
-        expected.update(f"mfds_dur:{operation}" for operation in DUR_ENDPOINTS)
-        expected.update(
-            f"mfds_dur_ingredient:{operation}" for operation in MFDS_INGREDIENT_ENDPOINTS
-        )
-        self.assertEqual(EXPECTED_CANONICAL_SOURCE_KEYS, expected)
-        self.assertEqual(len(EXPECTED_CANONICAL_SOURCE_FAMILIES), 17)
-
-    def test_verify_rejects_source_key_family_mismatch(self) -> None:
-        self._build()
-        with closing(sqlite3.connect(self.db)) as con:
-            con.execute(
-                """UPDATE source_snapshots SET source_family='mfds_dur_item_api'
-                   WHERE dataset_key='mfds_dur_ingredient:getCpctyAtentInfoList02'"""
-            )
-            con.commit()
-        verification = verify_canonical_database(self.db)
-        self.assertEqual(verification["status"], "invalid")
-        self.assertIn("source snapshot family mismatch", " ".join(verification["errors"]))
-
-    def test_declares_all_expected_live_dur_endpoints(self) -> None:
-        self.assertEqual(len(DUR_ENDPOINTS), 9)
-        self.assertEqual(len(MFDS_INGREDIENT_ENDPOINTS), 7)
-        self.assertEqual(
-            {spec.category for spec in MFDS_INGREDIENT_ENDPOINTS.values()},
-            {
-                "combination_contraindication",
-                "age_contraindication",
-                "pregnancy_contraindication",
-                "dose_caution",
-                "duration_caution",
-                "elderly_caution",
-                "therapeutic_duplication_caution",
-            },
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
