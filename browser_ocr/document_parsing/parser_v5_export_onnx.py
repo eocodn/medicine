@@ -14,22 +14,22 @@ import paddle
 from onnx import TensorProto, helper, numpy_helper
 
 from .artifact_storage import exclusive_output_lock
-from .parser_v5_encoder_paddle import parser_v5_tensors
+from .parser_v5_export_parity import (
+    load_frozen_parser_v5_export_model,
+    run_parser_v5_export_parity_case,
+)
 from .parser_v5_heads_paddle import FIELD_ROLE_LABELS
 from .parser_v5_model_input import (
+    BYTE_PAD,
     NODE_SCALAR_DIM,
     PARSER_V5_ROLE_LABELS,
     RELATION_FEATURE_DIM,
-    build_parser_v5_runtime_input,
 )
-from .parser_v5_observation import ObservationProfile, simulate_observations
 from .parser_v5_training_paddle import ParserV5Model, ParserV5TrainingConfig
-from .parser_v5_training_artifact import resolve_parser_v5_checkpoint
 from .parser_v5_validation_protocol import (
     load_parser_v5_candidate_freeze,
     validate_parser_v5_frozen_implementation,
 )
-from .parser_v5_world import ParserWorldProfile, generate_parser_world
 
 
 MODEL_FILE = "parser.onnx"
@@ -37,6 +37,10 @@ MANIFEST_FILE = "manifest.json"
 ONNX_IR_VERSION = 8
 OPSET_VERSION = 17
 PARITY_TOLERANCE = 2e-5
+_EXPORT_IMPLEMENTATION_FILES = (
+    "parser_v5_export_onnx.py",
+    "parser_v5_export_parity.py",
+)
 
 
 def _canonical_json(value: object) -> bytes:
@@ -55,6 +59,11 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _export_implementation_hashes() -> dict[str, str]:
+    root = Path(__file__).resolve().parent
+    return {name: _sha256_file(root / name) for name in _EXPORT_IMPLEMENTATION_FILES}
 
 
 def _json_object(path: Path, *, label: str) -> dict[str, Any]:
@@ -83,6 +92,15 @@ def _state_initializers(model: paddle.nn.Layer) -> list[onnx.TensorProto]:
         array = parameter.numpy()
         if array.dtype.kind == "f":
             array = np.asarray(array, dtype=np.float32)
+        if name == "encoder.text_encoder.embedding.weight":
+            # Paddle's Embedding padding_idx semantics are applied at lookup
+            # time, not guaranteed by the persisted parameter value. AdamW
+            # weight decay can therefore move the stored PAD row away from
+            # zero while Paddle inference still returns an all-zero embedding
+            # for BYTE_PAD. A raw ONNX Gather would otherwise leak that stored
+            # row and diverge from the trained model's actual forward pass.
+            array = array.copy()
+            array[BYTE_PAD] = 0.0
         values.append(_tensor(name, array))
     return values
 
@@ -393,119 +411,6 @@ def _build_onnx_model(model: ParserV5Model, config: ParserV5TrainingConfig) -> o
     return model_proto
 
 
-def _load_frozen_model(training_result: Path, freeze: Mapping[str, Any]) -> tuple[ParserV5Model, ParserV5TrainingConfig]:
-    result = _json_object(training_result, label="Parser v5 training result")
-    if _sha256_file(training_result) != freeze["training_result_sha256"]:
-        raise ValueError("Parser v5 export training result disagrees with candidate freeze")
-    profile = result.get("profile")
-    if not isinstance(profile, Mapping) or result.get("profile_sha256") != freeze["training_profile_sha256"]:
-        raise ValueError("Parser v5 export training profile disagrees with candidate freeze")
-    config_raw = profile.get("config")
-    if not isinstance(config_raw, Mapping):
-        raise ValueError("Parser v5 export training config is invalid")
-    config = ParserV5TrainingConfig(**dict(config_raw))
-    checkpoint = resolve_parser_v5_checkpoint(training_result, result.get("best_checkpoint"))
-    if not checkpoint.is_file() or _sha256_file(checkpoint) != freeze["checkpoint_sha256"]:
-        raise ValueError("Parser v5 export checkpoint disagrees with candidate freeze")
-    paddle.set_device(config.device)
-    with paddle.utils.unique_name.guard():
-        model = ParserV5Model(config)
-    model.set_state_dict(paddle.load(str(checkpoint)))
-    model.eval()
-    return model, config
-
-
-def _parity_case(
-    model: ParserV5Model,
-    config: ParserV5TrainingConfig,
-    *,
-    seed: int,
-    session: ort.InferenceSession,
-    empty_assignments: bool = False,
-) -> dict[str, Any]:
-    truth = generate_parser_world(
-        seed=seed,
-        document_index=0,
-        profile=ParserWorldProfile(medication_count=(2, 2), distractor_section_count=(1, 2)),
-    )
-    observation = simulate_observations(
-        truth,
-        seed=seed + 1,
-        profile=ObservationProfile(
-            text_corruption_rate=0.05,
-            drop_rate=0,
-            duplicate_rate=0,
-            split_rate=0,
-            merge_rate=0,
-            geometry_jitter=0.002,
-            false_positive_count=(1, 1),
-            reading_order_shuffle_rate=0,
-        ),
-    )
-    nodes = [
-        {
-            "node_id": str(node["node_id"]),
-            "text": str(node["text"]),
-            "detector_confidence": float(node["detector_confidence"]),
-            "recognizer_confidence": float(node["recognizer_confidence"]),
-            "polygon": node["polygon"],
-        }
-        for node in observation["nodes"]
-    ]
-    value = build_parser_v5_runtime_input(
-        document_id=str(truth["document_id"]),
-        width=truth["width"],
-        height=truth["height"],
-        nodes=nodes,
-        max_text_bytes=config.max_text_bytes,
-    )
-    tensors = parser_v5_tensors(value)
-    node_count = len(nodes)
-    product_indices = [] if empty_assignments else list(range(min(2, node_count)))
-    field_indices = [] if empty_assignments else list(range(min(2, node_count), min(5, node_count)))
-    membership = np.zeros((len(product_indices), node_count), dtype=np.float32)
-    for slot, index in enumerate(product_indices):
-        membership[slot, index] = 1.0
-    field_role_index = np.asarray([index % len(FIELD_ROLE_LABELS) for index in range(len(field_indices))], dtype=np.int64)
-    product_available = np.ones((len(product_indices),), dtype=np.bool_)
-    field_node_index = np.asarray(field_indices, dtype=np.int64)
-
-    with paddle.no_grad():
-        hidden, role_logits = model.encoder(tensors)
-        candidate_logits = model.heads.candidate_head(hidden).reshape([-1])
-        assignment_logits = model.heads.score_assignments(
-            hidden,
-            tensors.relation_features,
-            product_membership=paddle.to_tensor(membership, dtype="float32"),
-            product_available=paddle.to_tensor(product_available, dtype="bool"),
-            field_node_index=paddle.to_tensor(field_node_index, dtype="int64"),
-            field_role_index=paddle.to_tensor(field_role_index, dtype="int64"),
-        )
-    feeds = {
-        "token_ids": tensors.token_ids.numpy(),
-        "token_mask": tensors.token_mask.numpy(),
-        "node_scalars": tensors.node_scalars.numpy(),
-        "relation_features": tensors.relation_features.numpy(),
-        "product_membership": membership,
-        "product_available": product_available,
-        "field_node_index": field_node_index,
-        "field_role_index": field_role_index,
-    }
-    onnx_role, onnx_candidate, onnx_assignment = session.run(None, feeds)
-    deltas = [
-        float(np.max(np.abs(onnx_role - role_logits.numpy()))) if onnx_role.size else 0.0,
-        float(np.max(np.abs(onnx_candidate - candidate_logits.numpy()))) if onnx_candidate.size else 0.0,
-        float(np.max(np.abs(onnx_assignment - assignment_logits.numpy()))) if onnx_assignment.size else 0.0,
-    ]
-    return {
-        "seed": seed,
-        "nodes": node_count,
-        "products": len(product_indices),
-        "fields": len(field_indices),
-        "max_abs_delta": max(deltas),
-    }
-
-
 def _validate_existing(root: Path, freeze: Mapping[str, Any]) -> dict[str, Any]:
     manifest_path = root / MANIFEST_FILE
     model_path = root / MODEL_FILE
@@ -514,6 +419,8 @@ def _validate_existing(root: Path, freeze: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("Parser v5 export manifest candidate freeze mismatch")
     if not model_path.is_file() or manifest.get("model_sha256") != _sha256_file(model_path):
         raise ValueError("Parser v5 export model SHA-256 mismatch")
+    if manifest.get("export_implementation_sha256") != _export_implementation_hashes():
+        raise ValueError("Parser v5 export implementation identity mismatch")
     return manifest
 
 
@@ -530,15 +437,21 @@ def export_parser_v5_candidate(
     with exclusive_output_lock(root):
         if (root / MANIFEST_FILE).exists():
             return _validate_existing(root, freeze)
-        model, config = _load_frozen_model(Path(training_result).resolve(), freeze)
+        model, config = load_frozen_parser_v5_export_model(Path(training_result).resolve(), freeze)
         model_proto = _build_onnx_model(model, config)
         model_bytes = model_proto.SerializeToString(deterministic=True)
         model_path = root / MODEL_FILE
         model_path.write_bytes(model_bytes)
         session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         parity_cases = [
-            _parity_case(model, config, seed=7301, session=session),
-            _parity_case(model, config, seed=7302, session=session, empty_assignments=True),
+            run_parser_v5_export_parity_case(model, config, seed=7301, session=session),
+            run_parser_v5_export_parity_case(
+                model,
+                config,
+                seed=7302,
+                session=session,
+                empty_assignments=True,
+            ),
         ]
         parity_max = max(float(item["max_abs_delta"]) for item in parity_cases)
         if parity_max > PARITY_TOLERANCE:
@@ -553,6 +466,7 @@ def export_parser_v5_candidate(
             "model_sha256": _sha256_file(model_path),
             "source_candidate_freeze_fingerprint": str(freeze["freeze_fingerprint"]),
             "source_checkpoint_sha256": str(freeze["checkpoint_sha256"]),
+            "export_implementation_sha256": _export_implementation_hashes(),
             "decode_policy": dict(freeze["decode_policy"]),
             "role_labels": list(PARSER_V5_ROLE_LABELS),
             "field_role_labels": list(FIELD_ROLE_LABELS),
@@ -580,6 +494,7 @@ def export_parser_v5_candidate(
                 "converter": "direct_onnx_builder_v1",
             },
             "parity_tolerance": PARITY_TOLERANCE,
+            "parity_reference": {"framework": "paddle", "device": "cpu"},
             "parity_max_abs_delta": parity_max,
             "parity_cases": parity_cases,
         }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -71,6 +72,45 @@ class ParserV5ExportTest(unittest.TestCase):
             self.assertEqual(second, manifest)
             (output / "parser.onnx").write_bytes((output / "parser.onnx").read_bytes() + b"tampered")
             with self.assertRaisesRegex(ValueError, "SHA-256"):
+                export_parser_v5_candidate(
+                    candidate_freeze=freeze,
+                    training_result=result,
+                    output_dir=output,
+                )
+
+    def test_export_parity_uses_cpu_reference_independent_of_training_device(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            result, freeze = build_frozen_candidate(root, training_device="gpu")
+            manifest = export_parser_v5_candidate(
+                candidate_freeze=freeze,
+                training_result=result,
+                output_dir=root / "export",
+            )
+            self.assertEqual(manifest["parity_reference"], {"framework": "paddle", "device": "cpu"})
+            self.assertLessEqual(manifest["parity_max_abs_delta"], manifest["parity_tolerance"])
+
+    def test_existing_export_rejects_stale_converter_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            result, freeze = build_frozen_candidate(root)
+            output = root / "export"
+            manifest = export_parser_v5_candidate(
+                candidate_freeze=freeze,
+                training_result=result,
+                output_dir=output,
+            )
+            self.assertEqual(
+                set(manifest["export_implementation_sha256"]),
+                {"parser_v5_export_onnx.py", "parser_v5_export_parity.py"},
+            )
+            persisted = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+            persisted["export_implementation_sha256"] = {
+                "parser_v5_export_onnx.py": "0" * 64,
+                "parser_v5_export_parity.py": "1" * 64,
+            }
+            (output / "manifest.json").write_text(json.dumps(persisted), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "implementation"):
                 export_parser_v5_candidate(
                     candidate_freeze=freeze,
                     training_result=result,

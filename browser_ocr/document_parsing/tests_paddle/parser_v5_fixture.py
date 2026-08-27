@@ -56,7 +56,7 @@ def _calibration_artifact(path: Path) -> Path:
     return path
 
 
-def build_frozen_candidate(root: Path) -> tuple[Path, Path]:
+def build_frozen_candidate(root: Path, *, training_device: str = "cpu") -> tuple[Path, Path]:
     train_manifest = build_parser_v5_dataset(
         root / "train",
         dataset_id="v5-train-sealed-eval",
@@ -90,10 +90,17 @@ def build_frozen_candidate(root: Path) -> tuple[Path, Path]:
         heads=1,
         assignment_hidden_dim=16,
         role_embedding_dim=4,
-        device="cpu",
+        device=training_device,
     )
     with paddle.utils.unique_name.guard():
         model = ParserV5Model(config)
+    # Paddle Embedding honors padding_idx at lookup time even if optimizer
+    # weight decay has moved the persisted PAD row away from zero. Keep this
+    # fixture non-zero so exporters must preserve that runtime semantic rather
+    # than relying on freshly initialized padding weights being zero.
+    padding_weight = model.encoder.text_encoder.embedding.weight.numpy()
+    padding_weight[0] = 0.125
+    model.encoder.text_encoder.embedding.weight.set_value(padding_weight)
     checkpoint = root / "model.pdparams"
     paddle.save(model.state_dict(), str(checkpoint))
     profile = {
