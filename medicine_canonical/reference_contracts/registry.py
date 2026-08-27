@@ -77,8 +77,7 @@ def build_supported_contract_artifacts(
         implementation = implementation_for(major)
         database = root / f"contract-{major}.sqlite"
         manifest = root / f"contract-{major}.manifest.json"
-        database.unlink(missing_ok=True)
-        manifest.unlink(missing_ok=True)
+        checkpoint = database.with_name(database.name + ".build.checkpoint.json")
         try:
             result = implementation.export(
                 canonical_db,
@@ -89,8 +88,9 @@ def build_supported_contract_artifacts(
             verifier = implementation.verify_built or implementation.verify
             verifier(database, major, str(result["dataset_id"]))
         except Exception as exc:
-            database.unlink(missing_ok=True)
-            manifest.unlink(missing_ok=True)
+            if not checkpoint.exists():
+                database.unlink(missing_ok=True)
+                manifest.unlink(missing_ok=True)
             if allow_previous_failure and major == current - 1:
                 failed_previous = {
                     "contract_major": major,

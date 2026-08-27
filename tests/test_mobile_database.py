@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest import mock
 
 from medicine_app.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
 from medicine_canonical.mobile import RUNTIME_INDEXES, build_mobile_database
@@ -26,6 +27,107 @@ class MobileDatabaseTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def test_mobile_build_resumes_runtime_copy_from_input_bound_checkpoint(self) -> None:
+        events: list[dict[str, object]] = []
+        with mock.patch(
+            "medicine_canonical.mobile._populate_compact_product_rules",
+            side_effect=RuntimeError("compact interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "compact interrupted"):
+                build_mobile_database(
+                    self.canonical_db,
+                    self.mobile_db,
+                    manifest_path=self.manifest,
+                    progress=events.append,
+                )
+
+        checkpoint = self.mobile_db.with_name(
+            self.mobile_db.name + ".build.checkpoint.json"
+        )
+        temporary = self.mobile_db.with_name(self.mobile_db.name + ".tmp")
+        self.assertTrue(checkpoint.is_file())
+        self.assertTrue(temporary.is_file())
+        self.assertTrue(
+            any(
+                event.get("job") == "mobile-reference-build"
+                and event.get("status") == "checkpoint"
+                and event.get("phase") == "runtime_copied"
+                for event in events
+            )
+        )
+
+        with mock.patch(
+            "medicine_canonical.mobile.verify_canonical_database",
+            side_effect=AssertionError("canonical verification must not rerun"),
+        ), mock.patch(
+            "medicine_canonical.mobile.COPIED_RUNTIME_TABLES",
+            ("missing_if_copy_restarts",),
+        ):
+            result = build_mobile_database(
+                self.canonical_db,
+                self.mobile_db,
+                manifest_path=self.manifest,
+                progress=events.append,
+            )
+
+        self.assertEqual(result["contract_major"], REFERENCE_CONTRACT_MAJOR)
+        clean_db = self.mobile_db.with_name("mobile-clean.sqlite")
+        clean_manifest = self.manifest.with_name("mobile-clean.manifest.json")
+        clean = build_mobile_database(
+            self.canonical_db,
+            clean_db,
+            manifest_path=clean_manifest,
+        )
+        self.assertEqual(result["dataset_id"], clean["dataset_id"])
+        self.assertEqual(result["sha256"], clean["sha256"])
+        self.assertEqual(self.mobile_db.read_bytes(), clean_db.read_bytes())
+        self.assertFalse(checkpoint.exists())
+        self.assertFalse(temporary.exists())
+        self.assertTrue(self.mobile_db.is_file())
+        self.assertTrue(self.manifest.is_file())
+
+    def test_mobile_build_repairs_manifest_after_database_commit_interruption(self) -> None:
+        with mock.patch(
+            "medicine_canonical.mobile.write_manifest_atomic",
+            side_effect=RuntimeError("manifest write interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "manifest write interrupted"):
+                build_mobile_database(
+                    self.canonical_db,
+                    self.mobile_db,
+                    manifest_path=self.manifest,
+                )
+
+        checkpoint = self.mobile_db.with_name(
+            self.mobile_db.name + ".build.checkpoint.json"
+        )
+        temporary = self.mobile_db.with_name(self.mobile_db.name + ".tmp")
+        self.assertTrue(checkpoint.is_file())
+        self.assertTrue(self.mobile_db.is_file())
+        self.assertFalse(temporary.exists())
+        self.assertFalse(self.manifest.exists())
+
+        with mock.patch(
+            "medicine_canonical.mobile.verify_canonical_database",
+            side_effect=AssertionError("canonical verification must not rerun"),
+        ), mock.patch(
+            "medicine_canonical.mobile._populate_compact_product_rules",
+            side_effect=AssertionError("materialization must not rerun"),
+        ), mock.patch(
+            "medicine_canonical.mobile.materialize_product_search_fts",
+            side_effect=AssertionError("search materialization must not rerun"),
+        ):
+            result = build_mobile_database(
+                self.canonical_db,
+                self.mobile_db,
+                manifest_path=self.manifest,
+            )
+
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["sha256"], result["sha256"])
+        self.assertEqual(manifest["dataset_id"], result["dataset_id"])
+        self.assertFalse(checkpoint.exists())
 
     def test_compact_snapshot_preserves_frozen_contract_without_legacy_tables(self) -> None:
         result = build_mobile_database(

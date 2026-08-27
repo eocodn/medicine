@@ -368,7 +368,10 @@ def main(argv=None) -> int:
 
     elif args.command == "mobile-build":
         payload = build_mobile_database(
-            args.db, args.output, manifest_path=args.manifest
+            args.db,
+            args.output,
+            manifest_path=args.manifest,
+            progress=_reference_progress,
         )
     elif args.command == "reference-window-build":
         payload = build_supported_contract_window(

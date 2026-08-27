@@ -449,6 +449,33 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
         self.assertTrue(Path(result["contracts"][0]["database"]).is_file())
         self.assertTrue(Path(result["contracts"][0]["manifest"]).is_file())
 
+    def test_supported_contract_window_preserves_exporter_checkpoint_for_resume(self) -> None:
+        output = self.mobile.parent / "resumable-contract-window"
+        database = output / "contract-1.sqlite"
+        manifest = output / "contract-1.manifest.json"
+        checkpoint = database.with_name(database.name + ".build.checkpoint.json")
+
+        with mock.patch(
+            "medicine_canonical.mobile.write_manifest_atomic",
+            side_effect=RuntimeError("manifest interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "manifest interrupted"):
+                build_supported_contract_window(self.canonical, output)
+
+        self.assertTrue(database.is_file())
+        self.assertFalse(manifest.exists())
+        self.assertTrue(checkpoint.is_file())
+
+        with mock.patch(
+            "medicine_canonical.mobile.verify_canonical_database",
+            side_effect=AssertionError("resumed exporter must not restart verification"),
+        ):
+            result = build_supported_contract_window(self.canonical, output)
+
+        self.assertEqual(result["contracts"][0]["database"], str(database))
+        self.assertTrue(manifest.is_file())
+        self.assertFalse(checkpoint.exists())
+
     def test_supported_contract_window_does_not_repeat_strict_identity_verification(self) -> None:
         output = self.mobile.parent / "single-identity-pass-window"
         database = output / "contract-1.sqlite"
