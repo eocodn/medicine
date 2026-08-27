@@ -53,12 +53,18 @@ class ParserWorldProfile:
     distractor_section_count: tuple[int, int] = (1, 6)
     width: int = 1200
     height: int = 1800
+    counterfactual_context_rate: float = 0.0
+    geometry_scramble_rate: float = 0.0
 
     def __post_init__(self) -> None:
         _validate_range(self.medication_count, "medication_count")
         _validate_range(self.distractor_section_count, "distractor_section_count")
         if self.width < 600 or self.height < 800:
             raise ValueError("parser world page dimensions are too small")
+        for name in ("counterfactual_context_rate", "geometry_scramble_rate"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
+                raise ValueError(f"parser world {name} must be in [0, 1]")
 
 
 def _validate_range(value: tuple[int, int], label: str) -> None:
@@ -177,6 +183,63 @@ def _build_distractor_spans(
     return spans
 
 
+def _inject_counterfactual_context(
+    spans: list[dict[str, Any]],
+    sections: list[dict[str, Any]],
+    *,
+    rng: random.Random,
+    rate: float,
+    page_width: int,
+    page_height: int,
+) -> None:
+    if rate <= 0.0:
+        return
+    medication_spans = [span for span in spans if span.get("association_group") is not None]
+    selected = [span for span in medication_spans if rng.random() < rate]
+    if not selected:
+        return
+    section_id = f"section-{len(sections) + 1:02d}"
+    sections.append({"section_id": section_id, "kind": "general_context"})
+    for index, source in enumerate(selected, start=1):
+        width = min(max(90.0, 14.0 * len(str(source["text"]))), page_width * 0.45)
+        height = 34.0
+        x = rng.uniform(30.0, max(30.0, page_width - width - 30.0))
+        y = rng.uniform(30.0, max(30.0, page_height - height - 30.0))
+        spans.append(_span(
+            span_id=f"span-{section_id}-cf-{index:03d}",
+            section_id=section_id,
+            text=str(source["text"]),
+            semantic_role="context",
+            association_group=None,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+        ))
+
+
+def _scramble_geometry(
+    spans: list[dict[str, Any]],
+    *,
+    rng: random.Random,
+    rate: float,
+    page_width: int,
+    page_height: int,
+) -> None:
+    if rate <= 0.0:
+        return
+    for span in spans:
+        if rng.random() >= rate:
+            continue
+        x1, y1 = span["polygon"][0]
+        x2, y2 = span["polygon"][2]
+        width = max(1.0, float(x2) - float(x1))
+        height = max(1.0, float(y2) - float(y1))
+        x = rng.uniform(0.0, max(0.0, page_width - width))
+        y = rng.uniform(0.0, max(0.0, page_height - height))
+        span["polygon"] = _rect(x, y, width, height)
+
+
 def generate_parser_world(
     *,
     seed: int,
@@ -233,6 +296,21 @@ def generate_parser_world(
                 )
             )
 
+    _inject_counterfactual_context(
+        spans,
+        sections,
+        rng=rng,
+        rate=float(selected.counterfactual_context_rate),
+        page_width=selected.width,
+        page_height=selected.height,
+    )
+    _scramble_geometry(
+        spans,
+        rng=rng,
+        rate=float(selected.geometry_scramble_rate),
+        page_width=selected.width,
+        page_height=selected.height,
+    )
     spans.sort(key=lambda span: (span["polygon"][0][1], span["polygon"][0][0], span["span_id"]))
     for reading_order, span in enumerate(spans):
         span["reading_order"] = reading_order

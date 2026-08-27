@@ -61,6 +61,61 @@ class ParserV5WorldTest(unittest.TestCase):
         self.assertTrue(field_spans)
         self.assertTrue(all(span["association_group"] in medication_groups for span in field_spans))
 
+    def test_counterfactual_context_reuses_exact_medication_tokens_as_non_medication_text(self) -> None:
+        document = generate_parser_world(
+            seed=77,
+            document_index=4,
+            profile=ParserWorldProfile(
+                medication_count=(1, 1),
+                distractor_section_count=(0, 0),
+                counterfactual_context_rate=1.0,
+            ),
+        )
+        medication_text = {
+            span["text"] for span in document["spans"] if span["association_group"] is not None
+        }
+        context_text = {
+            span["text"]
+            for span in document["spans"]
+            if span["semantic_role"] == "context" and span["association_group"] is None
+        }
+        self.assertTrue(medication_text)
+        self.assertTrue(medication_text <= context_text)
+
+    def test_geometry_scramble_changes_coordinates_without_changing_semantics_or_text(self) -> None:
+        base = generate_parser_world(
+            seed=88,
+            document_index=2,
+            profile=ParserWorldProfile(
+                medication_count=(2, 2),
+                distractor_section_count=(2, 2),
+                counterfactual_context_rate=0.0,
+                geometry_scramble_rate=0.0,
+            ),
+        )
+        stressed = generate_parser_world(
+            seed=88,
+            document_index=2,
+            profile=ParserWorldProfile(
+                medication_count=(2, 2),
+                distractor_section_count=(2, 2),
+                counterfactual_context_rate=0.0,
+                geometry_scramble_rate=1.0,
+            ),
+        )
+        base_semantics = sorted(
+            (span["span_id"], span["text"], span["semantic_role"], span["association_group"])
+            for span in base["spans"]
+        )
+        stressed_semantics = sorted(
+            (span["span_id"], span["text"], span["semantic_role"], span["association_group"])
+            for span in stressed["spans"]
+        )
+        self.assertEqual(base_semantics, stressed_semantics)
+        base_geometry = {span["span_id"]: span["polygon"] for span in base["spans"]}
+        stressed_geometry = {span["span_id"]: span["polygon"] for span in stressed["spans"]}
+        self.assertTrue(any(base_geometry[key] != stressed_geometry[key] for key in base_geometry))
+
 
 class ParserV5ObservationTest(unittest.TestCase):
     def _document(self) -> dict:
