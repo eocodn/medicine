@@ -33,13 +33,17 @@ if set(PARSER_V5_ROLE_LABELS) != SEMANTIC_ROLES:
 
 
 @dataclass(frozen=True)
-class ParserV5ModelInput:
+class ParserV5DocumentInput:
     document_id: str
     node_ids: tuple[str, ...]
     token_ids: tuple[tuple[int, ...], ...]
     token_mask: tuple[tuple[bool, ...], ...]
     node_scalars: tuple[tuple[float, ...], ...]
     relation_features: tuple[tuple[tuple[float, ...], ...], ...]
+
+
+@dataclass(frozen=True)
+class ParserV5ModelInput(ParserV5DocumentInput):
     role_targets: tuple[tuple[float, ...], ...]
     role_mask: tuple[tuple[float, ...], ...]
 
@@ -233,14 +237,14 @@ def build_parser_v5_model_input(
     )
 
 
-def build_parser_v5_runtime_input(
+def build_parser_v5_runtime_document_input(
     *,
     document_id: str,
     width: int | float,
     height: int | float,
     nodes: Sequence[Mapping[str, object]],
     max_text_bytes: int = 96,
-) -> ParserV5ModelInput:
+) -> ParserV5DocumentInput:
     """Build inference input without semantic truth, provenance, or labels."""
 
     document_id = str(document_id or "").strip()
@@ -270,6 +274,13 @@ def build_parser_v5_runtime_input(
         if not node_id or node_id in seen:
             raise ValueError("Parser v5 runtime node ids must be unique and non-empty")
         seen.add(node_id)
+        # A detector proposal with no recognized text carries no semantic
+        # evidence. Keeping it in the dense document graph lets arbitrary box
+        # geometry perturb every meaningful node through global attention, so
+        # canonicalize it out rather than asking the learned parser to infer a
+        # special meaning for absence of recognition.
+        if not str(raw.get("text") or "").strip():
+            continue
         for score_name in ("detector_confidence", "recognizer_confidence"):
             score = raw.get(score_name)
             if isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= float(score) <= 1:
@@ -285,8 +296,6 @@ def build_parser_v5_runtime_input(
     token_rows: list[tuple[int, ...]] = []
     mask_rows: list[tuple[bool, ...]] = []
     scalar_rows: list[tuple[float, ...]] = []
-    empty_targets = tuple(0.0 for _ in PARSER_V5_ROLE_LABELS)
-    empty_mask = tuple(0.0 for _ in PARSER_V5_ROLE_LABELS)
     for node in normalized_nodes:
         token_ids, token_mask = encode_text_bytes(str(node["text"]), max_bytes=max_text_bytes)
         token_rows.append(token_ids)
@@ -306,15 +315,44 @@ def build_parser_v5_runtime_input(
         )
         for source_index, source in enumerate(normalized_nodes)
     )
-    return ParserV5ModelInput(
+    return ParserV5DocumentInput(
         document_id=document_id,
         node_ids=tuple(str(node["node_id"]) for node in normalized_nodes),
         token_ids=tuple(token_rows),
         token_mask=tuple(mask_rows),
         node_scalars=tuple(scalar_rows),
         relation_features=pair_rows,
-        role_targets=tuple(empty_targets for _ in normalized_nodes),
-        role_mask=tuple(empty_mask for _ in normalized_nodes),
+    )
+
+
+def build_parser_v5_runtime_input(
+    *,
+    document_id: str,
+    width: int | float,
+    height: int | float,
+    nodes: Sequence[Mapping[str, object]],
+    max_text_bytes: int = 96,
+) -> ParserV5ModelInput:
+    """Legacy v5 wrapper around the runtime-visible document input."""
+
+    document = build_parser_v5_runtime_document_input(
+        document_id=document_id,
+        width=width,
+        height=height,
+        nodes=nodes,
+        max_text_bytes=max_text_bytes,
+    )
+    empty_targets = tuple(0.0 for _ in PARSER_V5_ROLE_LABELS)
+    empty_mask = tuple(0.0 for _ in PARSER_V5_ROLE_LABELS)
+    return ParserV5ModelInput(
+        document_id=document.document_id,
+        node_ids=document.node_ids,
+        token_ids=document.token_ids,
+        token_mask=document.token_mask,
+        node_scalars=document.node_scalars,
+        relation_features=document.relation_features,
+        role_targets=tuple(empty_targets for _ in document.node_ids),
+        role_mask=tuple(empty_mask for _ in document.node_ids),
     )
 
 
@@ -325,9 +363,11 @@ __all__ = [
     "BYTE_VOCAB_SIZE",
     "NODE_SCALAR_DIM",
     "PARSER_V5_ROLE_LABELS",
+    "ParserV5DocumentInput",
     "ParserV5ModelInput",
     "RELATION_FEATURE_DIM",
     "build_parser_v5_model_input",
+    "build_parser_v5_runtime_document_input",
     "build_parser_v5_runtime_input",
     "encode_text_bytes",
 ]

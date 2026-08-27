@@ -56,6 +56,7 @@ _IMPLEMENTATION_FILES = (
     "parser_v5_contract.py",
     "parser_v5_dataset.py",
     "parser_v5_model_input.py",
+    "parser_v5_document_encoder_paddle.py",
     "parser_v5_encoder_paddle.py",
     "parser_v5_structured_targets.py",
     "parser_v5_heads_paddle.py",

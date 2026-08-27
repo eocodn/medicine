@@ -36,10 +36,12 @@ _NODE_FIELDS = {
     "recognizer_confidence",
     "polygon",
     "source_span_ids",
+    "source_segments",
     "targets",
     "operation",
 }
 _TARGET_FIELDS = {"source_span_id", "semantic_role", "association_group", "label_status"}
+_SOURCE_SEGMENT_FIELDS = {"source_span_id", "start_char", "end_char"}
 _OBSERVATION_OPERATIONS = {"identity", "split", "duplicate", "merge", "false_positive"}
 
 
@@ -152,8 +154,8 @@ def validate_parser_v5_observation(observation: Mapping[str, Any]) -> None:
     value = _require_mapping(observation, "parser v5 observation")
     _require_exact_fields(value, _OBSERVATION_FIELDS, "parser v5 observation")
     _require_nonempty_text(value.get("document_id"), "parser v5 observation document_id")
-    if value.get("profile_revision") != 1:
-        raise ValueError("parser v5 observation profile_revision must be 1")
+    if value.get("profile_revision") != 2:
+        raise ValueError("parser v5 observation profile_revision must be 2")
     nodes = value.get("nodes")
     if not isinstance(nodes, list):
         raise ValueError("parser v5 observation nodes must be a list")
@@ -167,8 +169,9 @@ def validate_parser_v5_observation(observation: Mapping[str, Any]) -> None:
         node_ids.add(node_id)
         _require_nonempty_text(node.get("text"), f"parser v5 observation node {node_id}.text")
         source_span_ids = node.get("source_span_ids")
+        source_segments = node.get("source_segments")
         targets = node.get("targets")
-        if not isinstance(source_span_ids, list) or not isinstance(targets, list):
+        if not isinstance(source_span_ids, list) or not isinstance(source_segments, list) or not isinstance(targets, list):
             raise ValueError(f"parser v5 observation node {node_id} provenance must use lists")
         if node.get("operation") not in _OBSERVATION_OPERATIONS:
             raise ValueError(f"parser v5 observation node {node_id} operation is unsupported")
@@ -186,6 +189,38 @@ def validate_parser_v5_observation(observation: Mapping[str, Any]) -> None:
                 raise ValueError(f"parser v5 observation node {node_id} target role is unsupported")
             if target_map.get("label_status") not in {"labeled", "ambiguous"}:
                 raise ValueError(f"parser v5 observation node {node_id} target label_status is unsupported")
+        text_length = len(str(node["text"]))
+        previous_end = 0
+        previous_source_id: str | None = None
+        for segment_index, segment in enumerate(source_segments):
+            segment_map = _require_mapping(
+                segment, f"parser v5 observation node {node_id} source segment {segment_index}"
+            )
+            _require_exact_fields(
+                segment_map,
+                _SOURCE_SEGMENT_FIELDS,
+                f"parser v5 observation node {node_id} source segment {segment_index}",
+            )
+            source_id = _require_nonempty_text(
+                segment_map.get("source_span_id"),
+                f"parser v5 observation node {node_id} source segment {segment_index}.source_span_id",
+            )
+            start = segment_map.get("start_char")
+            end = segment_map.get("end_char")
+            if (
+                isinstance(start, bool)
+                or isinstance(end, bool)
+                or not isinstance(start, int)
+                or not isinstance(end, int)
+                or start < previous_end
+                or end <= start
+                or end > text_length
+            ):
+                raise ValueError(f"parser v5 observation node {node_id} source segments must be ordered disjoint ranges")
+            if source_id == previous_source_id and start == previous_end:
+                raise ValueError(f"parser v5 observation node {node_id} adjacent source segments must be coalesced")
+            previous_end = end
+            previous_source_id = source_id
 
 
 def validate_parser_v5_pair(document: Mapping[str, Any], observation: Mapping[str, Any]) -> None:
@@ -211,6 +246,9 @@ def validate_parser_v5_pair(document: Mapping[str, Any], observation: Mapping[st
             raise ValueError(f"parser v5 observation node {node_id} targets must be unique by source span")
         if set(target_ids) != set(source_ids):
             raise ValueError(f"parser v5 observation node {node_id} targets disagree with provenance")
+        segment_ids = [str(segment["source_span_id"]) for segment in node["source_segments"]]
+        if any(source_id not in source_ids for source_id in segment_ids):
+            raise ValueError(f"parser v5 observation node {node_id} source segments disagree with provenance")
         for target in targets:
             source_id = str(target["source_span_id"])
             source = spans.get(source_id)

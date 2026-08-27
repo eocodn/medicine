@@ -93,13 +93,82 @@ def _target(span: Mapping[str, Any], *, label_status: str = "labeled") -> dict[s
     }
 
 
-def _initial_node(span: Mapping[str, Any], *, rng: random.Random) -> dict[str, Any]:
+def _segment(source_span_id: str, start_char: int, end_char: int) -> dict[str, Any]:
     return {
-        "text": str(span["text"]),
+        "source_span_id": source_span_id,
+        "start_char": start_char,
+        "end_char": end_char,
+    }
+
+
+def _copy_segments(node: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [dict(segment) for segment in node["source_segments"]]
+
+
+def _slice_segments(segments: list[dict[str, Any]], start: int, end: int) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for segment in segments:
+        overlap_start = max(start, int(segment["start_char"]))
+        overlap_end = min(end, int(segment["end_char"]))
+        if overlap_end <= overlap_start:
+            continue
+        result.append(
+            _segment(
+                str(segment["source_span_id"]),
+                overlap_start - start,
+                overlap_end - start,
+            )
+        )
+    return result
+
+
+def _shift_segments(segments: list[dict[str, Any]], offset: int) -> list[dict[str, Any]]:
+    return [
+        _segment(
+            str(segment["source_span_id"]),
+            int(segment["start_char"]) + offset,
+            int(segment["end_char"]) + offset,
+        )
+        for segment in segments
+    ]
+
+
+def _segment_alignment(text: str, segments: list[dict[str, Any]]) -> list[str | None]:
+    alignment: list[str | None] = [None] * len(text)
+    for segment in segments:
+        source_id = str(segment["source_span_id"])
+        for index in range(int(segment["start_char"]), int(segment["end_char"])):
+            if alignment[index] is not None and alignment[index] != source_id:
+                raise ValueError("parser v5 source segments must not overlap")
+            alignment[index] = source_id
+    return alignment
+
+
+def _segments_from_alignment(alignment: list[str | None]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    start = 0
+    while start < len(alignment):
+        source_id = alignment[start]
+        if source_id is None:
+            start += 1
+            continue
+        end = start + 1
+        while end < len(alignment) and alignment[end] == source_id:
+            end += 1
+        result.append(_segment(source_id, start, end))
+        start = end
+    return result
+
+
+def _initial_node(span: Mapping[str, Any], *, rng: random.Random) -> dict[str, Any]:
+    text = str(span["text"])
+    return {
+        "text": text,
         "detector_confidence": rng.uniform(0.84, 0.999),
         "recognizer_confidence": rng.uniform(0.82, 0.999),
         "polygon": [[float(x), float(y)] for x, y in span["polygon"]],
         "source_span_ids": [str(span["span_id"])],
+        "source_segments": [_segment(str(span["span_id"]), 0, len(text))],
         "targets": [_target(span)],
         "operation": "identity",
         "source_reading_order": int(span["reading_order"]),
@@ -120,6 +189,9 @@ def _split_node(node: Mapping[str, Any], *, rng: random.Random) -> tuple[dict[st
     right.update(text=text[split_at:], polygon=_rect(middle, y1, x2, y2), operation="split")
     left["source_span_ids"] = list(node["source_span_ids"])
     right["source_span_ids"] = list(node["source_span_ids"])
+    source_segments = _copy_segments(node)
+    left["source_segments"] = _slice_segments(source_segments, 0, split_at)
+    right["source_segments"] = _slice_segments(source_segments, split_at, len(text))
     left["targets"] = [dict(target) for target in node["targets"]]
     right["targets"] = [dict(target) for target in node["targets"]]
     return left, right
@@ -133,12 +205,18 @@ def _merge_nodes(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str,
     for raw in [*left["targets"], *right["targets"]]:
         target = dict(raw)
         targets_by_span[str(target["source_span_id"])] = target
+    left_text = str(left["text"])
+    right_text = str(right["text"])
     return {
-        "text": f"{left['text']} {right['text']}",
+        "text": f"{left_text} {right_text}",
         "detector_confidence": min(float(left["detector_confidence"]), float(right["detector_confidence"])),
         "recognizer_confidence": min(float(left["recognizer_confidence"]), float(right["recognizer_confidence"])),
         "polygon": _rect(min(lx1, rx1), min(ly1, ry1), max(lx2, rx2), max(ly2, ry2)),
         "source_span_ids": source_ids,
+        "source_segments": [
+            *_copy_segments(left),
+            *_shift_segments(_copy_segments(right), len(left_text) + 1),
+        ],
         "targets": list(targets_by_span.values()),
         "operation": "merge",
         "source_reading_order": min(int(left["source_reading_order"]), int(right["source_reading_order"])),
@@ -205,28 +283,56 @@ def _merge_adjacent_pairs(nodes: list[dict[str, Any]], *, rng: random.Random, ra
     return result
 
 
-def _corrupt_text(text: str, *, rng: random.Random) -> str:
+def _corrupt_text(
+    text: str,
+    segments: list[dict[str, Any]],
+    *,
+    rng: random.Random,
+) -> tuple[str, list[dict[str, Any]]]:
     if not text:
-        return text
+        return text, segments
     substitutions = {"1": "I", "0": "O", "정": "점", "회": "외", "일": "|", "아": "어"}
-    candidates: list[str] = []
+    alignment = _segment_alignment(text, segments)
+    candidates: list[tuple[str, list[str | None]]] = []
     for index, char in enumerate(text):
         replacement = substitutions.get(char)
         if replacement is not None:
-            candidates.append(text[:index] + replacement + text[index + 1 :])
-        if char.isspace():
-            candidates.append(text[:index] + text[index + 1 :])
-        else:
-            candidates.append(text[:index] + text[index + 1 :])
-            candidates.append(text[:index] + char + char + text[index + 1 :])
-            candidates.append(text[:index] + "?" + text[index + 1 :])
+            candidates.append((text[:index] + replacement + text[index + 1 :], list(alignment)))
+        candidates.append((text[:index] + text[index + 1 :], alignment[:index] + alignment[index + 1 :]))
+        if not char.isspace():
+            candidates.append(
+                (
+                    text[:index] + char + char + text[index + 1 :],
+                    alignment[:index] + [alignment[index], alignment[index]] + alignment[index + 1 :],
+                )
+            )
+            candidates.append((text[:index] + "?" + text[index + 1 :], list(alignment)))
     for index in range(1, len(text)):
         if not text[index - 1].isspace() and not text[index].isspace():
-            candidates.append(text[:index] + " " + text[index:])
+            left_source = alignment[index - 1]
+            right_source = alignment[index]
+            inserted_source = left_source if left_source is not None and left_source == right_source else None
+            candidates.append(
+                (
+                    text[:index] + " " + text[index:],
+                    alignment[:index] + [inserted_source] + alignment[index:],
+                )
+            )
         if text[index - 1] != text[index]:
-            candidates.append(text[: index - 1] + text[index] + text[index - 1] + text[index + 1 :])
-    usable = [candidate for candidate in candidates if candidate != text and candidate.strip()]
-    return rng.choice(usable) if usable else "?"
+            swapped_alignment = list(alignment)
+            swapped_alignment[index - 1], swapped_alignment[index] = swapped_alignment[index], swapped_alignment[index - 1]
+            candidates.append(
+                (
+                    text[: index - 1] + text[index] + text[index - 1] + text[index + 1 :],
+                    swapped_alignment,
+                )
+            )
+    usable = [candidate for candidate in candidates if candidate[0] != text and candidate[0].strip()]
+    if not usable:
+        fallback_source = next((source_id for source_id in alignment if source_id is not None), None)
+        return "?", _segments_from_alignment([fallback_source])
+    corrupted, corrupted_alignment = rng.choice(usable)
+    return corrupted, _segments_from_alignment(corrupted_alignment)
 
 
 def _false_positive(*, rng: random.Random, width: int, height: int) -> dict[str, Any]:
@@ -241,6 +347,7 @@ def _false_positive(*, rng: random.Random, width: int, height: int) -> dict[str,
         "recognizer_confidence": rng.uniform(0.15, 0.80),
         "polygon": _rect(x, y, x + box_width, y + box_height),
         "source_span_ids": [],
+        "source_segments": [],
         "targets": [],
         "operation": "false_positive",
         "source_reading_order": 1_000_000 + rng.randrange(1_000_000),
@@ -275,6 +382,7 @@ def simulate_observations(
         if rng.random() < selected.duplicate_rate:
             duplicate = dict(node)
             duplicate["source_span_ids"] = list(node["source_span_ids"])
+            duplicate["source_segments"] = _copy_segments(node)
             duplicate["targets"] = [dict(target) for target in node["targets"]]
             duplicate["operation"] = "duplicate"
             nodes.append(duplicate)
@@ -292,7 +400,11 @@ def simulate_observations(
             height=height,
         )
         if rng.random() < selected.text_corruption_rate:
-            node["text"] = _corrupt_text(str(node["text"]), rng=rng)
+            node["text"], node["source_segments"] = _corrupt_text(
+                str(node["text"]),
+                _copy_segments(node),
+                rng=rng,
+            )
             node["recognizer_confidence"] = min(float(node["recognizer_confidence"]), rng.uniform(0.35, 0.88))
 
     for _ in range(rng.randint(*selected.false_positive_count)):
@@ -309,7 +421,7 @@ def simulate_observations(
 
     observation = {
         "document_id": str(document["document_id"]),
-        "profile_revision": 1,
+        "profile_revision": 2,
         "nodes": nodes,
     }
     validate_parser_v5_pair(document, observation)

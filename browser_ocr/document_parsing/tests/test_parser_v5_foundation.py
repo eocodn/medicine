@@ -235,8 +235,9 @@ class ParserV5ObservationTest(unittest.TestCase):
         self.assertEqual(document, before)
         self.assertEqual(first, second)
         self.assertEqual(first["document_id"], document["document_id"])
-        self.assertEqual(first["profile_revision"], 1)
+        self.assertEqual(first["profile_revision"], 2)
         self.assertTrue(any(not node["source_span_ids"] for node in first["nodes"]))
+        self.assertTrue(all("source_segments" in node for node in first["nodes"]))
         validate_parser_v5_document(document)
 
     def test_forced_merge_keeps_multiple_semantic_targets_in_one_observation(self) -> None:
@@ -275,6 +276,11 @@ class ParserV5ObservationTest(unittest.TestCase):
         self.assertEqual({item["association_group"] for item in target["targets"]}, {medication_id})
         self.assertTrue(all(item["label_status"] == "labeled" for item in target["targets"]))
         self.assertGreaterEqual(len(target["source_span_ids"]), 2)
+        truth_by_span = {span["span_id"]: span for span in document["spans"]}
+        self.assertGreaterEqual(len(target["source_segments"]), 2)
+        for segment in target["source_segments"]:
+            observed = target["text"][segment["start_char"] : segment["end_char"]]
+            self.assertEqual(observed, truth_by_span[segment["source_span_id"]]["text"])
 
     def test_split_observation_preserves_provenance_without_forcing_flat_role(self) -> None:
         document = self._document()
@@ -307,8 +313,16 @@ class ParserV5ObservationTest(unittest.TestCase):
         self.assertTrue(all(str(node["text"]).strip() for node in observation["nodes"]))
 
     def test_text_corruption_covers_spacing_and_sequence_errors(self) -> None:
-        compact = {_corrupt_text("가나정", rng=random.Random(seed)) for seed in range(128)}
-        spaced = {_corrupt_text("1일 2회", rng=random.Random(seed)) for seed in range(128)}
+        compact_segments = [{"source_span_id": "s", "start_char": 0, "end_char": 3}]
+        spaced_segments = [{"source_span_id": "s", "start_char": 0, "end_char": 5}]
+        compact = {
+            _corrupt_text("가나정", compact_segments, rng=random.Random(seed))[0]
+            for seed in range(128)
+        }
+        spaced = {
+            _corrupt_text("1일 2회", spaced_segments, rng=random.Random(seed))[0]
+            for seed in range(128)
+        }
 
         self.assertTrue(any(" " in text for text in compact))
         self.assertTrue(any(" " not in text for text in spaced))

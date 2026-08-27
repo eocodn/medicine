@@ -145,6 +145,41 @@ class ParserV5ModelInputTest(unittest.TestCase):
         self.assertEqual(len(model_input.node_ids), len(runtime_nodes))
         self.assertTrue(all(all(value == 0.0 for value in row) for row in model_input.role_mask))
 
+    def test_runtime_input_canonicalizes_blank_ocr_proposals_out(self) -> None:
+        nodes = [
+            {
+                "node_id": "blank",
+                "text": " \t ",
+                "detector_confidence": 0.7,
+                "recognizer_confidence": 0.0,
+                "polygon": [[10, 10], [80, 10], [80, 30], [10, 30]],
+            },
+            {
+                "node_id": "meaningful",
+                "text": "약A",
+                "detector_confidence": 0.9,
+                "recognizer_confidence": 0.95,
+                "polygon": [[100, 100], [200, 100], [200, 140], [100, 140]],
+            },
+        ]
+
+        with_blank = build_parser_v5_runtime_input(
+            document_id="runtime-doc",
+            width=1000,
+            height=1400,
+            nodes=nodes,
+            max_text_bytes=32,
+        )
+        without_blank = build_parser_v5_runtime_input(
+            document_id="runtime-doc",
+            width=1000,
+            height=1400,
+            nodes=nodes[1:],
+            max_text_bytes=32,
+        )
+
+        self.assertEqual(with_blank, without_blank)
+
 
 if __name__ == "__main__":
     unittest.main()
