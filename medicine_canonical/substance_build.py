@@ -7,7 +7,6 @@ import sqlite3
 import time
 from collections import defaultdict
 from contextlib import closing
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -26,6 +25,11 @@ from .substance_matching import (
     MatchEvidence,
     candidates_for_local_name,
 )
+from .substance_observations import (
+    SourceIdentity,
+    extract_domestic_identities,
+    representative_name,
+)
 from .substance_relation_resolution import select_source_relations
 from .substance_reviewed_aliases import (
     ActiveReviewedAliases,
@@ -41,26 +45,10 @@ from .substance_reviewed_relations import (
 )
 from .substance_schema import SUBSTANCE_SCHEMA, SUBSTANCE_SCHEMA_VERSION
 from .substance_sources import sync_substance_identity_sources
-from .substance_text import (
-    normalize_substance_name,
-    split_top_level as _split_top_level,
-    text_or_none as _text,
-)
+from .substance_text import normalize_substance_name
 
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
-
-
-@dataclass
-class SourceIdentity:
-    dataset_key: str
-    scope: str
-    source_row: int
-    ingredient_code: str | None
-    name_en: str | None
-    name_ko: str | None
-    normalized_name: str
-    occurrence_count: int
 
 
 def _canonical_source_fingerprint(con: sqlite3.Connection) -> str:
@@ -92,172 +80,6 @@ def _copy_canonical_snapshots(source: sqlite3.Connection, target: sqlite3.Connec
     return len(rows)
 
 
-def _aggregate_identity(
-    bucket: dict[tuple, SourceIdentity],
-    *,
-    dataset_key: object,
-    scope: str,
-    source_row: object,
-    occurrence_count: int,
-    ingredient_code: object = None,
-    name_en: object = None,
-    name_ko: object = None,
-) -> None:
-    english = _text(name_en)
-    korean = _text(name_ko)
-    normalized = normalize_substance_name(english or korean)
-    if not normalized:
-        return
-    key = (
-        str(dataset_key),
-        scope,
-        _text(ingredient_code),
-        english,
-        korean,
-        normalized,
-    )
-    row_number = int(source_row or 0)
-    existing = bucket.get(key)
-    if existing is None:
-        bucket[key] = SourceIdentity(
-            dataset_key=str(dataset_key),
-            scope=scope,
-            source_row=row_number,
-            ingredient_code=_text(ingredient_code),
-            name_en=english,
-            name_ko=korean,
-            normalized_name=normalized,
-            occurrence_count=int(occurrence_count),
-        )
-        return
-    existing.occurrence_count += int(occurrence_count)
-    existing.source_row = min(existing.source_row, row_number)
-
-
-def _extract_domestic_identities(
-    con: sqlite3.Connection,
-    external_names: set[str],
-) -> tuple[list[SourceIdentity], list[tuple[str, str, int, str, str]]]:
-    con.row_factory = sqlite3.Row
-    bucket: dict[tuple, SourceIdentity] = {}
-
-    for scope, prefix in (("dur_rule_primary", ""), ("dur_rule_paired", "paired_")):
-        rows = con.execute(
-            f"""SELECT source_dataset_key,MIN(source_row) AS first_row,COUNT(*) AS n,
-                       {prefix}ingredient_code AS ingredient_code,
-                       {prefix}ingredient_name_en AS name_en,
-                       {prefix}ingredient_name AS name_ko
-                FROM product_rules
-                WHERE ({prefix}ingredient_name_en IS NOT NULL AND TRIM({prefix}ingredient_name_en)<>'')
-                   OR ({prefix}ingredient_name IS NOT NULL AND TRIM({prefix}ingredient_name)<>'')
-                GROUP BY source_dataset_key,{prefix}ingredient_code,
-                         {prefix}ingredient_name_en,{prefix}ingredient_name"""
-        ).fetchall()
-        for row in rows:
-            _aggregate_identity(
-                bucket,
-                dataset_key=row["source_dataset_key"],
-                scope=scope,
-                source_row=row["first_row"],
-                occurrence_count=row["n"],
-                ingredient_code=row["ingredient_code"],
-                name_en=row["name_en"],
-                name_ko=row["name_ko"],
-            )
-
-    ingredient_rows = con.execute(
-        """SELECT source_dataset_key,source_row,ingredient_name,ingredient_name_ko,
-                  paired_ingredient_name
-           FROM ingredient_rules"""
-    ).fetchall()
-    for row in ingredient_rows:
-        primary = _split_top_level(row["ingredient_name"], frozenset({"/", "+"}))
-        for component in dict.fromkeys(primary):
-            _aggregate_identity(
-                bucket,
-                dataset_key=row["source_dataset_key"],
-                scope="ingredient_rule_primary",
-                source_row=row["source_row"],
-                occurrence_count=1,
-                name_en=component,
-                name_ko=row["ingredient_name_ko"] if len(primary) == 1 else None,
-            )
-        paired = _split_top_level(row["paired_ingredient_name"], frozenset({"/", "+"}))
-        for component in dict.fromkeys(paired):
-            _aggregate_identity(
-                bucket,
-                dataset_key=row["source_dataset_key"],
-                scope="ingredient_rule_paired",
-                source_row=row["source_row"],
-                occurrence_count=1,
-                name_en=component,
-            )
-
-    trusted_atomic_names = {item.normalized_name for item in bucket.values()} | external_names
-    unparsed: list[tuple[str, str, int, str, str]] = []
-    for row in con.execute(
-        """SELECT source_dataset_key,source_row,ingredient_text
-           FROM products
-           WHERE ingredient_text IS NOT NULL AND TRIM(ingredient_text)<>''"""
-    ):
-        raw_text = str(row["ingredient_text"]).strip()
-        parts = _split_top_level(raw_text, frozenset({"/"}))
-        # Slash is overloaded in MFDS permit text: it separates ingredients, but
-        # is also used in ratios and biological strain designations. Split only
-        # when every resulting atom is independently known.
-        if "/" in raw_text and (
-            len(parts) < 2
-            or any(normalize_substance_name(part) not in trusted_atomic_names for part in parts)
-        ):
-            unparsed.append(
-                (
-                    str(row["source_dataset_key"]),
-                    "permit_composition",
-                    int(row["source_row"]),
-                    raw_text,
-                    "ambiguous_composition_delimiter",
-                )
-            )
-            continue
-        seen: set[str] = set()
-        for component in parts or [raw_text]:
-            normalized = normalize_substance_name(component)
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            _aggregate_identity(
-                bucket,
-                dataset_key=row["source_dataset_key"],
-                scope="permit_component",
-                source_row=row["source_row"],
-                occurrence_count=1,
-                name_en=component,
-            )
-
-    identities = sorted(
-        bucket.values(),
-        key=lambda item: (
-            item.normalized_name,
-            item.dataset_key,
-            item.scope,
-            item.ingredient_code or "",
-            item.name_en or "",
-            item.name_ko or "",
-        ),
-    )
-    return identities, unparsed
-
-
-def _representative_name(observations: list[SourceIdentity]) -> str:
-    english = sorted({row.name_en for row in observations if row.name_en}, key=lambda value: (len(value), value.casefold(), value))
-    if english:
-        return english[0]
-    korean = sorted({row.name_ko for row in observations if row.name_ko}, key=lambda value: (len(value), value))
-    if not korean:
-        raise RuntimeError("substance identity has no representative source name")
-    return korean[0]
-
-
 def _insert_substance_layer(
     con: sqlite3.Connection,
     observations: list[SourceIdentity],
@@ -277,7 +99,7 @@ def _insert_substance_layer(
     # admitted for explicit source wrappers/aliases and tightly scoped typography
     # transformations; ambiguous exact names never fall through to those rules.
     for normalized_name in sorted(by_name):
-        representative = _representative_name(by_name[normalized_name])
+        representative = representative_name(by_name[normalized_name])
         evidence_rows = candidates_for_local_name(
             representative,
             external,
@@ -297,7 +119,7 @@ def _insert_substance_layer(
         name_to_substance[normalized_name] = substance_id
         group_names[substance_id].append(normalized_name)
 
-    representatives = {name: _representative_name(rows) for name, rows in by_name.items()}
+    representatives = {name: representative_name(rows) for name, rows in by_name.items()}
     name_relations = select_source_relations(
         representatives,
         name_evidence,
@@ -333,12 +155,12 @@ def _insert_substance_layer(
         )
         con.execute(
             "INSERT INTO substances(substance_id,canonical_name,identity_status) VALUES(?,?,?)",
-            (substance_id, _representative_name(grouped_rows), identity_status),
+            (substance_id, representative_name(grouped_rows), identity_status),
         )
         for normalized_name in normalized_names:
             con.execute(
                 "INSERT INTO substance_names(normalized_name,substance_id,representative_name) VALUES(?,?,?)",
-                (normalized_name, substance_id, _representative_name(by_name[normalized_name])),
+                (normalized_name, substance_id, representative_name(by_name[normalized_name])),
             )
 
         if resolved:
@@ -514,7 +336,7 @@ def assemble_substance_database(
                     )
                 ],
             )
-            observations, unparsed = _extract_domestic_identities(
+            observations, unparsed = extract_domestic_identities(
                 source,
                 set(external),
             )
