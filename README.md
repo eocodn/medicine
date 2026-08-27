@@ -200,8 +200,8 @@ APK 자체에는 해당 DB나 manifest를 포함하지 않습니다. APK에는 r
 
 ## 앱 제어 CLI
 
-`app` 서비스의 Python 코드는 CLI 인자와 출력 형식만 담당하며, 개인 DB 초기화와 모든 앱 도메인 요청은
-동일 이미지의 Rust `medicine-core` Agent Control CLI로 전달합니다.
+`app` 서비스는 Rust `medicine-agentctl`을 직접 실행합니다. 개인 DB 초기화와 모든 앱 도메인 요청은
+Android/WebView와 동일한 `MedicineEngine` 코어를 사용하며 Python 앱 런타임을 거치지 않습니다.
 
 ```bash
 # 사람 목록

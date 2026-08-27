@@ -357,7 +357,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertTrue(any(call.startswith("aapt:dump badging ") for call in calls))
         self.assertTrue(any(call.startswith("apksigner:verify --verbose --print-certs ") for call in calls))
 
-    def test_android_package_excludes_python_runtime_but_repo_cli_remains(self) -> None:
+    def test_android_and_developer_controls_use_rust_without_python_runtime(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
         rust_build = Path("scripts/build_android_rust.sh").read_text()
@@ -365,24 +365,28 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertNotIn("chaquopy", gradle.lower())
         self.assertNotIn('include("medicine_app/**/*.py")', gradle)
         self.assertNotIn("medicine_canonical", gradle)
-        self.assertTrue(Path("medicine_app/cli.py").is_file())
-        self.assertTrue(Path("rust/medicine_core/src/bin/medicine_core.rs").is_file())
+        self.assertTrue(Path("rust/medicine_core/src/bin/medicine_agentctl.rs").is_file())
         self.assertIn("--lib", rust_build)
         app_service = compose.split("\n  app:\n", 1)[1].split("\n  web:\n", 1)[0]
         app_dockerfile = Path("Dockerfile.app").read_text()
         ui_dockerfile = Path("Dockerfile.ui").read_text()
         self.assertIn("dockerfile: Dockerfile.app", app_service)
-        self.assertIn('entrypoint: ["python", "-m", "medicine_app.cli"]', app_service)
-        self.assertIn("cargo build --locked --release --bin medicine-core", app_dockerfile)
+        self.assertIn('entrypoint: ["/usr/local/bin/medicine-agentctl"]', app_service)
+        self.assertIn(
+            "cargo build --locked --release --features agentctl --bin medicine-agentctl",
+            app_dockerfile,
+        )
         self.assertIn("COPY --from=rust-cli", app_dockerfile)
-        self.assertIn("medicine-core", app_dockerfile)
-        self.assertIn("COPY medicine_app/__init__.py medicine_app/cli.py ./medicine_app/", app_dockerfile)
-        self.assertNotIn("COPY medicine_app ./medicine_app", app_dockerfile)
-        self.assertIn("cargo build --locked --release --features web --bin medicine-core --bin medicine-core-web", ui_dockerfile)
+        self.assertIn("medicine-agentctl", app_dockerfile)
+        self.assertNotIn("python", app_dockerfile.lower())
+        self.assertIn(
+            "cargo build --locked --release --features agentctl,web --bin medicine-agentctl --bin medicine-core-web",
+            ui_dockerfile,
+        )
+        self.assertIn("medicine-agentctl", ui_dockerfile)
         self.assertIn("medicine-core-web", ui_dockerfile)
-        self.assertIn("COPY medicine_app/__init__.py medicine_app/cli.py ./medicine_app/", ui_dockerfile)
-        self.assertIn("COPY medicine_app/static ./medicine_app/static", ui_dockerfile)
-        self.assertNotIn("COPY medicine_app ./medicine_app", ui_dockerfile)
+        self.assertIn("COPY medicine_app/static /opt/medicine-static", ui_dockerfile)
+        self.assertNotIn("python", ui_dockerfile.lower())
 
     def test_android_bootstrap_contract_matches_embedded_runtime_contract(self) -> None:
         kotlin = Path(
@@ -574,7 +578,9 @@ class DeploymentConfigTest(unittest.TestCase):
         compose = Path("compose.yaml").read_text()
         web_service = compose.split("\n  web:\n", 1)[1].split("\n  ui:\n", 1)[0]
         web_binary = Path("rust/medicine_core/src/bin/medicine_core_web.rs").read_text()
-        app_cli = Path("medicine_app/cli.py").read_text()
+        app_commands = Path(
+            "rust/medicine_core/src/bin/agentctl/app_commands/support.rs"
+        ).read_text()
 
         self.assertIn(
             "MEDICINE_CANONICAL_DB: ${MEDICINE_CANONICAL_DB:-}",
@@ -585,8 +591,8 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("ensure_development_reference", web_binary)
         self.assertIn('const DEFAULT_REFERENCE_DIR: &str = "data/reference";', web_binary)
         self.assertNotIn('const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";', web_binary)
-        self.assertIn('DEFAULT_CANONICAL_DB = Path("data/db/mobile.sqlite")', app_cli)
-        self.assertNotIn('DEFAULT_CANONICAL_DB = Path("data/db/canonical.sqlite")', app_cli)
+        self.assertIn('const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";', app_commands)
+        self.assertNotIn('const DEFAULT_CANONICAL_DB: &str = "data/db/canonical.sqlite";', app_commands)
 
     def test_retired_legacy_etl_is_not_packaged_or_exposed(self) -> None:
         compose = Path("compose.yaml").read_text()

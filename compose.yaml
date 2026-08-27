@@ -18,11 +18,10 @@ services:
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     environment:
       HOME: /tmp
-      PYTHONDONTWRITEBYTECODE: "1"
     working_dir: /app
     volumes:
       - .:/app
-    entrypoint: ["python", "-m", "medicine_app.cli"]
+    entrypoint: ["/usr/local/bin/medicine-agentctl"]
 
   web:
     build:
