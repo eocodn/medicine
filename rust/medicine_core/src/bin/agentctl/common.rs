@@ -1,6 +1,9 @@
 #[cfg(feature = "agentctl")]
 #[path = "app_commands.rs"]
 mod app_commands;
+#[cfg(feature = "agentctl")]
+#[path = "discovery.rs"]
+mod discovery;
 #[path = "../medicine_core/reference_cli.rs"]
 mod reference_cli;
 #[cfg(feature = "agentctl")]
@@ -37,9 +40,9 @@ fn run(args: Vec<String>) -> Result<i32, String> {
     };
     let result = match command {
         #[cfg(feature = "agentctl")]
-        "capabilities" => agentctl_capabilities(&args[1..]),
+        "capabilities" => discovery::capabilities(&args[1..], usage),
         #[cfg(feature = "agentctl")]
-        "targets" => agentctl_targets(&args[1..]),
+        "targets" => discovery::targets(&args[1..], usage),
         #[cfg(feature = "agentctl")]
         "scenario" => scenario::run(&args[1..], usage),
         "request-access" => request_access(&args[1..]),
@@ -59,124 +62,6 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         _ => Err(usage()),
     };
     result.map(|()| 0)
-}
-
-#[cfg(feature = "agentctl")]
-fn agentctl_capabilities(args: &[String]) -> Result<(), String> {
-    let json_output = agentctl_json_flag(args)?;
-    #[cfg(not(feature = "web"))]
-    let observation = vec!["health", "reference-state", "scenario-events"];
-    #[cfg(feature = "web")]
-    let observation = vec!["health", "reference-state", "scenario-events", "screenshot"];
-    #[cfg(not(feature = "web"))]
-    let control = vec![
-        "request",
-        "personal-schema",
-        "personal-checkpoint",
-        "reference-verify",
-        "reference-apply",
-        "product",
-        "draft-normalize",
-        "safety-basis",
-        "dur-display",
-        "profile-risks",
-        "interaction-risks",
-        "scenario",
-        "app-commands",
-    ];
-    #[cfg(feature = "web")]
-    let control = vec![
-        "request",
-        "personal-schema",
-        "personal-checkpoint",
-        "reference-verify",
-        "reference-apply",
-        "product",
-        "draft-normalize",
-        "safety-basis",
-        "dur-display",
-        "profile-risks",
-        "interaction-risks",
-        "scenario",
-        "app-commands",
-        "screenshot",
-    ];
-    let payload = json!({
-        "agentctl": true,
-        "structured_output": true,
-        "scheduled_operations": true,
-        "max_scheduled_operations": 64,
-        "max_schedule_horizon_ms": 60_000,
-        "observation": observation,
-        "control": control,
-    });
-    emit_agentctl_payload(&payload, json_output)
-}
-
-#[cfg(feature = "agentctl")]
-fn agentctl_targets(args: &[String]) -> Result<(), String> {
-    let json_output = agentctl_json_flag(args)?;
-    #[cfg(not(feature = "web"))]
-    let targets = vec![
-        json!({
-            "id": "medicine-engine",
-            "kind": "headless-core",
-            "controls": ["request", "scenario"],
-            "observations": ["health"]
-        }),
-        json!({
-            "id": "reference-store",
-            "kind": "state-store",
-            "controls": ["reference-apply"],
-            "observations": ["reference-state"]
-        }),
-    ];
-    #[cfg(feature = "web")]
-    let targets = vec![
-        json!({
-            "id": "medicine-engine",
-            "kind": "headless-core",
-            "controls": ["request", "scenario"],
-            "observations": ["health"]
-        }),
-        json!({
-            "id": "reference-store",
-            "kind": "state-store",
-            "controls": ["reference-apply"],
-            "observations": ["reference-state"]
-        }),
-        json!({
-            "id": "shared-ui",
-            "kind": "gui",
-            "controls": ["screenshot"],
-            "observations": ["screenshot"]
-        }),
-    ];
-    let payload = json!({"targets": targets});
-    emit_agentctl_payload(&payload, json_output)
-}
-
-#[cfg(feature = "agentctl")]
-fn agentctl_json_flag(args: &[String]) -> Result<bool, String> {
-    match args {
-        [] => Ok(false),
-        [flag] if flag == "--json" => Ok(true),
-        _ => Err(usage()),
-    }
-}
-
-#[cfg(feature = "agentctl")]
-fn emit_agentctl_payload(payload: &serde_json::Value, json_output: bool) -> Result<(), String> {
-    if json_output {
-        println!("{payload}");
-    } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(payload)
-                .map_err(|error| format!("cannot encode agentctl output: {error}"))?
-        );
-    }
-    Ok(())
 }
 
 fn reference_verify(args: &[String]) -> Result<(), String> {
