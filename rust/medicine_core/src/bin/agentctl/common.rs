@@ -70,11 +70,12 @@ fn agentctl_capabilities(args: &[String]) -> Result<(), String> {
         "scheduled_operations": true,
         "max_scheduled_operations": 64,
         "max_schedule_horizon_ms": 60_000,
-        "observation": ["health", "reference-state", "scenario-events"],
+        "observation": ["health", "reference-state", "scenario-events", "screenshot"],
         "control": [
             "request", "personal-schema", "personal-checkpoint", "reference-verify",
             "reference-apply", "product", "draft-normalize", "safety-basis",
-            "dur-display", "profile-risks", "interaction-risks", "scenario"
+            "dur-display", "profile-risks", "interaction-risks", "scenario",
+            "app-commands", "screenshot"
         ]
     });
     emit_agentctl_payload(&payload, json_output)
@@ -96,6 +97,12 @@ fn agentctl_targets(args: &[String]) -> Result<(), String> {
                 "kind": "state-store",
                 "controls": ["reference-apply"],
                 "observations": ["reference-state"]
+            },
+            {
+                "id": "shared-ui",
+                "kind": "gui",
+                "controls": ["screenshot"],
+                "observations": ["screenshot"]
             }
         ]
     });

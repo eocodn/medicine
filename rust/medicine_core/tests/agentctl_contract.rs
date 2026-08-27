@@ -5,6 +5,7 @@ mod common;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
@@ -91,6 +92,11 @@ fn capabilities_and_targets_expose_exploratory_surface() {
         .expect("observation list")
         .iter()
         .any(|item| item == "scenario-events"));
+    assert!(value["control"]
+        .as_array()
+        .expect("control list")
+        .iter()
+        .any(|item| item == "screenshot"));
 
     let targets = agentctl()
         .args(["targets", "--json"])
@@ -104,7 +110,7 @@ fn capabilities_and_targets_expose_exploratory_surface() {
         .iter()
         .filter_map(|item| item["id"].as_str())
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec!["medicine-engine", "reference-store"]);
+    assert_eq!(ids, vec!["medicine-engine", "reference-store", "shared-ui"]);
 }
 
 #[test]
@@ -373,4 +379,101 @@ fn app_meds_command_remains_read_only_for_daily_plan_state() {
     drop(connection);
     remove_sqlite(&personal);
     remove_sqlite(&reference);
+}
+
+#[test]
+fn screenshot_uses_read_only_personal_snapshot_and_local_rust_web() {
+    let root = common::temp_sqlite_path("agentctl-screenshot-root");
+    fs::remove_file(&root).expect("release screenshot root path");
+    fs::create_dir_all(&root).expect("create screenshot root");
+    let static_dir = root.join("static");
+    fs::create_dir_all(&static_dir).expect("create screenshot static dir");
+    fs::write(static_dir.join("index.html"), "<html>fixture</html>")
+        .expect("write screenshot index");
+
+    let canonical = root.join("canonical.sqlite");
+    Connection::open(&canonical).expect("create screenshot canonical database");
+    let personal = root.join("personal.sqlite");
+    let connection = Connection::open(&personal).expect("create screenshot personal database");
+    connection
+        .execute_batch(
+            "CREATE TABLE marker(value TEXT NOT NULL);\n             INSERT INTO marker(value) VALUES('source');",
+        )
+        .expect("create screenshot marker");
+    drop(connection);
+    let mut permissions = fs::metadata(&personal)
+        .expect("personal metadata")
+        .permissions();
+    permissions.set_mode(0o444);
+    fs::set_permissions(&personal, permissions).expect("make source personal database read only");
+
+    let browser = root.join("fake-chromium");
+    let url_log = root.join("browser-url.txt");
+    fs::write(
+        &browser,
+        "#!/bin/sh\nset -eu\nout=''\nurl=''\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    --screenshot=*) out=${arg#--screenshot=} ;;\n    http://*) url=$arg ;;\n  esac\ndone\nprintf '%s' \"$url\" > \"$MEDICINE_SCREENSHOT_URL_LOG\"\nprintf 'png' > \"$out\"\n",
+    )
+    .expect("write fake chromium");
+    let mut browser_permissions = fs::metadata(&browser)
+        .expect("browser metadata")
+        .permissions();
+    browser_permissions.set_mode(0o755);
+    fs::set_permissions(&browser, browser_permissions).expect("make fake chromium executable");
+
+    let output = root.join("shot.png");
+    let screenshot = agentctl()
+        .env(
+            "MEDICINE_CORE_WEB_BINARY",
+            env!("CARGO_BIN_EXE_medicine-core-web"),
+        )
+        .env("MEDICINE_CHROMIUM_BINARY", &browser)
+        .env("MEDICINE_STATIC_DIR", &static_dir)
+        .env("MEDICINE_SCREENSHOT_URL_LOG", &url_log)
+        .args([
+            "--canonical-db",
+            canonical.to_str().expect("canonical path"),
+            "--personal-db",
+            personal.to_str().expect("personal path"),
+            "screenshot",
+            "--output",
+            output.to_str().expect("output path"),
+            "--width",
+            "390",
+            "--height",
+            "844",
+            "--screen",
+            "meds",
+            "--json",
+        ])
+        .output()
+        .expect("run screenshot through agentctl");
+    assert!(
+        screenshot.status.success(),
+        "{}",
+        String::from_utf8_lossy(&screenshot.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&screenshot.stdout).expect("screenshot json");
+    assert_eq!(payload["width"], 390);
+    assert_eq!(payload["height"], 844);
+    assert_eq!(payload["screen"], "meds");
+    assert_eq!(payload["size_bytes"], 3);
+    assert_eq!(fs::read(&output).expect("read screenshot"), b"png");
+    assert!(fs::read_to_string(&url_log)
+        .expect("read screenshot URL")
+        .ends_with("/?screen=meds"));
+
+    let source = Connection::open_with_flags(&personal, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .expect("reopen source personal database read only");
+    let marker: String = source
+        .query_row("SELECT value FROM marker", [], |row| row.get(0))
+        .expect("read source marker");
+    assert_eq!(marker, "source");
+    drop(source);
+
+    let mut permissions = fs::metadata(&personal)
+        .expect("personal metadata after screenshot")
+        .permissions();
+    permissions.set_mode(0o644);
+    fs::set_permissions(&personal, permissions).expect("restore personal permissions");
+    fs::remove_dir_all(root).ok();
 }
