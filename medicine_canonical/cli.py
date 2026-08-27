@@ -18,7 +18,7 @@ from .inspection import canonical_product_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .mobile import build_mobile_database
 from .reference_contracts.registry import build_supported_contract_window
-from medicine_app.reference_update import verify_reference_database
+from medicine_reference.reference_update import verify_reference_database
 from .release import apply_chunk_patch, prepare_release
 from .release_r2 import download_object_from_env
 from .release_r2_public import audit_public_bucket_from_env

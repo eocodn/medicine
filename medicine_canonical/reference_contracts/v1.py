@@ -381,7 +381,7 @@ def verify_built_reference_database(
     """
     if contract_major != REFERENCE_CONTRACT_MAJOR:
         raise ValueError("contract-v1 verifier received a different contract major")
-    from medicine_app.reference_contracts.v1 import verify_reference_database as runtime_verify
+    from medicine_reference.reference_contracts.v1 import verify_reference_database as runtime_verify
 
     result = runtime_verify(
         database,

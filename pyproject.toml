@@ -15,7 +15,7 @@ dependencies = [
 medicine-canonical = "medicine_canonical.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["medicine_app*", "medicine_canonical*", "medicine_reference*"]
+include = ["medicine_canonical*", "medicine_reference*"]
 
 [tool.setuptools.package-data]
 medicine_canonical = ["data/*.tsv"]

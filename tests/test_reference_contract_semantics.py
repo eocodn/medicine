@@ -105,7 +105,7 @@ class ReferenceContractSemanticsTest(unittest.TestCase):
                 manifest_path=exported_manifest,
             )
         with mock.patch(
-            "medicine_app.reference_update.verify_reference_database",
+            "medicine_reference.reference_update.verify_reference_database",
             side_effect=AssertionError("mutable verifier dispatcher must not own frozen contract v1"),
         ):
             verified = verify_reference_database(

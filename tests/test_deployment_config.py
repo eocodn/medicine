@@ -363,7 +363,6 @@ class DeploymentConfigTest(unittest.TestCase):
         rust_build = Path("scripts/build_android_rust.sh").read_text()
 
         self.assertNotIn("chaquopy", gradle.lower())
-        self.assertNotIn('include("medicine_app/**/*.py")', gradle)
         self.assertNotIn("medicine_canonical", gradle)
         self.assertTrue(Path("rust/medicine_core/src/bin/medicine_agentctl.rs").is_file())
         self.assertIn("--lib", rust_build)
@@ -405,7 +404,7 @@ class DeploymentConfigTest(unittest.TestCase):
         kotlin = Path(
             "android/app/src/main/java/com/medicine/android/ReferenceRuntimeAdapters.kt"
         ).read_text()
-        python_runtime = Path("medicine_app/reference_contracts/v1.py").read_text()
+        python_runtime = Path("medicine_reference/reference_contracts/v1.py").read_text()
 
         android_contract = re.search(r'const val CONTRACT_MAJOR = ([0-9]+)', kotlin)
         runtime_contract = re.search(r'REFERENCE_CONTRACT_MAJOR = ([0-9]+)', python_runtime)
@@ -441,7 +440,7 @@ class DeploymentConfigTest(unittest.TestCase):
 
     def test_android_excludes_mfds_remark_registry_and_requires_materialized_semantics(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
-        verifier = Path("medicine_app/reference_contracts/v1.py").read_text()
+        verifier = Path("medicine_reference/reference_contracts/v1.py").read_text()
         self.assertNotIn('include("medicine_reference/**/*.py")', gradle)
         self.assertNotIn("mfds_remark_registry.tsv", gradle)
         self.assertIn('"reference_criterion_semantics"', verifier)
@@ -462,7 +461,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("addGeneratedSourceDirectory", gradle)
         self.assertNotIn("assets.srcDirs", gradle)
         self.assertNotIn("project.copy", gradle)
-        self.assertNotIn('include("medicine_app/**/*.py")', gradle)
 
     def test_ui_service_runs_as_the_host_user_for_bind_mounted_screenshots(self) -> None:
         compose = Path("compose.yaml").read_text()
