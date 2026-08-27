@@ -1,3 +1,6 @@
+#[cfg(feature = "agentctl")]
+#[path = "app_commands.rs"]
+mod app_commands;
 #[path = "../medicine_core/reference_cli.rs"]
 mod reference_cli;
 #[cfg(feature = "agentctl")]
@@ -14,17 +17,25 @@ use serde_json::json;
 use std::path::Path;
 
 pub fn main_entry() {
-    if let Err(error) = run(std::env::args().skip(1).collect()) {
-        eprintln!("{error}");
-        std::process::exit(2);
+    match run(std::env::args().skip(1).collect()) {
+        Ok(0) => {}
+        Ok(code) => std::process::exit(code),
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
     }
 }
 
-fn run(args: Vec<String>) -> Result<(), String> {
+fn run(args: Vec<String>) -> Result<i32, String> {
+    #[cfg(feature = "agentctl")]
+    if let Some(code) = app_commands::try_run(&args, usage)? {
+        return Ok(code);
+    }
     let Some(command) = args.first().map(String::as_str) else {
         return Err(usage());
     };
-    match command {
+    let result = match command {
         #[cfg(feature = "agentctl")]
         "capabilities" => agentctl_capabilities(&args[1..]),
         #[cfg(feature = "agentctl")]
@@ -46,7 +57,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "profile-risks" => profile_risks(&args[1..]),
         "interaction-risks" => interaction_risks(&args[1..]),
         _ => Err(usage()),
-    }
+    };
+    result.map(|()| 0)
 }
 
 #[cfg(feature = "agentctl")]
