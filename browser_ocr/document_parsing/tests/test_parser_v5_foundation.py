@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import copy
+import unittest
+
+from browser_ocr.document_parsing.parser_v5_contract import validate_parser_v5_document
+from browser_ocr.document_parsing.parser_v5_observation import ObservationProfile, simulate_observations
+from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile, generate_parser_world
+
+
+class ParserV5WorldTest(unittest.TestCase):
+    def test_world_generation_is_deterministic_and_has_no_layout_identity_shortcut(self) -> None:
+        profile = ParserWorldProfile(
+            medication_count=(2, 2),
+            distractor_section_count=(3, 3),
+        )
+        first = generate_parser_world(seed=624, document_index=7, profile=profile)
+        second = generate_parser_world(seed=624, document_index=7, profile=profile)
+        different = generate_parser_world(seed=625, document_index=7, profile=profile)
+
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, different)
+        self.assertNotIn("layout_family", first)
+        self.assertNotIn("template_id", first)
+        self.assertNotIn("layout_id", first)
+        validate_parser_v5_document(first)
+
+    def test_zero_medication_documents_are_first_class_worlds(self) -> None:
+        document = generate_parser_world(
+            seed=11,
+            document_index=3,
+            profile=ParserWorldProfile(
+                medication_count=(0, 0),
+                distractor_section_count=(5, 5),
+            ),
+        )
+
+        self.assertEqual(document["medications"], [])
+        self.assertGreaterEqual(len(document["sections"]), 5)
+        self.assertTrue(all(span["association_group"] is None for span in document["spans"]))
+        validate_parser_v5_document(document)
+
+    def test_semantic_truth_exposes_span_level_roles_and_medication_groups(self) -> None:
+        document = generate_parser_world(
+            seed=29,
+            document_index=1,
+            profile=ParserWorldProfile(
+                medication_count=(2, 2),
+                distractor_section_count=(0, 0),
+            ),
+        )
+
+        medication_groups = {item["medication_id"] for item in document["medications"]}
+        product_spans = [span for span in document["spans"] if span["semantic_role"] == "product"]
+        field_spans = [
+            span
+            for span in document["spans"]
+            if span["semantic_role"] in {"dose", "frequency", "duration", "instruction", "schedule"}
+        ]
+        self.assertEqual({span["association_group"] for span in product_spans}, medication_groups)
+        self.assertTrue(field_spans)
+        self.assertTrue(all(span["association_group"] in medication_groups for span in field_spans))
+
+
+class ParserV5ObservationTest(unittest.TestCase):
+    def _document(self) -> dict:
+        return generate_parser_world(
+            seed=17,
+            document_index=2,
+            profile=ParserWorldProfile(
+                medication_count=(1, 1),
+                distractor_section_count=(0, 0),
+            ),
+        )
+
+    def test_observation_corruption_is_separate_and_does_not_mutate_truth(self) -> None:
+        document = self._document()
+        before = copy.deepcopy(document)
+        profile = ObservationProfile(
+            text_corruption_rate=1.0,
+            drop_rate=0.2,
+            duplicate_rate=0.2,
+            split_rate=0.3,
+            merge_rate=0.3,
+            geometry_jitter=0.02,
+            false_positive_count=(2, 2),
+            reading_order_shuffle_rate=1.0,
+        )
+
+        first = simulate_observations(document, seed=91, profile=profile)
+        second = simulate_observations(document, seed=91, profile=profile)
+
+        self.assertEqual(document, before)
+        self.assertEqual(first, second)
+        self.assertEqual(first["document_id"], document["document_id"])
+        self.assertEqual(first["profile_revision"], 1)
+        self.assertTrue(any(not node["source_span_ids"] for node in first["nodes"]))
+        validate_parser_v5_document(document)
+
+    def test_forced_merge_keeps_multiple_semantic_targets_in_one_observation(self) -> None:
+        document = self._document()
+        medication_id = document["medications"][0]["medication_id"]
+        source_spans = [
+            span
+            for span in document["spans"]
+            if span["association_group"] == medication_id
+            and span["semantic_role"] in {"dose", "frequency"}
+        ]
+        self.assertEqual({span["semantic_role"] for span in source_spans}, {"dose", "frequency"})
+
+        observation = simulate_observations(
+            document,
+            seed=5,
+            profile=ObservationProfile(
+                text_corruption_rate=0.0,
+                drop_rate=0.0,
+                duplicate_rate=0.0,
+                split_rate=0.0,
+                merge_rate=1.0,
+                geometry_jitter=0.0,
+                false_positive_count=(0, 0),
+                reading_order_shuffle_rate=0.0,
+            ),
+        )
+
+        merged = [
+            node
+            for node in observation["nodes"]
+            if {target["semantic_role"] for target in node["targets"]} >= {"dose", "frequency"}
+        ]
+        self.assertTrue(merged)
+        target = merged[0]
+        self.assertEqual({item["association_group"] for item in target["targets"]}, {medication_id})
+        self.assertTrue(all(item["label_status"] == "labeled" for item in target["targets"]))
+        self.assertGreaterEqual(len(target["source_span_ids"]), 2)
+
+    def test_split_observation_preserves_provenance_without_forcing_flat_role(self) -> None:
+        document = self._document()
+        observation = simulate_observations(
+            document,
+            seed=13,
+            profile=ObservationProfile(
+                text_corruption_rate=0.0,
+                drop_rate=0.0,
+                duplicate_rate=0.0,
+                split_rate=1.0,
+                merge_rate=0.0,
+                geometry_jitter=0.0,
+                false_positive_count=(0, 0),
+                reading_order_shuffle_rate=0.0,
+            ),
+        )
+
+        split_nodes = [node for node in observation["nodes"] if node["operation"] == "split"]
+        self.assertTrue(split_nodes)
+        self.assertTrue(all(node["source_span_ids"] for node in split_nodes))
+        self.assertTrue(all("semantic_role" not in node for node in observation["nodes"]))
+        self.assertTrue(all("association_group" not in node for node in observation["nodes"]))
+
+
+if __name__ == "__main__":
+    unittest.main()
