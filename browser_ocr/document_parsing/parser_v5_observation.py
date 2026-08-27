@@ -209,16 +209,24 @@ def _corrupt_text(text: str, *, rng: random.Random) -> str:
     if not text:
         return text
     substitutions = {"1": "I", "0": "O", "정": "점", "회": "외", "일": "|", "아": "어"}
-    index = rng.randrange(len(text))
-    replacement = substitutions.get(text[index])
-    if replacement is not None:
-        candidate = text[:index] + replacement + text[index + 1 :]
-        return candidate if candidate.strip() else "?"
-    if len(text) > 1 and rng.random() < 0.5:
-        candidate = text[:index] + text[index + 1 :]
-        return candidate if candidate.strip() else "?"
-    candidate = text[:index] + "?" + text[index + 1 :]
-    return candidate if candidate.strip() else "?"
+    candidates: list[str] = []
+    for index, char in enumerate(text):
+        replacement = substitutions.get(char)
+        if replacement is not None:
+            candidates.append(text[:index] + replacement + text[index + 1 :])
+        if char.isspace():
+            candidates.append(text[:index] + text[index + 1 :])
+        else:
+            candidates.append(text[:index] + text[index + 1 :])
+            candidates.append(text[:index] + char + char + text[index + 1 :])
+            candidates.append(text[:index] + "?" + text[index + 1 :])
+    for index in range(1, len(text)):
+        if not text[index - 1].isspace() and not text[index].isspace():
+            candidates.append(text[:index] + " " + text[index:])
+        if text[index - 1] != text[index]:
+            candidates.append(text[: index - 1] + text[index] + text[index - 1] + text[index + 1 :])
+    usable = [candidate for candidate in candidates if candidate != text and candidate.strip()]
+    return rng.choice(usable) if usable else "?"
 
 
 def _false_positive(*, rng: random.Random, width: int, height: int) -> dict[str, Any]:

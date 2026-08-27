@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import copy
+import random
 import unittest
 
 from browser_ocr.document_parsing.parser_v5_contract import validate_parser_v5_document
-from browser_ocr.document_parsing.parser_v5_observation import ObservationProfile, simulate_observations
+from browser_ocr.document_parsing.parser_v5_observation import ObservationProfile, _corrupt_text, simulate_observations
 from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile, generate_parser_world
 
 
@@ -295,6 +296,14 @@ class ParserV5ObservationTest(unittest.TestCase):
 
         self.assertTrue(observation["nodes"])
         self.assertTrue(all(str(node["text"]).strip() for node in observation["nodes"]))
+
+    def test_text_corruption_covers_spacing_and_sequence_errors(self) -> None:
+        compact = {_corrupt_text("가나정", rng=random.Random(seed)) for seed in range(128)}
+        spaced = {_corrupt_text("1일 2회", rng=random.Random(seed)) for seed in range(128)}
+
+        self.assertTrue(any(" " in text for text in compact))
+        self.assertTrue(any(" " not in text for text in spaced))
+        self.assertTrue(any(text not in {"가나정", "가 나정", "가나 정"} for text in compact))
 
 
 if __name__ == "__main__":

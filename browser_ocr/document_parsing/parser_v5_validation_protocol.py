@@ -48,6 +48,7 @@ _OPEN_FIELDS = {
     "open_fingerprint",
 }
 _IMPLEMENTATION_FILES = (
+    "parser_v5_semantic_grammar.py",
     "parser_v5_world.py",
     "parser_v5_observation.py",
     "parser_v5_contract.py",
@@ -57,6 +58,8 @@ _IMPLEMENTATION_FILES = (
     "parser_v5_structured_targets.py",
     "parser_v5_heads_paddle.py",
     "parser_v5_training_paddle.py",
+    "parser_v5_training_evaluation.py",
+    "parser_v5_training_views.py",
     "parser_v5_decode.py",
     "parser_v5_inference_paddle.py",
     "parser_v5_evaluation.py",
