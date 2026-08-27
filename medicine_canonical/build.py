@@ -408,6 +408,13 @@ def assemble_canonical_database(
             lifecycle.discard(f"unknown completed phase {phase!r}")
         if phase is not None and lifecycle.artifacts.get("staged_db") != str(temp):
             lifecycle.discard("staged canonical database path changed")
+        if phase is not None:
+            staged_sha256 = lifecycle.artifacts.get("staged_sha256")
+            if not isinstance(staged_sha256, str) or not staged_sha256:
+                lifecycle.discard("canonical checkpoint is missing staged sha256")
+            candidate = temp if temp.exists() else db_path if phase == "verified" and db_path.exists() else None
+            if candidate is None or sha256_file(candidate) != staged_sha256:
+                lifecycle.discard("checkpointed canonical database bytes changed")
         if phase == "source_import" and canonical_build_stage(temp) != "source":
             lifecycle.discard("authoritative staged database is not at source stage")
         if phase == "materialized" and canonical_build_stage(temp) != "complete":
@@ -432,9 +439,14 @@ def assemble_canonical_database(
                     ],
                 )
                 con.commit()
+            staged_sha256 = sha256_file(temp)
             lifecycle.checkpoint(
                 current_phase,
-                {"staged_db": str(temp), "source_result": source_result},
+                {
+                    "staged_db": str(temp),
+                    "staged_sha256": staged_sha256,
+                    "source_result": source_result,
+                },
             )
             lifecycle.step_completed(current_phase, 1)
             phase = lifecycle.completed_phase
@@ -460,10 +472,12 @@ def assemble_canonical_database(
                 con.execute("ANALYZE")
                 con.execute("PRAGMA optimize")
                 con.commit()
+            staged_sha256 = sha256_file(temp)
             lifecycle.checkpoint(
                 current_phase,
                 {
                     "staged_db": str(temp),
+                    "staged_sha256": staged_sha256,
                     "source_result": source_result,
                     "search_result": search_result,
                     "link_result": link_result,

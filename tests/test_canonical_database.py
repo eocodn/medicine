@@ -203,6 +203,52 @@ class CanonicalDatabaseTest(unittest.TestCase):
         self.assertFalse(checkpoint.exists())
         self.assertFalse(staged.exists())
 
+    def test_assemble_rejects_mutated_source_stage_checkpoint(self) -> None:
+        self._build()
+        self.db.unlink()
+        layout = MfdsSourceLayout.for_database(self.db)
+
+        with mock.patch(
+            "medicine_canonical.build.materialize_product_search_documents",
+            side_effect=RuntimeError("materialization interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "materialization interrupted"):
+                assemble_canonical_database(self.db, layout)
+
+        checkpoint = self.db.with_name(self.db.name + ".build.checkpoint.json")
+        staged = self.db.with_name(self.db.name + ".tmp")
+        with closing(sqlite3.connect(staged)) as con, con:
+            con.execute("UPDATE products SET product_name='TAMPERED' WHERE item_seq='P1'")
+
+        with self.assertRaisesRegex(RuntimeError, "checkpoint.*bytes changed"):
+            assemble_canonical_database(self.db, layout)
+
+        self.assertFalse(checkpoint.exists())
+        self.assertFalse(staged.exists())
+
+    def test_assemble_rejects_mutated_materialized_checkpoint(self) -> None:
+        self._build()
+        self.db.unlink()
+        layout = MfdsSourceLayout.for_database(self.db)
+
+        with mock.patch(
+            "medicine_canonical.build.verify_canonical_database",
+            side_effect=RuntimeError("verification interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "verification interrupted"):
+                assemble_canonical_database(self.db, layout)
+
+        checkpoint = self.db.with_name(self.db.name + ".build.checkpoint.json")
+        staged = self.db.with_name(self.db.name + ".tmp")
+        with closing(sqlite3.connect(staged)) as con, con:
+            con.execute("UPDATE products SET product_name='TAMPERED' WHERE item_seq='P1'")
+
+        with self.assertRaisesRegex(RuntimeError, "checkpoint.*bytes changed"):
+            assemble_canonical_database(self.db, layout)
+
+        self.assertFalse(checkpoint.exists())
+        self.assertFalse(staged.exists())
+
     def test_cli_build_exposes_structured_job_progress_and_checkpoint_events(self) -> None:
         self._build()
         self.db.unlink()
