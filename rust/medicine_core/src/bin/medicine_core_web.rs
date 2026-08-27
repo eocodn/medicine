@@ -1,7 +1,8 @@
 use medicine_core::development_reference::{
-    ensure_development_reference, DevelopmentReferenceConfig,
+    check_development_reference_update, ensure_development_reference, DevelopmentReferenceConfig,
+    DevelopmentReferenceUpdateStatus,
 };
-use medicine_core::web::{build_router, WebConfig};
+use medicine_core::web::{build_runtime, WebConfig};
 use std::{env, net::IpAddr, path::PathBuf};
 use tokio::net::TcpListener;
 
@@ -93,6 +94,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         return Err("web port must be an integer between 1 and 65535".to_owned());
     }
 
+    let mut managed_reference_update = None;
     let canonical_db = if reference_unavailable_reason.is_some() {
         None
     } else if let Some(path) = canonical_db {
@@ -102,21 +104,25 @@ async fn run(args: Vec<String>) -> Result<(), String> {
             "reference distribution base URL is not configured and no --canonical-db override was supplied"
                 .to_owned()
         })?;
-        let selection = tokio::task::spawn_blocking(move || {
-            ensure_development_reference(DevelopmentReferenceConfig {
-                reference_dir: PathBuf::from(reference_dir),
-                base_url,
-                trust_manifest: PathBuf::from(reference_trust_manifest),
-                contract_major: REFERENCE_CONTRACT_MAJOR,
-            })
-        })
-        .await
-        .map_err(|error| format!("reference preparation task failed: {error}"))?
-        .map_err(|error| format!("reference preparation failed: {error}"))?;
+        let config = DevelopmentReferenceConfig {
+            reference_dir: PathBuf::from(reference_dir),
+            base_url,
+            trust_manifest: PathBuf::from(reference_trust_manifest),
+            contract_major: REFERENCE_CONTRACT_MAJOR,
+        };
+        let startup_config = config.clone();
+        let selection =
+            tokio::task::spawn_blocking(move || ensure_development_reference(startup_config))
+                .await
+                .map_err(|error| format!("reference preparation task failed: {error}"))?
+                .map_err(|error| format!("reference preparation failed: {error}"))?;
+        if selection.database.is_some() && selection.unavailable_reason.is_none() {
+            managed_reference_update = Some(config);
+        }
         reference_unavailable_reason = selection.unavailable_reason;
         selection.database
     };
-    let app = build_router(WebConfig {
+    let runtime = build_runtime(WebConfig {
         canonical_db,
         personal_db: PathBuf::from(personal_db),
         static_dir: PathBuf::from(static_dir),
@@ -128,7 +134,43 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         .await
         .map_err(|error| format!("cannot bind local web service on {host}:{port}: {error}"))?;
     eprintln!("medicine-core-web listening on http://{host}:{port}");
-    axum::serve(listener, app)
+
+    if let Some(config) = managed_reference_update {
+        let engine = runtime.engine.clone();
+        tokio::spawn(async move {
+            let result =
+                tokio::task::spawn_blocking(move || check_development_reference_update(config))
+                    .await;
+            match result {
+                Err(error) => eprintln!("reference update task failed: {error}"),
+                Ok(Err(error)) => eprintln!("reference update skipped; using LKG: {error}"),
+                Ok(Ok(DevelopmentReferenceUpdateStatus::NoChange)) => {
+                    eprintln!("reference update check completed: no change");
+                }
+                Ok(Ok(DevelopmentReferenceUpdateStatus::Staged)) => {
+                    eprintln!("reference update staged for next startup");
+                }
+                Ok(Ok(DevelopmentReferenceUpdateStatus::UpdateRequired)) => match engine.write() {
+                    Ok(mut engine) => {
+                        if let Err(error) =
+                            engine.set_reference_available(false, Some("update_required"))
+                        {
+                            eprintln!("cannot apply reference retirement to live engine: {error}");
+                        } else {
+                            eprintln!(
+                                "reference contract retired; live safety-data access disabled"
+                            );
+                        }
+                    }
+                    Err(_) => {
+                        eprintln!("cannot lock live medicine engine after reference retirement")
+                    }
+                },
+            }
+        });
+    }
+
+    axum::serve(listener, runtime.router)
         .await
         .map_err(|error| format!("local web service failed: {error}"))
 }

@@ -7,7 +7,11 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 use tower_http::services::ServeDir;
 
 use crate::MedicineEngine;
@@ -26,11 +30,20 @@ pub struct WebConfig {
 
 #[derive(Clone)]
 struct AppState {
-    engine: Arc<MedicineEngine>,
+    engine: Arc<RwLock<MedicineEngine>>,
     index_html: Arc<String>,
 }
 
+pub struct WebRuntime {
+    pub router: Router,
+    pub engine: Arc<RwLock<MedicineEngine>>,
+}
+
 pub fn build_router(config: WebConfig) -> Result<Router, String> {
+    Ok(build_runtime(config)?.router)
+}
+
+pub fn build_runtime(config: WebConfig) -> Result<WebRuntime, String> {
     let index_path = config.static_dir.join("index.html");
     let index_html = fs::read_to_string(&index_path)
         .map_err(|error| format!("cannot read static index {}: {error}", index_path.display()))?;
@@ -64,8 +77,9 @@ pub fn build_router(config: WebConfig) -> Result<Router, String> {
         config.reference_unavailable_reason.as_deref(),
     );
     engine.initialize_personal_database()?;
+    let engine = Arc::new(RwLock::new(engine));
     let state = AppState {
-        engine: Arc::new(engine),
+        engine: Arc::clone(&engine),
         index_html: Arc::new(index_html),
     };
 
@@ -76,7 +90,10 @@ pub fn build_router(config: WebConfig) -> Result<Router, String> {
     if let Some(ocr_root) = config.ocr_assets_dir {
         router = router.nest_service("/ocr-assets", ServeDir::new(ocr_root));
     }
-    Ok(router.with_state(state))
+    Ok(WebRuntime {
+        router: router.with_state(state),
+        engine,
+    })
 }
 
 async fn index(State(state): State<AppState>) -> Response {
@@ -115,7 +132,15 @@ async fn api_request(State(state): State<AppState>, request: Request<Body>) -> R
         }
     };
 
-    let raw = state.engine.request(&method, &raw_path, body_json);
+    let raw = match state.engine.read() {
+        Ok(engine) => engine.request(&method, &raw_path, body_json),
+        Err(_) => {
+            return json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"detail": "medicine engine state is unavailable"}),
+            );
+        }
+    };
     let envelope: Value = match serde_json::from_str(&raw) {
         Ok(value) => value,
         Err(_) => {
