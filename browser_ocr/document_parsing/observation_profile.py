@@ -7,9 +7,8 @@ from typing import Any, Mapping
 from .training_dataset import ParserDatasetError
 
 
-_SHA_FIELDS = {
+_COMMON_SHA_FIELDS = {
     "image_sha256",
-    "recognizer_result_sha256",
     "recognizer_checkpoint_sha256",
     "recognizer_config_sha256",
     "detector_manifest_sha256",
@@ -20,6 +19,8 @@ _SHA_FIELDS = {
     "paddleocr_source_sha256",
     "paddleocr_dictionary_sha256",
 }
+_SHA_FIELDS_V2 = {*_COMMON_SHA_FIELDS, "baseline_result_sha256"}
+_SHA_FIELDS_V3 = {*_COMMON_SHA_FIELDS, "recognizer_result_sha256"}
 _IMPLEMENTATION_SHA_FIELDS = {
     "full_document",
     "full_document_cli",
@@ -31,16 +32,16 @@ _IMPLEMENTATION_SHA_FIELDS = {
     "detector_runtime",
     "detector_benchmark",
 }
-_PROFILE_FIELDS = {
+_COMMON_PROFILE_FIELDS = {
     "schema_version",
-    *_SHA_FIELDS,
     "recognizer_device",
     "detector_model",
     "detector_edge",
     "detector_threads",
     "implementation",
 }
-_RAW_PROFILE_FIELDS = _PROFILE_FIELDS
+_PROFILE_FIELDS_V2 = {*_COMMON_PROFILE_FIELDS, *_SHA_FIELDS_V2}
+_PROFILE_FIELDS_V3 = {*_COMMON_PROFILE_FIELDS, *_SHA_FIELDS_V3}
 _RAW_IMPLEMENTATION_FIELDS = _IMPLEMENTATION_SHA_FIELDS
 _ALLOWED_DETECTOR_MODELS = {"PP-OCRv5_mobile_det", "PP-OCRv6_tiny_det", "PP-OCRv6_small_det"}
 _TRAINED_DETECTOR_MODEL = re.compile(r"PP-OCRv5_mobile_det_candidate_[0-9a-f]{12}")
@@ -60,13 +61,20 @@ def runtime_observation_profile(raw: object, *, expected_image_sha256: str | Non
 
     if not isinstance(raw, Mapping):
         raise ParserDatasetError("runtime result profile must be an object")
-    unknown = sorted(set(raw) - _RAW_PROFILE_FIELDS)
+    schema_version = raw.get("schema_version")
+    if schema_version == 2:
+        profile_fields = _PROFILE_FIELDS_V2
+        sha_fields = _SHA_FIELDS_V2
+    elif schema_version == 3:
+        profile_fields = _PROFILE_FIELDS_V3
+        sha_fields = _SHA_FIELDS_V3
+    else:
+        raise ParserDatasetError("runtime OCR profile schema_version must be 2 or 3")
+    unknown = sorted(set(raw) - profile_fields)
     if unknown:
         raise ParserDatasetError(f"unsupported runtime OCR profile fields: {', '.join(map(str, unknown))}")
     profile = {str(key): value for key, value in raw.items()}
-    if profile.get("schema_version") != 3:
-        raise ParserDatasetError("runtime OCR profile schema_version must be 3")
-    for field in _SHA_FIELDS:
+    for field in sha_fields:
         profile[field] = _require_sha256(profile.get(field), field)
     if expected_image_sha256 is not None and profile["image_sha256"] != expected_image_sha256:
         raise ParserDatasetError("runtime OCR profile image SHA-256 does not match document image")
