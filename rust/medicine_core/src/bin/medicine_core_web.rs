@@ -3,7 +3,7 @@ use medicine_core::development_reference::{
     DevelopmentReferenceUpdateStatus,
 };
 use medicine_core::web::{build_runtime, WebConfig};
-use std::{env, net::IpAddr, path::PathBuf};
+use std::{env, net::IpAddr, path::PathBuf, thread, time::Duration};
 use tokio::net::TcpListener;
 
 const DEFAULT_PERSONAL_DB: &str = "data/db/personal.sqlite";
@@ -135,19 +135,37 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         .map_err(|error| format!("cannot bind local web service on {host}:{port}: {error}"))?;
     eprintln!("medicine-core-web listening on http://{host}:{port}");
 
+    let heartbeat_status = runtime.status.clone();
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(5));
+        heartbeat_status.heartbeat();
+    });
+
     if let Some(config) = managed_reference_update {
         let engine = runtime.engine.clone();
+        let status = runtime.status.clone();
+        status.reference_update_running("check");
         tokio::spawn(async move {
             let result =
                 tokio::task::spawn_blocking(move || check_development_reference_update(config))
                     .await;
             match result {
-                Err(error) => eprintln!("reference update task failed: {error}"),
-                Ok(Err(error)) => eprintln!("reference update skipped; using LKG: {error}"),
+                Err(error) => {
+                    let detail = format!("reference update task failed: {error}");
+                    status.reference_update_failed("join", &detail);
+                    eprintln!("{detail}");
+                }
+                Ok(Err(error)) => {
+                    let detail = format!("reference update skipped; using LKG: {error}");
+                    status.reference_update_failed("check", &detail);
+                    eprintln!("{detail}");
+                }
                 Ok(Ok(DevelopmentReferenceUpdateStatus::NoChange)) => {
+                    status.reference_update_completed("no_change");
                     eprintln!("reference update check completed: no change");
                 }
                 Ok(Ok(DevelopmentReferenceUpdateStatus::Staged)) => {
+                    status.reference_update_completed("staged");
                     eprintln!("reference update staged for next startup");
                 }
                 Ok(Ok(DevelopmentReferenceUpdateStatus::UpdateRequired)) => match engine.write() {
@@ -155,19 +173,32 @@ async fn run(args: Vec<String>) -> Result<(), String> {
                         if let Err(error) =
                             engine.set_reference_available(false, Some("update_required"))
                         {
+                            let detail = format!(
+                                "cannot apply reference retirement to live engine: {error}"
+                            );
+                            status.reference_update_failed("retire", &detail);
                             eprintln!("cannot apply reference retirement to live engine: {error}");
                         } else {
+                            status.reference_update_completed("update_required");
                             eprintln!(
                                 "reference contract retired; live safety-data access disabled"
                             );
                         }
                     }
                     Err(_) => {
+                        status.reference_update_failed(
+                            "retire",
+                            "cannot lock live medicine engine after reference retirement",
+                        );
                         eprintln!("cannot lock live medicine engine after reference retirement")
                     }
                 },
             }
         });
+    } else {
+        runtime
+            .status
+            .reference_update_disabled("managed reference update is not configured");
     }
 
     axum::serve(listener, runtime.router)

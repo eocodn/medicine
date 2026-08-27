@@ -361,3 +361,66 @@ async fn local_http_adapter_exposes_reference_unavailable_state_without_python_f
 
     fs::remove_dir_all(root).ok();
 }
+
+#[tokio::test]
+async fn development_status_exposes_heartbeat_reference_phase_and_authoritative_engine_state() {
+    let reference = reference_db("web-server-observability");
+    let (config, root) = fixture_config(Some(reference.clone()), None);
+    let runtime = build_runtime(config).expect("build observable Rust web runtime");
+    let app = runtime.router.clone();
+
+    let initial = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/development/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("initial development status response");
+    assert_eq!(initial.status(), StatusCode::OK);
+    let initial = response_json(initial).await;
+    assert_eq!(initial["process"]["heartbeat_sequence"], 0);
+    assert!(initial["process"]["started_unix_ms"].as_u64().is_some());
+    assert!(initial["process"]["heartbeat_unix_ms"].as_u64().is_some());
+    assert_eq!(initial["reference_update"]["state"], "idle");
+    assert_eq!(initial["reference"]["available"], true);
+    assert_eq!(initial["reference"]["status"], Value::Null);
+
+    runtime.status.heartbeat();
+    runtime.status.reference_update_running("check");
+    runtime
+        .status
+        .reference_update_failed("check", "simulated update failure");
+    runtime
+        .engine
+        .write()
+        .expect("lock medicine engine")
+        .set_reference_available(false, Some("simulated_unavailable"))
+        .expect("disable reference for observability test");
+
+    let changed = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/development/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("changed development status response");
+    assert_eq!(changed.status(), StatusCode::OK);
+    let changed = response_json(changed).await;
+    assert_eq!(changed["process"]["heartbeat_sequence"], 1);
+    assert_eq!(changed["reference_update"]["state"], "failed");
+    assert_eq!(changed["reference_update"]["phase"], "check");
+    assert_eq!(
+        changed["reference_update"]["detail"],
+        "simulated update failure"
+    );
+    assert_eq!(changed["reference"]["available"], false);
+    assert_eq!(changed["reference"]["status"], "simulated_unavailable");
+
+    fs::remove_file(reference).ok();
+    fs::remove_dir_all(root).ok();
+}
