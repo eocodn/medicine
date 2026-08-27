@@ -18,6 +18,5 @@ medicine-canonical = "medicine_canonical.cli:main"
 include = ["medicine_app*", "medicine_canonical*", "medicine_reference*"]
 
 [tool.setuptools.package-data]
-medicine_app = ["static/*.html", "static/*.css", "static/*.js"]
 medicine_canonical = ["data/*.tsv"]
 medicine_reference = ["data/*.tsv"]

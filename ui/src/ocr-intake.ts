@@ -51,7 +51,7 @@
       parserIssue(issues, rowIndex, "draft", rawDraft == null ? "missing" : "not_object");
       return {};
     }
-    const draft = {};
+    const draft: Record<string, any> = {};
     for (const [key, item] of Object.entries(rawDraft)) {
       if (key === "schedule_times") {
         if (item == null) continue;

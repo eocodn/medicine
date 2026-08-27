@@ -16,7 +16,7 @@
     return error;
   }
 
-  function request(path, options = {}) {
+  function request(path, options: any = {}) {
     if (!window.MedicineNative || typeof window.MedicineNative.requestAsync !== "function") return undefined;
     const method = String(options.method || "GET").toUpperCase();
     const requestId = `native-${++nextRequestId}`;

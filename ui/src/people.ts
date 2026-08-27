@@ -250,12 +250,13 @@ function bindPeopleEvents() {
   form.elements.birth_day.addEventListener("change", syncBirthDateFields);
   form.elements.sex.addEventListener("change", syncReproductiveFields);
   document.addEventListener("medicine:sheet-closed", (event) => {
-    if (event.detail?.id === "person-sheet") {
+    const detail = (event as CustomEvent).detail;
+    if (detail?.id === "person-sheet") {
       state.editingPersonId = null;
       form.reset();
       setBirthDateFields(null);
       syncReproductiveFields();
     }
-    if (event.detail?.id === "delete-person-sheet") state.pendingDeletePersonId = null;
+    if (detail?.id === "delete-person-sheet") state.pendingDeletePersonId = null;
   });
 }

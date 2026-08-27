@@ -21,7 +21,7 @@ function qualifierHtml(qualifiers) {
   }).join("");
 }
 
-function durDetailText(item, finding = {}) {
+function durDetailText(item, finding: any = {}) {
   const title = String(finding.title || item.summary || "").trim();
   const raw = String(finding.details ?? item.details ?? "").trim();
   if (raw && raw !== "-" && raw.replace(/\s+/g, "") !== title.replace(/\s+/g, "")) return raw;

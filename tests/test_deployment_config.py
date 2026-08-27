@@ -385,8 +385,21 @@ class DeploymentConfigTest(unittest.TestCase):
         )
         self.assertIn("medicine-agentctl", ui_dockerfile)
         self.assertIn("medicine-core-web", ui_dockerfile)
-        self.assertIn("COPY medicine_app/static /opt/medicine-static", ui_dockerfile)
+        self.assertIn("COPY ui/dist /opt/medicine-static", ui_dockerfile)
         self.assertNotIn("python", ui_dockerfile.lower())
+
+    def test_shared_ui_is_typescript_authoritative_and_consumes_one_dist(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        web_dockerfile = Path("Dockerfile.web").read_text()
+        ui_dockerfile = Path("Dockerfile.ui").read_text()
+
+        self.assertTrue(Path("ui/package.json").is_file())
+        self.assertTrue(Path("ui/tsconfig.json").is_file())
+        self.assertTrue(Path("ui/src/app.ts").is_file())
+        self.assertTrue(Path("ui/src/ocr-intake.ts").is_file())
+        self.assertIn('rootProject.file("../ui/dist").absolutePath', gradle)
+        self.assertIn("COPY ui/dist /opt/medicine-static", web_dockerfile)
+        self.assertIn("COPY ui/dist /opt/medicine-static", ui_dockerfile)
 
     def test_android_bootstrap_contract_matches_embedded_runtime_contract(self) -> None:
         kotlin = Path(
@@ -569,7 +582,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("--ocr-assets-dir", web_binary)
         self.assertIn("MEDICINE_REFERENCE_TRUST_MANIFEST=/opt/medicine-reference-trust.json", dockerfile)
         self.assertIn("COPY deploy/reference-signing-trusted-keys.json /opt/medicine-reference-trust.json", dockerfile)
-        self.assertIn("COPY medicine_app/static /opt/medicine-static", dockerfile)
+        self.assertIn("COPY ui/dist /opt/medicine-static", dockerfile)
         self.assertIn("COPY --from=rust-web", dockerfile)
         self.assertIn('ENTRYPOINT ["/usr/local/bin/medicine-core-web"]', dockerfile)
         self.assertNotIn("python", dockerfile.lower())

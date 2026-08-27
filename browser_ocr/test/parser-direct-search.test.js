@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, "../..");
 const source = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
 
 test("parser rows keep structured draft and uncertainty without a review form", () => {
-  const { normalizeParserRows } = require("../../medicine_app/static/ocr-intake.js");
+  const { normalizeParserRows } = require("../../ui/dist/ocr-intake.js");
   assert.deepEqual(normalizeParserRows([{
     row_id: "row-1",
     product_query: " 타이레놀정 ",
@@ -36,7 +36,7 @@ test("parser rows keep structured draft and uncertainty without a review form", 
 });
 
 test("invalid parser fields are dropped and reported without aborting the row", () => {
-  const { normalizeParserRows } = require("../../medicine_app/static/ocr-intake.js");
+  const { normalizeParserRows } = require("../../ui/dist/ocr-intake.js");
   const warnings = [];
   const originalWarn = console.warn;
   console.warn = (...args) => warnings.push(args);
@@ -78,11 +78,11 @@ test("invalid parser fields are dropped and reported without aborting the row", 
 });
 
 test("parser result bypasses review and enters the generic product-search flow", () => {
-  const intake = source("medicine_app/static/ocr-intake.js");
-  const app = source("medicine_app/static/app.js");
-  const index = source("medicine_app/static/index.html");
-  const state = source("medicine_app/static/app-state.js");
-  const prescription = source("medicine_app/static/prescription.js");
+  const intake = source("ui/dist/ocr-intake.js");
+  const app = source("ui/dist/app.js");
+  const index = source("ui/dist/index.html");
+  const state = source("ui/dist/app-state.js");
+  const prescription = source("ui/dist/prescription.js");
 
   assert.match(intake, /medicine:parser-result/);
   assert.match(app, /medicine:parser-result/);

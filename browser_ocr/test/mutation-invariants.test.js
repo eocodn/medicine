@@ -10,7 +10,7 @@ function policyContext() {
   const context = {};
   vm.createContext(context);
   vm.runInContext(
-    fs.readFileSync(path.join(__dirname, "../../medicine_app/static/mutation-invariants.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "../../ui/dist/mutation-invariants.js"), "utf8"),
     context,
   );
   return context;

@@ -1,31 +1,31 @@
-let previousSheetFocus = null;
+let previousSheetFocus: HTMLElement | null = null;
 
 function activeSheet() {
-  return [...document.querySelectorAll(".bottom-sheet")].find((node) => !node.classList.contains("hidden")) || null;
+  return [...document.querySelectorAll<HTMLElement>(".bottom-sheet")].find((node) => !node.classList.contains("hidden")) || null;
 }
 
-function sheetFocusable(sheet) {
-  return [...sheet.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+function sheetFocusable(sheet: HTMLElement) {
+  return [...sheet.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
     .filter((node) => !node.classList.contains("hidden"));
 }
 
 function focusSheetContent(sheet = activeSheet()) {
   if (!sheet) return false;
-  const target = sheet.querySelector("[data-sheet-focus]") || sheetFocusable(sheet)[0] || sheet;
+  const target = sheet.querySelector<HTMLElement>("[data-sheet-focus]") || sheetFocusable(sheet)[0] || sheet;
   if (target === sheet) target.tabIndex = -1;
   target.focus({ preventScroll: true });
   return true;
 }
 
 function focusPageTitle() {
-  const title = document.querySelector("#page-title");
+  const title = document.querySelector<HTMLElement>("#page-title");
   if (!title?.focus) return false;
   title.tabIndex = -1;
   title.focus({ preventScroll: true });
   return true;
 }
 
-function trapSheetFocus(event) {
+function trapSheetFocus(event: KeyboardEvent) {
   const sheet = activeSheet();
   if (!sheet) return;
   if (event.key === "Escape") {
@@ -42,7 +42,7 @@ function trapSheetFocus(event) {
   }
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
-  if (!focusable.includes(document.activeElement)) {
+  if (!focusable.includes(document.activeElement as HTMLElement)) {
     event.preventDefault();
     (event.shiftKey ? last : first).focus();
   } else if (event.shiftKey && document.activeElement === first) {
@@ -55,12 +55,12 @@ function trapSheetFocus(event) {
 }
 
 function openSheet(selector) {
-  previousSheetFocus = document.activeElement;
+  previousSheetFocus = document.activeElement as HTMLElement | null;
   document.querySelector("#sheet-backdrop").classList.remove("hidden");
   document.querySelectorAll(".bottom-sheet").forEach((node) => node.classList.add("hidden"));
-  const sheet = document.querySelector(selector);
+  const sheet = document.querySelector<HTMLElement>(selector)!;
   sheet.classList.remove("hidden");
-  document.querySelector(".app-shell").inert = true;
+  document.querySelector<HTMLElement>(".app-shell")!.inert = true;
   document.addEventListener("keydown", trapSheetFocus);
   setTimeout(() => focusSheetContent(sheet), 0);
 }
@@ -74,12 +74,12 @@ function restorePreviousSheetFocus() {
   return focusPageTitle();
 }
 
-function closeSheets(options = {}) {
+function closeSheets(options: { restoreFocus?: boolean } = {}) {
   const closingSheet = activeSheet();
   const restoreFocus = options?.restoreFocus !== false;
   document.querySelector("#sheet-backdrop").classList.add("hidden");
   document.querySelectorAll(".bottom-sheet").forEach((node) => node.classList.add("hidden"));
-  document.querySelector(".app-shell").inert = false;
+  document.querySelector<HTMLElement>(".app-shell")!.inert = false;
   document.removeEventListener("keydown", trapSheetFocus);
   if (restoreFocus && closingSheet) restorePreviousSheetFocus();
   previousSheetFocus = null;

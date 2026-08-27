@@ -26,7 +26,7 @@ function formatDoseText(value) {
   return `${match[1]}${fraction ? `.${fraction}` : ""}${match[3]}`;
 }
 
-async function api(path, options = {}) {
+async function api(path, options: any = {}) {
   const local = window.MedicineLocalApi?.request(path, options);
   if (local !== undefined) return local;
   const { coalesceKey: _coalesceKey, ...fetchOptions } = options;
@@ -547,10 +547,12 @@ function bindEvents() {
     selectProductResult(card);
   });
   document.addEventListener("medicine:sheet-closed", (event) => {
-    if (event.detail?.id === "stop-medication-sheet") state.pendingStopMedicationId = null;
+    const detail = (event as CustomEvent).detail;
+    if (detail?.id === "stop-medication-sheet") state.pendingStopMedicationId = null;
   });
   window.addEventListener("medicine:parser-result", (event) => {
-    const rows = Array.isArray(event.detail?.rows) ? event.detail.rows : [];
+    const detail = (event as CustomEvent).detail;
+    const rows = Array.isArray(detail?.rows) ? detail.rows : [];
     if (!rows.length) return;
     resetParserTransientState({ clearSearch: true });
     state.pendingParserRows = rows.map((row) => ({

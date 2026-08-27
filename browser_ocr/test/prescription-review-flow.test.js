@@ -19,7 +19,7 @@ function prescriptionContext(preview) {
   vm.createContext(context);
   for (const relative of ["prescription-dur.js", "prescription.js"]) {
     const source = fs.readFileSync(
-      path.join(__dirname, `../../medicine_app/static/${relative}`), "utf8",
+      path.join(__dirname, `../../ui/dist/${relative}`), "utf8",
     );
     vm.runInContext(source, context);
   }
@@ -151,7 +151,7 @@ test("informational reviewed MFDS remark is labeled as source note", () => {
 
 test("conditional DUR review uses the regular DUR warning styling contract", () => {
   const css = fs.readFileSync(
-    path.join(__dirname, "../../medicine_app/static/styles.css"), "utf8",
+    path.join(__dirname, "../../ui/dist/styles.css"), "utf8",
   );
 
   assert.match(css, /--conditional:/);
@@ -318,7 +318,7 @@ test("split prohibition uses warning styling, guidance, and renders after DUR wa
   assert.ok(html.indexOf("노인주의 대상") < html.indexOf("분할불가"));
 
   const css = fs.readFileSync(
-    path.join(__dirname, "../../medicine_app/static/styles.css"), "utf8",
+    path.join(__dirname, "../../ui/dist/styles.css"), "utf8",
   );
   assert.match(css, /\.dur-check\.hit\.split-caution\s*\{[^}]*background:\s*var\(--warning-soft\)/);
 });

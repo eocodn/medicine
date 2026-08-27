@@ -26,15 +26,15 @@ function prescriptionContext(storage = new Map()) {
   };
   vm.createContext(context);
   vm.runInContext(
-    fs.readFileSync(path.join(__dirname, "../../medicine_app/static/app-state.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "../../ui/dist/app-state.js"), "utf8"),
     context,
   );
   vm.runInContext(
-    fs.readFileSync(path.join(__dirname, "../../medicine_app/static/mutation-invariants.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "../../ui/dist/mutation-invariants.js"), "utf8"),
     context,
   );
   vm.runInContext(
-    fs.readFileSync(path.join(__dirname, "../../medicine_app/static/dose-actions.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "../../ui/dist/dose-actions.js"), "utf8"),
     context,
   );
   return context;

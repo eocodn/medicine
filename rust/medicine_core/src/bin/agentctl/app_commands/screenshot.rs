@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const DEFAULT_OUTPUT: &str = "data/debug/mobile.png";
-const DEFAULT_STATIC_DIR: &str = "medicine_app/static";
+const DEFAULT_STATIC_DIR: &str = "ui/dist";
 
 pub(super) fn capture(
     config: &AppConfig,

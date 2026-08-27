@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 const DEFAULT_PERSONAL_DB: &str = "data/db/personal.sqlite";
 const DEFAULT_REFERENCE_DIR: &str = "data/reference";
 const DEFAULT_REFERENCE_TRUST_MANIFEST: &str = "deploy/reference-signing-trusted-keys.json";
-const DEFAULT_STATIC_DIR: &str = "medicine_app/static";
+const DEFAULT_STATIC_DIR: &str = "ui/dist";
 const REFERENCE_CONTRACT_MAJOR: i32 = 1;
 
 #[tokio::main]

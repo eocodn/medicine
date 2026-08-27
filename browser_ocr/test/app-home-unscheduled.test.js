@@ -52,19 +52,19 @@ function appContext(storage = new Map()) {
   };
   vm.createContext(context);
   const stateSource = fs.readFileSync(
-    path.join(__dirname, "../../medicine_app/static/app-state.js"), "utf8",
+    path.join(__dirname, "../../ui/dist/app-state.js"), "utf8",
   );
   const source = fs.readFileSync(
-    path.join(__dirname, "../../medicine_app/static/app.js"), "utf8",
+    path.join(__dirname, "../../ui/dist/app.js"), "utf8",
   );
   vm.runInContext(stateSource, context);
   vm.runInContext(source, context);
   vm.runInContext(
-    fs.readFileSync(path.join(__dirname, "../../medicine_app/static/mutation-invariants.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "../../ui/dist/mutation-invariants.js"), "utf8"),
     context,
   );
   vm.runInContext(
-    fs.readFileSync(path.join(__dirname, "../../medicine_app/static/dose-actions.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "../../ui/dist/dose-actions.js"), "utf8"),
     context,
   );
   return { context, home, medications, history };

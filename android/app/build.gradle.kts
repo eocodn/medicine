@@ -343,7 +343,7 @@ androidComponents {
         val assets = checkNotNull(variant.sources.assets) {
             "Android assets source API is unavailable for ${variant.name}"
         }
-        assets.addStaticSourceDirectory(rootProject.file("../medicine_app/static").absolutePath)
+        assets.addStaticSourceDirectory(rootProject.file("../ui/dist").absolutePath)
         prepareOcrAssets?.let { task ->
             assets.addGeneratedSourceDirectory(task, PrepareOcrAssets::outputDirectory)
         }

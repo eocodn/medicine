@@ -143,7 +143,7 @@ test("Android product packaging exposes only generated on-device OCR assets", ()
 });
 
 test("OCR import UI requires an explicitly available runtime manifest", () => {
-  const intake = fs.readFileSync(path.join(ROOT, "medicine_app/static/ocr-intake.js"), "utf8");
+  const intake = fs.readFileSync(path.join(ROOT, "ui/dist/ocr-intake.js"), "utf8");
   assert.match(intake, /\/ocr-assets\/runtime-manifest\.json/);
   assert.match(intake, /runtimeAvailable/);
   assert.match(intake, /setImportDisabled\(true\)/);

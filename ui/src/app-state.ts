@@ -34,13 +34,18 @@ const state = {
 
 const DOSE_INTENTS_STORAGE_KEY = "medicine.doseIntents";
 
-function persistedDoseIntents() {
+type PersistedDoseIntent = {
+  personId: string;
+  desiredStatus: string;
+};
+
+function persistedDoseIntents(): Record<string, PersistedDoseIntent> {
   const raw = localStorage.getItem(DOSE_INTENTS_STORAGE_KEY);
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid dose intents");
-    return parsed;
+    return parsed as Record<string, PersistedDoseIntent>;
   } catch (_) {
     localStorage.removeItem(DOSE_INTENTS_STORAGE_KEY);
     return {};

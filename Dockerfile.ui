@@ -15,7 +15,7 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends chromium fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
-COPY medicine_app/static /opt/medicine-static
+COPY ui/dist /opt/medicine-static
 RUN chmod -R a+rX /opt/medicine-static
 COPY --from=rust-tools /build/target/release/medicine-agentctl /usr/local/bin/medicine-agentctl
 COPY --from=rust-tools /build/target/release/medicine-core-web /usr/local/bin/medicine-core-web

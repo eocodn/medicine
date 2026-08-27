@@ -14,7 +14,7 @@ ENV HOME=/tmp \
 
 WORKDIR /app
 
-COPY medicine_app/static /opt/medicine-static
+COPY ui/dist /opt/medicine-static
 COPY deploy/reference-signing-trusted-keys.json /opt/medicine-reference-trust.json
 RUN chmod -R a+rX /opt/medicine-static /opt/medicine-reference-trust.json
 COPY --from=rust-web /build/target/release/medicine-core-web /usr/local/bin/medicine-core-web
