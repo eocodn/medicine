@@ -16,14 +16,18 @@ from .source_policy import CANONICAL_SOURCE_POLICY
 CANONICAL_BUILD_JOB_VERSION = 1
 
 
-def canonical_build_input_fingerprint(source_layout: MfdsSourceLayout) -> str:
+def canonical_source_input_files(source_layout: MfdsSourceLayout) -> dict[str, Path]:
     files: dict[str, Path] = {}
     for source in MFDS_SOURCE_MANIFEST:
         snapshot = source_layout.path_for(source)
         files[f"{source.dataset_key}:snapshot"] = snapshot
         files[f"{source.dataset_key}:metadata"] = snapshot_metadata_path(snapshot)
+    return files
+
+
+def canonical_build_input_fingerprint(source_layout: MfdsSourceLayout) -> str:
     return fingerprint_inputs(
-        files,
+        canonical_source_input_files(source_layout),
         context={
             "job_version": CANONICAL_BUILD_JOB_VERSION,
             "schema_version": SCHEMA_VERSION,
@@ -57,5 +61,6 @@ __all__ = [
     "CANONICAL_BUILD_JOB_VERSION",
     "canonical_build_input_fingerprint",
     "canonical_build_stage",
+    "canonical_source_input_files",
     "checkpoint_result",
 ]

@@ -15,23 +15,29 @@ from .substance_typo_corpus import APPROVED_TYPO_CORPUS_PATH
 SUBSTANCE_BUILD_JOB_VERSION = 1
 
 
+def substance_external_input_files(raw_dir: str | Path) -> dict[str, Path]:
+    root = Path(raw_dir)
+    openfda = root / OPENFDA_UNII_FILENAME
+    gsrs = root / FDA_GSRS_UNII_NAMES_FILENAME
+    return {
+        "openfda_unii": openfda,
+        "openfda_unii_metadata": snapshot_metadata_path(openfda),
+        "fda_gsrs_names": gsrs,
+        "fda_gsrs_names_metadata": snapshot_metadata_path(gsrs),
+        "approved_typo_corpus": APPROVED_TYPO_CORPUS_PATH,
+        "approved_nomenclature_corpus": APPROVED_NOMENCLATURE_CORPUS_PATH,
+        "approved_form_relation_corpus": APPROVED_FORM_RELATION_CORPUS_PATH,
+    }
+
+
 def substance_build_input_fingerprint(
     canonical_db: str | Path,
     raw_dir: str | Path,
 ) -> str:
-    root = Path(raw_dir)
-    openfda = root / OPENFDA_UNII_FILENAME
-    gsrs = root / FDA_GSRS_UNII_NAMES_FILENAME
     return fingerprint_inputs(
         {
             "canonical_db": Path(canonical_db),
-            "openfda_unii": openfda,
-            "openfda_unii_metadata": snapshot_metadata_path(openfda),
-            "fda_gsrs_names": gsrs,
-            "fda_gsrs_names_metadata": snapshot_metadata_path(gsrs),
-            "approved_typo_corpus": APPROVED_TYPO_CORPUS_PATH,
-            "approved_nomenclature_corpus": APPROVED_NOMENCLATURE_CORPUS_PATH,
-            "approved_form_relation_corpus": APPROVED_FORM_RELATION_CORPUS_PATH,
+            **substance_external_input_files(raw_dir),
         },
         context={
             "job_version": SUBSTANCE_BUILD_JOB_VERSION,
@@ -41,4 +47,8 @@ def substance_build_input_fingerprint(
     )
 
 
-__all__ = ["SUBSTANCE_BUILD_JOB_VERSION", "substance_build_input_fingerprint"]
+__all__ = [
+    "SUBSTANCE_BUILD_JOB_VERSION",
+    "substance_build_input_fingerprint",
+    "substance_external_input_files",
+]

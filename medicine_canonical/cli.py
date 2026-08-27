@@ -340,6 +340,7 @@ def main(argv=None) -> int:
             args.substance_db,
             _mfds_source_layout(args),
             args.substance_raw_dir,
+            progress=_canonical_progress,
         )
     elif args.command == "integrated-rebuild":
         payload = build_integrated_databases(
@@ -353,6 +354,7 @@ def main(argv=None) -> int:
             ingredient_page_size=args.ingredient_page_size,
             api_workers=args.workers,
             progress=not args.quiet,
+            job_progress=None if args.quiet else _canonical_progress,
         )
     elif args.command == "stats":
         payload = canonical_stats(args.db)
