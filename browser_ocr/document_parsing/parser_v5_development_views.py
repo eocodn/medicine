@@ -78,6 +78,26 @@ DEVELOPMENT_VIEWS = (
             reading_order_shuffle_rate=0.04,
         ),
     ),
+    ParserV5DevelopmentView(
+        "unseen_product_names",
+        ParserWorldProfile(
+            medication_count=(1, 5),
+            distractor_section_count=(1, 5),
+            product_vocabulary="unseen",
+            wording_vocabulary="train",
+        ),
+        ObservationProfile(),
+    ),
+    ParserV5DevelopmentView(
+        "unseen_wording",
+        ParserWorldProfile(
+            medication_count=(1, 5),
+            distractor_section_count=(2, 6),
+            product_vocabulary="train",
+            wording_vocabulary="unseen",
+        ),
+        ObservationProfile(),
+    ),
 )
 
 

@@ -25,6 +25,8 @@ class ParserV5DevelopmentViewsTest(unittest.TestCase):
                 "geometry_scramble",
                 "ocr_corruption",
                 "merged_regions",
+                "unseen_product_names",
+                "unseen_wording",
             },
         )
 
@@ -38,6 +40,17 @@ class ParserV5DevelopmentViewsTest(unittest.TestCase):
             self.assertTrue(all(not sample["truth"]["medications"] for sample in zero.samples))
             many = datasets["many_medication"]
             self.assertTrue(all(len(sample["truth"]["medications"]) >= 5 for sample in many.samples))
+            baseline_products = {
+                medication["product_name"]
+                for sample in datasets["baseline"].samples
+                for medication in sample["truth"]["medications"]
+            }
+            unseen_products = {
+                medication["product_name"]
+                for sample in datasets["unseen_product_names"].samples
+                for medication in sample["truth"]["medications"]
+            }
+            self.assertTrue(baseline_products.isdisjoint(unseen_products))
 
 
 if __name__ == "__main__":

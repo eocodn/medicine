@@ -9,6 +9,41 @@ from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile, gen
 
 
 class ParserV5WorldTest(unittest.TestCase):
+    def test_vocabulary_partitions_are_disjoint_for_product_names_and_wording(self) -> None:
+        train = generate_parser_world(
+            seed=731,
+            document_index=1,
+            profile=ParserWorldProfile(
+                medication_count=(5, 5),
+                distractor_section_count=(0, 0),
+                product_vocabulary="train",
+                wording_vocabulary="train",
+            ),
+        )
+        unseen = generate_parser_world(
+            seed=731,
+            document_index=1,
+            profile=ParserWorldProfile(
+                medication_count=(5, 5),
+                distractor_section_count=(0, 0),
+                product_vocabulary="unseen",
+                wording_vocabulary="unseen",
+            ),
+        )
+
+        train_products = {item["product_name"] for item in train["medications"]}
+        unseen_products = {item["product_name"] for item in unseen["medications"]}
+        self.assertTrue(train_products)
+        self.assertTrue(unseen_products)
+        self.assertTrue(train_products.isdisjoint(unseen_products))
+        train_non_product = {
+            span["text"] for span in train["spans"] if span["semantic_role"] != "product"
+        }
+        unseen_non_product = {
+            span["text"] for span in unseen["spans"] if span["semantic_role"] != "product"
+        }
+        self.assertTrue(train_non_product.isdisjoint(unseen_non_product))
+
     def test_world_generation_is_deterministic_and_has_no_layout_identity_shortcut(self) -> None:
         profile = ParserWorldProfile(
             medication_count=(2, 2),

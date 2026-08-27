@@ -19,31 +19,49 @@ _DISTRACTOR_KINDS = (
     "legal",
     "general_context",
 )
-_PRODUCT_NAMES = (
-    "가나정",
-    "다라캡슐",
-    "마바정",
-    "사아시럽",
-    "자차정",
-    "카타캡슐",
-    "파하정",
-    "노루정",
-)
-_DOSES = ("1정", "0.5정", "2정", "1캡슐", "5mL")
-_FREQUENCIES = ("1일 1회", "1일 2회", "1일 3회", "하루 2번")
-_DURATIONS = ("3일분", "5일분", "7일분", "14일분")
-_INSTRUCTIONS = ("식후 복용", "식전 복용", "필요시 복용", "충분한 물과 함께 복용")
-_SCHEDULES = ("아침", "아침 저녁", "아침 점심 저녁", "취침 전")
+_PRODUCT_NAMES = {
+    "train": ("가나정", "다라캡슐", "마바정", "사아시럽"),
+    "unseen": ("자차정", "카타캡슐", "파하정", "노루정"),
+}
+_WORDING = {
+    "train": {
+        "dose": ("1정", "0.5정", "1캡슐", "5mL"),
+        "frequency": ("1일 1회", "1일 2회", "하루 2번"),
+        "duration": ("3일분", "5일분", "7일분"),
+        "instruction": ("식후 복용", "식전 복용", "필요시 복용"),
+        "schedule": ("아침", "아침 저녁", "취침 전"),
+    },
+    "unseen": {
+        "dose": ("2알", "반 정", "10밀리리터", "2캡슐"),
+        "frequency": ("매일 세 번", "하루 네 차례", "격일 1회"),
+        "duration": ("열흘 동안", "2주 복용", "한 달분"),
+        "instruction": ("식사 직후 드세요", "공복에 복용", "증상 있을 때만 드세요"),
+        "schedule": ("기상 직후", "점심과 저녁", "잠들기 직전"),
+    },
+}
 _DISTRACTOR_TEXT = {
-    "patient": ("환자번호 1042", "접수일 2026-08-27"),
-    "clinic": ("늘봄의원", "대표전화 02-123-4567"),
-    "receipt": ("조제료 5,200원", "본인부담금 3,400원"),
-    "billing": ("승인번호 381204", "합계 12,600원"),
-    "header": ("약제 안내문", "복약 안내"),
-    "warning": ("1일 3회 이상 복용하지 마세요", "어린이 손이 닿지 않는 곳에 보관"),
-    "storage": ("실온 1~30도 보관", "직사광선을 피해서 보관"),
-    "legal": ("본 문서는 복약안내를 위한 자료입니다", "처방 변경은 의료진과 상의하세요"),
-    "general_context": ("다음 방문일 2026-09-03", "문의 1588-0000"),
+    "train": {
+        "patient": ("환자번호 1042", "접수일 2026-08-27"),
+        "clinic": ("늘봄의원", "대표전화 02-123-4567"),
+        "receipt": ("조제료 5,200원", "본인부담금 3,400원"),
+        "billing": ("승인번호 381204", "합계 12,600원"),
+        "header": ("약제 안내문", "복약 안내"),
+        "warning": ("1일 3회 이상 복용하지 마세요", "어린이 손이 닿지 않는 곳에 보관"),
+        "storage": ("실온 1~30도 보관", "직사광선을 피해서 보관"),
+        "legal": ("본 문서는 복약안내를 위한 자료입니다", "처방 변경은 의료진과 상의하세요"),
+        "general_context": ("다음 방문일 2026-09-03", "문의 1588-0000"),
+    },
+    "unseen": {
+        "patient": ("고객코드 7781", "내원일자 2026-09-11"),
+        "clinic": ("새봄가정의학과", "상담전화 031-987-6543"),
+        "receipt": ("약제비 8,700원", "수납금액 6,100원"),
+        "billing": ("결제코드 729105", "총액 18,900원"),
+        "header": ("복용 방법 안내", "약 복용 설명서"),
+        "warning": ("정해진 양보다 많이 드시지 마세요", "유아의 손이 닿지 않게 두세요"),
+        "storage": ("서늘하고 건조한 곳에 두세요", "빛을 피해 밀봉 보관하세요"),
+        "legal": ("복용 변경 전 전문가에게 문의하세요", "이 안내는 처방을 대신하지 않습니다"),
+        "general_context": ("재방문 예정 2026-09-18", "상담 1661-1111"),
+    },
 }
 
 
@@ -55,6 +73,8 @@ class ParserWorldProfile:
     height: int = 1800
     counterfactual_context_rate: float = 0.0
     geometry_scramble_rate: float = 0.0
+    product_vocabulary: str = "train"
+    wording_vocabulary: str = "train"
 
     def __post_init__(self) -> None:
         _validate_range(self.medication_count, "medication_count")
@@ -65,6 +85,10 @@ class ParserWorldProfile:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= float(value) <= 1.0:
                 raise ValueError(f"parser world {name} must be in [0, 1]")
+        if self.product_vocabulary not in _PRODUCT_NAMES:
+            raise ValueError("parser world product_vocabulary is unsupported")
+        if self.wording_vocabulary not in _WORDING:
+            raise ValueError("parser world wording_vocabulary is unsupported")
 
 
 def _validate_range(value: tuple[int, int], label: str) -> None:
@@ -113,6 +137,8 @@ def _build_medication_spans(
     y1: float,
     y2: float,
     page_width: int,
+    product_vocabulary: str,
+    wording_vocabulary: str,
 ) -> list[dict[str, Any]]:
     if not medication_ids:
         return []
@@ -125,13 +151,14 @@ def _build_medication_spans(
     spans: list[dict[str, Any]] = []
     for row_index, medication_id in enumerate(medication_ids):
         y = y1 + 10.0 + row_index * row_height + rng.uniform(-3.0, 3.0)
+        wording = _WORDING[wording_vocabulary]
         values = (
-            rng.choice(_PRODUCT_NAMES),
-            rng.choice(_DOSES),
-            rng.choice(_FREQUENCIES),
-            rng.choice(_DURATIONS),
-            rng.choice(_INSTRUCTIONS),
-            rng.choice(_SCHEDULES),
+            rng.choice(_PRODUCT_NAMES[product_vocabulary]),
+            rng.choice(wording["dose"]),
+            rng.choice(wording["frequency"]),
+            rng.choice(wording["duration"]),
+            rng.choice(wording["instruction"]),
+            rng.choice(wording["schedule"]),
         )
         for role, value, column, width_fraction in zip(roles, values, columns, widths):
             spans.append(
@@ -157,8 +184,9 @@ def _build_distractor_spans(
     y1: float,
     y2: float,
     page_width: int,
+    wording_vocabulary: str,
 ) -> list[dict[str, Any]]:
-    texts = list(_DISTRACTOR_TEXT[kind])
+    texts = list(_DISTRACTOR_TEXT[wording_vocabulary][kind])
     rng.shuffle(texts)
     count = 1 if y2 - y1 < 90 else rng.randint(1, len(texts))
     role = "header" if kind == "header" else "context"
@@ -282,6 +310,8 @@ def generate_parser_world(
                     y1=y1,
                     y2=y2,
                     page_width=selected.width,
+                    product_vocabulary=selected.product_vocabulary,
+                    wording_vocabulary=selected.wording_vocabulary,
                 )
             )
         else:
@@ -293,6 +323,7 @@ def generate_parser_world(
                     y1=y1,
                     y2=y2,
                     page_width=selected.width,
+                    wording_vocabulary=selected.wording_vocabulary,
                 )
             )
 
