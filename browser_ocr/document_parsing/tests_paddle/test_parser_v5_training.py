@@ -63,6 +63,10 @@ class ParserV5TrainingTest(unittest.TestCase):
             self.assertIn("assignment_accuracy", first["best_validation"])
             self.assertIn("candidate_accuracy", first["best_validation"])
             self.assertIn("worst_view_score", first["best_validation"])
+            self.assertIn("decoded_product_recall", first["best_validation"])
+            self.assertIn("decoded_field_exact_rate", first["best_validation"])
+            self.assertIn("cross_medication_associations", first["best_validation"])
+            self.assertIn("zero_medication_false_rows", first["best_validation"])
             self.assertEqual(set(first["best_validation"]["views"]), {"v5-val"})
 
     def test_training_resumes_from_last_complete_epoch_after_failure(self) -> None:

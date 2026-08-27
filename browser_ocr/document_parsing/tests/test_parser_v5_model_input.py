@@ -6,6 +6,7 @@ from browser_ocr.document_parsing.parser_v5_model_input import (
     BYTE_EOS,
     BYTE_PAD,
     PARSER_V5_ROLE_LABELS,
+    build_parser_v5_runtime_input,
     build_parser_v5_model_input,
     encode_text_bytes,
 )
@@ -105,6 +106,44 @@ class ParserV5ModelInputTest(unittest.TestCase):
         self.assertEqual(model_input.relation_features[0][0][-1], 1.0)
         self.assertAlmostEqual(model_input.relation_features[0][1][0], -model_input.relation_features[1][0][0])
         self.assertAlmostEqual(model_input.relation_features[0][1][1], -model_input.relation_features[1][0][1])
+
+    def test_runtime_input_requires_no_semantic_truth_or_target_provenance(self) -> None:
+        truth = self._world()
+        observation = simulate_observations(
+            truth,
+            seed=17,
+            profile=ObservationProfile(
+                text_corruption_rate=0,
+                drop_rate=0,
+                duplicate_rate=0,
+                split_rate=0,
+                merge_rate=0,
+                geometry_jitter=0,
+                false_positive_count=(0, 0),
+                reading_order_shuffle_rate=0,
+            ),
+        )
+        runtime_nodes = [
+            {
+                "node_id": node["node_id"],
+                "text": node["text"],
+                "detector_confidence": node["detector_confidence"],
+                "recognizer_confidence": node["recognizer_confidence"],
+                "polygon": node["polygon"],
+            }
+            for node in observation["nodes"]
+        ]
+        model_input = build_parser_v5_runtime_input(
+            document_id="runtime-doc",
+            width=truth["width"],
+            height=truth["height"],
+            nodes=runtime_nodes,
+            max_text_bytes=48,
+        )
+
+        self.assertEqual(model_input.document_id, "runtime-doc")
+        self.assertEqual(len(model_input.node_ids), len(runtime_nodes))
+        self.assertTrue(all(all(value == 0.0 for value in row) for row in model_input.role_mask))
 
 
 if __name__ == "__main__":

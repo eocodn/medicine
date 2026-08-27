@@ -86,31 +86,57 @@ class ParserV5SemanticAssignmentHead(nn.Layer):
         targets: ParserV5HeadTargets,
     ) -> tuple[paddle.Tensor, paddle.Tensor]:
         candidate_logits = self.candidate_head(hidden).reshape([-1])
-        field_count = targets.field_node_index.shape[0]
-        product_count = targets.product_membership.shape[0]
-        if field_count == 0:
-            return candidate_logits, paddle.zeros([0, product_count + 1], dtype=hidden.dtype)
+        assignment_logits = self.score_assignments(
+            hidden,
+            relation_features,
+            product_membership=targets.product_membership,
+            product_available=targets.product_available,
+            field_node_index=targets.field_node_index,
+            field_role_index=targets.field_role_index,
+        )
+        return candidate_logits, assignment_logits
 
-        field_hidden = paddle.gather(hidden, targets.field_node_index, axis=0)
-        role_hidden = self.role_embedding(targets.field_role_index)
+    def score_assignments(
+        self,
+        hidden: paddle.Tensor,
+        relation_features: paddle.Tensor,
+        *,
+        product_membership: paddle.Tensor,
+        product_available: paddle.Tensor,
+        field_node_index: paddle.Tensor,
+        field_role_index: paddle.Tensor,
+    ) -> paddle.Tensor:
+        """Score field-role instances against product slots plus NONE.
+
+        The scoring path consumes only contextual node states, geometry and
+        caller-provided candidate instances. Training targets are deliberately
+        absent so the same head is usable during truth-free inference.
+        """
+        field_count = field_node_index.shape[0]
+        product_count = product_membership.shape[0]
+        if field_count == 0:
+            return paddle.zeros([0, product_count + 1], dtype=hidden.dtype)
+
+        field_hidden = paddle.gather(hidden, field_node_index, axis=0)
+        role_hidden = self.role_embedding(field_role_index)
         none_logits = self.none_output(F.gelu(self.none_hidden(paddle.concat([field_hidden, role_hidden], axis=1))))
         if product_count == 0:
-            return candidate_logits, none_logits
+            return none_logits
 
-        slot_hidden = paddle.matmul(targets.product_membership, hidden)
-        selected_relations = paddle.gather(relation_features, targets.field_node_index, axis=0)
+        slot_hidden = paddle.matmul(product_membership, hidden)
+        selected_relations = paddle.gather(relation_features, field_node_index, axis=0)
         pooled_relations = paddle.matmul(
             selected_relations.transpose([0, 2, 1]),
-            targets.product_membership.transpose([1, 0]),
+            product_membership.transpose([1, 0]),
         ).transpose([0, 2, 1])
         field_expanded = field_hidden.unsqueeze(1).expand([-1, product_count, -1])
         slot_expanded = slot_hidden.unsqueeze(0).expand([field_count, -1, -1])
         role_expanded = role_hidden.unsqueeze(1).expand([-1, product_count, -1])
         pair_input = paddle.concat([field_expanded, slot_expanded, role_expanded, pooled_relations], axis=2)
         product_logits = self.assignment_output(F.gelu(self.assignment_hidden(pair_input))).reshape([field_count, product_count])
-        unavailable = (~targets.product_available).astype(product_logits.dtype).reshape([1, product_count])
+        unavailable = (~product_available).astype(product_logits.dtype).reshape([1, product_count])
         product_logits = product_logits - unavailable * 1e4
-        return candidate_logits, paddle.concat([product_logits, none_logits], axis=1)
+        return paddle.concat([product_logits, none_logits], axis=1)
 
 
 def parser_v5_head_loss(

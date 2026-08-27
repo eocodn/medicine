@@ -14,7 +14,9 @@ from browser_ocr.document_parsing.parser_v5_heads_paddle import (
     parser_v5_head_loss,
     parser_v5_head_targets,
 )
-from browser_ocr.document_parsing.parser_v5_model_input import build_parser_v5_model_input
+from browser_ocr.document_parsing.parser_v5_decode import ParserV5DecodeConfig
+from browser_ocr.document_parsing.parser_v5_inference_paddle import run_parser_v5_inference
+from browser_ocr.document_parsing.parser_v5_model_input import build_parser_v5_model_input, build_parser_v5_runtime_input
 from browser_ocr.document_parsing.parser_v5_observation import ObservationProfile, simulate_observations
 from browser_ocr.document_parsing.parser_v5_structured_targets import build_parser_v5_structured_targets
 from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile, generate_parser_world
@@ -78,6 +80,62 @@ class ParserV5HeadTest(unittest.TestCase):
         self.assertTrue(all(float(targets.assignment_mask[index].item()) == 0.0 for index in masked))
         none_index = len(structured.product_slots)
         self.assertTrue(all(int(targets.assignment_targets[index].item()) != none_index for index in masked))
+
+    def test_assignment_scorer_accepts_truth_free_predicted_instances(self) -> None:
+        paddle.seed(991)
+        hidden = paddle.randn([5, 64])
+        relation_features = paddle.randn([5, 5, 14])
+        head = ParserV5SemanticAssignmentHead(hidden_dim=64, assignment_hidden_dim=48)
+        membership = paddle.to_tensor([
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+        ], dtype="float32")
+        logits = head.score_assignments(
+            hidden,
+            relation_features,
+            product_membership=membership,
+            product_available=paddle.to_tensor([True, True], dtype="bool"),
+            field_node_index=paddle.to_tensor([2, 3], dtype="int64"),
+            field_role_index=paddle.to_tensor([0, 1], dtype="int64"),
+        )
+        self.assertEqual(list(logits.shape), [2, 3])
+        self.assertTrue(bool(paddle.isfinite(logits).all().item()))
+
+    def test_end_to_end_inference_path_consumes_no_truth_targets(self) -> None:
+        document, observation = self._pair()
+        runtime_nodes = [{
+            "node_id": node["node_id"],
+            "text": node["text"],
+            "detector_confidence": node["detector_confidence"],
+            "recognizer_confidence": node["recognizer_confidence"],
+            "polygon": node["polygon"],
+        } for node in observation["nodes"]]
+        model_input = build_parser_v5_runtime_input(
+            document_id="runtime-only",
+            width=document["width"],
+            height=document["height"],
+            nodes=runtime_nodes,
+            max_text_bytes=48,
+        )
+        encoder = ParserV5GlobalEncoder(
+            ParserV5EncoderSpec(hidden_dim=64, text_embedding_dim=24, text_conv_dim=32, layers=1, heads=4)
+        )
+        head = ParserV5SemanticAssignmentHead(hidden_dim=64, assignment_hidden_dim=48)
+        result = run_parser_v5_inference(
+            encoder=encoder,
+            heads=head,
+            model_input=model_input,
+            nodes=runtime_nodes,
+            config=ParserV5DecodeConfig(
+                candidate_threshold=0.0,
+                role_threshold=0.0,
+                assignment_threshold=1.0,
+                assignment_margin=1.0,
+            ),
+        )
+        self.assertEqual(len(result.role_probabilities), len(runtime_nodes))
+        self.assertEqual(len(result.product_node_indices), len(runtime_nodes))
+        self.assertEqual(len(result.rows), len(runtime_nodes))
 
 
 if __name__ == "__main__":

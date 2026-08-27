@@ -233,6 +233,91 @@ def build_parser_v5_model_input(
     )
 
 
+def build_parser_v5_runtime_input(
+    *,
+    document_id: str,
+    width: int | float,
+    height: int | float,
+    nodes: Sequence[Mapping[str, object]],
+    max_text_bytes: int = 96,
+) -> ParserV5ModelInput:
+    """Build inference input without semantic truth, provenance, or labels."""
+
+    document_id = str(document_id or "").strip()
+    if not document_id:
+        raise ValueError("Parser v5 runtime document_id is required")
+    if isinstance(width, bool) or not isinstance(width, (int, float)) or float(width) <= 0:
+        raise ValueError("Parser v5 runtime width must be positive")
+    if isinstance(height, bool) or not isinstance(height, (int, float)) or float(height) <= 0:
+        raise ValueError("Parser v5 runtime height must be positive")
+    if isinstance(max_text_bytes, bool) or not isinstance(max_text_bytes, int) or not 4 <= max_text_bytes <= 512:
+        raise ValueError("Parser v5 max_text_bytes must be between 4 and 512")
+    page_width = float(width)
+    page_height = float(height)
+    normalized_nodes: list[Mapping[str, object]] = []
+    seen: set[str] = set()
+    required = {
+        "node_id",
+        "text",
+        "detector_confidence",
+        "recognizer_confidence",
+        "polygon",
+    }
+    for index, raw in enumerate(nodes):
+        if not isinstance(raw, Mapping) or set(raw) != required:
+            raise ValueError(f"Parser v5 runtime node {index} fields are invalid")
+        node_id = str(raw.get("node_id") or "").strip()
+        if not node_id or node_id in seen:
+            raise ValueError("Parser v5 runtime node ids must be unique and non-empty")
+        seen.add(node_id)
+        for score_name in ("detector_confidence", "recognizer_confidence"):
+            score = raw.get(score_name)
+            if isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= float(score) <= 1:
+                raise ValueError(f"Parser v5 runtime node {node_id} {score_name} must be in [0, 1]")
+        polygon = raw.get("polygon")
+        if not isinstance(polygon, Sequence) or len(polygon) != 4:
+            raise ValueError(f"Parser v5 runtime node {node_id} polygon must contain four points")
+        x1, y1, x2, y2 = _bounds(polygon)  # type: ignore[arg-type]
+        if x1 < 0 or y1 < 0 or x2 > page_width or y2 > page_height or x2 <= x1 or y2 <= y1:
+            raise ValueError(f"Parser v5 runtime node {node_id} polygon is outside the document")
+        normalized_nodes.append(raw)
+
+    token_rows: list[tuple[int, ...]] = []
+    mask_rows: list[tuple[bool, ...]] = []
+    scalar_rows: list[tuple[float, ...]] = []
+    empty_targets = tuple(0.0 for _ in PARSER_V5_ROLE_LABELS)
+    empty_mask = tuple(0.0 for _ in PARSER_V5_ROLE_LABELS)
+    for node in normalized_nodes:
+        token_ids, token_mask = encode_text_bytes(str(node["text"]), max_bytes=max_text_bytes)
+        token_rows.append(token_ids)
+        mask_rows.append(token_mask)
+        scalar_rows.append(_node_scalars(node, width=page_width, height=page_height, max_text_bytes=max_text_bytes))
+
+    pair_rows = tuple(
+        tuple(
+            _relation_features(
+                source,
+                target,
+                width=page_width,
+                height=page_height,
+                self_relation=source_index == target_index,
+            )
+            for target_index, target in enumerate(normalized_nodes)
+        )
+        for source_index, source in enumerate(normalized_nodes)
+    )
+    return ParserV5ModelInput(
+        document_id=document_id,
+        node_ids=tuple(str(node["node_id"]) for node in normalized_nodes),
+        token_ids=tuple(token_rows),
+        token_mask=tuple(mask_rows),
+        node_scalars=tuple(scalar_rows),
+        relation_features=pair_rows,
+        role_targets=tuple(empty_targets for _ in normalized_nodes),
+        role_mask=tuple(empty_mask for _ in normalized_nodes),
+    )
+
+
 __all__ = [
     "BYTE_BOS",
     "BYTE_EOS",
@@ -243,5 +328,6 @@ __all__ = [
     "ParserV5ModelInput",
     "RELATION_FEATURE_DIM",
     "build_parser_v5_model_input",
+    "build_parser_v5_runtime_input",
     "encode_text_bytes",
 ]
