@@ -8,16 +8,124 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from .job_lifecycle import ProgressCallback, progress_bar
 from .snapshot_io import canonical_json, sha256_file, snapshot_metadata_path
 
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
+SYNC_HEARTBEAT_INTERVAL_SECONDS = 5.0
+SYNC_PROGRESS_BUCKETS = 20
+
+
+class _SyncObserver:
+    def __init__(
+        self,
+        dataset_key: str,
+        checkpoint_path: Path,
+        progress: ProgressCallback | None,
+    ) -> None:
+        self.dataset_key = dataset_key
+        self.checkpoint_path = checkpoint_path
+        self.progress = progress
+        self._last_heartbeat = time.monotonic()
+        self._last_progress_bucket = -1
+
+    def _emit(self, status: str, **extra: object) -> None:
+        if self.progress is None:
+            return
+        self.progress(
+            {
+                "job": "mfds-source-sync",
+                "dataset_key": self.dataset_key,
+                "status": status,
+                **extra,
+            }
+        )
+
+    def started(
+        self,
+        *,
+        resumed: bool,
+        completed_pages: int,
+        total_pages: int | None,
+    ) -> None:
+        self._emit(
+            "started",
+            resumed=resumed,
+            completed_pages=completed_pages,
+            total_pages=total_pages,
+        )
+
+    def progress_update(self, completed_pages: int, total_pages: int, *, force: bool = False) -> None:
+        bucket = (
+            SYNC_PROGRESS_BUCKETS
+            if total_pages <= 0
+            else min(SYNC_PROGRESS_BUCKETS, completed_pages * SYNC_PROGRESS_BUCKETS // total_pages)
+        )
+        if not force and bucket <= self._last_progress_bucket:
+            return
+        self._last_progress_bucket = bucket
+        self._emit(
+            "progress",
+            current=completed_pages,
+            total=total_pages,
+            bar=progress_bar(completed_pages, total_pages),
+        )
+        self._emit(
+            "checkpoint",
+            completed_pages=completed_pages,
+            total_pages=total_pages,
+            checkpoint_path=str(self.checkpoint_path),
+        )
+
+    def heartbeat(self, phase: str, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_heartbeat < SYNC_HEARTBEAT_INTERVAL_SECONDS:
+            return
+        self._last_heartbeat = now
+        self._emit("heartbeat", phase=phase)
+
+    def completed(self, *, row_count: int, total_pages: int, elapsed_seconds: float) -> None:
+        self._emit(
+            "completed",
+            row_count=row_count,
+            total_pages=total_pages,
+            elapsed_seconds=elapsed_seconds,
+        )
+
+    def failed(self, error: BaseException) -> None:
+        self._emit(
+            "failed",
+            error=type(error).__name__,
+            detail=str(error),
+            checkpoint_path=str(self.checkpoint_path),
+            checkpoint_available=self.checkpoint_path.exists(),
+        )
+
+
+def _fetch_with_heartbeat(
+    fetch_page: Callable[[int, int], tuple[list[dict], int]],
+    page: int,
+    page_size: int,
+    observer: _SyncObserver,
+) -> tuple[list[dict], int]:
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(fetch_page, page, page_size)
+        while True:
+            done, _ = wait(
+                {future},
+                timeout=SYNC_HEARTBEAT_INTERVAL_SECONDS,
+                return_when=FIRST_COMPLETED,
+            )
+            if done:
+                return future.result()
+            observer.heartbeat(f"fetch_page_{page}", force=True)
 
 
 def _raise_service_error(payload: dict, label: str) -> None:
@@ -81,7 +189,10 @@ def request_json(url: str, *, label: str, timeout: int = 45, attempts: int = 4) 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:
     temp = path.with_name(path.name + ".write")
-    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    with temp.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, indent=2))
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temp, path)
 
 
@@ -96,7 +207,7 @@ def _write_page(path: Path, rows: list[dict]) -> int:
     return len(rows)
 
 
-def sync_paginated_jsonl(
+def _sync_paginated_jsonl(
     output: Path,
     *,
     dataset_key: str,
@@ -106,6 +217,7 @@ def sync_paginated_jsonl(
     workers: int,
     fetch_page: Callable[[int, int], tuple[list[dict], int]],
     progress: bool,
+    observer: _SyncObserver,
 ) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     pages_dir = output.with_name(output.name + ".pages")
@@ -127,13 +239,14 @@ def sync_paginated_jsonl(
     if not resumed:
         shutil.rmtree(pages_dir, ignore_errors=True)
         pages_dir.mkdir(parents=True, exist_ok=True)
+        observer.started(resumed=False, completed_pages=0, total_pages=None)
         if progress:
             print(
                 f"[canonical-sync] {dataset_key}: fetch first page",
                 file=sys.stderr,
                 flush=True,
             )
-        first_rows, total = fetch_page(1, page_size)
+        first_rows, total = _fetch_with_heartbeat(fetch_page, 1, page_size, observer)
         total_pages = max(1, math.ceil(total / page_size)) if total else (1 if first_rows else 0)
         state = {
             "dataset_key": dataset_key,
@@ -156,6 +269,13 @@ def sync_paginated_jsonl(
     ]
     started = time.monotonic()
     completed = total_pages - len(missing)
+    if resumed:
+        observer.started(
+            resumed=True,
+            completed_pages=completed,
+            total_pages=total_pages,
+        )
+    observer.progress_update(completed, total_pages, force=True)
 
     def get_page(page: int) -> tuple[int, list[dict], int]:
         rows, reported = fetch_page(page, page_size)
@@ -165,21 +285,36 @@ def sync_paginated_jsonl(
     if missing:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(get_page, page): page for page in missing}
-            for future in as_completed(futures):
-                page, rows, reported = future.result()
-                if total and reported and reported != total:
-                    total_count_change = (total, reported)
-                    for pending in futures:
-                        pending.cancel()
+            pending = set(futures)
+            while pending:
+                done, pending = wait(
+                    pending,
+                    timeout=SYNC_HEARTBEAT_INTERVAL_SECONDS,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not done:
+                    observer.heartbeat("page_fetch", force=True)
+                    continue
+                for future in done:
+                    page, rows, reported = future.result()
+                    if total and reported and reported != total:
+                        total_count_change = (total, reported)
+                        for remaining in pending:
+                            remaining.cancel()
+                        pending.clear()
+                        break
+                    _write_page(pages_dir / f"{page:06d}.jsonl", rows)
+                    completed += 1
+                    observer.progress_update(completed, total_pages)
+                    observer.heartbeat("page_fetch")
+                    if progress and (completed == total_pages or completed % 25 == 0):
+                        print(
+                            f"[canonical-sync] {dataset_key}: {completed:,}/{total_pages:,} pages",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                if total_count_change is not None:
                     break
-                _write_page(pages_dir / f"{page:06d}.jsonl", rows)
-                completed += 1
-                if progress and (completed == total_pages or completed % 25 == 0):
-                    print(
-                        f"[canonical-sync] {dataset_key}: {completed:,}/{total_pages:,} pages",
-                        file=sys.stderr,
-                        flush=True,
-                    )
     if total_count_change is not None:
         previous_total, reported_total = total_count_change
         # A count change proves the saved pages no longer belong to one
@@ -202,6 +337,7 @@ def sync_paginated_jsonl(
                     if line.strip():
                         row_count += 1
                     target.write(line)
+            observer.heartbeat("merge_pages")
         target.flush()
         os.fsync(target.fileno())
     if total and row_count != total:
@@ -229,7 +365,43 @@ def sync_paginated_jsonl(
     }
     _write_json_atomic(meta_path, metadata)
     shutil.rmtree(pages_dir, ignore_errors=True)
+    observer.completed(
+        row_count=row_count,
+        total_pages=total_pages,
+        elapsed_seconds=float(metadata["elapsed_seconds"]),
+    )
     return metadata
+
+
+def sync_paginated_jsonl(
+    output: Path,
+    *,
+    dataset_key: str,
+    source_family: str,
+    source_locator: str,
+    page_size: int,
+    workers: int,
+    fetch_page: Callable[[int, int], tuple[list[dict], int]],
+    progress: bool,
+    job_progress: ProgressCallback | None = None,
+) -> dict:
+    pages_dir = output.with_name(output.name + ".pages")
+    observer = _SyncObserver(dataset_key, pages_dir / "state.json", job_progress)
+    try:
+        return _sync_paginated_jsonl(
+            output,
+            dataset_key=dataset_key,
+            source_family=source_family,
+            source_locator=source_locator,
+            page_size=page_size,
+            workers=workers,
+            fetch_page=fetch_page,
+            progress=progress,
+            observer=observer,
+        )
+    except Exception as exc:
+        observer.failed(exc)
+        raise
 
 
 __all__ = ["request_json", "sync_paginated_jsonl"]

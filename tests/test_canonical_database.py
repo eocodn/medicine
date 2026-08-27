@@ -15,6 +15,7 @@ from medicine_canonical.build import (
     assemble_canonical_database,
     build_canonical_database,
     canonical_stats,
+    sync_reference_sources,
     verify_canonical_database,
 )
 from medicine_canonical.cli import main as canonical_main
@@ -461,6 +462,30 @@ class CanonicalDatabaseTest(unittest.TestCase):
                 progress=True,
             )
         self.assertIn("[canonical-sync] mfds_permit:products: fetch first page", stderr.getvalue())
+
+    def test_reference_sync_threads_structured_progress_to_every_source(self) -> None:
+        events: list[dict[str, object]] = []
+        result = sync_reference_sources(
+            MfdsSourceLayout.from_roots(
+                self.root / "structured-product",
+                self.root / "structured-ingredient",
+            ),
+            service_key="test-key",
+            workers=2,
+            progress=False,
+            job_progress=events.append,
+            permit_fetch_page=self._permit_fetch,
+            dur_fetch_page=self._dur_fetch,
+            ingredient_fetch_page=self._ingredient_fetch,
+        )
+
+        started = [event for event in events if event.get("status") == "started"]
+        completed = [event for event in events if event.get("status") == "completed"]
+        expected_sources = 1 + len(DUR_ENDPOINTS) + len(MFDS_INGREDIENT_ENDPOINTS)
+        self.assertEqual(len(started), expected_sources)
+        self.assertEqual(len(completed), expected_sources)
+        self.assertEqual(result["source_rows"], sum(int(event["row_count"]) for event in completed))
+        self.assertTrue(all(event.get("job") == "mfds-source-sync" for event in events))
 
     def test_link_code_preprocessing_has_only_reviewed_explicit_equivalences(self) -> None:
         cases = {

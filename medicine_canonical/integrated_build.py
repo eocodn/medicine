@@ -331,6 +331,7 @@ def build_integrated_databases(
         ingredient_page_size=ingredient_page_size,
         workers=api_workers,
         progress=progress,
+        job_progress=job_progress,
         permit_fetch_page=permit_fetch_page,
         dur_fetch_page=dur_fetch_page,
         ingredient_fetch_page=ingredient_fetch_page,

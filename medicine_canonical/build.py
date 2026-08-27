@@ -318,6 +318,7 @@ def sync_reference_sources(
     ingredient_page_size: int = 500,
     workers: int = 8,
     progress: bool = True,
+    job_progress=None,
     permit_fetch_page: PermitFetchPage | None = None,
     dur_fetch_page: DurFetchPage | None = None,
     ingredient_fetch_page: IngredientFetchPage | None = None,
@@ -330,6 +331,7 @@ def sync_reference_sources(
         dur_page_size=dur_page_size,
         workers=workers,
         progress=progress,
+        job_progress=job_progress,
         permit_fetch_page=permit_fetch_page,
         dur_fetch_page=dur_fetch_page,
     )
@@ -339,6 +341,7 @@ def sync_reference_sources(
         page_size=ingredient_page_size,
         workers=workers,
         progress=progress,
+        job_progress=job_progress,
         fetch_page=ingredient_fetch_page,
     )
     return {
@@ -558,6 +561,7 @@ def build_canonical_database(
         ingredient_page_size=ingredient_page_size,
         workers=api_workers,
         progress=progress,
+        job_progress=job_progress,
         permit_fetch_page=permit_fetch_page,
         dur_fetch_page=dur_fetch_page,
         ingredient_fetch_page=ingredient_fetch_page,

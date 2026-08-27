@@ -73,6 +73,7 @@ def sync_canonical_api_sources(
     dur_page_size: int = 500,
     workers: int = 8,
     progress: bool = True,
+    job_progress=None,
     permit_fetch_page: PermitFetchPage | None = None,
     dur_fetch_page: DurFetchPage | None = None,
 ) -> dict:
@@ -101,6 +102,7 @@ def sync_canonical_api_sources(
             workers=workers,
             fetch_page=permit_fetcher,
             progress=progress,
+            job_progress=job_progress,
         )
     )
     for operation, spec in DUR_ENDPOINTS.items():
@@ -114,6 +116,7 @@ def sync_canonical_api_sources(
                 workers=workers,
                 fetch_page=lambda page, size, operation=operation: dur_fetcher(operation, page, size),
                 progress=progress,
+                job_progress=job_progress,
             )
         )
     return {

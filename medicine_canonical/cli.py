@@ -315,6 +315,7 @@ def main(argv=None) -> int:
             ingredient_page_size=args.ingredient_page_size,
             workers=args.workers,
             progress=not args.quiet,
+            job_progress=None if args.quiet else _canonical_progress,
         )
     elif args.command == "build":
         payload = assemble_canonical_database(

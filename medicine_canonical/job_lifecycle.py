@@ -39,7 +39,7 @@ def fingerprint_inputs(
     return f"sha256:{digest}"
 
 
-def _progress_bar(current: int, total: int, *, width: int = DEFAULT_PROGRESS_BAR_WIDTH) -> str:
+def progress_bar(current: int, total: int, *, width: int = DEFAULT_PROGRESS_BAR_WIDTH) -> str:
     if total <= 0:
         return "[" + "-" * width + "]"
     bounded = min(max(current, 0), total)
@@ -91,7 +91,7 @@ class JobLifecycle:
         payload: dict[str, object] = {"phase": phase, "current": current}
         if resolved_total is not None:
             payload["total"] = resolved_total
-            payload["bar"] = _progress_bar(current, resolved_total)
+            payload["bar"] = progress_bar(current, resolved_total)
         self._emit("progress", **payload)
 
     def heartbeat(self, phase: str, *, force: bool = False, **extra: object) -> bool:
@@ -209,5 +209,6 @@ __all__ = [
     "JobLifecycle",
     "ProgressCallback",
     "fingerprint_inputs",
+    "progress_bar",
     "sqlite_heartbeat",
 ]
