@@ -9,6 +9,16 @@ from pathlib import Path
 
 from .release import RELEASE_PREFIX, decompress_snapshot, prepare_release, sha256_file
 from .release_r2_history import MAX_PATCH_BASES, recent_release_bases as _recent_release_bases
+from .release_r2_object_io import (
+    IMMUTABLE_CACHE_CONTROL,
+    _download_to_file,
+    _head_optional,
+    _list_prefix_keys,
+    _not_found,
+    _precondition_failed,
+    _put_immutable,
+    _verify_head,
+)
 from .release_signing import (
     KmsReleaseSigner,
     ReleaseSigner,
@@ -24,25 +34,10 @@ from .release_signing_runtime import (
 
 LATEST_KEY = f"{RELEASE_PREFIX}/latest.json"
 LATEST_CACHE_CONTROL = "no-store"
-IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 # Current full + at most two history fulls. Older clients fall back to the current full gzip.
 FULL_SNAPSHOT_RETENTION = 3
 FULL_PREFIX = f"{RELEASE_PREFIX}/full/"
 PATCH_PREFIX = f"{RELEASE_PREFIX}/patch/"
-
-
-def _not_found(exc: Exception) -> bool:
-    response = getattr(exc, "response", {}) or {}
-    status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-    code = response.get("Error", {}).get("Code")
-    return status == 404 or code in {"404", "NoSuchKey", "NotFound"}
-
-
-def _precondition_failed(exc: Exception) -> bool:
-    response = getattr(exc, "response", {}) or {}
-    status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-    code = response.get("Error", {}).get("Code")
-    return status == 412 or code in {"412", "PreconditionFailed"}
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -88,26 +83,6 @@ def _read_latest(
     return raw, response.get("ETag"), payload, None, None
 
 
-def _download_to_file(client, bucket: str, key: str, output: Path) -> dict:
-    response = client.get_object(Bucket=bucket, Key=key)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(output.name + ".tmp")
-    temporary.unlink(missing_ok=True)
-    try:
-        with temporary.open("wb") as handle:
-            body = response["Body"]
-            while True:
-                chunk = body.read(1024 * 1024)
-                if not chunk:
-                    break
-                handle.write(chunk)
-        os.replace(temporary, output)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-    return {"sha256": sha256_file(output), "size_bytes": output.stat().st_size}
-
-
 def _validate_remote_full(client, bucket: str, latest: dict, work_dir: Path) -> tuple[Path, str]:
     full = latest.get("full")
     target = latest.get("target")
@@ -133,47 +108,6 @@ def _validate_remote_full(client, bucket: str, latest: dict, work_dir: Path) -> 
     if decompressed["size_bytes"] != target["size_bytes"] or decompressed["sha256"] != target["sha256"]:
         raise RuntimeError("remote full snapshot target does not match latest manifest")
     return previous, dataset_id
-
-
-def _head_optional(client, bucket: str, key: str) -> dict | None:
-    try:
-        return client.head_object(Bucket=bucket, Key=key)
-    except Exception as exc:
-        if _not_found(exc):
-            return None
-        raise
-
-
-def _verify_head(head: dict, *, size_bytes: int, sha256: str, key: str) -> None:
-    if head.get("ContentLength") != size_bytes:
-        raise RuntimeError(f"remote object size mismatch for {key}")
-    if (head.get("Metadata") or {}).get("sha256") != sha256:
-        raise RuntimeError(f"remote object hash metadata mismatch for {key}")
-
-
-def _put_immutable(client, bucket: str, key: str, path: Path, *, content_type: str) -> None:
-    expected_size = path.stat().st_size
-    expected_sha = sha256_file(path)
-    existing = _head_optional(client, bucket, key)
-    if existing is not None:
-        _verify_head(existing, size_bytes=expected_size, sha256=expected_sha, key=key)
-        return
-    try:
-        with path.open("rb") as handle:
-            client.put_object(
-                Bucket=bucket,
-                Key=key,
-                Body=handle,
-                ContentType=content_type,
-                CacheControl=IMMUTABLE_CACHE_CONTROL,
-                Metadata={"sha256": expected_sha},
-                custom_headers={"If-None-Match": "*"},
-            )
-    except Exception as exc:
-        if not _precondition_failed(exc):
-            raise
-    head = client.head_object(Bucket=bucket, Key=key)
-    _verify_head(head, size_bytes=expected_size, sha256=expected_sha, key=key)
 
 
 def _put_latest(
@@ -206,25 +140,6 @@ def _put_latest(
     metadata = response.get("Metadata") or {}
     if metadata.get("sha256") != _sha256_bytes(body):
         raise RuntimeError("remote latest manifest hash metadata does not match")
-
-
-def _list_prefix_keys(client, bucket: str, prefix: str) -> set[str]:
-    keys: set[str] = set()
-    continuation_token: str | None = None
-    while True:
-        kwargs = {"Bucket": bucket, "Prefix": prefix}
-        if continuation_token:
-            kwargs["ContinuationToken"] = continuation_token
-        response = client.list_objects_v2(**kwargs)
-        for item in response.get("Contents") or []:
-            key = item.get("Key")
-            if isinstance(key, str) and key.startswith(prefix):
-                keys.add(key)
-        if not response.get("IsTruncated"):
-            return keys
-        continuation_token = response.get("NextContinuationToken")
-        if not isinstance(continuation_token, str) or not continuation_token:
-            raise RuntimeError(f"remote object listing for {prefix} is truncated without continuation token")
 
 
 def _release_artifact_inventory(client, bucket: str) -> set[str]:
