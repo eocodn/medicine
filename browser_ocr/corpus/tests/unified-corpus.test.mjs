@@ -58,6 +58,27 @@ test("bounded generation batches run concurrently while committing in index orde
   ]);
 });
 
+test("synthetic generation ignores a stale lock file from a dead owner", async () => {
+  const root = await mkdtemp(join(tmpdir(), "medicine-unified-stale-generation-lock-"));
+  try {
+    const outputDir = join(root, "corpus");
+    await mkdir(outputDir, { recursive: true });
+    await writeFile(join(outputDir, ".generation.lock"), "stale-lock-from-dead-process\n");
+    const catalog = drugCatalog();
+    const corpus = await generateUnifiedCorpus({
+      outputDir, count: 6, seed: 727, drugSplitSeed: 161,
+      historicalDrugExposure: historicalExposure(catalog), drugCatalog: catalog,
+    });
+    assert.equal(corpus.samples.length, 6);
+    assert.equal(
+      await readFile(join(outputDir, ".generation.lock"), "utf8"),
+      "stale-lock-from-dead-process\n",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("parallel unified rendering preserves the serial corpus and image hashes", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-unified-concurrency-"));
   try {

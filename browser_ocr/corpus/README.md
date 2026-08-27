@@ -94,7 +94,7 @@ docker compose run --rm ocr-corpus materialize --corpus /artifacts/ocr/corpora/u
 docker compose run --rm ocr-corpus audit --corpus /artifacts/ocr/corpora/unified-360/manifest.json --json
 ```
 
-Generation and materialization use exclusive locks, atomic state files, content hashes, resumable checkpoints, and explicit progress on stderr. Materializer v14 uses a kernel advisory lock held by a helper process, so a dead process cannot strand an existence-based lock file; the lock file itself may persist harmlessly. Completed reuse revalidates the report SHA, a fixed set of stage/parser artifact hashes, recognition image hashes through the recognition dataset core, and all emitted parser datasets before returning success. Reusing an output directory with a different generator/materializer profile fails rather than mixing artifacts.
+Generation and materialization use kernel advisory locks, atomic state files, content hashes, resumable checkpoints, and explicit progress on stderr. Lock ownership belongs to a live helper process rather than to lock-file existence, so process/container death releases ownership automatically; the lock inode itself may persist harmlessly. Completed reuse revalidates the report SHA, a fixed set of stage/parser artifact hashes, recognition image hashes through the recognition dataset core, and all emitted parser datasets before returning success. Reusing an output directory with a different generator/materializer profile fails rather than mixing artifacts.
 
 ## Training and evaluation boundaries
 

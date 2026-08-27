@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
+import { acquireAdvisoryLock, releaseAdvisoryLock } from "./advisory_lock.mts";
 import { validateUnifiedCorpus } from "./contract.mjs";
 import { RECOGNITION_EVAL_POLICY, recognitionOodTag } from "./evaluation_policy.mjs";
 import { buildOracleManifest, buildParsingItems, expectedRows } from "./parser_truth.mjs";
@@ -83,68 +84,6 @@ function run(command, args, cwd, { streamStderr = false } = {}) {
       if (code === 0) resolvePromise({ stdout, stderr });
       else reject(new Error(`${command} failed with exit ${code}: ${stderr.trim().slice(-4000)}`));
     });
-  });
-}
-
-function acquireMaterializeLock(python, lockPath) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(
-      python,
-      ["-m", "browser_ocr.corpus.materialize_lock", "--path", lockPath],
-      { cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] },
-    );
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      child.stdin.end();
-      reject(error);
-    };
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.on("error", fail);
-    child.on("close", (code) => {
-      if (!settled) {
-        fail(new Error(
-          code === 2
-            ? "unified corpus materialization is already running for this output directory"
-            : `materialization lock helper exited with ${code}: ${stderr.trim()}`,
-        ));
-      }
-    });
-    child.stdout.on("data", (chunk) => {
-      if (settled) return;
-      stdout += chunk.toString();
-      const newline = stdout.indexOf("\n");
-      if (newline < 0) return;
-      let payload;
-      try {
-        payload = JSON.parse(stdout.slice(0, newline));
-      } catch (error) {
-        fail(new Error(`materialization lock helper returned invalid JSON: ${error.message}`));
-        return;
-      }
-      if (payload.status !== "locked") {
-        fail(new Error("unified corpus materialization is already running for this output directory"));
-        return;
-      }
-      settled = true;
-      resolvePromise(child);
-    });
-  });
-}
-
-function releaseMaterializeLock(child) {
-  return new Promise((resolvePromise, reject) => {
-    let stderr = "";
-    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    child.once("error", reject);
-    child.once("close", (code) => {
-      if (code === 0) resolvePromise();
-      else reject(new Error(`materialization lock helper release failed with ${code}: ${stderr.trim()}`));
-    });
-    child.stdin.end();
   });
 }
 
@@ -234,7 +173,10 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
   };
   await mkdir(output, { recursive: true });
   const lockPath = join(output, LOCK_FILE);
-  const lock = await acquireMaterializeLock(python, lockPath);
+  const lock = await acquireAdvisoryLock(lockPath, {
+    busyMessage: "unified corpus materialization is already running for this output directory",
+    label: "materialization lock",
+  });
   const statePath = join(output, STATE_FILE);
   const reportPath = join(output, "report.json");
   try {
@@ -577,6 +519,6 @@ export async function materializeUnifiedViews({ corpusPath, outputDir, python = 
     await atomicJson(statePath, { schema_version: 1, status: "failed", profile, error: error instanceof Error ? error.message : String(error) }).catch(() => {});
     throw error;
   } finally {
-    await releaseMaterializeLock(lock);
+    await releaseAdvisoryLock(lock);
   }
 }
