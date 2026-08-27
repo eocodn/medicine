@@ -151,6 +151,19 @@ class ParserV5WorldTest(unittest.TestCase):
         stressed_geometry = {span["span_id"]: span["polygon"] for span in stressed["spans"]}
         self.assertTrue(any(base_geometry[key] != stressed_geometry[key] for key in base_geometry))
 
+        for medication in stressed["medications"]:
+            group = medication["medication_id"]
+            grouped = [span for span in stressed["spans"] if span["association_group"] == group]
+            y_centers = [
+                (float(span["polygon"][0][1]) + float(span["polygon"][2][1])) / 2.0
+                for span in grouped
+            ]
+            self.assertLess(max(y_centers) - min(y_centers), 8.0)
+
+        base_product = next(span for span in base["spans"] if span["semantic_role"] == "product")
+        stressed_product = next(span for span in stressed["spans"] if span["span_id"] == base_product["span_id"])
+        self.assertNotEqual(base_product["polygon"][0][0], stressed_product["polygon"][0][0])
+
 
 class ParserV5ObservationTest(unittest.TestCase):
     def _document(self) -> dict:

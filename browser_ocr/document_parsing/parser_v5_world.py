@@ -256,7 +256,38 @@ def _scramble_geometry(
 ) -> None:
     if rate <= 0.0:
         return
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    ungrouped: list[dict[str, Any]] = []
     for span in spans:
+        group = span.get("association_group")
+        if group is None:
+            ungrouped.append(span)
+        else:
+            grouped.setdefault(str(group), []).append(span)
+
+    selected_groups = [group for group in sorted(grouped) if rng.random() < rate]
+    row_centers = [
+        page_height * (index + 1) / (len(selected_groups) + 1)
+        for index in range(len(selected_groups))
+    ]
+    rng.shuffle(row_centers)
+    for group, center_y in zip(selected_groups, row_centers, strict=True):
+        members = grouped[group]
+        x_slots = [float(span["polygon"][0][0]) for span in members]
+        shuffled_slots = list(x_slots)
+        rng.shuffle(shuffled_slots)
+        if len(shuffled_slots) > 1 and shuffled_slots == x_slots:
+            shuffled_slots = shuffled_slots[1:] + shuffled_slots[:1]
+        for span, x in zip(members, shuffled_slots, strict=True):
+            x1, y1 = span["polygon"][0]
+            x2, y2 = span["polygon"][2]
+            width = max(1.0, float(x2) - float(x1))
+            height = max(1.0, float(y2) - float(y1))
+            nx = max(0.0, min(float(x), page_width - width))
+            ny = max(0.0, min(center_y - height / 2.0 + rng.uniform(-2.0, 2.0), page_height - height))
+            span["polygon"] = _rect(nx, ny, width, height)
+
+    for span in ungrouped:
         if rng.random() >= rate:
             continue
         x1, y1 = span["polygon"][0]
