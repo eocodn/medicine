@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
-import { acquireAdvisoryLock, releaseAdvisoryLock } from "./advisory_lock.mts";
+import { acquireAdvisoryLock, releaseAdvisoryLock } from "../advisory_lock.mts";
 import { validateUnifiedCorpus } from "./contract.mjs";
 import { RECOGNITION_EVAL_POLICY, recognitionOodTag } from "./evaluation_policy.mjs";
 import { buildOracleManifest, buildParsingItems, expectedRows } from "./parser_truth.mjs";

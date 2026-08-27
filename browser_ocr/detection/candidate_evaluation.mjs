@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { validateCorpus } from "./contract.mjs";
 import { evaluateDetections } from "./evaluation.mjs";
+import { acquireAdvisoryLock, releaseAdvisoryLock } from "../advisory_lock.mts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -168,13 +169,10 @@ export async function runCandidateSafetyEvaluation({ candidatePath, corpusPath, 
   }));
   await mkdir(resolvedOutput, { recursive: true });
   const lockPath = join(resolvedOutput, ".candidate-evaluation.lock");
-  let lock;
-  try {
-    lock = await open(lockPath, "wx");
-  } catch (error) {
-    if (error?.code === "EEXIST") throw new Error("detector candidate evaluation is already active for this output directory");
-    throw error;
-  }
+  const lock = await acquireAdvisoryLock(lockPath, {
+    busyMessage: "detector candidate evaluation is already active for this output directory",
+    label: "detector candidate evaluation lock",
+  });
   try {
     const resultPath = join(resolvedOutput, "safety-evaluation.json");
     try {
@@ -208,10 +206,7 @@ export async function runCandidateSafetyEvaluation({ candidatePath, corpusPath, 
     process.stderr.write(`[det-candidate-eval] synthetic-test ${evaluation.synthetic_test.status}\n`);
     return result;
   } finally {
-    await lock.close();
-    await unlink(lockPath).catch((error) => {
-      if (error?.code !== "ENOENT") throw error;
-    });
+    await releaseAdvisoryLock(lock);
   }
 }
 

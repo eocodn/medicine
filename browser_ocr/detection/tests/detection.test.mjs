@@ -8,7 +8,9 @@ import { runDetectorBenchmarkMatrix } from "../benchmark.mjs";
 import { validateCorpus } from "../contract.mjs";
 import { benchmarkMatrix, loadDetectorModelManifest } from "../detector_models.mjs";
 import { evaluateDetections } from "../evaluation.mjs";
+import { fetchDetectorAssets } from "../fetch_detector_assets.mjs";
 import { generateSyntheticCorpus } from "../synthetic.mjs";
+import { acquireAdvisoryLock, releaseAdvisoryLock } from "../../advisory_lock.mts";
 import { testDrugCatalog, testHistoricalDrugExposure } from "../../corpus/tests/fixtures.mjs";
 
 const TEST_DRUG_CATALOG = testDrugCatalog();
@@ -162,24 +164,78 @@ test("detector candidates are official pinned ONNX assets with model-specific DB
   assert.ok(matrix.runs.every((run) => run.postprocess && run.asset_sha256));
 });
 
-test("detector benchmark refuses concurrent writers for the same output", async () => {
+test("detector benchmark and asset fetch ignore stale lock files", async () => {
   const root = await mkdtemp(join(tmpdir(), "medicine-det-benchmark-lock-"));
   try {
     const outputDir = join(root, "output");
+    const cacheDir = join(root, "cache");
     await mkdir(join(outputDir, "runs"), { recursive: true });
-    await writeFile(join(outputDir, ".benchmark.lock"), "occupied\n");
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(join(outputDir, ".benchmark.lock"), "stale-benchmark-owner\n");
+    await writeFile(join(cacheDir, ".asset-fetch.lock"), "stale-asset-owner\n");
     const corpusPath = join(root, "corpus.json");
     await writeFile(corpusPath, `${JSON.stringify(tinyCorpus())}\n`);
-    await assert.rejects(
-      runDetectorBenchmarkMatrix({
-        corpusPath,
-        cacheDir: join(root, "cache"),
-        outputDir,
-        models: ["PP-OCRv5_mobile_det"],
-        detectorEdges: [640],
-      }),
-      /already running/,
-    );
+    const summary = await runDetectorBenchmarkMatrix({
+      corpusPath,
+      cacheDir,
+      outputDir,
+      models: [],
+      detectorEdges: [],
+    });
+    assert.equal(summary.status, "complete");
+    assert.deepEqual(summary.ranked_runs, []);
+    assert.equal(await readFile(join(outputDir, ".benchmark.lock"), "utf8"), "stale-benchmark-owner\n");
+    assert.equal(await readFile(join(cacheDir, ".asset-fetch.lock"), "utf8"), "stale-asset-owner\n");
+
+    const assets = await fetchDetectorAssets({ outputDir: cacheDir, modelNames: [] });
+    assert.deepEqual(assets.models, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("detector asset fetch refuses a live advisory-lock owner", async () => {
+  const root = await mkdtemp(join(tmpdir(), "medicine-det-asset-live-lock-"));
+  try {
+    const cacheDir = join(root, "cache");
+    await mkdir(cacheDir, { recursive: true });
+    const lock = await acquireAdvisoryLock(join(cacheDir, ".asset-fetch.lock"), {
+      busyMessage: "fixture busy",
+      label: "fixture asset fetch lock",
+    });
+    try {
+      await assert.rejects(
+        fetchDetectorAssets({ outputDir: cacheDir, modelNames: [] }),
+        /already running/,
+      );
+    } finally {
+      await releaseAdvisoryLock(lock);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("detector benchmark refuses a live advisory-lock owner", async () => {
+  const root = await mkdtemp(join(tmpdir(), "medicine-det-benchmark-live-lock-"));
+  try {
+    const outputDir = join(root, "output");
+    const cacheDir = join(root, "cache");
+    await mkdir(join(outputDir, "runs"), { recursive: true });
+    const corpusPath = join(root, "corpus.json");
+    await writeFile(corpusPath, `${JSON.stringify(tinyCorpus())}\n`);
+    const lock = await acquireAdvisoryLock(join(outputDir, ".benchmark.lock"), {
+      busyMessage: "fixture busy",
+      label: "fixture benchmark lock",
+    });
+    try {
+      await assert.rejects(
+        runDetectorBenchmarkMatrix({ corpusPath, cacheDir, outputDir, models: [], detectorEdges: [] }),
+        /already running/,
+      );
+    } finally {
+      await releaseAdvisoryLock(lock);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
