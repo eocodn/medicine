@@ -155,9 +155,16 @@ class ParserV5GlobalEncoder(nn.Layer):
 
 def masked_multilabel_role_loss(role_logits: paddle.Tensor, tensors: ParserV5Tensors) -> paddle.Tensor:
     elementwise = F.binary_cross_entropy_with_logits(role_logits, tensors.role_targets, reduction="none")
-    weighted = elementwise * tensors.role_mask
-    denominator = paddle.clip(tensors.role_mask.sum(), min=1.0)
-    return weighted.sum() / denominator
+    positive_mask = tensors.role_mask * tensors.role_targets
+    negative_mask = tensors.role_mask * (1.0 - tensors.role_targets)
+    components: list[paddle.Tensor] = []
+    if float(positive_mask.sum().item()) > 0.0:
+        components.append((elementwise * positive_mask).sum() / paddle.clip(positive_mask.sum(), min=1.0))
+    if float(negative_mask.sum().item()) > 0.0:
+        components.append((elementwise * negative_mask).sum() / paddle.clip(negative_mask.sum(), min=1.0))
+    if not components:
+        return paddle.zeros([], dtype=role_logits.dtype)
+    return sum(components) / len(components)
 
 
 def model_parameter_count(model: nn.Layer) -> int:

@@ -10,6 +10,7 @@ from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile, gen
 from browser_ocr.document_parsing.parser_v5_encoder_paddle import (
     ParserV5EncoderSpec,
     ParserV5GlobalEncoder,
+    masked_multilabel_role_loss,
     model_parameter_count,
     parser_v5_tensors,
 )
@@ -101,6 +102,32 @@ class ParserV5EncoderTest(unittest.TestCase):
         self.assertEqual(list(hidden.shape), [len(self._input().node_ids), 96])
         self.assertEqual(list(role_logits.shape), [len(self._input().node_ids), 9])
         self.assertLess(model_parameter_count(model), 1_000_000)
+
+    def test_role_loss_is_invariant_to_number_of_equivalent_negative_labels(self) -> None:
+        tensors = parser_v5_tensors(self._input())
+        targets = paddle.zeros_like(tensors.role_targets)
+        targets[0, 0] = 1.0
+        all_negative_mask = paddle.zeros_like(tensors.role_mask)
+        all_negative_mask[0, :] = 1.0
+        one_negative_mask = paddle.zeros_like(tensors.role_mask)
+        one_negative_mask[0, 0] = 1.0
+        one_negative_mask[0, 1] = 1.0
+        logits = paddle.ones_like(tensors.role_targets)
+        logits[0, 0] = -2.0
+
+        def with_mask(mask):
+            return tensors.__class__(
+                token_ids=tensors.token_ids,
+                token_mask=tensors.token_mask,
+                node_scalars=tensors.node_scalars,
+                relation_features=tensors.relation_features,
+                role_targets=targets,
+                role_mask=mask,
+            )
+
+        full = masked_multilabel_role_loss(logits, with_mask(all_negative_mask))
+        reduced = masked_multilabel_role_loss(logits, with_mask(one_negative_mask))
+        self.assertAlmostEqual(float(full.item()), float(reduced.item()), places=6)
 
 
 if __name__ == "__main__":
