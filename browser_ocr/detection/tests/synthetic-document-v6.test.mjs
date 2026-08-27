@@ -78,6 +78,43 @@ test("receipt-sidecar layout derives medication truth and keeps accounting numer
   assert.ok(receiptRegions.some((region) => /^\d+$/u.test(region.text)));
 });
 
+test("classic medication bag schedule boxes stay paired with non-overlapping label truth", () => {
+  const random = seeded(515);
+  const document = buildDocumentTruth(3, random, {
+    products: PRODUCTS,
+    layoutFamily: "classic_medication_bag",
+  });
+  const layout = buildLayout(3, random, { document });
+  const labels = new Map(layout.regions
+    .filter((region) => region.region_id.startsWith("schedule-"))
+    .map((region) => [region.region_id.slice("schedule-".length), region]));
+  const boxes = [...layout.decorations.matchAll(
+    /<rect class="schedule-checkbox" data-option="([^"]+)" x="([0-9.]+)" y="([0-9.]+)" width="([0-9.]+)" height="([0-9.]+)"/gu,
+  )].map((match) => ({
+    option: match[1],
+    x: Number(match[2]),
+    y: Number(match[3]),
+    width: Number(match[4]),
+    height: Number(match[5]),
+  }));
+
+  assert.deepEqual([...labels.keys()], ["morning", "lunch", "evening", "bedtime"]);
+  assert.deepEqual(boxes.map((box) => box.option), [...labels.keys()]);
+  assert.equal(layout.regions.some((region) => region.region_id === "checkbox-label"), false);
+
+  for (let index = 0; index < boxes.length; index += 1) {
+    const box = boxes[index];
+    const label = labels.get(box.option);
+    const [[labelLeft, labelTop], [labelRight], [, labelBottom]] = label.natural_text_box;
+    assert.ok(box.x + box.width < labelLeft, `${box.option} box must end before its label`);
+    assert.ok(labelTop < box.y + box.height && labelBottom > box.y, `${box.option} box and label must share one row`);
+    assert.ok(labelLeft >= 0 && labelRight < DOCUMENT_WIDTH);
+    assert.ok(labelTop >= 0 && labelBottom < DOCUMENT_HEIGHT);
+    const next = boxes[index + 1];
+    if (next) assert.ok(labelRight < next.x, `${box.option} label must end before the next checkbox`);
+  }
+});
+
 test("receipt-sidecar cycles distinct real-print style families and medication-row densities", () => {
   assert.equal(PHARMACY_GUIDE_STYLE_IDS.length, 10);
   const observedStyles = new Set();
