@@ -312,13 +312,11 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
         {
             ReferenceUpdatePlan::UpToDate | ReferenceUpdatePlan::RollbackRejected => {
                 self.cleanup_update_files(None)?;
-                return Ok(DevelopmentReferenceUpdateStatus::NoChange);
+                Ok(DevelopmentReferenceUpdateStatus::NoChange)
             }
-            ReferenceUpdatePlan::IdentityConflict => {
-                return Err(DevelopmentReferenceError::new(
-                    "activated release sequence has a different signed target identity",
-                ));
-            }
+            ReferenceUpdatePlan::IdentityConflict => Err(DevelopmentReferenceError::new(
+                "activated release sequence has a different signed target identity",
+            )),
             ReferenceUpdatePlan::Stage(stage) => {
                 let target = stage.target;
                 let primary = stage.primary;
@@ -342,7 +340,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
                 self.persist_store(store)?;
                 self.cleanup_update_files(None)?;
                 self.cleanup_unreferenced(store)?;
-                return Ok(DevelopmentReferenceUpdateStatus::Staged);
+                Ok(DevelopmentReferenceUpdateStatus::Staged)
             }
         }
     }
