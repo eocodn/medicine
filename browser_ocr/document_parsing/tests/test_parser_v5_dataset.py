@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -87,6 +88,46 @@ class ParserV5DatasetTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "already contains a different Parser v5 dataset"):
                 build_parser_v5_dataset(root, dataset_id="fixture-v5", document_count=4, seed=20)
+
+    def test_loader_rejects_self_consistent_stale_generator_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest_path = build_parser_v5_dataset(root, dataset_id="fixture-v5", document_count=2, seed=64)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            generator = manifest["generation"]["generator"]
+            generator["sources"]["parser_v5_world.py"] = "0" * 64
+            generator["fingerprint"] = hashlib.sha256(
+                json.dumps(
+                    generator["sources"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            ).hexdigest()
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "generator identity disagrees"):
+                load_parser_v5_dataset(manifest_path)
+
+    def test_loader_rejects_legacy_dataset_schema_instead_of_reusing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest_path = build_parser_v5_dataset(root, dataset_id="fixture-v5", document_count=1, seed=65)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["schema_version"] = 1
+            manifest["builder"] = "structured_world_observation_v1"
+            manifest["generation"].pop("generator")
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "schema_version must be 2"):
+                load_parser_v5_dataset(manifest_path)
 
     def test_cli_build_and_validate_emit_machine_readable_summary(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

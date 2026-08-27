@@ -13,9 +13,17 @@ from .parser_v5_observation import ObservationProfile, simulate_observations
 from .parser_v5_world import ParserWorldProfile, generate_parser_world
 
 
-DATASET_SCHEMA_VERSION = 1
+DATASET_SCHEMA_VERSION = 2
 SAMPLES_FILE = "samples.jsonl"
 MANIFEST_FILE = "manifest.json"
+BUILDER_ID = "structured_world_observation_v2"
+_GENERATOR_SOURCE_FILES = (
+    "parser_v5_contract.py",
+    "parser_v5_semantic_grammar.py",
+    "parser_v5_world.py",
+    "parser_v5_observation.py",
+    "parser_v5_dataset.py",
+)
 _DATASET_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,127}$")
 _MANIFEST_FIELDS = {
     "schema_version",
@@ -27,7 +35,8 @@ _MANIFEST_FIELDS = {
     "document_count",
     "generation",
 }
-_GENERATION_FIELDS = {"seed", "document_count", "world_profile", "observation_profile"}
+_GENERATION_FIELDS = {"seed", "document_count", "world_profile", "observation_profile", "generator"}
+_GENERATOR_FIELDS = {"fingerprint", "sources"}
 _SAMPLE_FIELDS = {"sample_index", "truth", "observation"}
 
 
@@ -73,6 +82,22 @@ def _profile_mapping(profile: ParserWorldProfile | ObservationProfile) -> dict[s
     return asdict(profile)
 
 
+def _generator_identity() -> dict[str, Any]:
+    source_root = Path(__file__).resolve().parent
+    sources: dict[str, str] = {}
+    for name in _GENERATOR_SOURCE_FILES:
+        path = source_root / name
+        try:
+            payload = path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"could not read Parser v5 generator source: {path}") from exc
+        sources[name] = hashlib.sha256(payload).hexdigest()
+    return {
+        "fingerprint": hashlib.sha256(_canonical_json(sources)).hexdigest(),
+        "sources": sources,
+    }
+
+
 def _generation_profile(
     *,
     seed: int,
@@ -85,6 +110,7 @@ def _generation_profile(
         "document_count": document_count,
         "world_profile": _profile_mapping(world_profile),
         "observation_profile": _profile_mapping(observation_profile),
+        "generator": _generator_identity(),
     }
 
 
@@ -92,11 +118,11 @@ def _validate_manifest(value: object) -> dict[str, Any]:
     if not isinstance(value, Mapping) or set(value) != _MANIFEST_FIELDS:
         raise ValueError("Parser v5 manifest fields are invalid")
     if value.get("schema_version") != DATASET_SCHEMA_VERSION:
-        raise ValueError("Parser v5 manifest schema_version must be 1")
+        raise ValueError(f"Parser v5 manifest schema_version must be {DATASET_SCHEMA_VERSION}")
     dataset_id = _require_dataset_id(value.get("dataset_id"))
     if value.get("task") != "medication_document_parser_v5":
         raise ValueError("Parser v5 manifest task is invalid")
-    if value.get("builder") != "structured_world_observation_v1":
+    if value.get("builder") != BUILDER_ID:
         raise ValueError("Parser v5 manifest builder is invalid")
     if value.get("samples_file") != SAMPLES_FILE:
         raise ValueError("Parser v5 manifest samples_file is invalid")
@@ -116,6 +142,27 @@ def _validate_manifest(value: object) -> dict[str, Any]:
         raise ValueError("Parser v5 manifest generation seed must be an integer")
     _world_profile_from_mapping(generation.get("world_profile"))
     _observation_profile_from_mapping(generation.get("observation_profile"))
+    generator = generation.get("generator")
+    if not isinstance(generator, Mapping) or set(generator) != _GENERATOR_FIELDS:
+        raise ValueError("Parser v5 manifest generator identity is invalid")
+    fingerprint = str(generator.get("fingerprint") or "")
+    sources = generator.get("sources")
+    if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+        raise ValueError("Parser v5 manifest generator fingerprint must be lowercase SHA-256")
+    if not isinstance(sources, Mapping) or set(sources) != set(_GENERATOR_SOURCE_FILES):
+        raise ValueError("Parser v5 manifest generator sources are invalid")
+    normalized_sources: dict[str, str] = {}
+    for name in _GENERATOR_SOURCE_FILES:
+        sha = str(sources.get(name) or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", sha):
+            raise ValueError(f"Parser v5 manifest generator source {name} must be lowercase SHA-256")
+        normalized_sources[name] = sha
+    expected_fingerprint = hashlib.sha256(_canonical_json(normalized_sources)).hexdigest()
+    if fingerprint != expected_fingerprint:
+        raise ValueError("Parser v5 manifest generator fingerprint disagrees with source hashes")
+    current_generator = _generator_identity()
+    if generator != current_generator:
+        raise ValueError("Parser v5 manifest generator identity disagrees with current implementation")
     return {
         **dict(value),
         "dataset_id": dataset_id,
@@ -201,7 +248,7 @@ def build_parser_v5_dataset(
             "schema_version": DATASET_SCHEMA_VERSION,
             "dataset_id": dataset_id,
             "task": "medication_document_parser_v5",
-            "builder": "structured_world_observation_v1",
+            "builder": BUILDER_ID,
             "samples_file": SAMPLES_FILE,
             "samples_sha256": _sha256(encoded_samples),
             "document_count": document_count,
