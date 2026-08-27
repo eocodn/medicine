@@ -398,7 +398,10 @@ def main(argv=None) -> int:
             expected_dataset_id=args.dataset_id,
         )
     elif args.command == "substance-sync":
-        payload = sync_substance_identity_sources(args.raw_dir)
+        payload = sync_substance_identity_sources(
+            args.raw_dir,
+            job_progress=_canonical_progress,
+        )
     elif args.command == "substance-build":
         payload = assemble_substance_database(
             args.db,

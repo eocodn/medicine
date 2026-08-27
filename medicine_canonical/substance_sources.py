@@ -5,16 +5,23 @@ import hashlib
 import io
 import json
 import os
+import time
 import urllib.request
 import zipfile
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Callable, Iterator
 from zoneinfo import ZoneInfo
 
+from .job_lifecycle import ProgressCallback, progress_bar
+from .release_io import maybe_report_progress
+from .snapshot_io import sha256_file
+
 
 APP_TIMEZONE = ZoneInfo("Asia/Seoul")
+SUBSTANCE_HEARTBEAT_INTERVAL_SECONDS = 5.0
 OPENFDA_DOWNLOAD_MANIFEST = "https://api.fda.gov/download.json"
 OPENFDA_UNII_DATASET_KEY = "openfda_unii:all"
 OPENFDA_UNII_FILENAME = "openfda_unii.json.zip"
@@ -27,6 +34,64 @@ PartitionFetcher = Callable[[str], bytes]
 ArchiveFetcher = Callable[[str], bytes]
 
 
+class _SubstanceSyncObserver:
+    def __init__(
+        self,
+        dataset_key: str,
+        checkpoint_path: Path,
+        progress: ProgressCallback | None,
+    ) -> None:
+        self.dataset_key = dataset_key
+        self.checkpoint_path = checkpoint_path
+        self.progress = progress
+        self._last_heartbeat = 0.0
+
+    def _emit(self, status: str, **extra: object) -> None:
+        if self.progress is None:
+            return
+        self.progress(
+            {
+                "job": "substance-source-sync",
+                "dataset_key": self.dataset_key,
+                "status": status,
+                **extra,
+            }
+        )
+
+    def started(self, *, resumed: bool) -> None:
+        self._emit("started", resumed=resumed)
+
+    def progress_update(self, current: int, total: int) -> None:
+        self._emit(
+            "progress",
+            current=current,
+            total=total,
+            bar=progress_bar(current, total),
+        )
+        self.heartbeat("download")
+
+    def heartbeat(self, phase: str, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_heartbeat < SUBSTANCE_HEARTBEAT_INTERVAL_SECONDS:
+            return
+        self._last_heartbeat = now
+        self._emit("heartbeat", phase=phase)
+
+    def checkpoint(self, *, sha256: str, size_bytes: int) -> None:
+        self._emit(
+            "checkpoint",
+            checkpoint_path=str(self.checkpoint_path),
+            sha256=sha256,
+            size_bytes=size_bytes,
+        )
+
+    def completed(self, *, row_count: int, resumed: bool) -> None:
+        self._emit("completed", row_count=row_count, resumed=resumed)
+
+    def failed(self, error: BaseException) -> None:
+        self._emit("failed", error=type(error).__name__, detail=str(error))
+
+
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -37,7 +102,11 @@ def _fetch_json(url: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _fetch_bytes(url: str) -> bytes:
+def _fetch_bytes(
+    url: str,
+    *,
+    progress: Callable[[int, int], None] | None = None,
+) -> bytes:
     request = urllib.request.Request(
         url,
         headers={
@@ -46,7 +115,43 @@ def _fetch_bytes(url: str) -> bytes:
         },
     )
     with urllib.request.urlopen(request, timeout=90) as response:
-        return response.read()
+        length = response.headers.get("Content-Length")
+        total = int(length) if length and str(length).isdigit() else 0
+        payload = bytearray()
+        processed = 0
+        last_reported = 0
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            payload.extend(chunk)
+            processed += len(chunk)
+            last_reported = maybe_report_progress(
+                progress,
+                processed,
+                total,
+                last_reported,
+            )
+        if progress is not None and processed != last_reported:
+            progress(processed, total or processed)
+        return bytes(payload)
+
+
+def _fetch_with_heartbeat(
+    fetch: Callable[[], bytes],
+    observer: _SubstanceSyncObserver,
+) -> bytes:
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(fetch)
+        while True:
+            done, _ = wait(
+                {future},
+                timeout=SUBSTANCE_HEARTBEAT_INTERVAL_SECONDS,
+                return_when=FIRST_COMPLETED,
+            )
+            if done:
+                return future.result()
+            observer.heartbeat("download", force=True)
 
 
 def inspect_unii_archive(data: bytes) -> tuple[list[dict], dict]:
@@ -166,14 +271,46 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
     _write_atomic(path, data)
 
 
+def _load_reusable_openfda_snapshot(
+    path: Path,
+    metadata_path: Path,
+    *,
+    source_locator: str,
+    effective_date: str,
+    manifest_last_updated: object,
+    expected_rows: int,
+) -> dict | None:
+    if expected_rows <= 0 or not effective_date or not path.is_file() or not metadata_path.is_file():
+        return None
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    if (
+        metadata.get("dataset_key") != OPENFDA_UNII_DATASET_KEY
+        or metadata.get("source_family") != "openfda_unii"
+        or metadata.get("source_locator") != source_locator
+        or metadata.get("effective_date") != effective_date
+        or metadata.get("manifest_last_updated") != manifest_last_updated
+        or metadata.get("row_count") != expected_rows
+    ):
+        return None
+    expected_sha256 = metadata.get("sha256")
+    if not isinstance(expected_sha256, str) or sha256_file(path) != expected_sha256:
+        return None
+    return metadata
+
+
 def sync_openfda_unii(
     raw_dir: str | Path,
     *,
     manifest_fetcher: ManifestFetcher | None = None,
     partition_fetcher: PartitionFetcher | None = None,
+    job_progress: ProgressCallback | None = None,
 ) -> dict:
     manifest_fetcher = manifest_fetcher or (lambda: _fetch_json(OPENFDA_DOWNLOAD_MANIFEST))
-    partition_fetcher = partition_fetcher or _fetch_bytes
     manifest = manifest_fetcher()
     try:
         dataset = manifest["results"]["other"]["unii"]
@@ -186,63 +323,138 @@ def sync_openfda_unii(
     url = str(partition.get("file") or "").strip()
     if not url:
         raise RuntimeError("openFDA UNII partition has no download URL")
-    data = partition_fetcher(url)
-    records, archive_meta = inspect_unii_archive(data)
     expected = int(dataset.get("total_records") or partition.get("records") or 0)
-    if expected and len(records) != expected:
-        raise RuntimeError(f"openFDA UNII row-count mismatch: manifest {expected}, archive {len(records)}")
-
     root = Path(raw_dir)
     path = root / OPENFDA_UNII_FILENAME
-    _write_atomic(path, data)
-    metadata = {
-        "dataset_key": OPENFDA_UNII_DATASET_KEY,
-        "source_family": "openfda_unii",
-        "source_locator": url,
-        "effective_date": str(dataset.get("export_date") or archive_meta.get("last_updated") or "").strip() or None,
-        "fetched_at": datetime.now(APP_TIMEZONE).isoformat(timespec="seconds"),
-        "row_count": len(records),
-        "sha256": _sha256_bytes(data),
-        "manifest_locator": OPENFDA_DOWNLOAD_MANIFEST,
-        "manifest_last_updated": (manifest.get("meta") or {}).get("last_updated"),
-        "archive_last_updated": archive_meta.get("last_updated"),
-        "authority": "FDA GSRS / UNII via openFDA",
-        "license": archive_meta.get("license"),
-    }
-    _write_json_atomic(path.with_suffix(path.suffix + ".meta.json"), metadata)
-    return metadata
+    metadata_path = path.with_suffix(path.suffix + ".meta.json")
+    observer = _SubstanceSyncObserver(
+        OPENFDA_UNII_DATASET_KEY,
+        metadata_path,
+        job_progress,
+    )
+    manifest_last_updated = (manifest.get("meta") or {}).get("last_updated")
+    export_date = str(dataset.get("export_date") or "").strip()
+    reusable = _load_reusable_openfda_snapshot(
+        path,
+        metadata_path,
+        source_locator=url,
+        effective_date=export_date,
+        manifest_last_updated=manifest_last_updated,
+        expected_rows=expected,
+    )
+    if reusable is not None:
+        observer.started(resumed=True)
+        size_bytes = path.stat().st_size
+        observer.progress_update(size_bytes, size_bytes)
+        observer.checkpoint(sha256=str(reusable["sha256"]), size_bytes=size_bytes)
+        observer.completed(row_count=int(reusable["row_count"]), resumed=True)
+        return reusable
+
+    observer.started(resumed=False)
+    try:
+        if partition_fetcher is None:
+            data = _fetch_with_heartbeat(
+                lambda: _fetch_bytes(url, progress=observer.progress_update),
+                observer,
+            )
+        else:
+            data = _fetch_with_heartbeat(lambda: partition_fetcher(url), observer)
+        observer.progress_update(len(data), len(data))
+        records, archive_meta = inspect_unii_archive(data)
+        if expected and len(records) != expected:
+            raise RuntimeError(
+                f"openFDA UNII row-count mismatch: manifest {expected}, archive {len(records)}"
+            )
+        _write_atomic(path, data)
+        metadata = {
+            "dataset_key": OPENFDA_UNII_DATASET_KEY,
+            "source_family": "openfda_unii",
+            "source_locator": url,
+            "effective_date": str(
+                dataset.get("export_date") or archive_meta.get("last_updated") or ""
+            ).strip()
+            or None,
+            "fetched_at": datetime.now(APP_TIMEZONE).isoformat(timespec="seconds"),
+            "row_count": len(records),
+            "sha256": _sha256_bytes(data),
+            "manifest_locator": OPENFDA_DOWNLOAD_MANIFEST,
+            "manifest_last_updated": manifest_last_updated,
+            "archive_last_updated": archive_meta.get("last_updated"),
+            "authority": "FDA GSRS / UNII via openFDA",
+            "license": archive_meta.get("license"),
+        }
+        _write_json_atomic(metadata_path, metadata)
+        observer.checkpoint(sha256=metadata["sha256"], size_bytes=len(data))
+        observer.completed(row_count=len(records), resumed=False)
+        return metadata
+    except Exception as exc:
+        observer.failed(exc)
+        raise
 
 
 def sync_fda_gsrs_unii_names(
     raw_dir: str | Path,
     *,
     archive_fetcher: ArchiveFetcher | None = None,
+    job_progress: ProgressCallback | None = None,
 ) -> dict:
-    archive_fetcher = archive_fetcher or _fetch_bytes
-    data = archive_fetcher(FDA_GSRS_UNII_NAMES_LATEST)
-    inspected = inspect_gsrs_unii_names_archive(data)
     root = Path(raw_dir)
     path = root / FDA_GSRS_UNII_NAMES_FILENAME
-    _write_atomic(path, data)
-    metadata = {
-        "dataset_key": FDA_GSRS_UNII_NAMES_DATASET_KEY,
-        "source_family": "fda_gsrs_unii_names",
-        "source_locator": FDA_GSRS_UNII_NAMES_LATEST,
-        "effective_date": inspected["effective_date"],
-        "fetched_at": datetime.now(APP_TIMEZONE).isoformat(timespec="seconds"),
-        "row_count": inspected["row_count"],
-        "sha256": _sha256_bytes(data),
-        "archive_member": inspected["member"],
-        "authority": "FDA GSRS / UNII Names via precisionFDA",
-    }
-    _write_json_atomic(path.with_suffix(path.suffix + ".meta.json"), metadata)
-    return metadata
+    metadata_path = path.with_suffix(path.suffix + ".meta.json")
+    observer = _SubstanceSyncObserver(
+        FDA_GSRS_UNII_NAMES_DATASET_KEY,
+        metadata_path,
+        job_progress,
+    )
+    observer.started(resumed=False)
+    try:
+        if archive_fetcher is None:
+            data = _fetch_with_heartbeat(
+                lambda: _fetch_bytes(
+                    FDA_GSRS_UNII_NAMES_LATEST,
+                    progress=observer.progress_update,
+                ),
+                observer,
+            )
+        else:
+            data = _fetch_with_heartbeat(
+                lambda: archive_fetcher(FDA_GSRS_UNII_NAMES_LATEST),
+                observer,
+            )
+        observer.progress_update(len(data), len(data))
+        inspected = inspect_gsrs_unii_names_archive(data)
+        _write_atomic(path, data)
+        metadata = {
+            "dataset_key": FDA_GSRS_UNII_NAMES_DATASET_KEY,
+            "source_family": "fda_gsrs_unii_names",
+            "source_locator": FDA_GSRS_UNII_NAMES_LATEST,
+            "effective_date": inspected["effective_date"],
+            "fetched_at": datetime.now(APP_TIMEZONE).isoformat(timespec="seconds"),
+            "row_count": inspected["row_count"],
+            "sha256": _sha256_bytes(data),
+            "archive_member": inspected["member"],
+            "authority": "FDA GSRS / UNII Names via precisionFDA",
+        }
+        _write_json_atomic(metadata_path, metadata)
+        observer.checkpoint(sha256=metadata["sha256"], size_bytes=len(data))
+        observer.completed(row_count=int(inspected["row_count"]), resumed=False)
+        return metadata
+    except Exception as exc:
+        observer.failed(exc)
+        raise
 
 
-def sync_substance_identity_sources(raw_dir: str | Path) -> dict:
+def sync_substance_identity_sources(
+    raw_dir: str | Path,
+    *,
+    job_progress: ProgressCallback | None = None,
+) -> dict:
     return {
-        "openfda_unii": sync_openfda_unii(raw_dir),
-        "fda_gsrs_unii_names": sync_fda_gsrs_unii_names(raw_dir),
+        "openfda_unii": sync_openfda_unii(raw_dir, job_progress=job_progress),
+        "fda_gsrs_unii_names": sync_fda_gsrs_unii_names(
+            raw_dir,
+            job_progress=job_progress,
+        ),
     }
 
 

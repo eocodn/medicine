@@ -509,7 +509,7 @@ def rebuild_substance_database(
     *,
     progress=None,
 ) -> dict:
-    sync_substance_identity_sources(raw_dir)
+    sync_substance_identity_sources(raw_dir, job_progress=progress)
     return assemble_substance_database(
         db_path,
         canonical_db_path,
