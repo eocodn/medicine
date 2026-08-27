@@ -15,6 +15,7 @@ from .parser_v5_evaluation import evaluate_parser_v5_rows
 from .parser_v5_inference_paddle import run_parser_v5_inference
 from .parser_v5_model_input import build_parser_v5_runtime_input
 from .parser_v5_training_paddle import ParserV5Model, ParserV5TrainingConfig
+from .parser_v5_training_artifact import resolve_parser_v5_checkpoint
 from .parser_v5_validation_protocol import (
     validate_parser_v5_frozen_implementation,
     validate_parser_v5_holdout_authorization,
@@ -135,7 +136,7 @@ def _load_frozen_model(
     if not isinstance(config_raw, Mapping):
         raise ValueError("Parser v5 sealed evaluation training config is invalid")
     config = ParserV5TrainingConfig(**dict(config_raw))
-    checkpoint = Path(str(result.get("best_checkpoint") or "")).resolve()
+    checkpoint = resolve_parser_v5_checkpoint(result_path, result.get("best_checkpoint"))
     if not checkpoint.is_file() or _sha256_file(checkpoint) != freeze["checkpoint_sha256"]:
         raise ValueError("Parser v5 sealed evaluation checkpoint disagrees with candidate freeze")
     paddle.set_device(config.device)

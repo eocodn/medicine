@@ -12,6 +12,7 @@ from .parser_v5_calibration import load_parser_v5_calibration
 from .parser_v5_dataset import load_parser_v5_dataset
 from .parser_v5_decode import ParserV5DecodeConfig
 from .parser_v5_development_views import DEVELOPMENT_VIEWS
+from .parser_v5_training_artifact import resolve_parser_v5_checkpoint
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -58,6 +59,7 @@ _IMPLEMENTATION_FILES = (
     "parser_v5_structured_targets.py",
     "parser_v5_heads_paddle.py",
     "parser_v5_training_paddle.py",
+    "parser_v5_training_artifact.py",
     "parser_v5_training_evaluation.py",
     "parser_v5_training_views.py",
     "parser_v5_decode.py",
@@ -163,7 +165,7 @@ def freeze_parser_v5_candidate(
     validation_datasets = _dataset_identities(
         profile.get("validation_datasets"), "Parser v5 freeze validation datasets"
     )
-    checkpoint = Path(str(result.get("best_checkpoint") or "")).resolve()
+    checkpoint = resolve_parser_v5_checkpoint(result_path, result.get("best_checkpoint"))
     if not checkpoint.is_file():
         raise ValueError("Parser v5 freeze best checkpoint does not exist")
     checkpoint_sha256 = _sha256_file(checkpoint)

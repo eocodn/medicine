@@ -97,7 +97,7 @@ def build_frozen_candidate(root: Path) -> tuple[Path, Path]:
         "history": [],
         "best_epoch": 1,
         "best_validation": {"views": {dataset_id: {} for dataset_id in dev_ids}},
-        "best_checkpoint": str(checkpoint),
+        "best_checkpoint": checkpoint.name,
         "best_checkpoint_sha256": _sha(checkpoint),
     }
     result_path = root / "result.json"

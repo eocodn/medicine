@@ -30,6 +30,7 @@ from .parser_v5_training_evaluation import (
     parser_v5_selection_score,
     prepare_parser_v5_sample,
 )
+from .parser_v5_training_artifact import parser_v5_checkpoint_reference, resolve_parser_v5_checkpoint
 
 
 STATE_FILE = "training-state.json"
@@ -221,7 +222,7 @@ def _checkpoint_record(root: Path, epoch: int, profile_sha256: str) -> dict[str,
         "training_steps": int(record["training_steps"]),
         "validation": dict(record["validation"]),
         "selection_score": float(record["selection_score"]),
-        "checkpoint": str(model_path),
+        "checkpoint": parser_v5_checkpoint_reference(root, model_path),
         "model_sha256": str(record["model_sha256"]),
         "optimizer_sha256": str(record["optimizer_sha256"]),
     }
@@ -309,7 +310,7 @@ def _completed_result(root: Path, profile: Mapping[str, Any], state: Mapping[str
     result = _json_file(result_path)
     if result.get("status") != "ok" or result.get("profile") != profile:
         raise ValueError("completed Parser v5 training result profile mismatch")
-    best = Path(str(result.get("best_checkpoint") or ""))
+    best = resolve_parser_v5_checkpoint(result_path, result.get("best_checkpoint"))
     if not best.is_file() or result.get("best_checkpoint_sha256") != _sha256_file(best):
         raise ValueError("completed Parser v5 best checkpoint SHA-256 mismatch")
     return result

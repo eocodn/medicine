@@ -24,6 +24,7 @@ from .parser_v5_model_input import (
 )
 from .parser_v5_observation import ObservationProfile, simulate_observations
 from .parser_v5_training_paddle import ParserV5Model, ParserV5TrainingConfig
+from .parser_v5_training_artifact import resolve_parser_v5_checkpoint
 from .parser_v5_validation_protocol import (
     load_parser_v5_candidate_freeze,
     validate_parser_v5_frozen_implementation,
@@ -403,7 +404,7 @@ def _load_frozen_model(training_result: Path, freeze: Mapping[str, Any]) -> tupl
     if not isinstance(config_raw, Mapping):
         raise ValueError("Parser v5 export training config is invalid")
     config = ParserV5TrainingConfig(**dict(config_raw))
-    checkpoint = Path(str(result.get("best_checkpoint") or "")).resolve()
+    checkpoint = resolve_parser_v5_checkpoint(training_result, result.get("best_checkpoint"))
     if not checkpoint.is_file() or _sha256_file(checkpoint) != freeze["checkpoint_sha256"]:
         raise ValueError("Parser v5 export checkpoint disagrees with candidate freeze")
     paddle.set_device(config.device)

@@ -13,6 +13,7 @@ from browser_ocr.document_parsing.parser_v5_training_paddle import (
     train_parser_v5,
 )
 from browser_ocr.document_parsing.parser_v5_training_cli import build_parser
+from browser_ocr.document_parsing.parser_v5_training_artifact import resolve_parser_v5_checkpoint
 
 
 class ParserV5TrainingTest(unittest.TestCase):
@@ -36,6 +37,20 @@ class ParserV5TrainingTest(unittest.TestCase):
         self.assertEqual(args.validation_manifest, ["/tmp/val.json"])
         self.assertEqual(args.epochs, 3)
 
+    def test_checkpoint_reference_is_result_relative_and_cannot_escape_root(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            result = Path(raw) / "result.json"
+            result.write_text("{}", encoding="utf-8")
+            expected = Path(raw) / "checkpoints" / "epoch-0001" / "model.pdparams"
+            self.assertEqual(
+                resolve_parser_v5_checkpoint(result, "checkpoints/epoch-0001/model.pdparams"),
+                expected,
+            )
+            with self.assertRaisesRegex(ValueError, "must be relative"):
+                resolve_parser_v5_checkpoint(result, str(expected.resolve()))
+            with self.assertRaisesRegex(ValueError, "escapes"):
+                resolve_parser_v5_checkpoint(result, "../model.pdparams")
+
     def test_training_writes_hash_bound_best_checkpoint_and_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -57,7 +72,8 @@ class ParserV5TrainingTest(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(first["status"], "ok")
             self.assertEqual(len(first["history"]), 2)
-            self.assertTrue(Path(first["best_checkpoint"]).is_file())
+            self.assertFalse(Path(first["best_checkpoint"]).is_absolute())
+            self.assertTrue((output / first["best_checkpoint"]).is_file())
             self.assertEqual(len(first["best_checkpoint_sha256"]), 64)
             self.assertIn("role_micro_f1", first["best_validation"])
             self.assertIn("assignment_accuracy", first["best_validation"])
