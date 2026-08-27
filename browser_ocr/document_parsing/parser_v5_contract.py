@@ -16,6 +16,31 @@ SEMANTIC_ROLES = {
     "context",
     "other",
 }
+_DOCUMENT_FIELDS = {"schema_version", "document_id", "width", "height", "sections", "medications", "spans"}
+_SECTION_FIELDS = {"section_id", "kind"}
+_MEDICATION_FIELDS = {"medication_id", "product_name"}
+_SPAN_FIELDS = {
+    "span_id",
+    "section_id",
+    "text",
+    "semantic_role",
+    "association_group",
+    "polygon",
+    "reading_order",
+}
+_OBSERVATION_FIELDS = {"document_id", "profile_revision", "nodes"}
+_NODE_FIELDS = {
+    "node_id",
+    "text",
+    "detector_confidence",
+    "recognizer_confidence",
+    "polygon",
+    "source_span_ids",
+    "targets",
+    "operation",
+}
+_TARGET_FIELDS = {"source_span_id", "semantic_role", "association_group", "label_status"}
+_OBSERVATION_OPERATIONS = {"identity", "split", "duplicate", "merge", "false_positive"}
 
 
 def _require_mapping(value: object, label: str) -> Mapping[str, Any]:
@@ -29,6 +54,11 @@ def _require_nonempty_text(value: object, label: str) -> str:
     if not text:
         raise ValueError(f"{label} must be non-empty")
     return text
+
+
+def _require_exact_fields(value: Mapping[str, Any], expected: set[str], label: str) -> None:
+    if set(value) != expected:
+        raise ValueError(f"{label} fields are invalid")
 
 
 def _validate_polygon(value: object, *, width: int, height: int, label: str) -> None:
@@ -48,6 +78,7 @@ def _validate_polygon(value: object, *, width: int, height: int, label: str) -> 
 
 def validate_parser_v5_document(document: Mapping[str, Any]) -> None:
     doc = _require_mapping(document, "parser v5 document")
+    _require_exact_fields(doc, _DOCUMENT_FIELDS, "parser v5 document")
     if doc.get("schema_version") != PARSER_V5_SCHEMA_VERSION:
         raise ValueError("parser v5 document schema_version must be 5")
     _require_nonempty_text(doc.get("document_id"), "parser v5 document_id")
@@ -70,6 +101,7 @@ def validate_parser_v5_document(document: Mapping[str, Any]) -> None:
     section_ids: set[str] = set()
     for index, raw in enumerate(sections):
         section = _require_mapping(raw, f"parser v5 section {index}")
+        _require_exact_fields(section, _SECTION_FIELDS, f"parser v5 section {index}")
         section_id = _require_nonempty_text(section.get("section_id"), f"parser v5 section {index}.section_id")
         if section_id in section_ids:
             raise ValueError("parser v5 section ids must be unique")
@@ -79,6 +111,7 @@ def validate_parser_v5_document(document: Mapping[str, Any]) -> None:
     medication_ids: set[str] = set()
     for index, raw in enumerate(medications):
         medication = _require_mapping(raw, f"parser v5 medication {index}")
+        _require_exact_fields(medication, _MEDICATION_FIELDS, f"parser v5 medication {index}")
         medication_id = _require_nonempty_text(
             medication.get("medication_id"), f"parser v5 medication {index}.medication_id"
         )
@@ -91,6 +124,7 @@ def validate_parser_v5_document(document: Mapping[str, Any]) -> None:
     reading_orders: set[int] = set()
     for index, raw in enumerate(spans):
         span = _require_mapping(raw, f"parser v5 span {index}")
+        _require_exact_fields(span, _SPAN_FIELDS, f"parser v5 span {index}")
         span_id = _require_nonempty_text(span.get("span_id"), f"parser v5 span {index}.span_id")
         if span_id in span_ids:
             raise ValueError("parser v5 span ids must be unique")
@@ -116,6 +150,7 @@ def validate_parser_v5_document(document: Mapping[str, Any]) -> None:
 
 def validate_parser_v5_observation(observation: Mapping[str, Any]) -> None:
     value = _require_mapping(observation, "parser v5 observation")
+    _require_exact_fields(value, _OBSERVATION_FIELDS, "parser v5 observation")
     _require_nonempty_text(value.get("document_id"), "parser v5 observation document_id")
     if value.get("profile_revision") != 1:
         raise ValueError("parser v5 observation profile_revision must be 1")
@@ -125,6 +160,7 @@ def validate_parser_v5_observation(observation: Mapping[str, Any]) -> None:
     node_ids: set[str] = set()
     for index, raw in enumerate(nodes):
         node = _require_mapping(raw, f"parser v5 observation node {index}")
+        _require_exact_fields(node, _NODE_FIELDS, f"parser v5 observation node {index}")
         node_id = _require_nonempty_text(node.get("node_id"), f"parser v5 observation node {index}.node_id")
         if node_id in node_ids:
             raise ValueError("parser v5 observation node ids must be unique")
@@ -134,12 +170,18 @@ def validate_parser_v5_observation(observation: Mapping[str, Any]) -> None:
         targets = node.get("targets")
         if not isinstance(source_span_ids, list) or not isinstance(targets, list):
             raise ValueError(f"parser v5 observation node {node_id} provenance must use lists")
+        if node.get("operation") not in _OBSERVATION_OPERATIONS:
+            raise ValueError(f"parser v5 observation node {node_id} operation is unsupported")
         for score_name in ("detector_confidence", "recognizer_confidence"):
             score = node.get(score_name)
             if isinstance(score, bool) or not isinstance(score, (int, float)) or not 0.0 <= float(score) <= 1.0:
                 raise ValueError(f"parser v5 observation node {node_id} {score_name} must be in [0, 1]")
         for target in targets:
             target_map = _require_mapping(target, f"parser v5 observation node {node_id} target")
+            _require_exact_fields(target_map, _TARGET_FIELDS, f"parser v5 observation node {node_id} target")
+            _require_nonempty_text(
+                target_map.get("source_span_id"), f"parser v5 observation node {node_id} target source_span_id"
+            )
             if target_map.get("semantic_role") not in SEMANTIC_ROLES:
                 raise ValueError(f"parser v5 observation node {node_id} target role is unsupported")
             if target_map.get("label_status") not in {"labeled", "ambiguous"}:
@@ -154,6 +196,12 @@ def validate_parser_v5_pair(document: Mapping[str, Any], observation: Mapping[st
     spans = {str(span["span_id"]): span for span in document["spans"]}
     for node in observation["nodes"]:
         node_id = str(node["node_id"])
+        _validate_polygon(
+            node.get("polygon"),
+            width=int(document["width"]),
+            height=int(document["height"]),
+            label=f"parser v5 observation node {node_id}.polygon",
+        )
         source_ids = [str(source_id) for source_id in node["source_span_ids"]]
         if len(source_ids) != len(set(source_ids)):
             raise ValueError(f"parser v5 observation node {node_id} source_span_ids must be unique")
