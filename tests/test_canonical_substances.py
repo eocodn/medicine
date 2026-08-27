@@ -9,6 +9,7 @@ import unittest
 import zipfile
 from contextlib import closing, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.schema import SCHEMA, SCHEMA_VERSION
@@ -157,6 +158,50 @@ class CanonicalSubstanceTest(unittest.TestCase):
         }
         path.with_suffix(path.suffix + ".meta.json").write_text(json.dumps(meta), encoding="utf-8")
         self._write_gsrs_names_snapshot()
+
+    def test_substance_build_resumes_materialized_checkpoint_without_rebuilding(self) -> None:
+        self._write_unii_snapshot()
+        events: list[dict[str, object]] = []
+
+        with mock.patch(
+            "medicine_canonical.substance_build.verify_substance_database",
+            side_effect=RuntimeError("verification interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "verification interrupted"):
+                assemble_substance_database(
+                    self.substance_db,
+                    self.canonical_db,
+                    self.raw_dir,
+                    progress=events.append,
+                )
+
+        checkpoint = self.substance_db.with_name(
+            self.substance_db.name + ".build.checkpoint.json"
+        )
+        staged = self.substance_db.with_name(self.substance_db.name + ".tmp")
+        self.assertTrue(checkpoint.is_file())
+        self.assertTrue(staged.is_file())
+        self.assertTrue(any(event["status"] == "heartbeat" for event in events))
+        self.assertTrue(any(event["status"] == "checkpoint" for event in events))
+
+        with mock.patch(
+            "medicine_canonical.substance_build.build_external_index",
+            wraps=__import__(
+                "medicine_canonical.substance_build",
+                fromlist=["build_external_index"],
+            ).build_external_index,
+        ) as build_external:
+            result = assemble_substance_database(
+                self.substance_db,
+                self.canonical_db,
+                self.raw_dir,
+                progress=events.append,
+            )
+
+        self.assertEqual(build_external.call_count, 0)
+        self.assertGreater(result["substances"], 0)
+        self.assertFalse(checkpoint.exists())
+        self.assertFalse(staged.exists())
 
     def _write_gsrs_names_snapshot(
         self,

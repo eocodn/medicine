@@ -394,9 +394,19 @@ def main(argv=None) -> int:
     elif args.command == "substance-sync":
         payload = sync_substance_identity_sources(args.raw_dir)
     elif args.command == "substance-build":
-        payload = assemble_substance_database(args.db, args.canonical_db, args.raw_dir)
+        payload = assemble_substance_database(
+            args.db,
+            args.canonical_db,
+            args.raw_dir,
+            progress=_canonical_progress,
+        )
     elif args.command == "substance-rebuild":
-        payload = rebuild_substance_database(args.db, args.canonical_db, args.raw_dir)
+        payload = rebuild_substance_database(
+            args.db,
+            args.canonical_db,
+            args.raw_dir,
+            progress=_canonical_progress,
+        )
     elif args.command == "substance-stats":
         payload = substance_stats(args.db)
     elif args.command == "substance-unsolved":
