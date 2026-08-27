@@ -44,6 +44,35 @@ class ParserV5WorldTest(unittest.TestCase):
         }
         self.assertTrue(train_non_product.isdisjoint(unseen_non_product))
 
+    def test_product_training_vocabulary_is_broad_enough_to_resist_name_memorization(self) -> None:
+        train_products: set[str] = set()
+        unseen_products: set[str] = set()
+        for document_index in range(24):
+            train = generate_parser_world(
+                seed=980,
+                document_index=document_index,
+                profile=ParserWorldProfile(
+                    medication_count=(5, 5),
+                    distractor_section_count=(0, 0),
+                    product_vocabulary="train",
+                ),
+            )
+            unseen = generate_parser_world(
+                seed=981,
+                document_index=document_index,
+                profile=ParserWorldProfile(
+                    medication_count=(5, 5),
+                    distractor_section_count=(0, 0),
+                    product_vocabulary="unseen",
+                ),
+            )
+            train_products.update(item["product_name"] for item in train["medications"])
+            unseen_products.update(item["product_name"] for item in unseen["medications"])
+
+        self.assertGreaterEqual(len(train_products), 30)
+        self.assertGreaterEqual(len(unseen_products), 18)
+        self.assertTrue(train_products.isdisjoint(unseen_products))
+
     def test_world_generation_is_deterministic_and_has_no_layout_identity_shortcut(self) -> None:
         profile = ParserWorldProfile(
             medication_count=(2, 2),

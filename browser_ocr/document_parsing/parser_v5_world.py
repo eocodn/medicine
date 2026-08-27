@@ -19,17 +19,28 @@ _DISTRACTOR_KINDS = (
     "legal",
     "general_context",
 )
+_TRAIN_PRODUCT_STEMS = (
+    "가나", "다라", "마바", "사아", "거너", "더러", "머버", "서어",
+    "고노", "도로", "모보", "소오", "구누", "두루", "무부", "수우",
+)
+_UNSEEN_PRODUCT_STEMS = (
+    "자차", "카타", "파하", "노루", "저처", "커터", "퍼허", "너러",
+)
+_PRODUCT_SUFFIXES = ("정", "캡슐", "시럽")
 _PRODUCT_NAMES = {
-    "train": ("가나정", "다라캡슐", "마바정", "사아시럽"),
-    "unseen": ("자차정", "카타캡슐", "파하정", "노루정"),
+    "train": tuple(f"{stem}{suffix}" for stem in _TRAIN_PRODUCT_STEMS for suffix in _PRODUCT_SUFFIXES),
+    "unseen": tuple(f"{stem}{suffix}" for stem in _UNSEEN_PRODUCT_STEMS for suffix in _PRODUCT_SUFFIXES),
 }
 _WORDING = {
     "train": {
-        "dose": ("1정", "0.5정", "1캡슐", "5mL"),
-        "frequency": ("1일 1회", "1일 2회", "하루 2번"),
-        "duration": ("3일분", "5일분", "7일분"),
-        "instruction": ("식후 복용", "식전 복용", "필요시 복용"),
-        "schedule": ("아침", "아침 저녁", "취침 전"),
+        "dose": ("1정", "0.5정", "1캡슐", "5mL", "2정", "반정", "2캡슐", "10mL"),
+        "frequency": ("1일 1회", "1일 2회", "1일 3회", "하루 2번", "하루 3번", "매일 1회", "매일 2회"),
+        "duration": ("3일분", "5일분", "7일분", "10일분", "14일분", "2주분"),
+        "instruction": (
+            "식후 복용", "식전 복용", "필요시 복용", "식사 후 복용", "공복 복용",
+            "물과 함께 복용", "증상시 복용",
+        ),
+        "schedule": ("아침", "아침 저녁", "취침 전", "아침 점심 저녁", "저녁", "점심", "기상 후"),
     },
     "unseen": {
         "dose": ("2알", "반 정", "10밀리리터", "2캡슐"),
