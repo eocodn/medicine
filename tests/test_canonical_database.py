@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -169,6 +170,69 @@ class CanonicalDatabaseTest(unittest.TestCase):
             ingredient_fetch_page=self._ingredient_fetch,
             api_workers=1,
         )
+
+    def test_assemble_resumes_verified_source_stage_from_input_bound_checkpoint(self) -> None:
+        self._build()
+        self.db.unlink()
+        layout = MfdsSourceLayout.for_database(self.db)
+        events: list[dict[str, object]] = []
+
+        with mock.patch(
+            "medicine_canonical.build.materialize_product_search_documents",
+            side_effect=RuntimeError("materialization interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "materialization interrupted"):
+                assemble_canonical_database(self.db, layout, progress=events.append)
+
+        checkpoint = self.db.with_name(self.db.name + ".build.checkpoint.json")
+        staged = self.db.with_name(self.db.name + ".tmp")
+        self.assertTrue(checkpoint.is_file())
+        self.assertTrue(staged.is_file())
+        self.assertTrue(any(event["status"] == "checkpoint" for event in events))
+        self.assertTrue(any(event["status"] == "failed" for event in events))
+
+        with mock.patch(
+            "medicine_canonical.build.populate_canonical_source_tables",
+            wraps=__import__("medicine_canonical.build", fromlist=["populate_canonical_source_tables"]).populate_canonical_source_tables,
+        ) as populate:
+            result = assemble_canonical_database(self.db, layout, progress=events.append)
+
+        self.assertEqual(populate.call_count, 0)
+        self.assertGreater(result["products"], 0)
+        self.assertFalse(checkpoint.exists())
+        self.assertFalse(staged.exists())
+
+    def test_cli_build_exposes_structured_job_progress_and_checkpoint_events(self) -> None:
+        self._build()
+        self.db.unlink()
+        layout = MfdsSourceLayout.for_database(self.db)
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = canonical_main(
+                [
+                    "build",
+                    "--db",
+                    str(self.db),
+                    "--raw-dir",
+                    str(layout.product_dir),
+                    "--ingredient-raw-dir",
+                    str(layout.ingredient_dir),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        events = [
+            json.loads(line)["canonical_progress"]
+            for line in stderr.getvalue().splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(events[0]["status"], "started")
+        self.assertTrue(any(event["status"] == "checkpoint" for event in events))
+        self.assertTrue(any(event.get("bar", "").startswith("[") for event in events))
+        self.assertEqual(events[-1]["status"], "completed")
 
     def test_rejects_unknown_product_flag_code(self) -> None:
         def fetch(operation: str, page: int, page_size: int):

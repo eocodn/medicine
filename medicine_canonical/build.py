@@ -11,8 +11,14 @@ from zoneinfo import ZoneInfo
 
 from medicine_reference.mfds_sources import PERMIT_SOURCE
 
+from .canonical_job import (
+    canonical_build_input_fingerprint,
+    canonical_build_stage,
+    checkpoint_result,
+)
 from .dose_criteria import materialize_dose_criteria
 from .inspection import canonical_stats, verify_canonical_database
+from .job_lifecycle import JobLifecycle, sqlite_heartbeat
 from .mfds_ingredient import (
     IngredientFetchPage,
     import_mfds_ingredient_snapshots,
@@ -22,7 +28,11 @@ from .linking import materialize_product_criterion_links
 from .product_search_documents import materialize_product_search_documents
 from .schema import SCHEMA, SCHEMA_VERSION
 from .source_layout import MfdsSourceLayout
-from .snapshot_io import insert_source_snapshot, load_snapshot_metadata
+from .snapshot_io import (
+    insert_source_snapshot,
+    load_snapshot_metadata,
+    sha256_file,
+)
 from .source_policy import CANONICAL_SOURCE_POLICY
 from .sources import (
     DUR_ENDPOINTS,
@@ -362,38 +372,152 @@ def populate_canonical_source_tables(
 def assemble_canonical_database(
     db_path: str | Path,
     source_layout: MfdsSourceLayout,
+    *,
+    progress=None,
+    checkpoint_path: str | Path | None = None,
 ) -> dict:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     temp = db_path.with_name(db_path.name + ".tmp")
-    temp.unlink(missing_ok=True)
-    started = time.monotonic()
+    checkpoint = (
+        Path(checkpoint_path)
+        if checkpoint_path is not None
+        else db_path.with_name(db_path.name + ".build.checkpoint.json")
+    )
+    input_fingerprint = canonical_build_input_fingerprint(source_layout)
     try:
-        with closing(sqlite3.connect(temp)) as con:
-            con.executescript(SCHEMA)
-            con.execute("BEGIN")
-            source_result = populate_canonical_source_tables(con, source_layout)
-            search_result = materialize_product_search_documents(con, None)
-            link_result = materialize_product_criterion_links(con)
-            built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
-            con.executemany(
-                "INSERT INTO canonical_meta(key,value) VALUES(?,?)",
-                [
-                    ("schema_version", SCHEMA_VERSION),
-                    ("built_at", built_at),
-                    ("source_policy", CANONICAL_SOURCE_POLICY),
-                ],
-            )
-            con.commit()
-            con.execute("ANALYZE")
-            con.execute("PRAGMA optimize")
-            con.commit()
-        verification = verify_canonical_database(temp)
-        if verification["status"] != "verified":
-            raise RuntimeError("canonical verification failed: " + "; ".join(verification["errors"]))
-        os.replace(temp, db_path)
-    except Exception:
+        lifecycle = JobLifecycle(
+            "canonical-build",
+            checkpoint,
+            input_fingerprint=input_fingerprint,
+            progress=progress,
+            total_steps=4,
+        )
+    except RuntimeError:
         temp.unlink(missing_ok=True)
+        raise
+    started = time.monotonic()
+    current_phase = "startup"
+    lifecycle.started()
+    try:
+        phase = lifecycle.completed_phase
+        if phase not in {None, "source_import", "materialized", "verified"}:
+            lifecycle.discard(f"unknown completed phase {phase!r}")
+        if phase is not None and lifecycle.artifacts.get("staged_db") != str(temp):
+            lifecycle.discard("staged canonical database path changed")
+        if phase == "source_import" and canonical_build_stage(temp) != "source":
+            lifecycle.discard("authoritative staged database is not at source stage")
+        if phase == "materialized" and canonical_build_stage(temp) != "complete":
+            lifecycle.discard("authoritative staged database is not materialized")
+
+        if phase is None:
+            temp.unlink(missing_ok=True)
+            current_phase = "source_import"
+            lifecycle.step_started(current_phase, 1)
+            with closing(sqlite3.connect(temp)) as con, sqlite_heartbeat(
+                con, lifecycle, current_phase
+            ):
+                con.executescript(SCHEMA)
+                con.execute("BEGIN")
+                source_result = populate_canonical_source_tables(con, source_layout)
+                con.executemany(
+                    "INSERT INTO canonical_meta(key,value) VALUES(?,?)",
+                    [
+                        ("schema_version", SCHEMA_VERSION),
+                        ("source_policy", CANONICAL_SOURCE_POLICY),
+                        ("build_stage", "source"),
+                    ],
+                )
+                con.commit()
+            lifecycle.checkpoint(
+                current_phase,
+                {"staged_db": str(temp), "source_result": source_result},
+            )
+            lifecycle.step_completed(current_phase, 1)
+            phase = lifecycle.completed_phase
+        else:
+            source_result = checkpoint_result(lifecycle, "source_result")
+
+        if phase == "source_import":
+            current_phase = "materialized"
+            lifecycle.step_started(current_phase, 2)
+            with closing(sqlite3.connect(temp)) as con, sqlite_heartbeat(
+                con, lifecycle, current_phase
+            ):
+                con.execute("BEGIN")
+                search_result = materialize_product_search_documents(con, None)
+                link_result = materialize_product_criterion_links(con)
+                built_at = datetime.now(APP_TIMEZONE).isoformat(timespec="seconds")
+                con.execute("UPDATE canonical_meta SET value='complete' WHERE key='build_stage'")
+                con.execute(
+                    "INSERT INTO canonical_meta(key,value) VALUES('built_at',?)",
+                    (built_at,),
+                )
+                con.commit()
+                con.execute("ANALYZE")
+                con.execute("PRAGMA optimize")
+                con.commit()
+            lifecycle.checkpoint(
+                current_phase,
+                {
+                    "staged_db": str(temp),
+                    "source_result": source_result,
+                    "search_result": search_result,
+                    "link_result": link_result,
+                },
+            )
+            lifecycle.step_completed(current_phase, 2)
+            phase = lifecycle.completed_phase
+        else:
+            search_result = checkpoint_result(lifecycle, "search_result")
+            link_result = checkpoint_result(lifecycle, "link_result")
+
+        if phase == "materialized":
+            current_phase = "verified"
+            lifecycle.step_started(current_phase, 3)
+            lifecycle.heartbeat(current_phase, force=True)
+            verification = verify_canonical_database(temp)
+            if verification["status"] != "verified":
+                raise RuntimeError(
+                    "canonical verification failed: " + "; ".join(verification["errors"])
+                )
+            staged_sha256 = sha256_file(temp)
+            lifecycle.checkpoint(
+                current_phase,
+                {
+                    "staged_db": str(temp),
+                    "source_result": source_result,
+                    "search_result": search_result,
+                    "link_result": link_result,
+                    "staged_sha256": staged_sha256,
+                },
+            )
+            lifecycle.step_completed(current_phase, 3)
+            phase = lifecycle.completed_phase
+
+        if phase != "verified":
+            lifecycle.discard(f"cannot commit from completed phase {phase!r}")
+        staged_sha256 = lifecycle.artifacts.get("staged_sha256")
+        if not isinstance(staged_sha256, str) or not staged_sha256:
+            lifecycle.discard("verified checkpoint is missing staged sha256")
+
+        current_phase = "commit"
+        lifecycle.step_started(current_phase, 4)
+        if temp.exists():
+            if sha256_file(temp) != staged_sha256:
+                lifecycle.discard("verified staged database bytes changed")
+            os.replace(temp, db_path)
+        elif db_path.exists():
+            if sha256_file(db_path) != staged_sha256:
+                lifecycle.discard("committed database does not match verified staged sha256")
+        else:
+            lifecycle.discard("verified staged and committed databases are both missing")
+        lifecycle.step_completed(current_phase, 4)
+        lifecycle.completed()
+    except Exception as exc:
+        lifecycle.failed(current_phase, exc)
+        if lifecycle.completed_phase is None:
+            temp.unlink(missing_ok=True)
         raise
     stats = canonical_stats(db_path)
     stats.update(
@@ -419,6 +543,7 @@ def build_canonical_database(
     ingredient_page_size: int = 500,
     api_workers: int = 8,
     progress: bool = True,
+    job_progress=None,
     permit_fetch_page: PermitFetchPage | None = None,
     dur_fetch_page: DurFetchPage | None = None,
     ingredient_fetch_page: IngredientFetchPage | None = None,
@@ -437,7 +562,7 @@ def build_canonical_database(
         dur_fetch_page=dur_fetch_page,
         ingredient_fetch_page=ingredient_fetch_page,
     )
-    return assemble_canonical_database(db_path, layout)
+    return assemble_canonical_database(db_path, layout, progress=job_progress)
 
 
 __all__ = [

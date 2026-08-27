@@ -64,6 +64,14 @@ def _reference_progress(event: dict[str, object]) -> None:
     )
 
 
+def _canonical_progress(event: dict[str, object]) -> None:
+    print(
+        json.dumps({"canonical_progress": event}, ensure_ascii=False, separators=(",", ":")),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="medicine-canonical",
@@ -310,7 +318,9 @@ def main(argv=None) -> int:
         )
     elif args.command == "build":
         payload = assemble_canonical_database(
-            args.db, _mfds_source_layout(args)
+            args.db,
+            _mfds_source_layout(args),
+            progress=_canonical_progress,
         )
     elif args.command == "rebuild":
         payload = build_canonical_database(
@@ -322,6 +332,7 @@ def main(argv=None) -> int:
             ingredient_page_size=args.ingredient_page_size,
             api_workers=args.workers,
             progress=not args.quiet,
+            job_progress=None if args.quiet else _canonical_progress,
         )
     elif args.command == "integrated-build":
         payload = assemble_integrated_databases(
