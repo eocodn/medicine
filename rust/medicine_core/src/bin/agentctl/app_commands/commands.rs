@@ -506,6 +506,8 @@ fn request(
         None,
     );
     let body = body.map(|value| value.to_string()).unwrap_or_default();
-    serde_json::from_str(&engine.request(method, path, &body))
+    let (response, observation) = engine.request_with_observation(method, path, &body);
+    super::super::runtime_log::record_or_emit(&observation);
+    serde_json::from_str(&response)
         .map_err(|error| format!("medicine engine returned invalid JSON: {error}"))
 }

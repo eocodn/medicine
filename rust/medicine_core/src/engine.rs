@@ -1,6 +1,10 @@
 use rusqlite::{Connection, OpenFlags};
+#[cfg(feature = "agentctl")]
+use serde::Serialize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "agentctl")]
+use std::time::Instant;
 
 use crate::{
     dashboard, doses, medication_list, medications, people, personal_schema, planning, preview,
@@ -12,6 +16,16 @@ pub enum AccessClass {
     Reference,
     PersonalRead,
     PersonalWrite,
+}
+
+#[cfg(feature = "agentctl")]
+#[derive(Clone, Debug, Serialize)]
+pub struct RequestObservation {
+    pub method: String,
+    pub path: String,
+    pub access: &'static str,
+    pub status: u64,
+    pub elapsed_ms: u128,
 }
 
 impl AccessClass {
@@ -206,6 +220,31 @@ impl MedicineEngine {
             return json!({"status": status, "body": body}).to_string();
         }
         json!({"status": 404, "body": {"detail": "route not found"}}).to_string()
+    }
+
+    #[cfg(feature = "agentctl")]
+    pub fn request_with_observation(
+        &self,
+        method: &str,
+        raw_path: &str,
+        body_json: &str,
+    ) -> (String, RequestObservation) {
+        let started = Instant::now();
+        let response = self.request(method, raw_path, body_json);
+        let status = serde_json::from_str::<serde_json::Value>(&response)
+            .ok()
+            .and_then(|value| value.get("status").and_then(serde_json::Value::as_u64))
+            .unwrap_or(500);
+        (
+            response,
+            RequestObservation {
+                method: normalized_method(method).to_owned(),
+                path: request_path(raw_path).to_owned(),
+                access: self.request_access(method, raw_path).as_str(),
+                status,
+                elapsed_ms: started.elapsed().as_millis(),
+            },
+        )
     }
 
     fn health_response(&self) -> String {

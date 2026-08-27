@@ -161,7 +161,12 @@ fn execute(
             });
             let engine =
                 MedicineEngine::new(canonical_db.as_deref(), Some(Path::new(&personal_db)), None);
-            let response = engine.request(&operation.method, &operation.path, &operation.body);
+            let (response, observation) = engine.request_with_observation(
+                &operation.method,
+                &operation.path,
+                &operation.body,
+            );
+            super::runtime_log::record_or_emit(&observation);
             let event = if serde_json::from_str::<Value>(&response).is_ok() {
                 Event::Completed {
                     index: operation.index,

@@ -7,6 +7,9 @@ mod discovery;
 #[path = "../medicine_core/reference_cli.rs"]
 mod reference_cli;
 #[cfg(feature = "agentctl")]
+#[path = "runtime_log.rs"]
+mod runtime_log;
+#[cfg(feature = "agentctl")]
 #[path = "scenario.rs"]
 mod scenario;
 
@@ -43,6 +46,8 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "capabilities" => discovery::capabilities(&args[1..], usage),
         #[cfg(feature = "agentctl")]
         "targets" => discovery::targets(&args[1..], usage),
+        #[cfg(feature = "agentctl")]
+        "logs" => runtime_log::command(&args[1..], usage),
         #[cfg(feature = "agentctl")]
         "scenario" => scenario::run(&args[1..], usage),
         "request-access" => request_access(&args[1..]),
@@ -198,7 +203,8 @@ fn request(args: &[String]) -> Result<(), String> {
         personal_db.as_deref().map(Path::new),
         None,
     );
-    let response = engine.request(method, path, &body);
+    let (response, observation) = engine.request_with_observation(method, path, &body);
+    runtime_log::record_or_emit(&observation);
     if json_output {
         println!("{response}");
     } else {
@@ -234,7 +240,8 @@ fn health(args: &[String]) -> Result<(), String> {
         None,
         reason.as_deref(),
     );
-    let response = engine.request("GET", "/api/health", "");
+    let (response, observation) = engine.request_with_observation("GET", "/api/health", "");
+    runtime_log::record_or_emit(&observation);
     if json_output {
         println!("{response}");
     } else {
@@ -484,7 +491,7 @@ fn usage() -> String {
     #[cfg(feature = "agentctl")]
     {
         format!(
-            "usage: medicine-agentctl capabilities [--json]\n       medicine-agentctl targets [--json]\n       medicine-agentctl scenario --personal-db <PATH> [--canonical-db <PATH>] --input <JSON> [--json]\n       {common}"
+            "usage: medicine-agentctl capabilities [--json]\n       medicine-agentctl targets [--json]\n       medicine-agentctl logs [--limit <N>] [--log-db <PATH>] [--json]\n       medicine-agentctl scenario --personal-db <PATH> [--canonical-db <PATH>] --input <JSON> [--json]\n       {common}"
         )
     }
     #[cfg(not(feature = "agentctl"))]

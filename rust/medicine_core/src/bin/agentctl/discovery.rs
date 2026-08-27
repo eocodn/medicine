@@ -3,9 +3,15 @@ use serde_json::json;
 pub(super) fn capabilities(args: &[String], usage: fn() -> String) -> Result<(), String> {
     let json_output = json_flag(args, usage)?;
     #[cfg(not(feature = "web"))]
-    let observation = vec!["health", "reference-state", "scenario-events"];
+    let observation = vec!["health", "reference-state", "scenario-events", "logs"];
     #[cfg(feature = "web")]
-    let observation = vec!["health", "reference-state", "scenario-events", "screenshot"];
+    let observation = vec![
+        "health",
+        "reference-state",
+        "scenario-events",
+        "logs",
+        "screenshot",
+    ];
     #[cfg(not(feature = "web"))]
     let control = vec![
         "request",
@@ -59,7 +65,7 @@ pub(super) fn targets(args: &[String], usage: fn() -> String) -> Result<(), Stri
             "id": "medicine-engine",
             "kind": "headless-core",
             "controls": ["request", "scenario"],
-            "observations": ["health"]
+            "observations": ["health", "logs"]
         }),
         json!({
             "id": "reference-store",
@@ -74,7 +80,7 @@ pub(super) fn targets(args: &[String], usage: fn() -> String) -> Result<(), Stri
             "id": "medicine-engine",
             "kind": "headless-core",
             "controls": ["request", "scenario"],
-            "observations": ["health"]
+            "observations": ["health", "logs"]
         }),
         json!({
             "id": "reference-store",

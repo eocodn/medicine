@@ -48,6 +48,8 @@ mod safety_time;
 #[cfg(feature = "web")]
 pub mod web;
 
+#[cfg(feature = "agentctl")]
+pub use engine::RequestObservation;
 pub use engine::{AccessClass, MedicineEngine};
 pub use reference_capabilities::{
     verify_reference_runtime_capabilities, ReferenceRuntimeCapabilityError,

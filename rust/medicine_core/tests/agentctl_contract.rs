@@ -94,6 +94,11 @@ fn capabilities_and_targets_expose_exploratory_surface() {
         .expect("observation list")
         .iter()
         .any(|item| item == "scenario-events"));
+    assert!(value["observation"]
+        .as_array()
+        .expect("observation list")
+        .iter()
+        .any(|item| item == "logs"));
     assert!(value["control"]
         .as_array()
         .expect("control list")
@@ -113,6 +118,11 @@ fn capabilities_and_targets_expose_exploratory_surface() {
         .filter_map(|item| item["id"].as_str())
         .collect::<Vec<_>>();
     assert_eq!(ids, vec!["medicine-engine", "reference-store", "shared-ui"]);
+    assert!(value["targets"][0]["observations"]
+        .as_array()
+        .expect("medicine-engine observations")
+        .iter()
+        .any(|item| item == "logs"));
 }
 
 #[cfg(not(feature = "web"))]
@@ -148,6 +158,51 @@ fn capabilities_without_web_do_not_advertise_shared_ui_screenshots() {
         .filter_map(|item| item["id"].as_str())
         .collect::<Vec<_>>();
     assert_eq!(ids, vec!["medicine-engine", "reference-store"]);
+}
+
+#[test]
+fn logs_expose_bounded_structured_engine_request_observations() {
+    let log_db = common::temp_sqlite_path("agentctl-runtime-log");
+    let request = agentctl()
+        .env("MEDICINE_AGENTCTL_LOG_DB", &log_db)
+        .args([
+            "request",
+            "GET",
+            "/api/health?private=do-not-log",
+            "--body",
+            r#"{"private":"do-not-log"}"#,
+            "--json",
+        ])
+        .output()
+        .expect("run observed request");
+    assert!(
+        request.status.success(),
+        "{}",
+        String::from_utf8_lossy(&request.stderr)
+    );
+
+    let logs = agentctl()
+        .env("MEDICINE_AGENTCTL_LOG_DB", &log_db)
+        .args(["logs", "--limit", "1", "--json"])
+        .output()
+        .expect("read agentctl logs");
+    assert!(
+        logs.status.success(),
+        "{}",
+        String::from_utf8_lossy(&logs.stderr)
+    );
+    let value: Value = serde_json::from_slice(&logs.stdout).expect("logs json");
+    let entries = value["logs"].as_array().expect("logs array");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["method"], "GET");
+    assert_eq!(entries[0]["path"], "/api/health");
+    assert_eq!(entries[0]["access"], "reference");
+    assert_eq!(entries[0]["status"], 200);
+    assert!(entries[0].get("body").is_none());
+    assert!(!serde_json::to_string(&entries[0])
+        .expect("encode log entry")
+        .contains("do-not-log"));
+    remove_sqlite(&log_db);
 }
 
 #[test]
