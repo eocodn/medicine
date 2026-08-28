@@ -9,7 +9,7 @@ import paddle.nn as nn
 import paddle.nn.functional as F
 
 from .parser_v5_document_encoder_paddle import ParserV5DocumentTensors
-from .parser_v5_model_input import BYTE_OFFSET
+from .parser_v5_model_input import BYTE_OFFSET, RELATION_FEATURE_DIM
 from .parser_v51_targets import ROW_FIELD_ROLES
 
 
@@ -82,6 +82,8 @@ class ParserV51DirectRowDecoder(nn.Layer):
         self.piece_embedding = nn.Embedding(spec.max_field_pieces, spec.hidden_dim)
         self.node_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.pointer_node_key = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.relation_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.relation_key = nn.Linear(RELATION_FEATURE_DIM, spec.hidden_dim)
         self.none_node = self.create_parameter(
             shape=[1, spec.hidden_dim],
             default_initializer=nn.initializer.Normal(std=0.02),
@@ -131,6 +133,34 @@ class ParserV51DirectRowDecoder(nn.Layer):
         ).reshape(
             [self.spec.max_rows, len(ROW_FIELD_ROLES), self.spec.max_field_pieces, node_count + 1]
         )
+        if node_count:
+            product_index = ROW_FIELD_ROLES.index("product")
+            product_probabilities = F.softmax(
+                piece_node_logits[:, product_index, 0, :],
+                axis=-1,
+            )[:, :node_count]
+            relation_hidden = self.relation_key(tensors.relation_features)
+            expected_relation = paddle.matmul(
+                product_probabilities,
+                relation_hidden.reshape([node_count, node_count * self.spec.hidden_dim]),
+            ).reshape([self.spec.max_rows, node_count, self.spec.hidden_dim])
+            relation_queries = self.relation_query(piece_hidden)
+            relation_scores = (
+                relation_queries.unsqueeze(3)
+                * expected_relation.reshape([self.spec.max_rows, 1, 1, node_count, self.spec.hidden_dim])
+            ).sum(axis=-1) / math.sqrt(self.spec.hidden_dim)
+            relation_mask = paddle.ones(
+                [1, len(ROW_FIELD_ROLES), 1, 1],
+                dtype=relation_scores.dtype,
+            )
+            relation_mask[:, product_index, :, :] = 0.0
+            piece_node_logits = paddle.concat(
+                [
+                    piece_node_logits[..., :node_count] + relation_scores * relation_mask,
+                    piece_node_logits[..., node_count:],
+                ],
+                axis=-1,
+            )
         text_length = tensors.token_ids.shape[1]
         shape = [
             self.spec.max_rows,
