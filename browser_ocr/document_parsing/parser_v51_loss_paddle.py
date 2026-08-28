@@ -6,29 +6,16 @@ import paddle
 import paddle.nn.functional as F
 
 from .parser_v51_direct_decoder_paddle import ParserV51DecoderOutput
-from .parser_v51_targets import ParserV51FieldTarget, ParserV51MedicationRowTarget, ParserV51RowTargets, ROW_FIELD_ROLES
+from .parser_v51_targets import (
+    ParserV51FieldTarget,
+    ParserV51MedicationRowTarget,
+    ParserV51RowTargets,
+    ROW_FIELD_ROLES,
+    required_field_pieces,
+)
 
 
-def _valid_piece_keys(
-    field: ParserV51FieldTarget,
-    *,
-    node_count: int,
-    text_length: int,
-) -> tuple[tuple[int, int, int], ...]:
-    values: set[tuple[int, int, int]] = set()
-    for piece in field.pieces:
-        start_token = piece.start_byte + 1
-        end_token = piece.end_byte
-        if (
-            0 <= piece.node_index < node_count
-            and 1 <= start_token < text_length
-            and start_token <= end_token < text_length
-        ):
-            values.add((piece.node_index, start_token, end_token))
-    return tuple(sorted(values))
-
-
-def _field_nll(
+def _field_loss(
     output: ParserV51DecoderOutput,
     *,
     row_index: int,
@@ -37,30 +24,61 @@ def _field_nll(
     node_count: int,
     text_length: int,
 ) -> paddle.Tensor:
-    node_log_probs = F.log_softmax(output.field_node_logits[row_index, field_index], axis=0)
-    pieces = _valid_piece_keys(field, node_count=node_count, text_length=text_length)
-    if not field.pieces:
-        return -node_log_probs[node_count]
-    if not pieces:
-        # The source text exists but falls outside the encoded byte window.
-        # Keep node selection trainable without inventing an impossible span.
-        node_indices = sorted({piece.node_index for piece in field.pieces if 0 <= piece.node_index < node_count})
-        if not node_indices:
-            return paddle.zeros([], dtype=output.field_node_logits.dtype)
-        return -paddle.logsumexp(paddle.stack([node_log_probs[index] for index in node_indices]), axis=0)
+    present = bool(field.pieces)
+    presence_target = paddle.to_tensor(1.0 if present else 0.0, dtype=output.field_presence_logits.dtype)
+    presence_loss = F.binary_cross_entropy_with_logits(
+        output.field_presence_logits[row_index, field_index],
+        presence_target,
+    )
+    if node_count == 0:
+        return presence_loss
 
-    start_log_probs = F.log_softmax(output.field_start_logits[row_index, field_index], axis=1)
-    end_log_probs = F.log_softmax(output.field_end_logits[row_index, field_index], axis=1)
-    scores = [
-        node_log_probs[node_index]
-        + start_log_probs[node_index, start_token]
-        + end_log_probs[node_index, end_token]
-        for node_index, start_token, end_token in pieces
-    ]
-    # Multiple observed pieces can arise from OCR duplication or fragmentation.
-    # The first direct decoder is allowed to select any visible piece; a later
-    # fragment-linking stage can require complete multi-node reconstruction.
-    return -paddle.logsumexp(paddle.stack(scores), axis=0)
+    required = required_field_pieces(field)
+    membership_target = paddle.zeros([node_count], dtype=output.field_node_logits.dtype)
+    for piece in required:
+        if 0 <= piece.node_index < node_count:
+            membership_target[piece.node_index] = 1.0
+    membership_loss = F.binary_cross_entropy_with_logits(
+        output.field_node_logits[row_index, field_index],
+        membership_target,
+        reduction="mean",
+    )
+    if not required or text_length == 0:
+        return (presence_loss + membership_loss) / 2.0
+
+    # At most one contiguous source span is decoded per selected OCR node. If
+    # training provenance presents multiple alternatives in one node, use the
+    # first canonical piece; multi-node split fragments remain independently
+    # supervised and are concatenated by the runtime decoder.
+    piece_by_node = {}
+    for piece in required:
+        piece_by_node.setdefault(piece.node_index, piece)
+    span_losses: list[paddle.Tensor] = []
+    for node_index, piece in sorted(piece_by_node.items()):
+        if not 0 <= node_index < node_count:
+            continue
+        start_token = piece.start_byte + 1
+        end_token = piece.end_byte
+        if not (1 <= start_token < text_length and start_token <= end_token < text_length):
+            continue
+        start_target = paddle.to_tensor([start_token], dtype="int64")
+        end_target = paddle.to_tensor([end_token], dtype="int64")
+        span_losses.append(
+            F.cross_entropy(
+                output.field_start_logits[row_index, field_index, node_index].reshape([1, text_length]),
+                start_target,
+            )
+        )
+        span_losses.append(
+            F.cross_entropy(
+                output.field_end_logits[row_index, field_index, node_index].reshape([1, text_length]),
+                end_target,
+            )
+        )
+    components = [presence_loss, membership_loss]
+    if span_losses:
+        components.append(sum(span_losses) / len(span_losses))
+    return sum(components) / len(components)
 
 
 def _row_target_cost(
@@ -78,7 +96,7 @@ def _row_target_cost(
     components = [positive_existence]
     for field_index, role in enumerate(ROW_FIELD_ROLES):
         components.append(
-            _field_nll(
+            _field_loss(
                 output,
                 row_index=row_index,
                 field_index=field_index,
@@ -100,7 +118,7 @@ def match_parser_v51_rows(
         raise ValueError("Parser v5.1 target rows exceed decoder row slots")
     if target_count == 0:
         return ()
-    node_count = int(output.field_node_logits.shape[2]) - 1
+    node_count = int(output.field_node_logits.shape[2])
     text_length = int(output.field_start_logits.shape[3]) if node_count else 0
     costs = [
         [
@@ -143,7 +161,7 @@ def parser_v51_set_loss(
 ) -> paddle.Tensor:
     assignments = match_parser_v51_rows(output, targets)
     row_count = int(output.row_existence_logits.shape[0])
-    node_count = int(output.field_node_logits.shape[2]) - 1
+    node_count = int(output.field_node_logits.shape[2])
     text_length = int(output.field_start_logits.shape[3]) if node_count else 0
     existence_targets = paddle.zeros([row_count], dtype=output.row_existence_logits.dtype)
     for row_index, _ in assignments:
@@ -159,7 +177,7 @@ def parser_v51_set_loss(
         target = targets.rows[target_index]
         for field_index, role in enumerate(ROW_FIELD_ROLES):
             field_losses.append(
-                _field_nll(
+                _field_loss(
                     output,
                     row_index=row_index,
                     field_index=field_index,

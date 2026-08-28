@@ -34,19 +34,21 @@ class ParserV51DecoderSpec:
 @dataclass(frozen=True)
 class ParserV51DecoderOutput:
     row_existence_logits: paddle.Tensor
+    field_presence_logits: paddle.Tensor
     field_node_logits: paddle.Tensor
     field_start_logits: paddle.Tensor
     field_end_logits: paddle.Tensor
 
 
 class ParserV51DirectRowDecoder(nn.Layer):
-    """DETR-like medication-row queries with direct OCR node/span pointers.
+    """DETR-like medication rows with direct multi-node OCR span membership.
 
-    There is intentionally no header/context/other classifier. Every row query
-    competes for observable OCR evidence; text that no row/field selects is
-    simply unused. Field start/end scores point back into the original byte
-    sequence so merged OCR boxes can provide distinct substrings to different
-    output fields.
+    No header/context/other classifier exists on this path. Each row query
+    predicts which output fields are present, which OCR nodes contribute to
+    each field, and the byte span used from every selected node. Unselected OCR
+    text is naturally unused. Multi-node membership lets a split product or
+    regimen field be reconstructed without first inventing semantic node
+    classes.
     """
 
     def __init__(self, spec: ParserV51DecoderSpec = ParserV51DecoderSpec()) -> None:
@@ -70,8 +72,8 @@ class ParserV51DirectRowDecoder(nn.Layer):
         self.row_existence = nn.Linear(spec.hidden_dim, 1)
         self.field_embedding = nn.Embedding(len(ROW_FIELD_ROLES), spec.hidden_dim)
         self.field_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.field_presence = nn.Linear(spec.hidden_dim, 1)
         self.pointer_node_key = nn.Linear(spec.hidden_dim, spec.hidden_dim)
-        self.none_node = nn.Linear(spec.hidden_dim, 1)
         token_input_dim = spec.text_token_dim + spec.hidden_dim
         self.start_key = nn.Linear(token_input_dim, spec.hidden_dim)
         self.end_key = nn.Linear(token_input_dim, spec.hidden_dim)
@@ -101,18 +103,22 @@ class ParserV51DirectRowDecoder(nn.Layer):
         field_embeddings = self.field_embedding.weight.unsqueeze(0)
         field_hidden = row_hidden.unsqueeze(1) + field_embeddings
         field_queries = self.field_query(field_hidden)
+        field_presence_logits = self.field_presence(field_hidden).reshape(
+            [self.spec.max_rows, len(ROW_FIELD_ROLES)]
+        )
         node_count = node_hidden.shape[0]
         field_count = len(ROW_FIELD_ROLES)
         if node_count:
-            node_logits = paddle.matmul(
+            field_node_logits = paddle.matmul(
                 field_queries.reshape([self.spec.max_rows * field_count, self.spec.hidden_dim]),
                 self.pointer_node_key(node_hidden),
                 transpose_y=True,
             ).reshape([self.spec.max_rows, field_count, node_count])
         else:
-            node_logits = paddle.zeros([self.spec.max_rows, field_count, 0], dtype=field_queries.dtype)
-        none_logits = self.none_node(field_hidden).reshape([self.spec.max_rows, field_count, 1])
-        field_node_logits = paddle.concat([node_logits, none_logits], axis=2)
+            field_node_logits = paddle.zeros(
+                [self.spec.max_rows, field_count, 0],
+                dtype=field_queries.dtype,
+            )
 
         text_length = tensors.token_ids.shape[1]
         if node_count and text_length:
@@ -143,6 +149,7 @@ class ParserV51DirectRowDecoder(nn.Layer):
 
         return ParserV51DecoderOutput(
             row_existence_logits=row_existence_logits,
+            field_presence_logits=field_presence_logits,
             field_node_logits=field_node_logits,
             field_start_logits=field_start_logits,
             field_end_logits=field_end_logits,
@@ -152,10 +159,13 @@ class ParserV51DirectRowDecoder(nn.Layer):
 @dataclass(frozen=True)
 class ParserV51DecodeConfig:
     row_threshold: float = 0.5
+    field_threshold: float = 0.5
+    node_threshold: float = 0.5
 
     def __post_init__(self) -> None:
-        if not 0.0 <= float(self.row_threshold) <= 1.0:
-            raise ValueError("Parser v5.1 row_threshold must be in [0, 1]")
+        for name in ("row_threshold", "field_threshold", "node_threshold"):
+            if not 0.0 <= float(getattr(self, name)) <= 1.0:
+                raise ValueError(f"Parser v5.1 {name} must be in [0, 1]")
 
 
 def _selected_text(text: str, start_token: int, end_token: int) -> str | None:
@@ -181,7 +191,8 @@ def decode_parser_v51_rows(
     config: ParserV51DecodeConfig = ParserV51DecodeConfig(),
 ) -> list[dict[str, Any]]:
     existence = F.sigmoid(output.row_existence_logits).numpy()
-    node_logits = output.field_node_logits.numpy()
+    presence = F.sigmoid(output.field_presence_logits).numpy()
+    membership = F.sigmoid(output.field_node_logits).numpy()
     start_logits = output.field_start_logits.numpy()
     end_logits = output.field_end_logits.numpy()
     node_count = len(nodes)
@@ -191,20 +202,33 @@ def decode_parser_v51_rows(
             continue
         fields: dict[str, dict[str, Any]] = {}
         for field_index, role in enumerate(ROW_FIELD_ROLES):
-            node_index = int(node_logits[row_index, field_index].argmax())
-            if node_index == node_count:
+            if float(presence[row_index, field_index]) < config.field_threshold:
                 continue
-            start_token = int(start_logits[row_index, field_index, node_index].argmax())
-            end_token = int(end_logits[row_index, field_index, node_index].argmax())
-            text = _selected_text(str(nodes[node_index]["text"]), start_token, end_token)
-            if text is None:
-                continue
-            fields[role] = {
-                "text": text,
-                "node_id": str(nodes[node_index]["node_id"]),
-                "start_token": start_token,
-                "end_token": end_token,
-            }
+            selected_nodes = [
+                node_index
+                for node_index in range(node_count)
+                if float(membership[row_index, field_index, node_index]) >= config.node_threshold
+            ]
+            evidence: list[dict[str, Any]] = []
+            for node_index in selected_nodes:
+                start_token = int(start_logits[row_index, field_index, node_index].argmax())
+                end_token = int(end_logits[row_index, field_index, node_index].argmax())
+                text = _selected_text(str(nodes[node_index]["text"]), start_token, end_token)
+                if text is None:
+                    continue
+                evidence.append(
+                    {
+                        "text": text,
+                        "node_id": str(nodes[node_index]["node_id"]),
+                        "start_token": start_token,
+                        "end_token": end_token,
+                    }
+                )
+            if evidence:
+                fields[role] = {
+                    "text": "".join(item["text"] for item in evidence),
+                    "evidence": evidence,
+                }
         product = fields.pop("product", None)
         if product is None:
             continue
@@ -213,7 +237,7 @@ def decode_parser_v51_rows(
                 "row_slot": row_index,
                 "row_confidence": float(score),
                 "product_query": product["text"],
-                "product_evidence": product,
+                "product_evidence": product["evidence"],
                 "fields": fields,
             }
         )

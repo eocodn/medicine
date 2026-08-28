@@ -6,7 +6,10 @@ import unittest
 from browser_ocr.document_parsing.parser_v51_targets import (
     build_parser_v51_row_targets,
     observed_piece_text,
+    required_field_pieces,
 )
+from browser_ocr.document_parsing.parser_v5_observation import ObservationProfile, simulate_observations
+from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile, generate_parser_world
 
 
 class ParserV51TargetsTest(unittest.TestCase):
@@ -168,6 +171,36 @@ class ParserV51TargetsTest(unittest.TestCase):
 
         self.assertEqual((product.start_char, product.end_char), (0, 2))
         self.assertEqual((product.start_byte, product.end_byte), (0, len("약A".encode("utf-8"))))
+
+    def test_split_product_requires_all_visible_fragments(self) -> None:
+        document = generate_parser_world(
+            seed=771,
+            document_index=0,
+            profile=ParserWorldProfile(medication_count=(1, 1), distractor_section_count=(0, 0)),
+        )
+        observation = simulate_observations(
+            document,
+            seed=772,
+            profile=ObservationProfile(
+                text_corruption_rate=0,
+                drop_rate=0,
+                duplicate_rate=0,
+                split_rate=1,
+                merge_rate=0,
+                geometry_jitter=0,
+                false_positive_count=(0, 0),
+                reading_order_shuffle_rate=0,
+            ),
+        )
+        product = build_parser_v51_row_targets(document, observation).rows[0].field("product")
+        required = required_field_pieces(product)
+
+        self.assertGreaterEqual(len(required), 2)
+        reconstructed = "".join(
+            observed_piece_text(observation["nodes"][piece.node_index]["text"], piece)
+            for piece in required
+        )
+        self.assertEqual(reconstructed, document["medications"][0]["product_name"])
 
 
 if __name__ == "__main__":

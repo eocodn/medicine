@@ -14,6 +14,7 @@ class ParserV51SpanPieceTarget:
     node_index: int
     node_id: str
     source_span_id: str
+    operation: str
     start_char: int
     end_char: int
     start_byte: int
@@ -55,6 +56,7 @@ def _piece(
     node_index: int,
     node_id: str,
     source_span_id: str,
+    operation: str,
     text: str,
     start_char: int,
     end_char: int,
@@ -64,6 +66,7 @@ def _piece(
         node_index=node_index,
         node_id=node_id,
         source_span_id=source_span_id,
+        operation=operation,
         start_char=start_char,
         end_char=end_char,
         start_byte=offsets[start_char],
@@ -103,6 +106,7 @@ def build_parser_v51_row_targets(
         if not isinstance(raw_node, Mapping):
             raise ValueError("Parser v5.1 observation node must be an object")
         node_id = str(raw_node["node_id"])
+        operation = str(raw_node["operation"])
         text = str(raw_node["text"])
         targets = raw_node["targets"]
         segments = raw_node["source_segments"]
@@ -131,6 +135,7 @@ def build_parser_v51_row_targets(
                     node_index=node_index,
                     node_id=node_id,
                     source_span_id=source_span_id,
+                    operation=operation,
                     text=text,
                     start_char=start_char,
                     end_char=end_char,
@@ -160,6 +165,32 @@ def observed_piece_text(node_text: str, piece: ParserV51SpanPieceTarget) -> str:
     return node_text[piece.start_char : piece.end_char]
 
 
+def required_field_pieces(field: ParserV51FieldTarget) -> tuple[ParserV51SpanPieceTarget, ...]:
+    """Choose the source pieces required to reconstruct one observed field.
+
+    Split OCR pieces are complementary and all non-duplicate fragments are
+    required. Multiple complete observations created by duplication are
+    alternatives, so one canonical non-duplicate piece is sufficient. This is
+    training-only provenance logic; runtime inference receives no operation
+    labels and must learn the corresponding membership pattern from text and
+    document geometry.
+    """
+
+    if not field.pieces:
+        return ()
+    pieces = tuple(
+        sorted(
+            field.pieces,
+            key=lambda item: (item.node_index, item.start_char, item.end_char, item.source_span_id),
+        )
+    )
+    if any(piece.operation == "split" for piece in pieces):
+        required = tuple(piece for piece in pieces if piece.operation != "duplicate")
+        return required or (pieces[0],)
+    preferred = tuple(piece for piece in pieces if piece.operation != "duplicate")
+    return (preferred[0] if preferred else pieces[0],)
+
+
 __all__ = [
     "ROW_FIELD_ROLES",
     "ParserV51FieldTarget",
@@ -168,4 +199,5 @@ __all__ = [
     "ParserV51SpanPieceTarget",
     "build_parser_v51_row_targets",
     "observed_piece_text",
+    "required_field_pieces",
 ]
