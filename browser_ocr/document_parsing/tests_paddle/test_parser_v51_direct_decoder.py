@@ -37,6 +37,21 @@ from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile, gen
 
 
 class ParserV51DirectDecoderTest(unittest.TestCase):
+    def test_cross_attention_values_preserve_node_state_geometry(self) -> None:
+        decoder = ParserV51DirectRowDecoder(ParserV51DecoderSpec(hidden_dim=32, max_rows=4))
+        node_hidden = paddle.to_tensor(
+            [
+                [1.0] + [0.0] * 31,
+                [0.0, 1.0] + [0.0] * 30,
+                [1.0, 1.0] + [0.0] * 30,
+            ],
+            dtype="float32",
+        )
+
+        values = decoder._cross_attention_values(node_hidden)
+
+        self.assertTrue(bool(paddle.allclose(values, node_hidden).item()))
+
     def test_pointer_scores_use_hidden_dimension_scaling(self) -> None:
         query = paddle.ones([1, 64], dtype="float32")
         key = paddle.ones([1, 64], dtype="float32")

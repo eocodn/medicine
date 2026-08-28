@@ -71,7 +71,6 @@ class ParserV51DirectRowDecoder(nn.Layer):
         self.row_self_norm = nn.LayerNorm(spec.hidden_dim)
         self.row_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.node_key = nn.Linear(spec.hidden_dim, spec.hidden_dim)
-        self.node_value = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.row_norm1 = nn.LayerNorm(spec.hidden_dim)
         feedforward_dim = spec.hidden_dim * spec.feedforward_multiplier
         self.row_feedforward = nn.Sequential(
@@ -92,6 +91,10 @@ class ParserV51DirectRowDecoder(nn.Layer):
         self.end_pointer_key = nn.Linear(token_input_dim, spec.hidden_dim)
         self.evidence_value = nn.Linear(token_input_dim, spec.hidden_dim)
 
+    @staticmethod
+    def _cross_attention_values(node_hidden: paddle.Tensor) -> paddle.Tensor:
+        return node_hidden
+
     def _row_states(self, node_hidden: paddle.Tensor) -> paddle.Tensor:
         queries = self.row_queries
         self_scores = scaled_pointer_scores(
@@ -108,7 +111,7 @@ class ParserV51DirectRowDecoder(nn.Layer):
             scores = paddle.matmul(self.row_query(queries), self.node_key(node_hidden), transpose_y=True)
             scores = scores / math.sqrt(self.spec.hidden_dim)
             attention = F.softmax(scores, axis=1)
-            context = paddle.matmul(attention, self.node_value(node_hidden))
+            context = paddle.matmul(attention, self._cross_attention_values(node_hidden))
         hidden = self.row_norm1(queries + context)
         return self.row_norm2(hidden + self.row_feedforward(hidden))
 
