@@ -15,8 +15,14 @@ from browser_ocr.document_parsing.parser_v51_direct_decoder_paddle import (
     ParserV51DecoderSpec,
     ParserV51DirectRowDecoder,
     decode_parser_v51_rows,
+    pointer_class_logits,
+    scaled_pointer_scores,
 )
-from browser_ocr.document_parsing.parser_v51_loss_paddle import match_parser_v51_rows, parser_v51_set_loss
+from browser_ocr.document_parsing.parser_v51_loss_paddle import (
+    _pointer_cross_entropy,
+    match_parser_v51_rows,
+    parser_v51_set_loss,
+)
 from browser_ocr.document_parsing.parser_v51_model_paddle import (
     ParserV51Model,
     ParserV51ModelConfig,
@@ -34,6 +40,23 @@ from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile, gen
 
 
 class ParserV51DirectDecoderTest(unittest.TestCase):
+    def test_pointer_scores_use_hidden_dimension_scaling(self) -> None:
+        query = paddle.ones([1, 64], dtype="float32")
+        key = paddle.ones([1, 64], dtype="float32")
+        score = scaled_pointer_scores(query, key, hidden_dim=64)
+
+        self.assertAlmostEqual(float(score.item()), 8.0, places=6)
+
+    def test_pointer_cross_entropy_preserves_noncontiguous_class_order(self) -> None:
+        positions = paddle.arange(2 * 3 * 4 * 5 * 7, dtype="float32").reshape([2, 3, 4, 5, 7]) / 100.0
+        none = paddle.arange(2 * 3 * 4, dtype="float32").reshape([2, 3, 4]) / 50.0
+        classes = pointer_class_logits(positions, none)[1, 2, 3]
+        target = 7
+        expected = paddle.logsumexp(classes, axis=0) - classes[target]
+        actual = _pointer_cross_entropy(classes, target)
+
+        self.assertAlmostEqual(float(actual.item()), float(expected.item()), places=6)
+
     def _nodes(self) -> list[dict]:
         return [
             {

@@ -9,6 +9,21 @@ from .parser_v51_direct_decoder_paddle import ParserV51DecoderOutput, pointer_cl
 from .parser_v51_targets import ParserV51MedicationRowTarget, ParserV51RowTargets, ROW_FIELD_ROLES, required_field_pieces
 
 
+def _pointer_cross_entropy(classes: paddle.Tensor, target: int) -> paddle.Tensor:
+    """Cross entropy for one logical pointer vector without reordering a slice."""
+
+    # `pointer_class_logits` is assembled by flatten+concat and then indexed by
+    # row/field/piece. Paddle can preserve a non-contiguous view here whose
+    # values index correctly but whose fused cross-entropy kernel observes a
+    # different physical stride. Materialize the logical class order before
+    # handing it to CE; clone remains differentiable and preserves gradients.
+    contiguous = classes.clone()
+    return F.cross_entropy(
+        contiguous.unsqueeze(0),
+        paddle.to_tensor([target], dtype="int64"),
+    )
+
+
 def _field_pointer_loss(
     output: ParserV51DecoderOutput,
     *,
@@ -42,16 +57,10 @@ def _field_pointer_loss(
             start_target = none_index
             end_target = none_index
         losses.append(
-            F.cross_entropy(
-                start_classes[row_index, field_index, piece_index].reshape([1, none_index + 1]),
-                paddle.to_tensor([start_target], dtype="int64"),
-            )
+            _pointer_cross_entropy(start_classes[row_index, field_index, piece_index], start_target)
         )
         losses.append(
-            F.cross_entropy(
-                end_classes[row_index, field_index, piece_index].reshape([1, none_index + 1]),
-                paddle.to_tensor([end_target], dtype="int64"),
-            )
+            _pointer_cross_entropy(end_classes[row_index, field_index, piece_index], end_target)
         )
     return sum(losses) / len(losses)
 

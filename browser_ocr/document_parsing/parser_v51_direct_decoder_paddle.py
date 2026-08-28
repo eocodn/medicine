@@ -13,6 +13,12 @@ from .parser_v5_model_input import BYTE_OFFSET
 from .parser_v51_targets import ROW_FIELD_ROLES
 
 
+def scaled_pointer_scores(query: paddle.Tensor, key: paddle.Tensor, *, hidden_dim: int) -> paddle.Tensor:
+    """Scaled categorical pointer similarity, analogous to attention logits."""
+
+    return paddle.matmul(query, key, transpose_y=True) / math.sqrt(hidden_dim)
+
+
 @dataclass(frozen=True)
 class ParserV51DecoderSpec:
     hidden_dim: int = 96
@@ -129,8 +135,16 @@ class ParserV51DirectRowDecoder(nn.Layer):
             end_keys = self.end_key(contextual_tokens).reshape([node_count * text_length, self.spec.hidden_dim])
             flat_start_queries = start_queries.reshape([-1, self.spec.hidden_dim])
             flat_end_queries = end_queries.reshape([-1, self.spec.hidden_dim])
-            piece_start_logits = paddle.matmul(flat_start_queries, start_keys, transpose_y=True).reshape(shape)
-            piece_end_logits = paddle.matmul(flat_end_queries, end_keys, transpose_y=True).reshape(shape)
+            piece_start_logits = scaled_pointer_scores(
+                flat_start_queries,
+                start_keys,
+                hidden_dim=self.spec.hidden_dim,
+            ).reshape(shape)
+            piece_end_logits = scaled_pointer_scores(
+                flat_end_queries,
+                end_keys,
+                hidden_dim=self.spec.hidden_dim,
+            ).reshape(shape)
             valid_byte = tensors.token_ids >= BYTE_OFFSET
             invalid = (~valid_byte).astype(piece_start_logits.dtype).reshape([1, 1, 1, node_count, text_length])
             piece_start_logits = piece_start_logits - invalid * 1e4
@@ -251,4 +265,5 @@ __all__ = [
     "ParserV51DirectRowDecoder",
     "decode_parser_v51_rows",
     "pointer_class_logits",
+    "scaled_pointer_scores",
 ]
