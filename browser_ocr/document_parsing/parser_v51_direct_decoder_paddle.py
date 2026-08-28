@@ -19,6 +19,25 @@ def scaled_pointer_scores(query: paddle.Tensor, key: paddle.Tensor, *, hidden_di
     return paddle.matmul(query, key, transpose_y=True) / math.sqrt(hidden_dim)
 
 
+def joint_row_evidence_context(
+    piece_node_logits: paddle.Tensor,
+    node_hidden: paddle.Tensor,
+) -> paddle.Tensor:
+    """Pool provisional evidence from every field/piece into one row context."""
+
+    row_count = int(piece_node_logits.shape[0])
+    node_count = int(node_hidden.shape[0])
+    hidden_dim = int(node_hidden.shape[1]) if node_count else 0
+    if node_count == 0:
+        return paddle.zeros([row_count, hidden_dim], dtype=piece_node_logits.dtype)
+    probabilities = F.softmax(piece_node_logits, axis=-1)[..., :node_count]
+    flat_probabilities = probabilities.reshape([row_count, -1, node_count])
+    evidence = paddle.matmul(flat_probabilities, node_hidden)
+    evidence_mass = flat_probabilities.sum(axis=2)
+    total_mass = paddle.clip(evidence_mass.sum(axis=1, keepdim=True), min=1e-6)
+    return evidence.sum(axis=1) / total_mass
+
+
 @dataclass(frozen=True)
 class ParserV51DecoderSpec:
     hidden_dim: int = 96
@@ -86,6 +105,14 @@ class ParserV51DirectRowDecoder(nn.Layer):
             shape=[1, spec.hidden_dim],
             default_initializer=nn.initializer.Normal(std=0.02),
         )
+        self.evidence_projection = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.evidence_norm1 = nn.LayerNorm(spec.hidden_dim)
+        self.evidence_feedforward = nn.Sequential(
+            nn.Linear(spec.hidden_dim, feedforward_dim),
+            nn.GELU(),
+            nn.Linear(feedforward_dim, spec.hidden_dim),
+        )
+        self.evidence_norm2 = nn.LayerNorm(spec.hidden_dim)
         self.start_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.end_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         token_input_dim = spec.text_token_dim + spec.hidden_dim
@@ -112,18 +139,30 @@ class ParserV51DirectRowDecoder(nn.Layer):
         tensors: ParserV5DocumentTensors,
     ) -> ParserV51DecoderOutput:
         row_hidden = self._row_states(node_hidden)
-        row_existence_logits = self.row_existence(row_hidden).reshape([self.spec.max_rows])
-
         field_embeddings = self.field_embedding.weight.reshape([1, len(ROW_FIELD_ROLES), 1, self.spec.hidden_dim])
         piece_embeddings = self.piece_embedding.weight.reshape([1, 1, self.spec.max_field_pieces, self.spec.hidden_dim])
+        node_count = node_hidden.shape[0]
+        node_choices = paddle.concat([self.pointer_node_key(node_hidden), self.none_node], axis=0)
+
+        provisional_piece_hidden = row_hidden.reshape([self.spec.max_rows, 1, 1, self.spec.hidden_dim])
+        provisional_piece_hidden = provisional_piece_hidden + field_embeddings + piece_embeddings
+        provisional_node_logits = scaled_pointer_scores(
+            self.node_query(provisional_piece_hidden).reshape([-1, self.spec.hidden_dim]),
+            node_choices,
+            hidden_dim=self.spec.hidden_dim,
+        ).reshape(
+            [self.spec.max_rows, len(ROW_FIELD_ROLES), self.spec.max_field_pieces, node_count + 1]
+        )
+        evidence_context = joint_row_evidence_context(provisional_node_logits, node_hidden)
+        row_hidden = self.evidence_norm1(row_hidden + self.evidence_projection(evidence_context))
+        row_hidden = self.evidence_norm2(row_hidden + self.evidence_feedforward(row_hidden))
+        row_existence_logits = self.row_existence(row_hidden).reshape([self.spec.max_rows])
+
         piece_hidden = row_hidden.reshape([self.spec.max_rows, 1, 1, self.spec.hidden_dim])
         piece_hidden = piece_hidden + field_embeddings + piece_embeddings
         node_queries = self.node_query(piece_hidden)
         start_queries = self.start_query(piece_hidden)
         end_queries = self.end_query(piece_hidden)
-
-        node_count = node_hidden.shape[0]
-        node_choices = paddle.concat([self.pointer_node_key(node_hidden), self.none_node], axis=0)
         piece_node_logits = scaled_pointer_scores(
             node_queries.reshape([-1, self.spec.hidden_dim]),
             node_choices,
@@ -264,5 +303,6 @@ __all__ = [
     "ParserV51DecoderSpec",
     "ParserV51DirectRowDecoder",
     "decode_parser_v51_rows",
+    "joint_row_evidence_context",
     "scaled_pointer_scores",
 ]

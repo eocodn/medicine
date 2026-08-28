@@ -15,6 +15,7 @@ from browser_ocr.document_parsing.parser_v51_direct_decoder_paddle import (
     ParserV51DecoderSpec,
     ParserV51DirectRowDecoder,
     decode_parser_v51_rows,
+    joint_row_evidence_context,
     scaled_pointer_scores,
 )
 from browser_ocr.document_parsing.parser_v51_loss_paddle import (
@@ -45,6 +46,22 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         score = scaled_pointer_scores(query, key, hidden_dim=64)
 
         self.assertAlmostEqual(float(score.item()), 8.0, places=6)
+
+    def test_joint_row_evidence_context_aggregates_all_field_pieces_without_none(self) -> None:
+        node_hidden = paddle.to_tensor([[2.0, 0.0], [0.0, 4.0]], dtype="float32")
+        # One row, two field/piece queries, two real nodes plus NONE. The first
+        # query chooses node 0 and the second chooses node 1; NONE must not
+        # contribute to the refined row evidence.
+        logits = paddle.to_tensor(
+            [[[[20.0, -20.0, -20.0]], [[-20.0, 20.0, -20.0]]]],
+            dtype="float32",
+        )
+
+        context = joint_row_evidence_context(logits, node_hidden)
+
+        self.assertEqual(list(context.shape), [1, 2])
+        self.assertAlmostEqual(float(context[0, 0].item()), 1.0, places=5)
+        self.assertAlmostEqual(float(context[0, 1].item()), 2.0, places=5)
 
     def _nodes(self) -> list[dict]:
         return [
@@ -260,6 +277,8 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         self.assertGreater(float(paddle.abs(model.decoder.row_queries.grad).sum().item()), 0.0)
         self.assertIsNotNone(model.decoder.node_query.weight.grad)
         self.assertGreater(float(paddle.abs(model.decoder.node_query.weight.grad).sum().item()), 0.0)
+        self.assertIsNotNone(model.decoder.evidence_projection.weight.grad)
+        self.assertGreater(float(paddle.abs(model.decoder.evidence_projection.weight.grad).sum().item()), 0.0)
         self.assertIsNotNone(model.encoder.text_encoder.embedding.weight.grad)
         self.assertGreater(float(paddle.abs(model.encoder.text_encoder.embedding.weight.grad).sum().item()), 0.0)
 
