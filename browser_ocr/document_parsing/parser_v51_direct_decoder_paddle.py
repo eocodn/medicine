@@ -24,7 +24,7 @@ class ParserV51DecoderSpec:
     hidden_dim: int = 96
     text_token_dim: int = 96
     max_rows: int = 8
-    max_field_pieces: int = 4
+    max_field_pieces: int = 2
     feedforward_multiplier: int = 2
 
     def __post_init__(self) -> None:
@@ -82,6 +82,7 @@ class ParserV51DirectRowDecoder(nn.Layer):
         self.piece_embedding = nn.Embedding(spec.max_field_pieces, spec.hidden_dim)
         self.node_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.pointer_node_key = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.product_anchor_projection = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.none_node = self.create_parameter(
             shape=[1, spec.hidden_dim],
             default_initializer=nn.initializer.Normal(std=0.02),
@@ -116,13 +117,39 @@ class ParserV51DirectRowDecoder(nn.Layer):
 
         field_embeddings = self.field_embedding.weight.reshape([1, len(ROW_FIELD_ROLES), 1, self.spec.hidden_dim])
         piece_embeddings = self.piece_embedding.weight.reshape([1, 1, self.spec.max_field_pieces, self.spec.hidden_dim])
-        piece_hidden = row_hidden.reshape([self.spec.max_rows, 1, 1, self.spec.hidden_dim])
-        piece_hidden = piece_hidden + field_embeddings + piece_embeddings
+        base_piece_hidden = row_hidden.reshape([self.spec.max_rows, 1, 1, self.spec.hidden_dim])
+        base_piece_hidden = base_piece_hidden + field_embeddings + piece_embeddings
+
+        # The product is the identity anchor of a medication row. Let the
+        # first product piece softly select a product node, then expose that
+        # product context to the remaining field/piece queries. This is fully
+        # truth-free at runtime and avoids asking dose/frequency/etc. queries
+        # to rediscover the row identity independently from scratch.
+        node_count = node_hidden.shape[0]
+        if node_count:
+            product_query = self.node_query(base_piece_hidden[:, 0, 0, :])
+            product_scores = scaled_pointer_scores(
+                product_query,
+                self.pointer_node_key(node_hidden),
+                hidden_dim=self.spec.hidden_dim,
+            )
+            product_attention = F.softmax(product_scores, axis=1)
+            product_anchor = paddle.matmul(product_attention, node_hidden)
+        else:
+            product_anchor = paddle.zeros_like(row_hidden)
+        projected_anchor = self.product_anchor_projection(product_anchor).reshape(
+            [self.spec.max_rows, 1, 1, self.spec.hidden_dim]
+        )
+        anchor_mask = paddle.ones(
+            [1, len(ROW_FIELD_ROLES), self.spec.max_field_pieces, 1],
+            dtype=base_piece_hidden.dtype,
+        )
+        anchor_mask[:, 0, 0, :] = 0.0
+        piece_hidden = base_piece_hidden + projected_anchor * anchor_mask
         node_queries = self.node_query(piece_hidden)
         start_queries = self.start_query(piece_hidden)
         end_queries = self.end_query(piece_hidden)
 
-        node_count = node_hidden.shape[0]
         node_choices = paddle.concat([self.pointer_node_key(node_hidden), self.none_node], axis=0)
         piece_node_logits = scaled_pointer_scores(
             node_queries.reshape([-1, self.spec.hidden_dim]),

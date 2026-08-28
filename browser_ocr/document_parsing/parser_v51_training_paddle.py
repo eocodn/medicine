@@ -48,7 +48,7 @@ class ParserV51TrainingConfig:
     heads: int = 4
     feedforward_multiplier: int = 2
     max_rows: int = 8
-    max_field_pieces: int = 4
+    max_field_pieces: int = 2
     device: str = "gpu"
 
     def __post_init__(self) -> None:

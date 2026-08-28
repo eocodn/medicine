@@ -29,7 +29,7 @@ class ParserV51ModelConfig:
     heads: int = 4
     feedforward_multiplier: int = 2
     max_rows: int = 8
-    max_field_pieces: int = 4
+    max_field_pieces: int = 2
 
     def __post_init__(self) -> None:
         if not 4 <= self.max_text_bytes <= 512:
