@@ -75,7 +75,8 @@ class ParserV51TrainingTest(unittest.TestCase):
             metrics = first["best_validation"]
             self.assertIn("validation_loss", metrics)
             self.assertIn("row_existence_accuracy", metrics)
-            self.assertIn("piece_pointer_exact_rate", metrics)
+            self.assertIn("node_pointer_exact_rate", metrics)
+            self.assertIn("span_pointer_exact_rate", metrics)
             self.assertIn("evidence_piece_exact_rate", metrics)
             self.assertIn("none_piece_exact_rate", metrics)
             self.assertGreater(metrics["evidence_piece_supervised"], 0)

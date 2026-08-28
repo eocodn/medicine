@@ -15,7 +15,6 @@ from browser_ocr.document_parsing.parser_v51_direct_decoder_paddle import (
     ParserV51DecoderSpec,
     ParserV51DirectRowDecoder,
     decode_parser_v51_rows,
-    pointer_class_logits,
     scaled_pointer_scores,
 )
 from browser_ocr.document_parsing.parser_v51_loss_paddle import (
@@ -46,16 +45,6 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         score = scaled_pointer_scores(query, key, hidden_dim=64)
 
         self.assertAlmostEqual(float(score.item()), 8.0, places=6)
-
-    def test_pointer_cross_entropy_preserves_noncontiguous_class_order(self) -> None:
-        positions = paddle.arange(2 * 3 * 4 * 5 * 7, dtype="float32").reshape([2, 3, 4, 5, 7]) / 100.0
-        none = paddle.arange(2 * 3 * 4, dtype="float32").reshape([2, 3, 4]) / 50.0
-        classes = pointer_class_logits(positions, none)[1, 2, 3]
-        target = 7
-        expected = paddle.logsumexp(classes, axis=0) - classes[target]
-        actual = _pointer_cross_entropy(classes, target)
-
-        self.assertAlmostEqual(float(actual.item()), float(expected.item()), places=6)
 
     def _nodes(self) -> list[dict]:
         return [
@@ -92,14 +81,15 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
     ) -> ParserV51DecoderOutput:
         fields = len(ROW_FIELD_ROLES)
         existence = paddle.full([rows], -10.0, dtype="float32")
+        node_logits = paddle.full([rows, fields, pieces, node_count + 1], -10.0, dtype="float32")
+        node_logits[..., node_count] = 10.0
         start_logits = paddle.full([rows, fields, pieces, node_count, text_length], -10.0, dtype="float32")
         end_logits = paddle.full([rows, fields, pieces, node_count, text_length], -10.0, dtype="float32")
-        none_logits = paddle.full([rows, fields, pieces, 2], 10.0, dtype="float32")
         return ParserV51DecoderOutput(
             row_existence_logits=existence,
+            piece_node_logits=node_logits,
             piece_start_logits=start_logits,
             piece_end_logits=end_logits,
-            piece_none_logits=none_logits,
         )
 
     @staticmethod
@@ -115,7 +105,8 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         score: float = 10.0,
     ) -> None:
         field = ROW_FIELD_ROLES.index(role)
-        output.piece_none_logits[row, field, piece, :] = -score
+        output.piece_node_logits[row, field, piece, :] = -score
+        output.piece_node_logits[row, field, piece, node] = score
         output.piece_start_logits[row, field, piece, node, start_token] = score
         output.piece_end_logits[row, field, piece, node, end_token] = score
 
@@ -138,9 +129,9 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         output = decoder(node_hidden, token_states, tensors)
 
         self.assertEqual(list(output.row_existence_logits.shape), [5])
+        self.assertEqual(list(output.piece_node_logits.shape), [5, len(ROW_FIELD_ROLES), 4, 4])
         self.assertEqual(list(output.piece_start_logits.shape), [5, len(ROW_FIELD_ROLES), 4, 3, 32])
         self.assertEqual(list(output.piece_end_logits.shape), [5, len(ROW_FIELD_ROLES), 4, 3, 32])
-        self.assertEqual(list(output.piece_none_logits.shape), [5, len(ROW_FIELD_ROLES), 4, 2])
         self.assertFalse(hasattr(output, "role_logits"))
         self.assertFalse(hasattr(output, "candidate_logits"))
         self.assertFalse(hasattr(output, "field_node_logits"))

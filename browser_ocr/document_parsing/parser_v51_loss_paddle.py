@@ -5,18 +5,16 @@ from functools import lru_cache
 import paddle
 import paddle.nn.functional as F
 
-from .parser_v51_direct_decoder_paddle import ParserV51DecoderOutput, pointer_class_logits
+from .parser_v51_direct_decoder_paddle import ParserV51DecoderOutput
 from .parser_v51_targets import ParserV51MedicationRowTarget, ParserV51RowTargets, ROW_FIELD_ROLES, required_field_pieces
 
 
 def _pointer_cross_entropy(classes: paddle.Tensor, target: int) -> paddle.Tensor:
-    """Cross entropy for one logical pointer vector without reordering a slice."""
+    """Cross entropy over one logical categorical pointer vector."""
 
-    # `pointer_class_logits` is assembled by flatten+concat and then indexed by
-    # row/field/piece. Paddle can preserve a non-contiguous view here whose
-    # values index correctly but whose fused cross-entropy kernel observes a
-    # different physical stride. Materialize the logical class order before
-    # handing it to CE; clone remains differentiable and preserves gradients.
+    # Indexed Paddle views can retain non-contiguous strides that confuse the
+    # fused CE kernel even though direct value indexing is correct. Materialize
+    # the logical class order while preserving gradients before CE.
     contiguous = classes.clone()
     return F.cross_entropy(
         contiguous.unsqueeze(0),
@@ -33,34 +31,49 @@ def _field_pointer_loss(
 ) -> paddle.Tensor:
     field = target.field(ROW_FIELD_ROLES[field_index])
     required = required_field_pieces(field)
-    max_pieces = int(output.piece_start_logits.shape[2])
+    max_pieces = int(output.piece_node_logits.shape[2])
     node_count = int(output.piece_start_logits.shape[3])
     text_length = int(output.piece_start_logits.shape[4])
     if len(required) > max_pieces:
         raise ValueError("Parser v5.1 field fragments exceed decoder piece slots")
-    none_index = node_count * text_length
-    start_classes = pointer_class_logits(output.piece_start_logits, output.piece_none_logits[..., 0])
-    end_classes = pointer_class_logits(output.piece_end_logits, output.piece_none_logits[..., 1])
+
+    none_index = node_count
     losses: list[paddle.Tensor] = []
     for piece_index in range(max_pieces):
-        if piece_index < len(required):
-            piece = required[piece_index]
-            start_token = piece.start_byte + 1
-            end_token = piece.end_byte
-            if not (0 <= piece.node_index < node_count):
-                raise ValueError("Parser v5.1 piece node index is outside decoder input")
-            if not (1 <= start_token < text_length and start_token <= end_token < text_length):
-                raise ValueError("Parser v5.1 piece byte span is outside decoder text input")
-            start_target = piece.node_index * text_length + start_token
-            end_target = piece.node_index * text_length + end_token
-        else:
-            start_target = none_index
-            end_target = none_index
+        if piece_index >= len(required):
+            losses.append(
+                _pointer_cross_entropy(
+                    output.piece_node_logits[row_index, field_index, piece_index],
+                    none_index,
+                )
+            )
+            continue
+
+        piece = required[piece_index]
+        start_token = piece.start_byte + 1
+        end_token = piece.end_byte
+        if not (0 <= piece.node_index < node_count):
+            raise ValueError("Parser v5.1 piece node index is outside decoder input")
+        if not (1 <= start_token < text_length and start_token <= end_token < text_length):
+            raise ValueError("Parser v5.1 piece byte span is outside decoder text input")
+
         losses.append(
-            _pointer_cross_entropy(start_classes[row_index, field_index, piece_index], start_target)
+            _pointer_cross_entropy(
+                output.piece_node_logits[row_index, field_index, piece_index],
+                piece.node_index,
+            )
         )
         losses.append(
-            _pointer_cross_entropy(end_classes[row_index, field_index, piece_index], end_target)
+            _pointer_cross_entropy(
+                output.piece_start_logits[row_index, field_index, piece_index, piece.node_index],
+                start_token,
+            )
+        )
+        losses.append(
+            _pointer_cross_entropy(
+                output.piece_end_logits[row_index, field_index, piece_index, piece.node_index],
+                end_token,
+            )
         )
     return sum(losses) / len(losses)
 
