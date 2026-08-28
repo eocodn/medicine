@@ -17,6 +17,7 @@ from .artifact_storage import exclusive_output_lock
 from .parser_v5_dataset import ParserV5Dataset, load_parser_v5_dataset
 from .parser_v51_loss_paddle import match_parser_v51_rows, parser_v51_set_loss
 from .parser_v51_model_paddle import ParserV51Model, ParserV51ModelConfig, prepare_parser_v51_sample
+from .parser_v51_direct_decoder_paddle import pointer_class_logits
 from .parser_v51_targets import ROW_FIELD_ROLES, required_field_pieces
 
 
@@ -48,6 +49,7 @@ class ParserV51TrainingConfig:
     heads: int = 4
     feedforward_multiplier: int = 2
     max_rows: int = 8
+    max_field_pieces: int = 4
     device: str = "gpu"
 
     def __post_init__(self) -> None:
@@ -74,6 +76,7 @@ class ParserV51TrainingConfig:
             heads=self.heads,
             feedforward_multiplier=self.feedforward_multiplier,
             max_rows=self.max_rows,
+            max_field_pieces=self.max_field_pieces,
         )
 
 
@@ -205,15 +208,12 @@ def evaluate_parser_v51(
     target_rows = 0
     row_existence_correct = 0
     row_existence_total = 0
-    field_presence_correct = 0
-    field_presence_total = 0
-    node_membership_correct = 0
-    node_membership_total = 0
-    node_membership_tp = 0
-    node_membership_fp = 0
-    node_membership_fn = 0
-    span_exact = 0
-    span_total = 0
+    piece_pointer_exact = 0
+    piece_pointer_total = 0
+    evidence_piece_exact = 0
+    evidence_piece_total = 0
+    none_piece_exact = 0
+    none_piece_total = 0
 
     for sample in _training_samples(datasets):
         tensors, targets, _ = prepare_parser_v51_sample(sample, config.model_config)
@@ -229,57 +229,51 @@ def evaluate_parser_v51(
             row_existence_correct += int(int(existence_guess[row_index].item()) == expected)
             row_existence_total += 1
 
-        membership_guess = F.sigmoid(output.field_node_logits) >= 0.5
-        presence_guess = F.sigmoid(output.field_presence_logits) >= 0.5
+        start_classes = pointer_class_logits(output.piece_start_logits, output.piece_none_logits[..., 0])
+        end_classes = pointer_class_logits(output.piece_end_logits, output.piece_none_logits[..., 1])
+        node_count = int(output.piece_start_logits.shape[3])
+        text_length = int(output.piece_start_logits.shape[4])
+        none_index = node_count * text_length
+        max_pieces = int(output.piece_start_logits.shape[2])
         for row_index, target_index in assignments:
             row_target = targets.rows[target_index]
             for field_index, role in enumerate(ROW_FIELD_ROLES):
                 field = row_target.field(role)
                 required = required_field_pieces(field)
-                expected_present = bool(required)
-                field_presence_correct += int(bool(presence_guess[row_index, field_index].item()) == expected_present)
-                field_presence_total += 1
-                required_nodes = {piece.node_index for piece in required}
-                for node_index in range(len(tensors.node_scalars)):
-                    expected_member = node_index in required_nodes
-                    guessed_member = bool(membership_guess[row_index, field_index, node_index].item())
-                    node_membership_correct += int(
-                        guessed_member == expected_member
-                    )
-                    node_membership_total += 1
-                    node_membership_tp += int(guessed_member and expected_member)
-                    node_membership_fp += int(guessed_member and not expected_member)
-                    node_membership_fn += int(not guessed_member and expected_member)
-                canonical = {}
-                for piece in required:
-                    canonical.setdefault(piece.node_index, piece)
-                for node_index, piece in canonical.items():
-                    start_guess = int(output.field_start_logits[row_index, field_index, node_index].argmax().item())
-                    end_guess = int(output.field_end_logits[row_index, field_index, node_index].argmax().item())
-                    span_exact += int(start_guess == piece.start_byte + 1 and end_guess == piece.end_byte)
-                    span_total += 1
+                if len(required) > max_pieces:
+                    raise ValueError("Parser v5.1 validation field exceeds decoder piece slots")
+                for piece_index in range(max_pieces):
+                    if piece_index < len(required):
+                        piece = required[piece_index]
+                        expected_start = piece.node_index * text_length + piece.start_byte + 1
+                        expected_end = piece.node_index * text_length + piece.end_byte
+                        evidence_piece_total += 1
+                    else:
+                        expected_start = none_index
+                        expected_end = none_index
+                        none_piece_total += 1
+                    start_guess = int(start_classes[row_index, field_index, piece_index].argmax().item())
+                    end_guess = int(end_classes[row_index, field_index, piece_index].argmax().item())
+                    exact = start_guess == expected_start and end_guess == expected_end
+                    piece_pointer_exact += int(exact)
+                    piece_pointer_total += 1
+                    if piece_index < len(required):
+                        evidence_piece_exact += int(exact)
+                    else:
+                        none_piece_exact += int(exact)
 
     if documents == 0:
         raise ValueError("Parser v5.1 validation data produced no samples")
-    membership_precision = node_membership_tp / max(1, node_membership_tp + node_membership_fp)
-    membership_recall = node_membership_tp / max(1, node_membership_tp + node_membership_fn)
-    membership_f1 = (
-        2.0 * membership_precision * membership_recall / (membership_precision + membership_recall)
-        if membership_precision + membership_recall
-        else 0.0
-    )
     return {
         "documents": documents,
         "validation_loss": total_loss / documents,
         "target_rows": target_rows,
         "row_existence_accuracy": row_existence_correct / max(1, row_existence_total),
-        "field_presence_accuracy": field_presence_correct / max(1, field_presence_total),
-        "node_membership_accuracy": node_membership_correct / max(1, node_membership_total),
-        "node_membership_precision": membership_precision,
-        "node_membership_recall": membership_recall,
-        "node_membership_f1": membership_f1,
-        "span_exact_rate": span_exact / max(1, span_total),
-        "span_supervised": span_total,
+        "piece_pointer_exact_rate": piece_pointer_exact / max(1, piece_pointer_total),
+        "evidence_piece_exact_rate": evidence_piece_exact / max(1, evidence_piece_total),
+        "none_piece_exact_rate": none_piece_exact / max(1, none_piece_total),
+        "evidence_piece_supervised": evidence_piece_total,
+        "none_piece_supervised": none_piece_total,
     }
 
 

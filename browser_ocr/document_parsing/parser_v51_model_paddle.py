@@ -29,6 +29,7 @@ class ParserV51ModelConfig:
     heads: int = 4
     feedforward_multiplier: int = 2
     max_rows: int = 8
+    max_field_pieces: int = 4
 
     def __post_init__(self) -> None:
         if not 4 <= self.max_text_bytes <= 512:
@@ -53,6 +54,7 @@ class ParserV51ModelConfig:
             hidden_dim=self.hidden_dim,
             text_token_dim=self.text_conv_dim * 2,
             max_rows=self.max_rows,
+            max_field_pieces=self.max_field_pieces,
             feedforward_multiplier=self.feedforward_multiplier,
         )
 

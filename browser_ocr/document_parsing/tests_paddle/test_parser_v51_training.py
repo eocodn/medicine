@@ -75,14 +75,14 @@ class ParserV51TrainingTest(unittest.TestCase):
             metrics = first["best_validation"]
             self.assertIn("validation_loss", metrics)
             self.assertIn("row_existence_accuracy", metrics)
-            self.assertIn("field_presence_accuracy", metrics)
-            self.assertIn("node_membership_accuracy", metrics)
-            self.assertIn("node_membership_precision", metrics)
-            self.assertIn("node_membership_recall", metrics)
-            self.assertIn("node_membership_f1", metrics)
-            self.assertIn("span_exact_rate", metrics)
+            self.assertIn("piece_pointer_exact_rate", metrics)
+            self.assertIn("evidence_piece_exact_rate", metrics)
+            self.assertIn("none_piece_exact_rate", metrics)
+            self.assertGreater(metrics["evidence_piece_supervised"], 0)
+            self.assertGreater(metrics["none_piece_supervised"], 0)
             self.assertNotIn("role_micro_f1", metrics)
             self.assertNotIn("candidate_accuracy", metrics)
+            self.assertNotIn("node_membership_accuracy", metrics)
 
     def test_training_rejects_same_samples_for_train_and_validation(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
