@@ -5,51 +5,55 @@ from functools import lru_cache
 import paddle
 import paddle.nn.functional as F
 
-from .parser_v51_direct_decoder_paddle import ParserV51DecoderOutput
+from .parser_v51_direct_decoder_paddle import (
+    ParserV51DecoderOutput,
+    advance_field_evidence_state,
+    field_node_pointer_logits,
+    field_span_pointer_logits,
+)
 from .parser_v51_targets import ParserV51MedicationRowTarget, ParserV51RowTargets, ROW_FIELD_ROLES, required_field_pieces
 
 
-def field_token_targets(
-    output: ParserV51DecoderOutput,
-    target: ParserV51MedicationRowTarget,
-    field_index: int,
-) -> paddle.Tensor:
-    node_count = int(output.field_token_logits.shape[2])
-    text_length = int(output.field_token_logits.shape[3])
-    selected = paddle.zeros([node_count, text_length], dtype="bool")
-    field = target.field(ROW_FIELD_ROLES[field_index])
-    for piece in required_field_pieces(field):
-        if not 0 <= piece.node_index < node_count:
-            raise ValueError("Parser v5.1 field segment node index is outside decoder input")
-        start = max(1, piece.start_byte + 1)
-        stop = min(text_length, piece.end_byte + 1)
-        if stop > start:
-            selected[piece.node_index, start:stop] = True
-    return selected & output.token_valid_mask
+def _pointer_cross_entropy(classes: paddle.Tensor, target: int) -> paddle.Tensor:
+    contiguous = classes.clone()
+    return F.cross_entropy(
+        contiguous.unsqueeze(0),
+        paddle.to_tensor([target], dtype="int64"),
+    )
 
 
-def _field_token_loss(
+def field_evidence_sequence_loss(
     output: ParserV51DecoderOutput,
     *,
     row_index: int,
     field_index: int,
     target: ParserV51MedicationRowTarget,
 ) -> paddle.Tensor:
-    valid = output.token_valid_mask
-    if not bool(valid.any().item()):
-        return output.row_existence_logits[row_index] * 0.0
-    selected = field_token_targets(output, target, field_index)
-    logits = output.field_token_logits[row_index, field_index][valid].clone()
-    labels = selected[valid].astype("int64")
-    losses = F.cross_entropy(logits, labels, reduction="none")
-    positives = labels == 1
-    negatives = ~positives
-    components: list[paddle.Tensor] = []
-    if bool(positives.any().item()):
-        components.append(losses[positives].mean())
-    if bool(negatives.any().item()):
-        components.append(losses[negatives].mean())
-    return sum(components) / len(components)
+    pieces = required_field_pieces(target.field(ROW_FIELD_ROLES[field_index]))
+    node_count = int(output.start_pointer_keys.shape[0])
+    text_length = int(output.start_pointer_keys.shape[1]) if node_count else 0
+    stop_index = node_count
+    base_state = output.field_query_states[row_index, field_index]
+    history: list[tuple[int, int, int]] = []
+    losses: list[paddle.Tensor] = []
+
+    for piece in pieces:
+        if not 0 <= piece.node_index < node_count:
+            raise ValueError("Parser v5.1 evidence node index is outside decoder memory")
+        start_token = piece.start_byte + 1
+        end_token = piece.end_byte
+        if not (1 <= start_token < text_length and start_token <= end_token < text_length):
+            raise ValueError("Parser v5.1 evidence byte span is outside decoder text memory")
+        state = advance_field_evidence_state(output, base_state, history)
+        losses.append(_pointer_cross_entropy(field_node_pointer_logits(output, state), piece.node_index))
+        start_logits, end_logits = field_span_pointer_logits(output, state, piece.node_index)
+        losses.append(_pointer_cross_entropy(start_logits, start_token))
+        losses.append(_pointer_cross_entropy(end_logits, end_token))
+        history.append((piece.node_index, start_token, end_token))
+
+    state = advance_field_evidence_state(output, base_state, history)
+    losses.append(_pointer_cross_entropy(field_node_pointer_logits(output, state), stop_index))
+    return sum(losses) / len(losses)
 
 
 def _row_target_cost(
@@ -65,7 +69,7 @@ def _row_target_cost(
     components = [positive_existence]
     for field_index in range(len(ROW_FIELD_ROLES)):
         components.append(
-            _field_token_loss(
+            field_evidence_sequence_loss(
                 output,
                 row_index=row_index,
                 field_index=field_index,
@@ -131,7 +135,7 @@ def parser_v51_set_loss(
         target = targets.rows[target_index]
         for field_index in range(len(ROW_FIELD_ROLES)):
             field_losses.append(
-                _field_token_loss(
+                field_evidence_sequence_loss(
                     output,
                     row_index=row_index,
                     field_index=field_index,
@@ -143,4 +147,4 @@ def parser_v51_set_loss(
     return existence_loss + sum(field_losses) / len(field_losses)
 
 
-__all__ = ["field_token_targets", "match_parser_v51_rows", "parser_v51_set_loss"]
+__all__ = ["field_evidence_sequence_loss", "match_parser_v51_rows", "parser_v51_set_loss"]

@@ -15,9 +15,14 @@ import paddle.nn.functional as F
 
 from .artifact_storage import exclusive_output_lock
 from .parser_v5_dataset import ParserV5Dataset, load_parser_v5_dataset
-from .parser_v51_loss_paddle import field_token_targets, match_parser_v51_rows, parser_v51_set_loss
+from .parser_v51_direct_decoder_paddle import (
+    advance_field_evidence_state,
+    field_node_pointer_logits,
+    field_span_pointer_logits,
+)
+from .parser_v51_loss_paddle import match_parser_v51_rows, parser_v51_set_loss
 from .parser_v51_model_paddle import ParserV51Model, ParserV51ModelConfig, prepare_parser_v51_sample
-from .parser_v51_targets import ROW_FIELD_ROLES
+from .parser_v51_targets import ROW_FIELD_ROLES, required_field_pieces
 
 
 STATE_FILE = "training-state.json"
@@ -205,13 +210,16 @@ def evaluate_parser_v51(
     target_rows = 0
     row_existence_correct = 0
     row_existence_total = 0
-    selected_true_positive = 0
-    selected_false_positive = 0
-    selected_false_negative = 0
-    selected_token_total = 0
-    outside_token_total = 0
-    field_exact = 0
-    field_total = 0
+    node_pointer_exact = 0
+    node_pointer_total = 0
+    span_pointer_exact = 0
+    span_pointer_total = 0
+    evidence_piece_exact = 0
+    evidence_piece_total = 0
+    stop_pointer_exact = 0
+    stop_pointer_total = 0
+    field_sequence_exact = 0
+    field_sequence_total = 0
 
     for sample in _training_samples(datasets):
         tensors, targets, _ = prepare_parser_v51_sample(sample, config.model_config)
@@ -229,35 +237,51 @@ def evaluate_parser_v51(
 
         for row_index, target_index in assignments:
             row_target = targets.rows[target_index]
-            for field_index, _ in enumerate(ROW_FIELD_ROLES):
-                expected = field_token_targets(output, row_target, field_index)
-                predicted = output.field_token_logits[row_index, field_index].argmax(axis=-1) == 1
-                valid = output.token_valid_mask
-                expected_valid = expected & valid
-                predicted_valid = predicted & valid
-                selected_true_positive += int((expected_valid & predicted_valid).astype("int64").sum().item())
-                selected_false_positive += int(((~expected_valid) & predicted_valid & valid).astype("int64").sum().item())
-                selected_false_negative += int((expected_valid & (~predicted_valid)).astype("int64").sum().item())
-                selected_token_total += int(expected_valid.astype("int64").sum().item())
-                outside_token_total += int(((~expected_valid) & valid).astype("int64").sum().item())
-                field_exact += int(bool(paddle.all((expected_valid == predicted_valid) | (~valid)).item()))
-                field_total += 1
+            for field_index, role in enumerate(ROW_FIELD_ROLES):
+                pieces = required_field_pieces(row_target.field(role))
+                base_state = output.field_query_states[row_index, field_index]
+                history: list[tuple[int, int, int]] = []
+                exact = True
+                for piece in pieces:
+                    state = advance_field_evidence_state(output, base_state, history)
+                    node_guess = int(field_node_pointer_logits(output, state).argmax().item())
+                    node_exact = node_guess == piece.node_index
+                    node_pointer_exact += int(node_exact)
+                    node_pointer_total += 1
+                    start_logits, end_logits = field_span_pointer_logits(output, state, piece.node_index)
+                    expected_start = piece.start_byte + 1
+                    expected_end = piece.end_byte
+                    start_guess = int(start_logits.argmax().item())
+                    end_guess = int(end_logits.argmax().item())
+                    span_exact = start_guess == expected_start and end_guess == expected_end
+                    span_pointer_exact += int(span_exact)
+                    span_pointer_total += 1
+                    evidence_piece_exact += int(node_exact and span_exact)
+                    evidence_piece_total += 1
+                    exact = exact and node_exact and span_exact
+                    history.append((piece.node_index, expected_start, expected_end))
+                stop_state = advance_field_evidence_state(output, base_state, history)
+                stop_guess = int(field_node_pointer_logits(output, stop_state).argmax().item())
+                stop_exact = stop_guess == int(output.start_pointer_keys.shape[0])
+                stop_pointer_exact += int(stop_exact)
+                stop_pointer_total += 1
+                field_sequence_exact += int(exact and stop_exact)
+                field_sequence_total += 1
 
     if documents == 0:
         raise ValueError("Parser v5.1 validation data produced no samples")
-    precision = selected_true_positive / max(1, selected_true_positive + selected_false_positive)
-    recall = selected_true_positive / max(1, selected_true_positive + selected_false_negative)
     return {
         "documents": documents,
         "validation_loss": total_loss / documents,
         "target_rows": target_rows,
         "row_existence_accuracy": row_existence_correct / max(1, row_existence_total),
-        "token_selection_precision": precision,
-        "token_selection_recall": recall,
-        "token_selection_f1": 2.0 * precision * recall / max(precision + recall, 1e-12),
-        "field_token_exact_rate": field_exact / max(1, field_total),
-        "selected_tokens_supervised": selected_token_total,
-        "outside_tokens_supervised": outside_token_total,
+        "node_pointer_exact_rate": node_pointer_exact / max(1, node_pointer_total),
+        "span_pointer_exact_rate": span_pointer_exact / max(1, span_pointer_total),
+        "evidence_piece_exact_rate": evidence_piece_exact / max(1, evidence_piece_total),
+        "stop_pointer_exact_rate": stop_pointer_exact / max(1, stop_pointer_total),
+        "field_sequence_exact_rate": field_sequence_exact / max(1, field_sequence_total),
+        "evidence_pieces_supervised": evidence_piece_total,
+        "field_sequences_supervised": field_sequence_total,
     }
 
 
