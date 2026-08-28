@@ -56,19 +56,6 @@ def field_evidence_sequence_loss(
     return sum(losses) / len(losses)
 
 
-def field_evidence_stop_loss(
-    output: ParserV51DecoderOutput,
-    *,
-    row_index: int,
-    field_index: int,
-) -> paddle.Tensor:
-    """Train an unused row/field query to abstain immediately."""
-
-    node_count = int(output.start_pointer_keys.shape[0])
-    state = output.field_query_states[row_index, field_index]
-    return _pointer_cross_entropy(field_node_pointer_logits(output, state), node_count)
-
-
 def _row_target_cost(
     output: ParserV51DecoderOutput,
     *,
@@ -144,7 +131,6 @@ def parser_v51_set_loss(
     )
 
     field_losses: list[paddle.Tensor] = []
-    matched_rows = {row_index for row_index, _ in assignments}
     for row_index, target_index in assignments:
         target = targets.rows[target_index]
         for field_index in range(len(ROW_FIELD_ROLES)):
@@ -156,29 +142,9 @@ def parser_v51_set_loss(
                     target=target,
                 )
             )
-    product_index = ROW_FIELD_ROLES.index("product")
-    for row_index in range(row_count):
-        if row_index in matched_rows:
-            continue
-        # Runtime drops a row as soon as it has no product evidence. Training
-        # auxiliary fields on unused slots would add six times as many STOP
-        # targets as necessary and distort the evidence objective. Product
-        # STOP is the complete abstention contract for an unmatched row.
-        field_losses.append(
-            field_evidence_stop_loss(
-                output,
-                row_index=row_index,
-                field_index=product_index,
-            )
-        )
     if not field_losses:
         return existence_loss
     return existence_loss + sum(field_losses) / len(field_losses)
 
 
-__all__ = [
-    "field_evidence_sequence_loss",
-    "field_evidence_stop_loss",
-    "match_parser_v51_rows",
-    "parser_v51_set_loss",
-]
+__all__ = ["field_evidence_sequence_loss", "match_parser_v51_rows", "parser_v51_set_loss"]
