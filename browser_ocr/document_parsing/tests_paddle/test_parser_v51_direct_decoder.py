@@ -258,11 +258,8 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         loss.backward()
         self.assertIsNotNone(model.decoder.row_queries.grad)
         self.assertGreater(float(paddle.abs(model.decoder.row_queries.grad).sum().item()), 0.0)
-        self.assertIsNotNone(model.decoder.product_anchor_projection.weight.grad)
-        self.assertGreater(
-            float(paddle.abs(model.decoder.product_anchor_projection.weight.grad).sum().item()),
-            0.0,
-        )
+        self.assertIsNotNone(model.decoder.node_query.weight.grad)
+        self.assertGreater(float(paddle.abs(model.decoder.node_query.weight.grad).sum().item()), 0.0)
         self.assertIsNotNone(model.encoder.text_encoder.embedding.weight.grad)
         self.assertGreater(float(paddle.abs(model.encoder.text_encoder.embedding.weight.grad).sum().item()), 0.0)
 
