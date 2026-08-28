@@ -49,6 +49,14 @@ def _runtime_profile(image_sha256: str = "a" * 64) -> dict:
     }
 
 
+def _runtime_profile_v2(image_sha256: str = "a" * 64) -> dict:
+    profile = _runtime_profile(image_sha256)
+    profile["schema_version"] = 2
+    profile["baseline_result_sha256"] = "0" * 64
+    profile.pop("recognizer_result_sha256")
+    return profile
+
+
 def _doc(*, source_kind: str = "synthetic", split: str = "train") -> dict:
     document = {
         "document_id": "doc-001",
@@ -140,6 +148,32 @@ def _rewrite_samples(manifest_path: Path, documents: list[dict]) -> None:
 
 
 class ParserTrainingDatasetContractTest(unittest.TestCase):
+    def test_runtime_observation_accepts_persisted_schema_v2_producer(self) -> None:
+        document = _doc()
+        document["observation"] = {
+            **document["observation"],
+            "kind": "runtime_ocr",
+            "profile": _runtime_profile_v2(document["image_sha256"]),
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            profile = _runtime_profile_v2(document["image_sha256"])
+            manifest = write_parser_dataset(
+                root,
+                dataset_id="runtime-v2-profile",
+                documents=[document],
+                metadata={
+                    "builder": "parser_runtime_builder_v2",
+                    "truth_samples_sha256": "9" * 64,
+                    "observation_kind": "runtime_ocr",
+                    "split": "train",
+                    "ocr_producer": {key: value for key, value in profile.items() if key != "image_sha256"},
+                },
+            )
+            loaded = load_parser_dataset(manifest)
+            self.assertEqual(loaded.metadata["ocr_producer"]["schema_version"], 2)
+            self.assertEqual(loaded.metadata["ocr_producer"]["baseline_result_sha256"], "0" * 64)
+
     def test_strict_artifact_rejects_empty_document_set(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             with self.assertRaisesRegex(ParserDatasetError, "at least one|empty"):

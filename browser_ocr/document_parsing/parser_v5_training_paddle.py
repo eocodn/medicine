@@ -1,0 +1,413 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import random
+import shutil
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+import paddle
+import paddle.nn as nn
+
+from .artifact_storage import exclusive_output_lock
+from .parser_v5_dataset import ParserV5Dataset, load_parser_v5_dataset
+from .parser_v5_encoder_paddle import (
+    ParserV5EncoderSpec,
+    ParserV5GlobalEncoder,
+    masked_multilabel_role_loss,
+)
+from .parser_v5_heads_paddle import (
+    ParserV5SemanticAssignmentHead,
+    parser_v5_head_loss,
+)
+from .parser_v5_training_evaluation import (
+    evaluate_parser_v5,
+    evaluate_parser_v5_views,
+    parser_v5_selection_score,
+    prepare_parser_v5_sample,
+)
+from .parser_v5_training_artifact import parser_v5_checkpoint_reference, resolve_parser_v5_checkpoint
+
+
+STATE_FILE = "training-state.json"
+RESULT_FILE = "result.json"
+CHECKPOINTS_DIR = "checkpoints"
+
+
+@dataclass(frozen=True)
+class ParserV5TrainingConfig:
+    epochs: int = 12
+    learning_rate: float = 0.002
+    weight_decay: float = 1e-4
+    seed: int = 112
+    max_text_bytes: int = 96
+    hidden_dim: int = 96
+    text_embedding_dim: int = 32
+    text_conv_dim: int = 48
+    layers: int = 2
+    heads: int = 4
+    feedforward_multiplier: int = 2
+    assignment_hidden_dim: int = 64
+    role_embedding_dim: int = 16
+    semantic_loss_weight: float = 1.0
+    head_loss_weight: float = 1.0
+    device: str = "gpu"
+
+    def __post_init__(self) -> None:
+        if isinstance(self.epochs, bool) or not isinstance(self.epochs, int) or self.epochs <= 0:
+            raise ValueError("Parser v5 training epochs must be a positive integer")
+        for name in ("learning_rate", "semantic_loss_weight", "head_loss_weight"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"Parser v5 training {name} must be positive and finite")
+        if not math.isfinite(float(self.weight_decay)) or self.weight_decay < 0:
+            raise ValueError("Parser v5 training weight_decay must be non-negative and finite")
+        if isinstance(self.seed, bool) or not isinstance(self.seed, int):
+            raise ValueError("Parser v5 training seed must be an integer")
+        if isinstance(self.max_text_bytes, bool) or not 4 <= self.max_text_bytes <= 512:
+            raise ValueError("Parser v5 training max_text_bytes must be between 4 and 512")
+        if self.device not in {"cpu", "gpu"}:
+            raise ValueError("Parser v5 training device must be cpu or gpu")
+        self.encoder_spec
+        if not 16 <= self.assignment_hidden_dim <= 256:
+            raise ValueError("Parser v5 assignment_hidden_dim must be between 16 and 256")
+        if not 4 <= self.role_embedding_dim <= 64:
+            raise ValueError("Parser v5 role_embedding_dim must be between 4 and 64")
+
+    @property
+    def encoder_spec(self) -> ParserV5EncoderSpec:
+        return ParserV5EncoderSpec(
+            hidden_dim=self.hidden_dim,
+            text_embedding_dim=self.text_embedding_dim,
+            text_conv_dim=self.text_conv_dim,
+            layers=self.layers,
+            heads=self.heads,
+            feedforward_multiplier=self.feedforward_multiplier,
+        )
+
+
+class ParserV5Model(nn.Layer):
+    def __init__(self, config: ParserV5TrainingConfig) -> None:
+        super().__init__()
+        self.encoder = ParserV5GlobalEncoder(config.encoder_spec)
+        self.heads = ParserV5SemanticAssignmentHead(
+            hidden_dim=config.hidden_dim,
+            assignment_hidden_dim=config.assignment_hidden_dim,
+            role_embedding_dim=config.role_embedding_dim,
+        )
+
+
+def _canonical_json(value: object) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _atomic_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    temporary.write_bytes(_canonical_json(value) + b"\n")
+    os.replace(temporary, path)
+
+
+def _json_file(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"could not read Parser v5 training JSON {path}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"Parser v5 training JSON must be an object: {path}")
+    return value
+
+
+def _datasets(manifests: Sequence[str | Path], *, label: str) -> list[ParserV5Dataset]:
+    if not manifests:
+        raise ValueError(f"Parser v5 training requires at least one {label} dataset")
+    datasets = [load_parser_v5_dataset(path) for path in manifests]
+    identities = [(dataset.dataset_id, dataset.samples_sha256) for dataset in datasets]
+    if len(identities) != len(set(identities)):
+        raise ValueError(f"Parser v5 {label} datasets must be unique")
+    return datasets
+
+
+def _profile(
+    train: Sequence[ParserV5Dataset],
+    validation: Sequence[ParserV5Dataset],
+    config: ParserV5TrainingConfig,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "model_id": "parser_v5_global_structured_v1",
+        "train_datasets": [
+            {"dataset_id": dataset.dataset_id, "samples_sha256": dataset.samples_sha256} for dataset in train
+        ],
+        "validation_datasets": [
+            {"dataset_id": dataset.dataset_id, "samples_sha256": dataset.samples_sha256} for dataset in validation
+        ],
+        "config": asdict(config),
+    }
+
+
+def _train_epoch(
+    model: ParserV5Model,
+    optimizer: paddle.optimizer.Optimizer,
+    datasets: Sequence[ParserV5Dataset],
+    config: ParserV5TrainingConfig,
+    *,
+    epoch: int,
+) -> tuple[float, int]:
+    samples = [(dataset.dataset_id, sample) for dataset in datasets for sample in dataset.samples]
+    rng = random.Random(config.seed + epoch * 1_000_003)
+    rng.shuffle(samples)
+    model.train()
+    total_loss = 0.0
+    steps = 0
+    for _, sample in samples:
+        prepared = prepare_parser_v5_sample(sample, config)
+        if prepared is None:
+            continue
+        tensors, targets = prepared
+        hidden, role_logits = model.encoder(tensors)
+        candidate_logits, assignment_logits = model.heads(hidden, tensors.relation_features, targets)
+        semantic = masked_multilabel_role_loss(role_logits, tensors)
+        heads = parser_v5_head_loss(candidate_logits, assignment_logits, targets)
+        loss = semantic * config.semantic_loss_weight + heads * config.head_loss_weight
+        if not bool(paddle.isfinite(loss).item()):
+            raise ValueError(f"non-finite Parser v5 training loss at epoch {epoch}")
+        loss.backward()
+        # Paddle names AdamW accumulator tensors lazily on the first step.
+        # Guard the global unique-name counter so an in-process resume produces
+        # the same optimizer-state keys as the checkpoint being restored.
+        with paddle.utils.unique_name.guard():
+            optimizer.step()
+        optimizer.clear_grad()
+        total_loss += float(loss.item())
+        steps += 1
+    if steps == 0:
+        raise ValueError("Parser v5 training data produced no observable OCR nodes")
+    return total_loss / steps, steps
+
+
+def _checkpoint_record(root: Path, epoch: int, profile_sha256: str) -> dict[str, Any] | None:
+    directory = root / CHECKPOINTS_DIR / f"epoch-{epoch:04d}"
+    if not directory.exists():
+        return None
+    record_path = directory / "checkpoint.json"
+    model_path = directory / "model.pdparams"
+    optimizer_path = directory / "optimizer.pdopt"
+    if not record_path.is_file() or not model_path.is_file() or not optimizer_path.is_file():
+        raise ValueError(f"Parser v5 checkpoint {epoch} is incomplete")
+    record = _json_file(record_path)
+    if record.get("epoch") != epoch or record.get("profile_sha256") != profile_sha256:
+        raise ValueError(f"Parser v5 checkpoint {epoch} profile mismatch")
+    if record.get("model_sha256") != _sha256_file(model_path) or record.get("optimizer_sha256") != _sha256_file(optimizer_path):
+        raise ValueError(f"Parser v5 checkpoint {epoch} SHA-256 mismatch")
+    return {
+        "epoch": epoch,
+        "training_loss": float(record["training_loss"]),
+        "training_steps": int(record["training_steps"]),
+        "validation": dict(record["validation"]),
+        "selection_score": float(record["selection_score"]),
+        "checkpoint": parser_v5_checkpoint_reference(root, model_path),
+        "model_sha256": str(record["model_sha256"]),
+        "optimizer_sha256": str(record["optimizer_sha256"]),
+    }
+
+
+def _save_checkpoint(
+    root: Path,
+    *,
+    epoch: int,
+    profile_sha256: str,
+    model: ParserV5Model,
+    optimizer: paddle.optimizer.Optimizer,
+    training_loss: float,
+    training_steps: int,
+    validation: Mapping[str, Any],
+) -> dict[str, Any]:
+    checkpoints = root / CHECKPOINTS_DIR
+    checkpoints.mkdir(parents=True, exist_ok=True)
+    final = checkpoints / f"epoch-{epoch:04d}"
+    if final.exists():
+        raise ValueError(f"Parser v5 checkpoint already exists unexpectedly: {final}")
+    temporary = checkpoints / f".epoch-{epoch:04d}.tmp-{os.getpid()}"
+    shutil.rmtree(temporary, ignore_errors=True)
+    temporary.mkdir(parents=True)
+    try:
+        model_path = temporary / "model.pdparams"
+        optimizer_path = temporary / "optimizer.pdopt"
+        paddle.save(model.state_dict(), str(model_path))
+        paddle.save(optimizer.state_dict(), str(optimizer_path))
+        record = {
+            "schema_version": 1,
+            "epoch": epoch,
+            "profile_sha256": profile_sha256,
+            "training_loss": training_loss,
+            "training_steps": training_steps,
+            "validation": dict(validation),
+            "selection_score": parser_v5_selection_score(validation),
+            "model_sha256": _sha256_file(model_path),
+            "optimizer_sha256": _sha256_file(optimizer_path),
+        }
+        _atomic_json(temporary / "checkpoint.json", record)
+        os.replace(temporary, final)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    persisted = _checkpoint_record(root, epoch, profile_sha256)
+    if persisted is None:
+        raise AssertionError("Parser v5 checkpoint disappeared after commit")
+    return persisted
+
+
+def _adopt_checkpoints(root: Path, state: dict[str, Any], profile_sha256: str, epochs: int) -> list[dict[str, Any]]:
+    history = list(state.get("history") or [])
+    completed = int(state.get("completed_epoch") or 0)
+    if len(history) != completed:
+        raise ValueError("Parser v5 training state history disagrees with completed_epoch")
+    for epoch in range(1, completed + 1):
+        persisted = _checkpoint_record(root, epoch, profile_sha256)
+        if persisted is None or persisted != history[epoch - 1]:
+            raise ValueError(f"Parser v5 training state disagrees with checkpoint {epoch}")
+    while completed < epochs:
+        persisted = _checkpoint_record(root, completed + 1, profile_sha256)
+        if persisted is None:
+            break
+        history.append(persisted)
+        completed += 1
+    state["completed_epoch"] = completed
+    state["history"] = history
+    return history
+
+
+def _load_checkpoint(root: Path, history: Sequence[Mapping[str, Any]], model: ParserV5Model, optimizer) -> None:
+    if not history:
+        return
+    epoch = int(history[-1]["epoch"])
+    directory = root / CHECKPOINTS_DIR / f"epoch-{epoch:04d}"
+    model.set_state_dict(paddle.load(str(directory / "model.pdparams")))
+    optimizer.set_state_dict(paddle.load(str(directory / "optimizer.pdopt")))
+
+
+def _completed_result(root: Path, profile: Mapping[str, Any], state: Mapping[str, Any]) -> dict[str, Any]:
+    result_path = root / RESULT_FILE
+    if not result_path.is_file() or state.get("result_sha256") != _sha256_file(result_path):
+        raise ValueError("completed Parser v5 training result SHA-256 mismatch")
+    result = _json_file(result_path)
+    if result.get("status") != "ok" or result.get("profile") != profile:
+        raise ValueError("completed Parser v5 training result profile mismatch")
+    best = resolve_parser_v5_checkpoint(result_path, result.get("best_checkpoint"))
+    if not best.is_file() or result.get("best_checkpoint_sha256") != _sha256_file(best):
+        raise ValueError("completed Parser v5 best checkpoint SHA-256 mismatch")
+    return result
+
+
+def train_parser_v5(
+    *,
+    train_manifests: Sequence[str | Path],
+    validation_manifests: Sequence[str | Path],
+    output_dir: str | Path,
+    config: ParserV5TrainingConfig = ParserV5TrainingConfig(),
+) -> dict[str, Any]:
+    train = _datasets(train_manifests, label="train")
+    validation = _datasets(validation_manifests, label="validation")
+    train_hashes = {dataset.samples_sha256 for dataset in train}
+    if any(dataset.samples_sha256 in train_hashes for dataset in validation):
+        raise ValueError("Parser v5 validation dataset must be disjoint from training data")
+    profile = _profile(train, validation, config)
+    profile_sha256 = _sha256_bytes(_canonical_json(profile))
+    root = Path(output_dir).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    paddle.seed(config.seed)
+    paddle.set_device(config.device)
+
+    with exclusive_output_lock(root):
+        state_path = root / STATE_FILE
+        if state_path.exists():
+            state = _json_file(state_path)
+            if state.get("profile_sha256") != profile_sha256 or state.get("profile") != profile:
+                raise ValueError("Parser v5 training profile does not match existing output")
+            if state.get("status") == "completed":
+                return _completed_result(root, profile, state)
+            if state.get("status") != "running":
+                raise ValueError("Parser v5 training state status is invalid")
+        else:
+            state = {
+                "schema_version": 1,
+                "status": "running",
+                "profile": profile,
+                "profile_sha256": profile_sha256,
+                "completed_epoch": 0,
+                "history": [],
+            }
+            _atomic_json(state_path, state)
+
+        with paddle.utils.unique_name.guard():
+            model = ParserV5Model(config)
+            optimizer = paddle.optimizer.AdamW(
+                learning_rate=config.learning_rate,
+                parameters=model.parameters(),
+                weight_decay=config.weight_decay,
+            )
+        history = _adopt_checkpoints(root, state, profile_sha256, config.epochs)
+        _atomic_json(state_path, state)
+        _load_checkpoint(root, history, model, optimizer)
+
+        for epoch in range(len(history) + 1, config.epochs + 1):
+            training_loss, steps = _train_epoch(model, optimizer, train, config, epoch=epoch)
+            metrics = evaluate_parser_v5_views(model, validation, config)
+            record = _save_checkpoint(
+                root,
+                epoch=epoch,
+                profile_sha256=profile_sha256,
+                model=model,
+                optimizer=optimizer,
+                training_loss=training_loss,
+                training_steps=steps,
+                validation=metrics,
+            )
+            history.append(record)
+            state["completed_epoch"] = epoch
+            state["history"] = history
+            _atomic_json(state_path, state)
+
+        best = max(history, key=lambda item: (float(item["selection_score"]), -int(item["epoch"])))
+        result = {
+            "schema_version": 1,
+            "status": "ok",
+            "profile": profile,
+            "profile_sha256": profile_sha256,
+            "history": history,
+            "best_epoch": int(best["epoch"]),
+            "best_validation": dict(best["validation"]),
+            "best_checkpoint": str(best["checkpoint"]),
+            "best_checkpoint_sha256": str(best["model_sha256"]),
+        }
+        _atomic_json(root / RESULT_FILE, result)
+        state["status"] = "completed"
+        state["result_sha256"] = _sha256_file(root / RESULT_FILE)
+        _atomic_json(state_path, state)
+        return result
+
+
+__all__ = [
+    "ParserV5Model",
+    "ParserV5TrainingConfig",
+    "evaluate_parser_v5",
+    "evaluate_parser_v5_views",
+    "train_parser_v5",
+]
