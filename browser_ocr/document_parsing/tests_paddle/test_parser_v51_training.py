@@ -68,6 +68,7 @@ class ParserV51TrainingTest(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(first["status"], "ok")
             self.assertEqual(first["profile"]["model_id"], "parser_v51_direct_rows_v1")
+            self.assertIn("parser_v51_loss_paddle.py", first["profile"]["implementation_sha256"])
             self.assertEqual(len(first["history"]), 2)
             self.assertTrue((output / first["best_checkpoint"]).is_file())
             metrics = first["best_validation"]
@@ -75,6 +76,9 @@ class ParserV51TrainingTest(unittest.TestCase):
             self.assertIn("row_existence_accuracy", metrics)
             self.assertIn("field_presence_accuracy", metrics)
             self.assertIn("node_membership_accuracy", metrics)
+            self.assertIn("node_membership_precision", metrics)
+            self.assertIn("node_membership_recall", metrics)
+            self.assertIn("node_membership_f1", metrics)
             self.assertIn("span_exact_rate", metrics)
             self.assertNotIn("role_micro_f1", metrics)
             self.assertNotIn("candidate_accuracy", metrics)

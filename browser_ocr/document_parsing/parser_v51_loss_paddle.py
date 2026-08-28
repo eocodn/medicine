@@ -15,6 +15,20 @@ from .parser_v51_targets import (
 )
 
 
+def _balanced_binary_loss(logits: paddle.Tensor, targets: paddle.Tensor) -> paddle.Tensor:
+    elementwise = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    positive = targets > 0.5
+    negative = ~positive
+    components: list[paddle.Tensor] = []
+    if bool(positive.any().item()):
+        components.append(elementwise[positive].mean())
+    if bool(negative.any().item()):
+        components.append(elementwise[negative].mean())
+    if not components:
+        return paddle.zeros([], dtype=logits.dtype)
+    return sum(components) / len(components)
+
+
 def _field_loss(
     output: ParserV51DecoderOutput,
     *,
@@ -38,10 +52,9 @@ def _field_loss(
     for piece in required:
         if 0 <= piece.node_index < node_count:
             membership_target[piece.node_index] = 1.0
-    membership_loss = F.binary_cross_entropy_with_logits(
+    membership_loss = _balanced_binary_loss(
         output.field_node_logits[row_index, field_index],
         membership_target,
-        reduction="mean",
     )
     if not required or text_length == 0:
         return (presence_loss + membership_loss) / 2.0

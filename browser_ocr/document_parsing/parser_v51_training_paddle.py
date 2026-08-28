@@ -22,6 +22,15 @@ from .parser_v51_targets import ROW_FIELD_ROLES, required_field_pieces
 STATE_FILE = "training-state.json"
 RESULT_FILE = "result.json"
 CHECKPOINTS_DIR = "checkpoints"
+_IMPLEMENTATION_FILES = (
+    "parser_v5_model_input.py",
+    "parser_v5_document_encoder_paddle.py",
+    "parser_v51_targets.py",
+    "parser_v51_direct_decoder_paddle.py",
+    "parser_v51_loss_paddle.py",
+    "parser_v51_model_paddle.py",
+    "parser_v51_training_paddle.py",
+)
 
 
 @dataclass(frozen=True)
@@ -116,6 +125,17 @@ def _datasets(manifests: Sequence[str | Path], *, label: str) -> list[ParserV5Da
     return datasets
 
 
+def _implementation_identity() -> dict[str, str]:
+    root = Path(__file__).resolve().parent
+    identity: dict[str, str] = {}
+    for name in _IMPLEMENTATION_FILES:
+        source = root / name
+        if not source.is_file():
+            raise ValueError(f"Parser v5.1 training implementation source is missing: {name}")
+        identity[name] = _sha256_file(source)
+    return identity
+
+
 def _profile(
     train: Sequence[ParserV5Dataset],
     validation: Sequence[ParserV5Dataset],
@@ -133,6 +153,7 @@ def _profile(
             for dataset in validation
         ],
         "config": asdict(config),
+        "implementation_sha256": _implementation_identity(),
     }
 
 
@@ -187,6 +208,9 @@ def evaluate_parser_v51(
     field_presence_total = 0
     node_membership_correct = 0
     node_membership_total = 0
+    node_membership_tp = 0
+    node_membership_fp = 0
+    node_membership_fn = 0
     span_exact = 0
     span_total = 0
 
@@ -217,10 +241,14 @@ def evaluate_parser_v51(
                 required_nodes = {piece.node_index for piece in required}
                 for node_index in range(len(tensors.node_scalars)):
                     expected_member = node_index in required_nodes
+                    guessed_member = bool(membership_guess[row_index, field_index, node_index].item())
                     node_membership_correct += int(
-                        bool(membership_guess[row_index, field_index, node_index].item()) == expected_member
+                        guessed_member == expected_member
                     )
                     node_membership_total += 1
+                    node_membership_tp += int(guessed_member and expected_member)
+                    node_membership_fp += int(guessed_member and not expected_member)
+                    node_membership_fn += int(not guessed_member and expected_member)
                 canonical = {}
                 for piece in required:
                     canonical.setdefault(piece.node_index, piece)
@@ -232,6 +260,13 @@ def evaluate_parser_v51(
 
     if documents == 0:
         raise ValueError("Parser v5.1 validation data produced no samples")
+    membership_precision = node_membership_tp / max(1, node_membership_tp + node_membership_fp)
+    membership_recall = node_membership_tp / max(1, node_membership_tp + node_membership_fn)
+    membership_f1 = (
+        2.0 * membership_precision * membership_recall / (membership_precision + membership_recall)
+        if membership_precision + membership_recall
+        else 0.0
+    )
     return {
         "documents": documents,
         "validation_loss": total_loss / documents,
@@ -239,6 +274,9 @@ def evaluate_parser_v51(
         "row_existence_accuracy": row_existence_correct / max(1, row_existence_total),
         "field_presence_accuracy": field_presence_correct / max(1, field_presence_total),
         "node_membership_accuracy": node_membership_correct / max(1, node_membership_total),
+        "node_membership_precision": membership_precision,
+        "node_membership_recall": membership_recall,
+        "node_membership_f1": membership_f1,
         "span_exact_rate": span_exact / max(1, span_total),
         "span_supervised": span_total,
     }
