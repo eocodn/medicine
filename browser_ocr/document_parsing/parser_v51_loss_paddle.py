@@ -156,17 +156,21 @@ def parser_v51_set_loss(
                     target=target,
                 )
             )
+    product_index = ROW_FIELD_ROLES.index("product")
     for row_index in range(row_count):
         if row_index in matched_rows:
             continue
-        for field_index in range(len(ROW_FIELD_ROLES)):
-            field_losses.append(
-                field_evidence_stop_loss(
-                    output,
-                    row_index=row_index,
-                    field_index=field_index,
-                )
+        # Runtime drops a row as soon as it has no product evidence. Training
+        # auxiliary fields on unused slots would add six times as many STOP
+        # targets as necessary and distort the evidence objective. Product
+        # STOP is the complete abstention contract for an unmatched row.
+        field_losses.append(
+            field_evidence_stop_loss(
+                output,
+                row_index=row_index,
+                field_index=product_index,
             )
+        )
     if not field_losses:
         return existence_loss
     return existence_loss + sum(field_losses) / len(field_losses)
