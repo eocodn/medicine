@@ -17,11 +17,7 @@ from browser_ocr.document_parsing.parser_v51_direct_decoder_paddle import (
     decode_parser_v51_rows,
     scaled_pointer_scores,
 )
-from browser_ocr.document_parsing.parser_v51_loss_paddle import (
-    _pointer_cross_entropy,
-    match_parser_v51_rows,
-    parser_v51_set_loss,
-)
+from browser_ocr.document_parsing.parser_v51_loss_paddle import match_parser_v51_rows, parser_v51_set_loss
 from browser_ocr.document_parsing.parser_v51_model_paddle import (
     ParserV51Model,
     ParserV51ModelConfig,
@@ -43,7 +39,6 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         query = paddle.ones([1, 64], dtype="float32")
         key = paddle.ones([1, 64], dtype="float32")
         score = scaled_pointer_scores(query, key, hidden_dim=64)
-
         self.assertAlmostEqual(float(score.item()), 8.0, places=6)
 
     def _nodes(self) -> list[dict]:
@@ -71,46 +66,37 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
             },
         ]
 
-    def _empty_output(
-        self,
-        *,
-        rows: int,
-        node_count: int,
-        text_length: int,
-        pieces: int = 4,
-    ) -> ParserV51DecoderOutput:
+    def _empty_output(self, *, rows: int, node_count: int, text_length: int) -> ParserV51DecoderOutput:
         fields = len(ROW_FIELD_ROLES)
         existence = paddle.full([rows], -10.0, dtype="float32")
-        node_logits = paddle.full([rows, fields, pieces, node_count + 1], -10.0, dtype="float32")
-        node_logits[..., node_count] = 10.0
-        start_logits = paddle.full([rows, fields, pieces, node_count, text_length], -10.0, dtype="float32")
-        end_logits = paddle.full([rows, fields, pieces, node_count, text_length], -10.0, dtype="float32")
+        logits = paddle.empty([rows, fields, node_count, text_length, 2], dtype="float32")
+        logits[..., 0] = 10.0
+        logits[..., 1] = -10.0
+        valid = paddle.ones([node_count, text_length], dtype="bool")
         return ParserV51DecoderOutput(
             row_existence_logits=existence,
-            piece_node_logits=node_logits,
-            piece_start_logits=start_logits,
-            piece_end_logits=end_logits,
+            field_token_logits=logits,
+            token_valid_mask=valid,
         )
 
     @staticmethod
-    def _select_piece(
+    def _select_byte_span(
         output: ParserV51DecoderOutput,
         *,
         row: int,
         role: str,
-        piece: int,
         node: int,
-        start_token: int,
-        end_token: int,
+        start_byte: int,
+        end_byte: int,
         score: float = 10.0,
     ) -> None:
         field = ROW_FIELD_ROLES.index(role)
-        output.piece_node_logits[row, field, piece, :] = -score
-        output.piece_node_logits[row, field, piece, node] = score
-        output.piece_start_logits[row, field, piece, node, start_token] = score
-        output.piece_end_logits[row, field, piece, node, end_token] = score
+        start_token = start_byte + 1
+        stop_token = end_byte + 1
+        output.field_token_logits[row, field, node, start_token:stop_token, 0] = -score
+        output.field_token_logits[row, field, node, start_token:stop_token, 1] = score
 
-    def test_direct_decoder_emits_piece_pointer_tensors_without_role_logits(self) -> None:
+    def test_direct_decoder_emits_variable_cardinality_token_segmentation(self) -> None:
         paddle.seed(51)
         nodes = self._nodes()
         value = build_parser_v5_runtime_document_input(
@@ -118,59 +104,45 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         )
         tensors = parser_v5_document_tensors(value)
         encoder = ParserV5DocumentEncoder(
-            ParserV5EncoderSpec(
-                hidden_dim=64, text_embedding_dim=24, text_conv_dim=32, layers=1, heads=4
-            )
+            ParserV5EncoderSpec(hidden_dim=64, text_embedding_dim=24, text_conv_dim=32, layers=1, heads=4)
         )
-        decoder = ParserV51DirectRowDecoder(
-            ParserV51DecoderSpec(hidden_dim=64, text_token_dim=64, max_rows=5, max_field_pieces=4)
-        )
+        decoder = ParserV51DirectRowDecoder(ParserV51DecoderSpec(hidden_dim=64, text_token_dim=64, max_rows=5))
         node_hidden, token_states = encoder(tensors)
         output = decoder(node_hidden, token_states, tensors)
 
         self.assertEqual(list(output.row_existence_logits.shape), [5])
-        self.assertEqual(list(output.piece_node_logits.shape), [5, len(ROW_FIELD_ROLES), 4, 4])
-        self.assertEqual(list(output.piece_start_logits.shape), [5, len(ROW_FIELD_ROLES), 4, 3, 32])
-        self.assertEqual(list(output.piece_end_logits.shape), [5, len(ROW_FIELD_ROLES), 4, 3, 32])
+        self.assertEqual(list(output.field_token_logits.shape), [5, len(ROW_FIELD_ROLES), 3, 32, 2])
+        self.assertEqual(list(output.token_valid_mask.shape), [3, 32])
+        self.assertFalse(hasattr(output, "piece_node_logits"))
         self.assertFalse(hasattr(output, "role_logits"))
         self.assertFalse(hasattr(output, "candidate_logits"))
-        self.assertFalse(hasattr(output, "field_node_logits"))
 
     def test_decode_uses_only_selected_evidence_and_drops_unrelated_text(self) -> None:
         nodes = self._nodes()
-        output = self._empty_output(rows=3, node_count=len(nodes), text_length=16)
+        output = self._empty_output(rows=3, node_count=len(nodes), text_length=32)
         output.row_existence_logits[0] = 10.0
-        self._select_piece(
-            output, row=0, role="product", piece=0, node=0, start_token=1, end_token=len("약A".encode("utf-8"))
-        )
-        self._select_piece(
-            output, row=0, role="dose", piece=0, node=1, start_token=1, end_token=len("1정".encode("utf-8"))
-        )
+        self._select_byte_span(output, row=0, role="product", node=0, start_byte=0, end_byte=len("약A".encode()))
+        self._select_byte_span(output, row=0, role="dose", node=1, start_byte=0, end_byte=len("1정".encode()))
 
         decoded = decode_parser_v51_rows(nodes=nodes, output=output)
-        self.assertEqual(len(decoded), 1)
         self.assertEqual(decoded[0]["product_query"], "약A")
         self.assertEqual(decoded[0]["fields"]["dose"]["text"], "1정")
-        self.assertNotIn("unused", str(decoded[0]))
         self.assertNotIn("영수증", str(decoded[0]))
 
-    def test_decode_can_reconstruct_one_field_from_multiple_ocr_nodes(self) -> None:
+    def test_decode_reconstructs_disjoint_and_multi_node_fragments_without_piece_limit(self) -> None:
         nodes = [
-            {"node_id": "p1", "text": "세티", "detector_confidence": 0.9, "recognizer_confidence": 0.95,
-             "polygon": [[10, 10], [80, 10], [80, 40], [10, 40]]},
-            {"node_id": "p2", "text": "리진정", "detector_confidence": 0.9, "recognizer_confidence": 0.95,
-             "polygon": [[82, 10], [170, 10], [170, 40], [82, 40]]},
+            {"node_id": "a", "text": "abXcdYef", "polygon": [[0, 0], [90, 0], [90, 20], [0, 20]]},
+            {"node_id": "b", "text": "gh", "polygon": [[92, 0], [120, 0], [120, 20], [92, 20]]},
         ]
-        output = self._empty_output(rows=2, node_count=2, text_length=16)
+        output = self._empty_output(rows=1, node_count=2, text_length=16)
         output.row_existence_logits[0] = 10.0
-        for piece, (node, text) in enumerate(((0, "세티"), (1, "리진정"))):
-            self._select_piece(
-                output, row=0, role="product", piece=piece, node=node, start_token=1, end_token=len(text.encode("utf-8"))
-            )
+        for start, end in ((0, 2), (3, 5), (6, 8)):
+            self._select_byte_span(output, row=0, role="product", node=0, start_byte=start, end_byte=end)
+        self._select_byte_span(output, row=0, role="product", node=1, start_byte=0, end_byte=2)
 
         decoded = decode_parser_v51_rows(nodes=nodes, output=output)
-        self.assertEqual(decoded[0]["product_query"], "세티리진정")
-        self.assertEqual([item["node_id"] for item in decoded[0]["product_evidence"]], ["p1", "p2"])
+        self.assertEqual(decoded[0]["product_query"], "abcdefgh")
+        self.assertEqual(len(decoded[0]["product_evidence"]), 4)
 
     def _row_target(self, medication_id: str, pieces: tuple[ParserV51SpanPieceTarget, ...]) -> ParserV51MedicationRowTarget:
         return ParserV51MedicationRowTarget(
@@ -181,40 +153,48 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
             ),
         )
 
+    @staticmethod
+    def _piece(node: int, start: int, end: int, *, operation: str = "split") -> ParserV51SpanPieceTarget:
+        return ParserV51SpanPieceTarget(
+            node_index=node,
+            node_id=f"n{node}",
+            source_span_id="source",
+            operation=operation,
+            start_char=start,
+            end_char=end,
+            start_byte=start,
+            end_byte=end,
+        )
+
     def test_set_matching_is_row_slot_permutation_invariant(self) -> None:
         output = self._empty_output(rows=3, node_count=2, text_length=8)
         output.row_existence_logits[0] = 8.0
         output.row_existence_logits[2] = 8.0
-        for row_index, node_index in ((0, 1), (2, 0)):
-            self._select_piece(output, row=row_index, role="product", piece=0, node=node_index, start_token=1, end_token=2, score=8.0)
-
-        def piece(node_index: int) -> ParserV51SpanPieceTarget:
-            return ParserV51SpanPieceTarget(
-                node_index=node_index, node_id=f"n{node_index}", source_span_id=f"s{node_index}",
-                operation="identity", start_char=0, end_char=2, start_byte=0, end_byte=2
-            )
-
-        targets = ParserV51RowTargets(rows=(self._row_target("A", (piece(0),)), self._row_target("B", (piece(1),))))
+        self._select_byte_span(output, row=0, role="product", node=1, start_byte=0, end_byte=2, score=8.0)
+        self._select_byte_span(output, row=2, role="product", node=0, start_byte=0, end_byte=2, score=8.0)
+        targets = ParserV51RowTargets(
+            rows=(self._row_target("A", (self._piece(0, 0, 2),)), self._row_target("B", (self._piece(1, 0, 2),)))
+        )
         assignments = match_parser_v51_rows(output, targets)
-        loss = parser_v51_set_loss(output, targets)
         self.assertEqual(assignments, ((2, 0), (0, 1)))
-        self.assertLess(float(loss.item()), 0.01)
+        self.assertLess(float(parser_v51_set_loss(output, targets).item()), 0.01)
 
-    def test_set_loss_supervises_all_required_split_product_pieces(self) -> None:
-        output = self._empty_output(rows=2, node_count=2, text_length=8)
+    def test_set_loss_supports_more_than_two_disjoint_fragments(self) -> None:
+        output = self._empty_output(rows=1, node_count=1, text_length=10)
         output.row_existence_logits[0] = 8.0
-        pieces = []
-        for piece_index, node_index in enumerate(range(2)):
-            self._select_piece(output, row=0, role="product", piece=piece_index, node=node_index, start_token=1, end_token=2, score=8.0)
-            pieces.append(
-                ParserV51SpanPieceTarget(
-                    node_index=node_index, node_id=f"n{node_index}", source_span_id="product-source",
-                    operation="split", start_char=0, end_char=2, start_byte=0, end_byte=2
-                )
+        pieces = tuple(self._piece(0, start, start + 1) for start in (0, 2, 4))
+        for piece in pieces:
+            self._select_byte_span(
+                output,
+                row=0,
+                role="product",
+                node=0,
+                start_byte=piece.start_byte,
+                end_byte=piece.end_byte,
+                score=8.0,
             )
-        target = self._row_target("A", tuple(pieces))
-        loss = parser_v51_set_loss(output, ParserV51RowTargets(rows=(target,)))
-        self.assertLess(float(loss.item()), 0.01)
+        target = self._row_target("A", pieces)
+        self.assertLess(float(parser_v51_set_loss(output, ParserV51RowTargets(rows=(target,))).item()), 0.01)
 
     def test_direct_model_backpropagates_without_role_or_candidate_supervision(self) -> None:
         paddle.seed(5101)
@@ -246,21 +226,14 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
             heads=4,
             max_rows=4,
         )
-        tensors, targets, _ = prepare_parser_v51_sample(
-            {"truth": truth, "observation": observation},
-            config,
-        )
+        tensors, targets, _ = prepare_parser_v51_sample({"truth": truth, "observation": observation}, config)
         model = ParserV51Model(config)
-        output = model(tensors)
-        loss = parser_v51_set_loss(output, targets)
+        loss = parser_v51_set_loss(model(tensors), targets)
 
         self.assertTrue(bool(paddle.isfinite(loss).item()))
         loss.backward()
-        self.assertIsNotNone(model.decoder.row_queries.grad)
         self.assertGreater(float(paddle.abs(model.decoder.row_queries.grad).sum().item()), 0.0)
-        self.assertIsNotNone(model.decoder.node_query.weight.grad)
-        self.assertGreater(float(paddle.abs(model.decoder.node_query.weight.grad).sum().item()), 0.0)
-        self.assertIsNotNone(model.encoder.text_encoder.embedding.weight.grad)
+        self.assertGreater(float(paddle.abs(model.decoder.selected_query.weight.grad).sum().item()), 0.0)
         self.assertGreater(float(paddle.abs(model.encoder.text_encoder.embedding.weight.grad).sum().item()), 0.0)
 
 

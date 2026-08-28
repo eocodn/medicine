@@ -15,9 +15,9 @@ import paddle.nn.functional as F
 
 from .artifact_storage import exclusive_output_lock
 from .parser_v5_dataset import ParserV5Dataset, load_parser_v5_dataset
-from .parser_v51_loss_paddle import match_parser_v51_rows, parser_v51_set_loss
+from .parser_v51_loss_paddle import field_token_targets, match_parser_v51_rows, parser_v51_set_loss
 from .parser_v51_model_paddle import ParserV51Model, ParserV51ModelConfig, prepare_parser_v51_sample
-from .parser_v51_targets import ROW_FIELD_ROLES, required_field_pieces
+from .parser_v51_targets import ROW_FIELD_ROLES
 
 
 STATE_FILE = "training-state.json"
@@ -48,7 +48,6 @@ class ParserV51TrainingConfig:
     heads: int = 4
     feedforward_multiplier: int = 2
     max_rows: int = 8
-    max_field_pieces: int = 2
     device: str = "gpu"
 
     def __post_init__(self) -> None:
@@ -75,7 +74,6 @@ class ParserV51TrainingConfig:
             heads=self.heads,
             feedforward_multiplier=self.feedforward_multiplier,
             max_rows=self.max_rows,
-            max_field_pieces=self.max_field_pieces,
         )
 
 
@@ -207,14 +205,13 @@ def evaluate_parser_v51(
     target_rows = 0
     row_existence_correct = 0
     row_existence_total = 0
-    node_pointer_exact = 0
-    node_pointer_total = 0
-    span_pointer_exact = 0
-    span_pointer_total = 0
-    evidence_piece_exact = 0
-    evidence_piece_total = 0
-    none_piece_exact = 0
-    none_piece_total = 0
+    selected_true_positive = 0
+    selected_false_positive = 0
+    selected_false_negative = 0
+    selected_token_total = 0
+    outside_token_total = 0
+    field_exact = 0
+    field_total = 0
 
     for sample in _training_samples(datasets):
         tensors, targets, _ = prepare_parser_v51_sample(sample, config.model_config)
@@ -230,61 +227,37 @@ def evaluate_parser_v51(
             row_existence_correct += int(int(existence_guess[row_index].item()) == expected)
             row_existence_total += 1
 
-        node_count = int(output.piece_start_logits.shape[3])
-        max_pieces = int(output.piece_start_logits.shape[2])
         for row_index, target_index in assignments:
             row_target = targets.rows[target_index]
-            for field_index, role in enumerate(ROW_FIELD_ROLES):
-                field = row_target.field(role)
-                required = required_field_pieces(field)
-                if len(required) > max_pieces:
-                    raise ValueError("Parser v5.1 validation field exceeds decoder piece slots")
-                for piece_index in range(max_pieces):
-                    if piece_index < len(required):
-                        piece = required[piece_index]
-                        expected_node = piece.node_index
-                        expected_start = piece.start_byte + 1
-                        expected_end = piece.end_byte
-                        evidence_piece_total += 1
-                    else:
-                        expected_node = node_count
-                        none_piece_total += 1
-                    node_guess = int(output.piece_node_logits[row_index, field_index, piece_index].argmax().item())
-                    node_exact = node_guess == expected_node
-                    node_pointer_exact += int(node_exact)
-                    node_pointer_total += 1
-                    if piece_index < len(required):
-                        start_guess = int(
-                            output.piece_start_logits[
-                                row_index, field_index, piece_index, piece.node_index
-                            ].argmax().item()
-                        )
-                        end_guess = int(
-                            output.piece_end_logits[
-                                row_index, field_index, piece_index, piece.node_index
-                            ].argmax().item()
-                        )
-                        span_exact = start_guess == expected_start and end_guess == expected_end
-                        span_pointer_exact += int(span_exact)
-                        span_pointer_total += 1
-                        exact = node_exact and span_exact
-                        evidence_piece_exact += int(exact)
-                    else:
-                        none_piece_exact += int(node_exact)
+            for field_index, _ in enumerate(ROW_FIELD_ROLES):
+                expected = field_token_targets(output, row_target, field_index)
+                predicted = output.field_token_logits[row_index, field_index].argmax(axis=-1) == 1
+                valid = output.token_valid_mask
+                expected_valid = expected & valid
+                predicted_valid = predicted & valid
+                selected_true_positive += int((expected_valid & predicted_valid).astype("int64").sum().item())
+                selected_false_positive += int(((~expected_valid) & predicted_valid & valid).astype("int64").sum().item())
+                selected_false_negative += int((expected_valid & (~predicted_valid)).astype("int64").sum().item())
+                selected_token_total += int(expected_valid.astype("int64").sum().item())
+                outside_token_total += int(((~expected_valid) & valid).astype("int64").sum().item())
+                field_exact += int(bool(paddle.all((expected_valid == predicted_valid) | (~valid)).item()))
+                field_total += 1
 
     if documents == 0:
         raise ValueError("Parser v5.1 validation data produced no samples")
+    precision = selected_true_positive / max(1, selected_true_positive + selected_false_positive)
+    recall = selected_true_positive / max(1, selected_true_positive + selected_false_negative)
     return {
         "documents": documents,
         "validation_loss": total_loss / documents,
         "target_rows": target_rows,
         "row_existence_accuracy": row_existence_correct / max(1, row_existence_total),
-        "node_pointer_exact_rate": node_pointer_exact / max(1, node_pointer_total),
-        "span_pointer_exact_rate": span_pointer_exact / max(1, span_pointer_total),
-        "evidence_piece_exact_rate": evidence_piece_exact / max(1, evidence_piece_total),
-        "none_piece_exact_rate": none_piece_exact / max(1, none_piece_total),
-        "evidence_piece_supervised": evidence_piece_total,
-        "none_piece_supervised": none_piece_total,
+        "token_selection_precision": precision,
+        "token_selection_recall": recall,
+        "token_selection_f1": 2.0 * precision * recall / max(precision + recall, 1e-12),
+        "field_token_exact_rate": field_exact / max(1, field_total),
+        "selected_tokens_supervised": selected_token_total,
+        "outside_tokens_supervised": outside_token_total,
     }
 
 

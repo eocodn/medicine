@@ -9,73 +9,47 @@ from .parser_v51_direct_decoder_paddle import ParserV51DecoderOutput
 from .parser_v51_targets import ParserV51MedicationRowTarget, ParserV51RowTargets, ROW_FIELD_ROLES, required_field_pieces
 
 
-def _pointer_cross_entropy(classes: paddle.Tensor, target: int) -> paddle.Tensor:
-    """Cross entropy over one logical categorical pointer vector."""
+def field_token_targets(
+    output: ParserV51DecoderOutput,
+    target: ParserV51MedicationRowTarget,
+    field_index: int,
+) -> paddle.Tensor:
+    node_count = int(output.field_token_logits.shape[2])
+    text_length = int(output.field_token_logits.shape[3])
+    selected = paddle.zeros([node_count, text_length], dtype="bool")
+    field = target.field(ROW_FIELD_ROLES[field_index])
+    for piece in required_field_pieces(field):
+        if not 0 <= piece.node_index < node_count:
+            raise ValueError("Parser v5.1 field segment node index is outside decoder input")
+        start = max(1, piece.start_byte + 1)
+        stop = min(text_length, piece.end_byte + 1)
+        if stop > start:
+            selected[piece.node_index, start:stop] = True
+    return selected & output.token_valid_mask
 
-    # Indexed Paddle views can retain non-contiguous strides that confuse the
-    # fused CE kernel even though direct value indexing is correct. Materialize
-    # the logical class order while preserving gradients before CE.
-    contiguous = classes.clone()
-    return F.cross_entropy(
-        contiguous.unsqueeze(0),
-        paddle.to_tensor([target], dtype="int64"),
-    )
 
-
-def _field_pointer_loss(
+def _field_token_loss(
     output: ParserV51DecoderOutput,
     *,
     row_index: int,
     field_index: int,
     target: ParserV51MedicationRowTarget,
 ) -> paddle.Tensor:
-    field = target.field(ROW_FIELD_ROLES[field_index])
-    required = required_field_pieces(field)
-    max_pieces = int(output.piece_node_logits.shape[2])
-    node_count = int(output.piece_start_logits.shape[3])
-    text_length = int(output.piece_start_logits.shape[4])
-    if len(required) > max_pieces:
-        raise ValueError("Parser v5.1 field fragments exceed decoder piece slots")
-
-    none_index = node_count
-    losses: list[paddle.Tensor] = []
-    for piece_index in range(max_pieces):
-        if piece_index >= len(required):
-            losses.append(
-                _pointer_cross_entropy(
-                    output.piece_node_logits[row_index, field_index, piece_index],
-                    none_index,
-                )
-            )
-            continue
-
-        piece = required[piece_index]
-        start_token = piece.start_byte + 1
-        end_token = piece.end_byte
-        if not (0 <= piece.node_index < node_count):
-            raise ValueError("Parser v5.1 piece node index is outside decoder input")
-        if not (1 <= start_token < text_length and start_token <= end_token < text_length):
-            raise ValueError("Parser v5.1 piece byte span is outside decoder text input")
-
-        losses.append(
-            _pointer_cross_entropy(
-                output.piece_node_logits[row_index, field_index, piece_index],
-                piece.node_index,
-            )
-        )
-        losses.append(
-            _pointer_cross_entropy(
-                output.piece_start_logits[row_index, field_index, piece_index, piece.node_index],
-                start_token,
-            )
-        )
-        losses.append(
-            _pointer_cross_entropy(
-                output.piece_end_logits[row_index, field_index, piece_index, piece.node_index],
-                end_token,
-            )
-        )
-    return sum(losses) / len(losses)
+    valid = output.token_valid_mask
+    if not bool(valid.any().item()):
+        return output.row_existence_logits[row_index] * 0.0
+    selected = field_token_targets(output, target, field_index)
+    logits = output.field_token_logits[row_index, field_index][valid].clone()
+    labels = selected[valid].astype("int64")
+    losses = F.cross_entropy(logits, labels, reduction="none")
+    positives = labels == 1
+    negatives = ~positives
+    components: list[paddle.Tensor] = []
+    if bool(positives.any().item()):
+        components.append(losses[positives].mean())
+    if bool(negatives.any().item()):
+        components.append(losses[negatives].mean())
+    return sum(components) / len(components)
 
 
 def _row_target_cost(
@@ -91,7 +65,7 @@ def _row_target_cost(
     components = [positive_existence]
     for field_index in range(len(ROW_FIELD_ROLES)):
         components.append(
-            _field_pointer_loss(
+            _field_token_loss(
                 output,
                 row_index=row_index,
                 field_index=field_index,
@@ -157,7 +131,7 @@ def parser_v51_set_loss(
         target = targets.rows[target_index]
         for field_index in range(len(ROW_FIELD_ROLES)):
             field_losses.append(
-                _field_pointer_loss(
+                _field_token_loss(
                     output,
                     row_index=row_index,
                     field_index=field_index,
@@ -169,4 +143,4 @@ def parser_v51_set_loss(
     return existence_loss + sum(field_losses) / len(field_losses)
 
 
-__all__ = ["match_parser_v51_rows", "parser_v51_set_loss"]
+__all__ = ["field_token_targets", "match_parser_v51_rows", "parser_v51_set_loss"]

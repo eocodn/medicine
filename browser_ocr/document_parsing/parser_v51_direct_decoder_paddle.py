@@ -14,7 +14,7 @@ from .parser_v51_targets import ROW_FIELD_ROLES
 
 
 def scaled_pointer_scores(query: paddle.Tensor, key: paddle.Tensor, *, hidden_dim: int) -> paddle.Tensor:
-    """Scaled categorical pointer similarity, analogous to attention logits."""
+    """Scaled query/key similarity, analogous to attention logits."""
 
     return paddle.matmul(query, key, transpose_y=True) / math.sqrt(hidden_dim)
 
@@ -24,7 +24,6 @@ class ParserV51DecoderSpec:
     hidden_dim: int = 96
     text_token_dim: int = 96
     max_rows: int = 8
-    max_field_pieces: int = 2
     feedforward_multiplier: int = 2
 
     def __post_init__(self) -> None:
@@ -34,8 +33,6 @@ class ParserV51DecoderSpec:
             raise ValueError("Parser v5.1 decoder text_token_dim must be between 16 and 256")
         if not 1 <= self.max_rows <= 16:
             raise ValueError("Parser v5.1 decoder max_rows must be between 1 and 16")
-        if not 1 <= self.max_field_pieces <= 8:
-            raise ValueError("Parser v5.1 decoder max_field_pieces must be between 1 and 8")
         if not 1 <= self.feedforward_multiplier <= 4:
             raise ValueError("Parser v5.1 decoder feedforward_multiplier must be between 1 and 4")
 
@@ -43,20 +40,18 @@ class ParserV51DecoderSpec:
 @dataclass(frozen=True)
 class ParserV51DecoderOutput:
     row_existence_logits: paddle.Tensor
-    piece_node_logits: paddle.Tensor
-    piece_start_logits: paddle.Tensor
-    piece_end_logits: paddle.Tensor
+    field_token_logits: paddle.Tensor
+    token_valid_mask: paddle.Tensor
 
 
 class ParserV51DirectRowDecoder(nn.Layer):
-    """DETR-like rows whose fields point directly at OCR byte evidence.
+    """Direct row decoder with variable-cardinality field segmentation.
 
-    Each row/field has a small fixed set of evidence-piece queries. Every piece
-    first chooses one OCR node or NONE categorically, then predicts start/end
-    byte positions inside the chosen node. This factorization keeps sparse
-    extraction threshold-free without forcing one softmax to discriminate
-    thousands of document-wide byte positions at once. Split OCR fragments
-    occupy separate piece slots and are concatenated by the runtime decoder.
+    Every row/field query labels every runtime-visible OCR payload byte as
+    OUTSIDE or SELECTED. Disjoint spans and an arbitrary number of OCR
+    fragments therefore require no fixed fragment slots. Header/context text
+    is not classified separately; it is simply left OUTSIDE by every output
+    field.
     """
 
     def __init__(self, spec: ParserV51DecoderSpec = ParserV51DecoderSpec()) -> None:
@@ -79,18 +74,11 @@ class ParserV51DirectRowDecoder(nn.Layer):
         self.row_norm2 = nn.LayerNorm(spec.hidden_dim)
         self.row_existence = nn.Linear(spec.hidden_dim, 1)
         self.field_embedding = nn.Embedding(len(ROW_FIELD_ROLES), spec.hidden_dim)
-        self.piece_embedding = nn.Embedding(spec.max_field_pieces, spec.hidden_dim)
-        self.node_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
-        self.pointer_node_key = nn.Linear(spec.hidden_dim, spec.hidden_dim)
-        self.none_node = self.create_parameter(
-            shape=[1, spec.hidden_dim],
-            default_initializer=nn.initializer.Normal(std=0.02),
-        )
-        self.start_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
-        self.end_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.selected_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.outside_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         token_input_dim = spec.text_token_dim + spec.hidden_dim
-        self.start_key = nn.Linear(token_input_dim, spec.hidden_dim)
-        self.end_key = nn.Linear(token_input_dim, spec.hidden_dim)
+        self.selected_key = nn.Linear(token_input_dim, spec.hidden_dim)
+        self.outside_key = nn.Linear(token_input_dim, spec.hidden_dim)
 
     def _row_states(self, node_hidden: paddle.Tensor) -> paddle.Tensor:
         queries = self.row_queries
@@ -113,64 +101,46 @@ class ParserV51DirectRowDecoder(nn.Layer):
     ) -> ParserV51DecoderOutput:
         row_hidden = self._row_states(node_hidden)
         row_existence_logits = self.row_existence(row_hidden).reshape([self.spec.max_rows])
+        field_hidden = row_hidden.unsqueeze(1) + self.field_embedding.weight.unsqueeze(0)
 
-        field_embeddings = self.field_embedding.weight.reshape([1, len(ROW_FIELD_ROLES), 1, self.spec.hidden_dim])
-        piece_embeddings = self.piece_embedding.weight.reshape([1, 1, self.spec.max_field_pieces, self.spec.hidden_dim])
-        piece_hidden = row_hidden.reshape([self.spec.max_rows, 1, 1, self.spec.hidden_dim])
-        piece_hidden = piece_hidden + field_embeddings + piece_embeddings
-        node_queries = self.node_query(piece_hidden)
-        start_queries = self.start_query(piece_hidden)
-        end_queries = self.end_query(piece_hidden)
-
-        node_count = node_hidden.shape[0]
-        node_choices = paddle.concat([self.pointer_node_key(node_hidden), self.none_node], axis=0)
-        piece_node_logits = scaled_pointer_scores(
-            node_queries.reshape([-1, self.spec.hidden_dim]),
-            node_choices,
-            hidden_dim=self.spec.hidden_dim,
-        ).reshape(
-            [self.spec.max_rows, len(ROW_FIELD_ROLES), self.spec.max_field_pieces, node_count + 1]
-        )
-        text_length = tensors.token_ids.shape[1]
-        shape = [
-            self.spec.max_rows,
-            len(ROW_FIELD_ROLES),
-            self.spec.max_field_pieces,
-            node_count,
-            text_length,
-        ]
+        node_count = int(node_hidden.shape[0])
+        text_length = int(tensors.token_ids.shape[1]) if tensors.token_ids.ndim == 2 else 0
+        token_valid_mask = tensors.token_ids >= BYTE_OFFSET
+        shape = [self.spec.max_rows, len(ROW_FIELD_ROLES), node_count, text_length]
         if node_count and text_length:
             contextual_tokens = paddle.concat(
                 [token_states, node_hidden.unsqueeze(1).expand([-1, text_length, -1])],
                 axis=2,
             )
-            start_keys = self.start_key(contextual_tokens).reshape([node_count * text_length, self.spec.hidden_dim])
-            end_keys = self.end_key(contextual_tokens).reshape([node_count * text_length, self.spec.hidden_dim])
-            flat_start_queries = start_queries.reshape([-1, self.spec.hidden_dim])
-            flat_end_queries = end_queries.reshape([-1, self.spec.hidden_dim])
-            piece_start_logits = scaled_pointer_scores(
-                flat_start_queries,
-                start_keys,
+            flat_selected_key = self.selected_key(contextual_tokens).reshape(
+                [node_count * text_length, self.spec.hidden_dim]
+            )
+            flat_outside_key = self.outside_key(contextual_tokens).reshape(
+                [node_count * text_length, self.spec.hidden_dim]
+            )
+            flat_selected_query = self.selected_query(field_hidden).reshape([-1, self.spec.hidden_dim])
+            flat_outside_query = self.outside_query(field_hidden).reshape([-1, self.spec.hidden_dim])
+            selected_logits = scaled_pointer_scores(
+                flat_selected_query,
+                flat_selected_key,
                 hidden_dim=self.spec.hidden_dim,
             ).reshape(shape)
-            piece_end_logits = scaled_pointer_scores(
-                flat_end_queries,
-                end_keys,
+            outside_logits = scaled_pointer_scores(
+                flat_outside_query,
+                flat_outside_key,
                 hidden_dim=self.spec.hidden_dim,
             ).reshape(shape)
-            valid_byte = tensors.token_ids >= BYTE_OFFSET
-            invalid = (~valid_byte).astype(piece_start_logits.dtype).reshape([1, 1, 1, node_count, text_length])
-            piece_start_logits = piece_start_logits - invalid * 1e4
-            piece_end_logits = piece_end_logits - invalid * 1e4
+            invalid = (~token_valid_mask).astype(selected_logits.dtype).reshape([1, 1, node_count, text_length])
+            selected_logits = selected_logits - invalid * 1e4
+            outside_logits = outside_logits * (1.0 - invalid)
+            field_token_logits = paddle.stack([outside_logits, selected_logits], axis=-1)
         else:
-            piece_start_logits = paddle.zeros(shape, dtype=piece_hidden.dtype)
-            piece_end_logits = paddle.zeros(shape, dtype=piece_hidden.dtype)
+            field_token_logits = paddle.zeros([*shape, 2], dtype=row_hidden.dtype)
 
         return ParserV51DecoderOutput(
             row_existence_logits=row_existence_logits,
-            piece_node_logits=piece_node_logits,
-            piece_start_logits=piece_start_logits,
-            piece_end_logits=piece_end_logits,
+            field_token_logits=field_token_logits,
+            token_valid_mask=token_valid_mask,
         )
 
 
@@ -183,19 +153,45 @@ class ParserV51DecodeConfig:
             raise ValueError("Parser v5.1 row_threshold must be in [0, 1]")
 
 
-def _selected_text(text: str, start_token: int, end_token: int) -> str | None:
-    if start_token < 1 or end_token < start_token:
-        return None
-    payload = text.encode("utf-8")
-    start_byte = start_token - 1
-    end_byte = end_token
-    if start_byte >= len(payload) or end_byte > len(payload):
-        return None
-    try:
-        selected = payload[start_byte:end_byte].decode("utf-8")
-    except UnicodeDecodeError:
-        return None
-    return selected if selected.strip() else None
+def _selected_characters(text: str, token_logits) -> list[bool]:
+    payload_offset = 0
+    selected: list[bool] = []
+    token_count = int(token_logits.shape[0])
+    for char in text:
+        byte_count = len(char.encode("utf-8"))
+        start = payload_offset + 1
+        end = payload_offset + byte_count + 1
+        payload_offset += byte_count
+        if start >= token_count or end > token_count:
+            selected.append(False)
+            continue
+        margin = token_logits[start:end, 1] - token_logits[start:end, 0]
+        selected.append(float(margin.mean()) >= 0.0)
+    return selected
+
+
+def _selected_segments(node: Mapping[str, Any], token_logits) -> list[dict[str, Any]]:
+    text = str(node["text"])
+    selected = _selected_characters(text, token_logits)
+    result: list[dict[str, Any]] = []
+    start: int | None = None
+    for index in range(len(selected) + 1):
+        active = index < len(selected) and selected[index]
+        if active and start is None:
+            start = index
+        if not active and start is not None:
+            fragment = text[start:index]
+            if fragment.strip():
+                result.append(
+                    {
+                        "text": fragment,
+                        "node_id": str(node["node_id"]),
+                        "start_char": start,
+                        "end_char": index,
+                    }
+                )
+            start = None
+    return result
 
 
 @paddle.no_grad()
@@ -206,11 +202,7 @@ def decode_parser_v51_rows(
     config: ParserV51DecodeConfig = ParserV51DecodeConfig(),
 ) -> list[dict[str, Any]]:
     existence = F.sigmoid(output.row_existence_logits).numpy()
-    node_classes = output.piece_node_logits.numpy()
-    start_logits = output.piece_start_logits.numpy()
-    end_logits = output.piece_end_logits.numpy()
-    node_count = len(nodes)
-    text_length = int(output.piece_start_logits.shape[-1]) if node_count else 0
+    token_logits = output.field_token_logits.numpy()
     rows: list[dict[str, Any]] = []
     for row_index, score in enumerate(existence.tolist()):
         if float(score) < config.row_threshold:
@@ -218,26 +210,8 @@ def decode_parser_v51_rows(
         fields: dict[str, dict[str, Any]] = {}
         for field_index, role in enumerate(ROW_FIELD_ROLES):
             evidence: list[dict[str, Any]] = []
-            for piece_index in range(int(output.piece_start_logits.shape[2])):
-                node_index = int(node_classes[row_index, field_index, piece_index].argmax())
-                if node_index == node_count or text_length == 0:
-                    continue
-                if node_index >= node_count:
-                    continue
-                start_token = int(start_logits[row_index, field_index, piece_index, node_index].argmax())
-                end_token = int(end_logits[row_index, field_index, piece_index, node_index].argmax())
-                text = _selected_text(str(nodes[node_index]["text"]), start_token, end_token)
-                if text is None:
-                    continue
-                evidence.append(
-                    {
-                        "text": text,
-                        "node_id": str(nodes[node_index]["node_id"]),
-                        "piece_slot": piece_index,
-                        "start_token": start_token,
-                        "end_token": end_token,
-                    }
-                )
+            for node_index, node in enumerate(nodes):
+                evidence.extend(_selected_segments(node, token_logits[row_index, field_index, node_index]))
             if evidence:
                 fields[role] = {
                     "text": "".join(item["text"] for item in evidence),
