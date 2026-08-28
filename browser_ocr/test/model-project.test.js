@@ -101,7 +101,8 @@ test("independent OCR Docker pipeline exposes separate eval and trimmed runtime 
   assert.match(dockerfile, /AS model-build/);
   assert.match(dockerfile, /AS eval/);
   assert.match(dockerfile, /FROM scratch AS runtime/);
-  assert.match(dockerfile, /COPY browser_ocr\/parser-export-package\.mjs/);
+  assert.match(dockerfile, /--mount=type=bind,source=browser_ocr,target=\/source\/browser_ocr,ro/);
+  assert.doesNotMatch(dockerfile, /COPY browser_ocr\/(?:src|eval|[^\s]+\.mjs)/);
   assert.match(dockerfile, /COPY --from=model-build \/out \/ocr-assets/);
   const compose = fs.readFileSync(path.join(ROOT, "compose.yaml"), "utf8");
   assert.match(compose, /ocr-eval:/);

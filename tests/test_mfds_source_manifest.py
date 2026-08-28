@@ -115,8 +115,11 @@ class MfdsSourceManifestTest(unittest.TestCase):
         rust_web = Path("Dockerfile.web").read_text(encoding="utf-8")
         self.assertIn('"medicine_reference*"', pyproject)
         builder = Path("Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("COPY medicine_reference ./medicine_reference", builder)
-        self.assertIn("COPY medicine_canonical ./medicine_canonical", builder)
+        compose = Path("compose.yaml").read_text(encoding="utf-8")
+        canonical_service = compose.split("\n  canonical:\n", 1)[1].split("\n  app:\n", 1)[0]
+        self.assertIn("- .:/app", canonical_service)
+        self.assertNotIn("COPY medicine_reference", builder)
+        self.assertNotIn("COPY medicine_canonical", builder)
         for dockerfile in ("Dockerfile.app", "Dockerfile.ui", "Dockerfile.web"):
             content = Path(dockerfile).read_text(encoding="utf-8")
             self.assertNotIn("COPY medicine_reference", content)
