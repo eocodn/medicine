@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import paddle
 
@@ -94,6 +95,45 @@ class ParserV51TrainingTest(unittest.TestCase):
                     output_dir=root / "model",
                     config=ParserV51TrainingConfig(epochs=1, device="cpu"),
                 )
+
+    def test_interrupted_checkpoint_save_never_exposes_partial_epoch_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            train, validation = self._datasets(root)
+            output = root / "interrupted"
+            config = ParserV51TrainingConfig(
+                epochs=1,
+                learning_rate=0.001,
+                seed=755,
+                hidden_dim=48,
+                text_embedding_dim=16,
+                text_conv_dim=24,
+                layers=1,
+                heads=4,
+                device="cpu",
+            )
+            from browser_ocr.document_parsing import parser_v51_training_paddle as module
+
+            original_save = module.paddle.save
+            calls = {"count": 0}
+
+            def fail_optimizer_save(value, path):
+                calls["count"] += 1
+                if calls["count"] == 2:
+                    raise RuntimeError("injected checkpoint interruption")
+                return original_save(value, path)
+
+            with patch.object(module.paddle, "save", side_effect=fail_optimizer_save):
+                with self.assertRaisesRegex(RuntimeError, "checkpoint interruption"):
+                    train_parser_v51(
+                        train_manifests=[train],
+                        validation_manifests=[validation],
+                        output_dir=output,
+                        config=config,
+                    )
+
+            self.assertFalse((output / "checkpoints" / "epoch-0001").exists())
+            self.assertFalse(any((output / "checkpoints").glob(".epoch-0001.tmp-*")))
 
 
 if __name__ == "__main__":

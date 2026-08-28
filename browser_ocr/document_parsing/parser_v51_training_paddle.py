@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -298,23 +299,35 @@ def _save_checkpoint(
     validation: Mapping[str, float | int],
 ) -> dict[str, Any]:
     directory = _checkpoint_directory(root, epoch)
-    directory.mkdir(parents=True, exist_ok=False)
-    model_path = directory / "model.pdparams"
-    optimizer_path = directory / "optimizer.pdopt"
-    paddle.save(model.state_dict(), str(model_path))
-    paddle.save(optimizer.state_dict(), str(optimizer_path))
-    record = {
-        "epoch": epoch,
-        "profile_sha256": profile_sha256,
-        "training_loss": training_loss,
-        "training_steps": training_steps,
-        "validation": dict(validation),
-        "checkpoint": str(model_path.relative_to(root)),
-        "model_sha256": _sha256_file(model_path),
-        "optimizer_sha256": _sha256_file(optimizer_path),
-    }
-    _atomic_json(directory / "checkpoint.json", record)
-    return record
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    if directory.exists():
+        raise ValueError(f"Parser v5.1 checkpoint {epoch} already exists")
+    temporary = directory.parent / f".{directory.name}.tmp-{os.getpid()}"
+    if temporary.exists():
+        shutil.rmtree(temporary)
+    temporary.mkdir()
+    try:
+        model_path = temporary / "model.pdparams"
+        optimizer_path = temporary / "optimizer.pdopt"
+        paddle.save(model.state_dict(), str(model_path))
+        paddle.save(optimizer.state_dict(), str(optimizer_path))
+        record = {
+            "epoch": epoch,
+            "profile_sha256": profile_sha256,
+            "training_loss": training_loss,
+            "training_steps": training_steps,
+            "validation": dict(validation),
+            "checkpoint": str((_checkpoint_directory(root, epoch) / "model.pdparams").relative_to(root)),
+            "model_sha256": _sha256_file(model_path),
+            "optimizer_sha256": _sha256_file(optimizer_path),
+        }
+        _atomic_json(temporary / "checkpoint.json", record)
+        os.replace(temporary, directory)
+        return record
+    except BaseException:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+        raise
 
 
 def _load_checkpoint(
