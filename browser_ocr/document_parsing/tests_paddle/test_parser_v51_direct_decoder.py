@@ -243,6 +243,34 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         self.assertGreater(float(paddle.abs(model.decoder.node_pointer_key.weight.grad).sum().item()), 0.0)
         self.assertGreater(float(paddle.abs(model.encoder.text_encoder.embedding.weight.grad).sum().item()), 0.0)
 
+    def test_unmatched_row_slots_are_supervised_to_stop(self) -> None:
+        paddle.seed(5103)
+        nodes = self._nodes()
+        value = build_parser_v5_runtime_document_input(
+            document_id="no-medication",
+            width=1000,
+            height=1400,
+            nodes=nodes,
+            max_text_bytes=32,
+        )
+        tensors = parser_v5_document_tensors(value)
+        config = ParserV51ModelConfig(
+            max_text_bytes=32,
+            hidden_dim=64,
+            text_embedding_dim=24,
+            text_conv_dim=32,
+            layers=1,
+            heads=4,
+            max_rows=4,
+        )
+        model = ParserV51Model(config)
+        loss = parser_v51_set_loss(model(tensors), ParserV51RowTargets(rows=()))
+
+        loss.backward()
+        self.assertIsNotNone(model.decoder.node_pointer_key.weight.grad)
+        self.assertGreater(float(paddle.abs(model.decoder.node_pointer_key.weight.grad).sum().item()), 0.0)
+        self.assertGreater(float(paddle.abs(model.decoder.stop_node.grad).sum().item()), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,6 +56,19 @@ def field_evidence_sequence_loss(
     return sum(losses) / len(losses)
 
 
+def field_evidence_stop_loss(
+    output: ParserV51DecoderOutput,
+    *,
+    row_index: int,
+    field_index: int,
+) -> paddle.Tensor:
+    """Train an unused row/field query to abstain immediately."""
+
+    node_count = int(output.start_pointer_keys.shape[0])
+    state = output.field_query_states[row_index, field_index]
+    return _pointer_cross_entropy(field_node_pointer_logits(output, state), node_count)
+
+
 def _row_target_cost(
     output: ParserV51DecoderOutput,
     *,
@@ -66,17 +79,17 @@ def _row_target_cost(
         output.row_existence_logits[row_index],
         paddle.ones([], dtype=output.row_existence_logits.dtype),
     )
-    components = [positive_existence]
-    for field_index in range(len(ROW_FIELD_ROLES)):
-        components.append(
-            field_evidence_sequence_loss(
-                output,
-                row_index=row_index,
-                field_index=field_index,
-                target=target,
-            )
-        )
-    return float((sum(components) / len(components)).detach().item())
+    # Product evidence is the identity of a medication row. Auxiliary fields
+    # are trained after assignment, but must not decide which row slot owns a
+    # truth medication when the product pointer disagrees.
+    product_index = ROW_FIELD_ROLES.index("product")
+    product_identity = field_evidence_sequence_loss(
+        output,
+        row_index=row_index,
+        field_index=product_index,
+        target=target,
+    )
+    return float(((positive_existence + product_identity) / 2.0).detach().item())
 
 
 def match_parser_v51_rows(
@@ -131,6 +144,7 @@ def parser_v51_set_loss(
     )
 
     field_losses: list[paddle.Tensor] = []
+    matched_rows = {row_index for row_index, _ in assignments}
     for row_index, target_index in assignments:
         target = targets.rows[target_index]
         for field_index in range(len(ROW_FIELD_ROLES)):
@@ -142,9 +156,25 @@ def parser_v51_set_loss(
                     target=target,
                 )
             )
+    for row_index in range(row_count):
+        if row_index in matched_rows:
+            continue
+        for field_index in range(len(ROW_FIELD_ROLES)):
+            field_losses.append(
+                field_evidence_stop_loss(
+                    output,
+                    row_index=row_index,
+                    field_index=field_index,
+                )
+            )
     if not field_losses:
         return existence_loss
     return existence_loss + sum(field_losses) / len(field_losses)
 
 
-__all__ = ["field_evidence_sequence_loss", "match_parser_v51_rows", "parser_v51_set_loss"]
+__all__ = [
+    "field_evidence_sequence_loss",
+    "field_evidence_stop_loss",
+    "match_parser_v51_rows",
+    "parser_v51_set_loss",
+]
