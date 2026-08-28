@@ -55,7 +55,6 @@ class ParserV51ModelConfig:
             text_token_dim=self.text_conv_dim * 2,
             max_rows=self.max_rows,
             max_field_pieces=self.max_field_pieces,
-            heads=self.heads,
             feedforward_multiplier=self.feedforward_multiplier,
         )
 

@@ -25,7 +25,6 @@ class ParserV51DecoderSpec:
     text_token_dim: int = 96
     max_rows: int = 8
     max_field_pieces: int = 2
-    heads: int = 4
     feedforward_multiplier: int = 2
 
     def __post_init__(self) -> None:
@@ -37,8 +36,6 @@ class ParserV51DecoderSpec:
             raise ValueError("Parser v5.1 decoder max_rows must be between 1 and 16")
         if not 1 <= self.max_field_pieces <= 8:
             raise ValueError("Parser v5.1 decoder max_field_pieces must be between 1 and 8")
-        if self.heads not in {1, 2, 4, 8} or self.hidden_dim % self.heads:
-            raise ValueError("Parser v5.1 decoder heads must divide hidden_dim")
         if not 1 <= self.feedforward_multiplier <= 4:
             raise ValueError("Parser v5.1 decoder feedforward_multiplier must be between 1 and 4")
 
@@ -69,9 +66,6 @@ class ParserV51DirectRowDecoder(nn.Layer):
             shape=[spec.max_rows, spec.hidden_dim],
             default_initializer=nn.initializer.Normal(std=0.02),
         )
-        self.row_self_qkv = nn.Linear(spec.hidden_dim, spec.hidden_dim * 3)
-        self.row_self_output = nn.Linear(spec.hidden_dim, spec.hidden_dim)
-        self.row_self_norm = nn.LayerNorm(spec.hidden_dim)
         self.row_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.node_key = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.node_value = nn.Linear(spec.hidden_dim, spec.hidden_dim)
@@ -100,26 +94,15 @@ class ParserV51DirectRowDecoder(nn.Layer):
 
     def _row_states(self, node_hidden: paddle.Tensor) -> paddle.Tensor:
         queries = self.row_queries
-        head_dim = self.spec.hidden_dim // self.spec.heads
-        qkv = self.row_self_qkv(queries).reshape(
-            [self.spec.max_rows, 3, self.spec.heads, head_dim]
-        ).transpose([1, 2, 0, 3])
-        self_query, self_key, self_value = qkv[0], qkv[1], qkv[2]
-        self_scores = paddle.matmul(self_query, self_key, transpose_y=True) / math.sqrt(head_dim)
-        self_attention = F.softmax(self_scores, axis=-1)
-        self_context = paddle.matmul(self_attention, self_value).transpose([1, 0, 2]).reshape(
-            [self.spec.max_rows, self.spec.hidden_dim]
-        )
-        hidden = self.row_self_norm(queries + self.row_self_output(self_context))
         node_count = node_hidden.shape[0]
         if node_count == 0:
-            context = paddle.zeros_like(hidden)
+            context = paddle.zeros_like(queries)
         else:
-            scores = paddle.matmul(self.row_query(hidden), self.node_key(node_hidden), transpose_y=True)
+            scores = paddle.matmul(self.row_query(queries), self.node_key(node_hidden), transpose_y=True)
             scores = scores / math.sqrt(self.spec.hidden_dim)
             attention = F.softmax(scores, axis=1)
             context = paddle.matmul(attention, self.node_value(node_hidden))
-        hidden = self.row_norm1(hidden + context)
+        hidden = self.row_norm1(queries + context)
         return self.row_norm2(hidden + self.row_feedforward(hidden))
 
     def forward(
