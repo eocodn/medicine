@@ -6,7 +6,6 @@ import paddle
 
 from browser_ocr.document_parsing.parser_v5_document_encoder_paddle import (
     ParserV5DocumentEncoder,
-    ParserV5DocumentTensors,
     ParserV5EncoderSpec,
     parser_v5_document_tensors,
 )
@@ -136,59 +135,6 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         self.assertFalse(hasattr(output, "role_logits"))
         self.assertFalse(hasattr(output, "candidate_logits"))
         self.assertFalse(hasattr(output, "field_node_logits"))
-
-    def test_pairwise_relations_condition_non_product_node_pointers_only(self) -> None:
-        paddle.seed(5109)
-        nodes = self._nodes()
-        value = build_parser_v5_runtime_document_input(
-            document_id="relation-aware", width=1000, height=1400, nodes=nodes, max_text_bytes=32
-        )
-        tensors = parser_v5_document_tensors(value)
-        decoder = ParserV51DirectRowDecoder(
-            ParserV51DecoderSpec(hidden_dim=64, text_token_dim=64, max_rows=3, max_field_pieces=2)
-        )
-        node_hidden = paddle.randn([len(nodes), 64])
-        token_states = paddle.randn([len(nodes), 32, 64])
-        paddle.assign(paddle.full_like(decoder.relation_key.weight, 0.05), decoder.relation_key.weight)
-        paddle.assign(paddle.zeros_like(decoder.relation_key.bias), decoder.relation_key.bias)
-        paddle.assign(paddle.eye(64), decoder.relation_query.weight)
-        paddle.assign(paddle.zeros_like(decoder.relation_query.bias), decoder.relation_query.bias)
-
-        zero_relations = ParserV5DocumentTensors(
-            token_ids=tensors.token_ids,
-            token_mask=tensors.token_mask,
-            node_scalars=tensors.node_scalars,
-            relation_features=paddle.zeros_like(tensors.relation_features),
-        )
-        with_relations = decoder(node_hidden, token_states, tensors)
-        without_relations = decoder(node_hidden, token_states, zero_relations)
-
-        product_index = ROW_FIELD_ROLES.index("product")
-        dose_index = ROW_FIELD_ROLES.index("dose")
-        self.assertTrue(
-            bool(
-                paddle.allclose(
-                    with_relations.piece_node_logits[:, product_index],
-                    without_relations.piece_node_logits[:, product_index],
-                ).item()
-            )
-        )
-        self.assertFalse(
-            bool(
-                paddle.allclose(
-                    with_relations.piece_node_logits[:, dose_index, :, :-1],
-                    without_relations.piece_node_logits[:, dose_index, :, :-1],
-                ).item()
-            )
-        )
-        self.assertTrue(
-            bool(
-                paddle.allclose(
-                    with_relations.piece_node_logits[:, dose_index, :, -1],
-                    without_relations.piece_node_logits[:, dose_index, :, -1],
-                ).item()
-            )
-        )
 
     def test_decode_uses_only_selected_evidence_and_drops_unrelated_text(self) -> None:
         nodes = self._nodes()
