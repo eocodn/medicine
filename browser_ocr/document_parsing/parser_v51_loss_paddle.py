@@ -15,18 +15,25 @@ from .parser_v51_targets import (
 )
 
 
-def _balanced_binary_loss(logits: paddle.Tensor, targets: paddle.Tensor) -> paddle.Tensor:
-    elementwise = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
-    positive = targets > 0.5
-    negative = ~positive
-    components: list[paddle.Tensor] = []
-    if bool(positive.any().item()):
-        components.append(elementwise[positive].mean())
-    if bool(negative.any().item()):
-        components.append(elementwise[negative].mean())
-    if not components:
-        return paddle.zeros([], dtype=logits.dtype)
-    return sum(components) / len(components)
+def _membership_set_loss(logits: paddle.Tensor, targets: paddle.Tensor) -> paddle.Tensor:
+    """Calibrated sparse membership plus direct set-overlap supervision.
+
+    Ordinary BCE preserves the true sparse node prior, while soft Dice keeps
+    the few positive fragments from being washed out by many irrelevant OCR
+    nodes. Class-reweighted BCE is deliberately avoided because it changes the
+    implied posterior prior and made a fixed 0.5 runtime decision over-select
+    nodes in the first v5.1 sanity run.
+    """
+
+    bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="mean")
+    if not bool((targets > 0.5).any().item()):
+        return bce
+    probabilities = F.sigmoid(logits)
+    intersection = (probabilities * targets).sum()
+    denominator = probabilities.sum() + targets.sum()
+    smooth = paddle.to_tensor(1e-6, dtype=logits.dtype)
+    dice = 1.0 - (2.0 * intersection + smooth) / (denominator + smooth)
+    return (bce + dice) / 2.0
 
 
 def _field_loss(
@@ -52,7 +59,7 @@ def _field_loss(
     for piece in required:
         if 0 <= piece.node_index < node_count:
             membership_target[piece.node_index] = 1.0
-    membership_loss = _balanced_binary_loss(
+    membership_loss = _membership_set_loss(
         output.field_node_logits[row_index, field_index],
         membership_target,
     )

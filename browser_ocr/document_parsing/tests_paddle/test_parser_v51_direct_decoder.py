@@ -17,7 +17,7 @@ from browser_ocr.document_parsing.parser_v51_direct_decoder_paddle import (
     decode_parser_v51_rows,
 )
 from browser_ocr.document_parsing.parser_v51_loss_paddle import (
-    _balanced_binary_loss,
+    _membership_set_loss,
     match_parser_v51_rows,
     parser_v51_set_loss,
 )
@@ -38,16 +38,14 @@ from browser_ocr.document_parsing.parser_v5_world import ParserWorldProfile, gen
 
 
 class ParserV51DirectDecoderTest(unittest.TestCase):
-    def test_membership_loss_balances_positive_and_negative_classes(self) -> None:
-        short_logits = paddle.to_tensor([0.0, 0.0], dtype="float32")
-        short_targets = paddle.to_tensor([1.0, 0.0], dtype="float32")
-        long_logits = paddle.to_tensor([0.0, 0.0, 0.0, 0.0, 0.0], dtype="float32")
-        long_targets = paddle.to_tensor([1.0, 0.0, 0.0, 0.0, 0.0], dtype="float32")
+    def test_membership_loss_prefers_sparse_correct_set_over_overselection(self) -> None:
+        targets = paddle.to_tensor([1.0, 0.0, 0.0, 0.0], dtype="float32")
+        sparse_correct = paddle.to_tensor([5.0, -5.0, -5.0, -5.0], dtype="float32")
+        broad_positive = paddle.to_tensor([5.0, 5.0, 5.0, 5.0], dtype="float32")
 
-        self.assertAlmostEqual(
-            float(_balanced_binary_loss(short_logits, short_targets).item()),
-            float(_balanced_binary_loss(long_logits, long_targets).item()),
-            places=6,
+        self.assertLess(
+            float(_membership_set_loss(sparse_correct, targets).item()),
+            float(_membership_set_loss(broad_positive, targets).item()),
         )
 
     def _nodes(self) -> list[dict]:
