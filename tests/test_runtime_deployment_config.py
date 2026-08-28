@@ -10,6 +10,34 @@ import unittest
 from pathlib import Path
 
 class RuntimeDeploymentConfigTest(unittest.TestCase):
+    def test_development_dockerfiles_do_not_copy_source_code(self) -> None:
+        dockerfiles = (
+            "Dockerfile",
+            "Dockerfile.app",
+            "Dockerfile.test",
+            "Dockerfile.ui",
+            "Dockerfile.web",
+            "Dockerfile.android",
+            "browser_ocr/Dockerfile",
+        )
+        forbidden_source_patterns = (
+            r"(?m)^COPY\s+medicine_(?:canonical|reference)\b",
+            r"(?m)^COPY\s+rust/medicine_core/src\b",
+            r"(?m)^COPY\s+ui/src\b",
+            r"(?m)^COPY\s+ui/public\b",
+            r"(?m)^COPY\s+android/app\b",
+            r"(?m)^COPY\s+browser_ocr/(?:src|eval)\b",
+            r"(?m)^COPY\s+browser_ocr/[^\s]+\.mjs\b",
+        )
+
+        for dockerfile in dockerfiles:
+            contents = Path(dockerfile).read_text()
+            for pattern in forbidden_source_patterns:
+                self.assertIsNone(
+                    re.search(pattern, contents),
+                    msg=f"{dockerfile} must use bind-mounted source instead of COPY: {pattern}",
+                )
+
     def test_android_and_developer_controls_use_rust_without_python_runtime(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
@@ -23,21 +51,19 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         app_dockerfile = Path("Dockerfile.app").read_text()
         ui_dockerfile = Path("Dockerfile.ui").read_text()
         self.assertIn("dockerfile: Dockerfile.app", app_service)
-        self.assertIn('entrypoint: ["/usr/local/bin/medicine-agentctl"]', app_service)
-        self.assertIn(
-            "cargo build --locked --release --features agentctl --bin medicine-agentctl",
-            app_dockerfile,
-        )
-        self.assertIn("COPY --from=rust-cli", app_dockerfile)
-        self.assertIn("medicine-agentctl", app_dockerfile)
+        self.assertIn("- .:/app", app_service)
+        self.assertIn('ENTRYPOINT ["sh", "/app/scripts/app_compose_run.sh"]', app_dockerfile)
+        app_runner = Path("scripts/app_compose_run.sh").read_text()
+        self.assertIn("cargo build --locked --release", app_runner)
+        self.assertIn("--features agentctl", app_runner)
+        self.assertIn("--bin medicine-agentctl", app_runner)
         self.assertNotIn("python", app_dockerfile.lower())
-        self.assertIn(
-            "cargo build --locked --release --features agentctl,web --bin medicine-agentctl --bin medicine-core-web",
-            ui_dockerfile,
-        )
-        self.assertIn("medicine-agentctl", ui_dockerfile)
-        self.assertIn("medicine-core-web", ui_dockerfile)
-        self.assertIn("COPY --from=ui-builder /build/ui/dist /opt/medicine-static", ui_dockerfile)
+        ui_runner = Path("scripts/ui_compose_run.sh").read_text()
+        self.assertIn("cargo build --locked --release", ui_runner)
+        self.assertIn("--features agentctl,web", ui_runner)
+        self.assertIn("--bin medicine-agentctl", ui_runner)
+        self.assertIn("--bin medicine-core-web", ui_runner)
+        self.assertIn("npm run build", ui_runner)
         self.assertNotIn("python", ui_dockerfile.lower())
     def test_shared_ui_is_typescript_authoritative_and_consumes_one_dist(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
@@ -54,12 +80,15 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertNotIn('rootProject.file("../ui/dist").absolutePath', gradle)
         self.assertIn("AS ui-toolchain", android_dockerfile)
         self.assertIn("MEDICINE_TSC_BINARY", android_dockerfile)
-        for dockerfile in (web_dockerfile, ui_dockerfile):
-            self.assertIn("AS ui-builder", dockerfile)
+        for dockerfile, runner in (
+            (web_dockerfile, Path("scripts/web_compose_run.sh").read_text()),
+            (ui_dockerfile, Path("scripts/ui_compose_run.sh").read_text()),
+        ):
+            self.assertIn("COPY ui/package.json ui/package-lock.json /opt/medicine-ui-tools/", dockerfile)
             self.assertIn("npm ci", dockerfile)
-            self.assertIn("npm run build", dockerfile)
-            self.assertIn("COPY --from=ui-builder /build/ui/dist /opt/medicine-static", dockerfile)
-            self.assertNotIn("COPY ui/dist /opt/medicine-static", dockerfile)
+            self.assertIn("npm run build", runner)
+            self.assertIn("MEDICINE_STATIC_DIR=/app/ui/dist", dockerfile)
+            self.assertNotIn("COPY ui/dist", dockerfile)
     def test_android_bootstrap_contract_matches_embedded_runtime_contract(self) -> None:
         kotlin = Path(
             "android/app/src/main/java/com/medicine/android/ReferenceRuntimeAdapters.kt"
@@ -221,8 +250,11 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertIn('user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"', web_service)
         self.assertIn("HOME: /tmp", web_service)
         self.assertNotIn("PYTHONDONTWRITEBYTECODE", web_service)
-        self.assertIn("AS rust-web", dockerfile)
-        self.assertIn("cargo build --locked --release --features web --bin medicine-core-web", dockerfile)
+        self.assertIn("AS rust-toolchain", dockerfile)
+        runner = Path("scripts/web_compose_run.sh").read_text()
+        self.assertIn("cargo build --locked --release", runner)
+        self.assertIn("--features web", runner)
+        self.assertIn("--bin medicine-core-web", runner)
         self.assertNotIn("AS ocr-assets", dockerfile)
         self.assertNotIn("browser_ocr/mobile", dockerfile)
         self.assertNotIn("medicine-ocr-assets", dockerfile)
@@ -230,9 +262,10 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertIn("--ocr-assets-dir", web_binary)
         self.assertIn("MEDICINE_REFERENCE_TRUST_MANIFEST=/opt/medicine-reference-trust.json", dockerfile)
         self.assertIn("COPY deploy/reference-signing-trusted-keys.json /opt/medicine-reference-trust.json", dockerfile)
-        self.assertIn("COPY --from=ui-builder /build/ui/dist /opt/medicine-static", dockerfile)
-        self.assertIn("COPY --from=rust-web", dockerfile)
-        self.assertIn('ENTRYPOINT ["/usr/local/bin/medicine-core-web"]', dockerfile)
+        self.assertIn("MEDICINE_STATIC_DIR=/app/ui/dist", dockerfile)
+        self.assertNotIn("COPY ui/src", dockerfile)
+        self.assertNotIn("COPY rust/medicine_core/src", dockerfile)
+        self.assertIn('ENTRYPOINT ["sh", "/app/scripts/web_compose_run.sh"]', dockerfile)
         self.assertNotIn("python", dockerfile.lower())
     def test_development_runtime_uses_android_signed_reference_channel_by_default(self) -> None:
         compose = Path("compose.yaml").read_text()

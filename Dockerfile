@@ -2,8 +2,4 @@ FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-COPY medicine_canonical ./medicine_canonical
-COPY medicine_reference ./medicine_reference
-
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir cryptography==50.0.0

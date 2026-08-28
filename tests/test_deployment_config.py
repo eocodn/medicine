@@ -210,8 +210,12 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertTrue(verification.is_file())
         self.assertIn("sha256", verification.read_text())
 
+        compose = Path("compose.yaml").read_text()
+        android_service = compose.split("\n  android:\n", 1)[1]
         dockerfile = Path("Dockerfile.android").read_text()
-        self.assertIn("COPY android/gradle ./gradle", dockerfile)
+        self.assertIn("- .:/workspace", android_service)
+        self.assertNotIn("COPY android/gradle", dockerfile)
+        self.assertNotIn("COPY android/app", dockerfile)
     def test_android_sdk_archive_is_checksum_verified(self) -> None:
         dockerfile = Path("Dockerfile.android").read_text()
         self.assertIn(

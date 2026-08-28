@@ -41,8 +41,5 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace/android
-COPY android/settings.gradle.kts android/build.gradle.kts android/gradle.properties android/release.properties ./
-COPY android/gradle ./gradle
-COPY android/app ./app
 
 CMD ["gradle", "--no-daemon", "--dependency-verification", "strict", "testDebugUnitTest", "assembleDebug"]
