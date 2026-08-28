@@ -143,9 +143,8 @@ def _append_decoder(
     nodes.append(helper.make_node("Div", [cross_raw, scale_name], [cross_scores], name="V51.Cross.Scale"))
     cross_attention = "v51.cross.attention"
     nodes.append(helper.make_node("Softmax", [cross_scores], [cross_attention], axis=1, name="V51.Cross.Softmax"))
-    node_v = _linear(nodes, hidden, "decoder.node_value", "v51.cross.v")
     cross_context = "v51.cross.context"
-    nodes.append(helper.make_node("MatMul", [cross_attention, node_v], [cross_context], name="V51.Cross.Context"))
+    nodes.append(helper.make_node("MatMul", [cross_attention, hidden], [cross_context], name="V51.Cross.Context"))
     cross_residual = "v51.cross.residual"
     nodes.append(helper.make_node("Add", [row_self, cross_context], [cross_residual], name="V51.Cross.Residual"))
     norm1 = _layer_norm(nodes, cross_residual, "decoder.row_norm1", "v51.row_norm1")
