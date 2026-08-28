@@ -79,17 +79,17 @@ def _row_target_cost(
         output.row_existence_logits[row_index],
         paddle.ones([], dtype=output.row_existence_logits.dtype),
     )
-    # Product evidence is the identity of a medication row. Auxiliary fields
-    # are trained after assignment, but must not decide which row slot owns a
-    # truth medication when the product pointer disagrees.
-    product_index = ROW_FIELD_ROLES.index("product")
-    product_identity = field_evidence_sequence_loss(
-        output,
-        row_index=row_index,
-        field_index=product_index,
-        target=target,
-    )
-    return float(((positive_existence + product_identity) / 2.0).detach().item())
+    components = [positive_existence]
+    for field_index in range(len(ROW_FIELD_ROLES)):
+        components.append(
+            field_evidence_sequence_loss(
+                output,
+                row_index=row_index,
+                field_index=field_index,
+                target=target,
+            )
+        )
+    return float((sum(components) / len(components)).detach().item())
 
 
 def match_parser_v51_rows(
