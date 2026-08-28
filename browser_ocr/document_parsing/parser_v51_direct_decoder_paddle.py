@@ -65,6 +65,10 @@ class ParserV51DirectRowDecoder(nn.Layer):
             shape=[spec.max_rows, spec.hidden_dim],
             default_initializer=nn.initializer.Normal(std=0.02),
         )
+        self.row_self_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.row_self_key = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.row_self_value = nn.Linear(spec.hidden_dim, spec.hidden_dim)
+        self.row_self_norm = nn.LayerNorm(spec.hidden_dim)
         self.row_query = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.node_key = nn.Linear(spec.hidden_dim, spec.hidden_dim)
         self.node_value = nn.Linear(spec.hidden_dim, spec.hidden_dim)
@@ -90,6 +94,13 @@ class ParserV51DirectRowDecoder(nn.Layer):
 
     def _row_states(self, node_hidden: paddle.Tensor) -> paddle.Tensor:
         queries = self.row_queries
+        self_scores = scaled_pointer_scores(
+            self.row_self_query(queries),
+            self.row_self_key(queries),
+            hidden_dim=self.spec.hidden_dim,
+        )
+        self_context = paddle.matmul(F.softmax(self_scores, axis=1), self.row_self_value(queries))
+        queries = self.row_self_norm(queries + self_context)
         node_count = node_hidden.shape[0]
         if node_count == 0:
             context = paddle.zeros_like(queries)

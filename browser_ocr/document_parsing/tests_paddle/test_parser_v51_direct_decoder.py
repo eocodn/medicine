@@ -239,6 +239,7 @@ class ParserV51DirectDecoderTest(unittest.TestCase):
         self.assertTrue(bool(paddle.isfinite(loss).item()))
         loss.backward()
         self.assertGreater(float(paddle.abs(model.decoder.row_queries.grad).sum().item()), 0.0)
+        self.assertGreater(float(paddle.abs(model.decoder.row_self_query.weight.grad).sum().item()), 0.0)
         self.assertGreater(float(paddle.abs(model.decoder.node_pointer_key.weight.grad).sum().item()), 0.0)
         self.assertGreater(float(paddle.abs(model.encoder.text_encoder.embedding.weight.grad).sum().item()), 0.0)
 
