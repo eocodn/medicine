@@ -101,6 +101,7 @@ class ManifestContractTest {
         val build = java.io.File("build.gradle.kts").readText()
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
         val bootstrapper = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapper.kt").readText()
+        val bootstrapBridge = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapJsBridge.kt").readText()
         val updater = java.io.File("src/main/java/com/medicine/android/ReferenceUpdater.kt").readText()
         val coordinator = java.io.File("src/main/java/com/medicine/android/ReferenceOperationCoordinator.kt").readText()
         val source = java.io.File("src/main/java/com/medicine/android/ReferenceReleaseHttpSource.kt").readText()
@@ -110,7 +111,7 @@ class ManifestContractTest {
         assertFalse(build.contains("medicine_canonical"))
         assertTrue(bootstrapper.contains("RustReferenceDatabaseVerifier()"))
         assertTrue(activity.contains("RustReferenceArtifactRebuilder()"))
-        assertTrue(activity.contains("name.startsWith(\"rebuild-\")"))
+        assertTrue(bootstrapBridge.contains("\"rebuild\", \"rebuild-checkpoint\", \"verify-and-install\""))
         val nativeReference = java.io.File(
             "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
         ).readText()
@@ -178,31 +179,32 @@ class ManifestContractTest {
     }
 
     @Test
-    fun applicationUsesProductNameAndDoesNotExposeStartupExceptionDetails() {
+    fun applicationUsesProductNameAndSharedBootstrapShell() {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
         val strings = java.io.File("src/main/res/values/strings.xml").readText()
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val bootstrapUi = java.io.File("../../ui/src/reference-bootstrap.ts").readText()
 
         assertTrue(manifest.contains("android:label=\"@string/app_name\""))
         assertTrue(strings.contains("<string name=\"app_name\">약봄</string>"))
         assertFalse(strings.contains(">Medicine</string>"))
-        assertTrue(activity.contains("Log.e(TAG, \"Application startup failed\", error)"))
-        assertTrue(activity.contains("앱 데이터를 준비하지 못했습니다.\\n다시 시도해주세요."))
-        assertTrue(activity.contains("다시 시도"))
-        assertFalse(activity.contains("\${error.message"))
+        assertTrue(activity.contains("ReferenceBootstrapJsBridge"))
+        assertTrue(bootstrapUi.contains("안전 데이터 준비에 실패했습니다. 인터넷 연결을 확인한 뒤 다시 시도해주세요."))
+        assertFalse(bootstrapUi.contains("error.message"))
     }
 
     @Test
-    fun firstLaunchReferenceDownloadIsBlockingAndShowsByteProgressInOneDialog() {
+    fun firstLaunchReferenceDownloadUsesSharedBlockingUiWithByteProgress() {
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
-        assertTrue(activity.contains("안전 데이터 다운로드"))
-        assertTrue(activity.contains("다운로드하지 않으면 앱을 사용할 수 없습니다"))
-        assertTrue(activity.contains("setNegativeButton(\"앱 종료\""))
-        assertTrue(activity.contains("setPositiveButton(\"다운로드\""))
-        assertTrue(activity.contains("dialog.setCancelable(false)"))
-        assertTrue(activity.contains("formatByteCount(completedBytes)"))
-        assertTrue(activity.contains("formatByteCount(totalBytes)"))
-        assertTrue(activity.contains("updateBootstrapDialog"))
+        val bootstrapUi = java.io.File("../../ui/src/reference-bootstrap.ts").readText()
+        assertTrue(activity.contains("MedicineBootstrapNative"))
+        assertTrue(activity.contains("MedicineNativeProxy"))
+        assertFalse(activity.contains("AlertDialog"))
+        assertTrue(bootstrapUi.contains("다운로드하지 않으면 앱을 사용할 수 없습니다"))
+        assertTrue(bootstrapUi.contains("completed_bytes"))
+        assertTrue(bootstrapUi.contains("total_bytes"))
+        assertTrue(bootstrapUi.contains("reference-bootstrap-progress"))
+        assertTrue(bootstrapUi.contains("/api/development/reference-bootstrap/start"))
     }
 
 

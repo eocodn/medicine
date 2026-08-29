@@ -1,4 +1,12 @@
 interface Window {
+  MedicineBootstrapUi?: {
+    ensureReady(): Promise<void>;
+    resolve(requestId: string, rawStatus: string): void;
+  };
+  MedicineBootstrapNative?: {
+    requestAsync(requestId: string, action: string): void;
+    closeApp(): void;
+  };
   MedicineDialog?: {
     handleNativeBack(): boolean;
   };

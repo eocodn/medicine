@@ -64,6 +64,18 @@ pub struct DevelopmentReferenceSelection {
     pub unavailable_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DevelopmentReferenceBootstrapInfo {
+    pub download_size_bytes: u64,
+    pub total_download_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DevelopmentReferenceBootstrapInspection {
+    Download(DevelopmentReferenceBootstrapInfo),
+    Unavailable,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DevelopmentReferenceUpdateStatus {
     NoChange,
@@ -130,6 +142,84 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
         fs::create_dir_all(&self.root).map_err(io_error("create reference data directory"))?;
         let _operation_lock = ReferenceDirectoryLock::acquire(&self.root.join(".operation.lock"))?;
         let mut store = self.load_store()?;
+        if let Some(selection) = self.open_installed_exclusive(&mut store)? {
+            return Ok(selection);
+        }
+        self.bootstrap(&mut store)
+    }
+
+    pub fn open_installed(
+        &self,
+    ) -> Result<DevelopmentReferenceSelection, DevelopmentReferenceError> {
+        fs::create_dir_all(&self.root).map_err(io_error("create reference data directory"))?;
+        let _operation_lock = ReferenceDirectoryLock::acquire(&self.root.join(".operation.lock"))?;
+        let mut store = self.load_store()?;
+        Ok(self
+            .open_installed_exclusive(&mut store)?
+            .unwrap_or(DevelopmentReferenceSelection {
+                database: None,
+                unavailable_reason: None,
+            }))
+    }
+
+    pub fn inspect_bootstrap(
+        &self,
+    ) -> Result<DevelopmentReferenceBootstrapInspection, DevelopmentReferenceError> {
+        fs::create_dir_all(&self.root).map_err(io_error("create reference data directory"))?;
+        let _operation_lock = ReferenceDirectoryLock::acquire(&self.root.join(".operation.lock"))?;
+        let mut store = self.load_store()?;
+        if let Some(selection) = self.open_installed_exclusive(&mut store)? {
+            return Ok(if selection.database.is_some() {
+                DevelopmentReferenceBootstrapInspection::Download(
+                    DevelopmentReferenceBootstrapInfo {
+                        download_size_bytes: 0,
+                        total_download_bytes: 0,
+                    },
+                )
+            } else {
+                DevelopmentReferenceBootstrapInspection::Unavailable
+            });
+        }
+
+        let release = match self.source.fetch_latest()? {
+            ReferenceRootSelection::Release(release) => release,
+            ReferenceRootSelection::Retired {
+                release_sequence,
+                root_hash,
+                ..
+            } => {
+                store
+                    .mark_contract_retired(self.contract_major, release_sequence, &root_hash)
+                    .map_err(|error| DevelopmentReferenceError::new(error.to_string()))?;
+                self.persist_store(&store)?;
+                return Ok(DevelopmentReferenceBootstrapInspection::Unavailable);
+            }
+        };
+        store
+            .observe_signed_root(release.release_sequence, &release.root_hash)
+            .map_err(|error| DevelopmentReferenceError::new(error.to_string()))?;
+        self.persist_store(&store)?;
+        let plan = plan_reference_bootstrap(self.contract_major, &store.snapshot(), &release)
+            .map_err(|error| DevelopmentReferenceError::new(error.to_string()))?;
+        let checkpoint = self.root.join(format!(
+            ".bootstrap-artifact-{}-{}.part",
+            release.release_sequence, plan.full.sha256
+        ));
+        self.cleanup_bootstrap_files(Some(&checkpoint))?;
+        normalize_checkpoint(&checkpoint, &plan.full)?;
+        let checkpoint_size = checkpoint.metadata().map(|value| value.len()).unwrap_or(0);
+        Ok(DevelopmentReferenceBootstrapInspection::Download(
+            DevelopmentReferenceBootstrapInfo {
+                download_size_bytes: plan.full.size_bytes.saturating_sub(checkpoint_size),
+                total_download_bytes: plan.full.size_bytes,
+            },
+        ))
+    }
+
+    fn open_installed_exclusive(
+        &self,
+        store: &mut ReferenceStore,
+    ) -> Result<Option<DevelopmentReferenceSelection>, DevelopmentReferenceError> {
         let before = store.snapshot();
         let active_valid = before
             .active
@@ -157,17 +247,17 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> DevelopmentRefere
         }
         if let Some(current) = selected {
             if store.is_contract_retired(self.contract_major) {
-                return Ok(unavailable());
+                return Ok(Some(unavailable()));
             }
-            return Ok(DevelopmentReferenceSelection {
+            return Ok(Some(DevelopmentReferenceSelection {
                 database: Some(self.file_for(&current)),
                 unavailable_reason: None,
-            });
+            }));
         }
         if store.is_contract_retired(self.contract_major) {
-            return Ok(unavailable());
+            return Ok(Some(unavailable()));
         }
-        self.bootstrap(&mut store)
+        Ok(None)
     }
 
     pub fn check_for_update(
@@ -533,6 +623,18 @@ pub fn ensure_development_reference(
     config: DevelopmentReferenceConfig,
 ) -> Result<DevelopmentReferenceSelection, DevelopmentReferenceError> {
     development_reference_manager(config)?.ensure_installed()
+}
+
+pub fn open_development_reference(
+    config: DevelopmentReferenceConfig,
+) -> Result<DevelopmentReferenceSelection, DevelopmentReferenceError> {
+    development_reference_manager(config)?.open_installed()
+}
+
+pub fn inspect_development_reference_bootstrap(
+    config: DevelopmentReferenceConfig,
+) -> Result<DevelopmentReferenceBootstrapInspection, DevelopmentReferenceError> {
+    development_reference_manager(config)?.inspect_bootstrap()
 }
 
 pub fn check_development_reference_update(

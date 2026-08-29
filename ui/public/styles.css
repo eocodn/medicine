@@ -235,6 +235,30 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .course-progress-track::-webkit-progress-bar { border-radius: inherit; background: var(--surface-soft); }
 .course-progress-track::-webkit-progress-value { border-radius: inherit; background: var(--brand); }
 .course-progress-track::-moz-progress-bar { border-radius: inherit; background: var(--brand); }
+
+.reference-bootstrap-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(25, 30, 27, 0.46);
+  backdrop-filter: blur(6px);
+}
+.reference-bootstrap-card {
+  width: min(100%, 440px);
+  border-radius: 24px;
+  padding: 26px;
+  background: var(--surface);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.2);
+}
+.reference-bootstrap-card h2 { margin: 4px 0 12px; }
+.reference-bootstrap-message { margin: 0; line-height: 1.6; }
+.reference-bootstrap-progress { width: 100%; margin-top: 22px; }
+.reference-bootstrap-error { margin: 12px 0 0; color: var(--danger); }
+.reference-bootstrap-actions { display: flex; gap: 10px; margin-top: 24px; }
+.reference-bootstrap-actions > button { flex: 1; }
 .regimen-summary { margin: 12px 0 0; color: #46554b; font-size: 13px; font-weight: 650; line-height: 1.55; }
 .med-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .med-meta:empty { display: none; }

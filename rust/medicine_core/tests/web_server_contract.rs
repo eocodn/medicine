@@ -6,7 +6,10 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use medicine_core::web::{build_router, build_runtime, WebConfig, BROWSER_CSP};
+use medicine_core::development_reference::DevelopmentReferenceConfig;
+use medicine_core::web::{
+    build_router, build_runtime, WebConfig, WebReferenceBootstrapConfig, BROWSER_CSP,
+};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf};
@@ -98,6 +101,7 @@ fn fixture_config(reference: Option<PathBuf>, reason: Option<&str>) -> (WebConfi
             static_dir,
             ocr_assets_dir: Some(ocr_dir),
             reference_unavailable_reason: reason.map(str::to_owned),
+            reference_bootstrap: None,
         },
         root,
     )
@@ -422,5 +426,40 @@ async fn development_status_exposes_heartbeat_reference_phase_and_authoritative_
     assert_eq!(changed["reference"]["status"], "simulated_unavailable");
 
     fs::remove_file(reference).ok();
+    fs::remove_dir_all(root).ok();
+}
+
+#[tokio::test]
+async fn development_status_exposes_shared_reference_bootstrap_contract() {
+    let (mut config, root) = fixture_config(None, Some("bootstrap_required"));
+    config.reference_bootstrap = Some(WebReferenceBootstrapConfig {
+        development: DevelopmentReferenceConfig {
+            reference_dir: root.join("reference"),
+            base_url: "https://example.invalid/".to_owned(),
+            trust_manifest: root.join("trust.json"),
+            contract_major: 1,
+        },
+        download_size_bytes: 75,
+        total_download_bytes: 100,
+    });
+    let app = build_router(config).expect("build bootstrap-required router");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/development/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("bootstrap development status response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body["reference"]["available"], false);
+    assert_eq!(body["reference"]["status"], "bootstrap_required");
+    assert_eq!(body["reference_bootstrap"]["state"], "download_required");
+    assert_eq!(body["reference_bootstrap"]["completed_bytes"], 25);
+    assert_eq!(body["reference_bootstrap"]["total_bytes"], 100);
+
     fs::remove_dir_all(root).ok();
 }

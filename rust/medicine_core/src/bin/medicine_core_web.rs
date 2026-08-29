@@ -1,8 +1,9 @@
 use medicine_core::development_reference::{
-    check_development_reference_update, ensure_development_reference, DevelopmentReferenceConfig,
-    DevelopmentReferenceUpdateStatus,
+    check_development_reference_update, inspect_development_reference_bootstrap,
+    open_development_reference, DevelopmentReferenceBootstrapInspection,
+    DevelopmentReferenceConfig, DevelopmentReferenceUpdateStatus,
 };
-use medicine_core::web::{build_runtime, WebConfig};
+use medicine_core::web::{build_runtime, WebConfig, WebReferenceBootstrapConfig};
 use std::{env, net::IpAddr, path::PathBuf, thread, time::Duration};
 use tokio::net::TcpListener;
 
@@ -38,7 +39,9 @@ async fn run(args: Vec<String>) -> Result<(), String> {
     let mut static_dir =
         env::var("MEDICINE_STATIC_DIR").unwrap_or_else(|_| DEFAULT_STATIC_DIR.to_owned());
     let mut ocr_assets_dir = env::var("MEDICINE_OCR_ASSETS_DIR").ok();
-    let mut reference_unavailable_reason = env::var("MEDICINE_REFERENCE_UNAVAILABLE_REASON").ok();
+    let mut reference_unavailable_reason = env::var("MEDICINE_REFERENCE_UNAVAILABLE_REASON")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
 
     let mut index = 0;
     while index < args.len() {
@@ -95,6 +98,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
     }
 
     let mut managed_reference_update = None;
+    let mut reference_bootstrap = None;
     let canonical_db = if reference_unavailable_reason.is_some() {
         None
     } else if let Some(path) = canonical_db {
@@ -112,14 +116,36 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         };
         let startup_config = config.clone();
         let selection =
-            tokio::task::spawn_blocking(move || ensure_development_reference(startup_config))
+            tokio::task::spawn_blocking(move || open_development_reference(startup_config))
                 .await
                 .map_err(|error| format!("reference preparation task failed: {error}"))?
                 .map_err(|error| format!("reference preparation failed: {error}"))?;
         if selection.database.is_some() && selection.unavailable_reason.is_none() {
             managed_reference_update = Some(config);
+        } else if selection.unavailable_reason.is_none() {
+            let inspect_config = config.clone();
+            let inspection = tokio::task::spawn_blocking(move || {
+                inspect_development_reference_bootstrap(inspect_config)
+            })
+            .await
+            .map_err(|error| format!("reference bootstrap inspection task failed: {error}"))?
+            .map_err(|error| format!("reference bootstrap inspection failed: {error}"))?;
+            match inspection {
+                DevelopmentReferenceBootstrapInspection::Download(info) => {
+                    reference_unavailable_reason = Some("bootstrap_required".to_owned());
+                    reference_bootstrap = Some(WebReferenceBootstrapConfig {
+                        development: config,
+                        download_size_bytes: info.download_size_bytes,
+                        total_download_bytes: info.total_download_bytes,
+                    });
+                }
+                DevelopmentReferenceBootstrapInspection::Unavailable => {
+                    reference_unavailable_reason = Some("update_required".to_owned());
+                }
+            }
+        } else {
+            reference_unavailable_reason = selection.unavailable_reason.clone();
         }
-        reference_unavailable_reason = selection.unavailable_reason;
         selection.database
     };
     let runtime = build_runtime(WebConfig {
@@ -128,6 +154,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         static_dir: PathBuf::from(static_dir),
         ocr_assets_dir: ocr_assets_dir.map(PathBuf::from),
         reference_unavailable_reason,
+        reference_bootstrap,
     })?;
     let address = (host, port);
     let listener = TcpListener::bind(address)
