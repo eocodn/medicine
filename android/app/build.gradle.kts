@@ -48,6 +48,12 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
     @get:Input
     abstract val tscBinary: Property<String>
 
+    @get:Input
+    abstract val nodeBinary: Property<String>
+
+    @get:Input
+    abstract val ocrEnabled: Property<Boolean>
+
     @get:InputDirectory
     abstract val sourceDirectory: DirectoryProperty
 
@@ -57,17 +63,33 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
     @get:InputFile
     abstract val tsconfigFile: RegularFileProperty
 
+    @get:InputFile
+    abstract val buildCapabilityScript: RegularFileProperty
+
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
     @TaskAction
     fun prepare() {
         fileSystemOperations.delete { delete(outputDirectory) }
+        val preparedSource = temporaryDir.resolve("src")
+        fileSystemOperations.delete { delete(preparedSource) }
+        execOperations.exec {
+            commandLine(
+                nodeBinary.get(),
+                "--experimental-strip-types",
+                buildCapabilityScript.get().asFile.absolutePath,
+                "prepare",
+                sourceDirectory.get().asFile.absolutePath,
+                preparedSource.absolutePath,
+                if (ocrEnabled.get()) "enabled" else "disabled",
+            )
+        }
         execOperations.exec {
             commandLine(
                 tscBinary.get(),
                 "-p",
-                tsconfigFile.get().asFile.absolutePath,
+                preparedSource.resolve("tsconfig.json").absolutePath,
                 "--outDir",
                 outputDirectory.get().asFile.absolutePath,
             )
@@ -76,6 +98,19 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
             from(publicDirectory)
             into(outputDirectory)
         }
+        val index = outputDirectory.file("index.html").get().asFile
+        val start = "<!-- MEDICINE_OCR_START -->"
+        val end = "<!-- MEDICINE_OCR_END -->"
+        val configuredHtml = if (ocrEnabled.get()) {
+            index.readText().replace(Regex("(?m)^[ \t]*(?:${Regex.escape(start)}|${Regex.escape(end)})[ \t]*\r?\n"), "")
+        } else {
+            outputDirectory.file("ocr-intake.js").get().asFile.delete()
+            index.readText().replace(
+                Regex("(?ms)^[ \t]*${Regex.escape(start)}.*?^[ \t]*${Regex.escape(end)}[ \t]*\r?\n?"),
+                "",
+            )
+        }
+        index.writeText(configuredHtml)
     }
 }
 
@@ -282,11 +317,12 @@ if (releaseReferenceUpdateBaseUrl.isNotEmpty()) {
 }
 val effectiveReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride ?: releaseReferenceUpdateBaseUrl
 
-val prepareOcrAssets = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
+val ocrAssetsDirectory = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
     .orNull
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
-    ?.let { source ->
+val isOcrEnabled = ocrAssetsDirectory != null
+val prepareOcrAssets = ocrAssetsDirectory?.let { source ->
     tasks.register<PrepareOcrAssets>("prepareOcrAssets") {
         sourceDirectory.set(layout.dir(providers.provider { file(source) }))
         outputDirectory.set(layout.buildDirectory.dir("generated/ocrAssets"))
@@ -296,11 +332,15 @@ val prepareOcrAssets = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
 val sharedUiRoot = rootProject.file("../ui")
 val sharedUiTscBinary = providers.environmentVariable("MEDICINE_TSC_BINARY")
     .orElse(sharedUiRoot.resolve("node_modules/.bin/tsc").absolutePath)
+val sharedUiNodeBinary = providers.environmentVariable("MEDICINE_NODE_BINARY").orElse("node")
 val prepareSharedUiAssets = tasks.register<PrepareSharedUiAssets>("prepareSharedUiAssets") {
     tscBinary.set(sharedUiTscBinary)
+    nodeBinary.set(sharedUiNodeBinary)
+    ocrEnabled.set(isOcrEnabled)
     sourceDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("src") }))
     publicDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("public") }))
     tsconfigFile.set(layout.file(providers.provider { sharedUiRoot.resolve("tsconfig.json") }))
+    buildCapabilityScript.set(layout.file(providers.provider { sharedUiRoot.resolve("build-capability.ts") }))
     outputDirectory.set(layout.buildDirectory.dir("generated/sharedUiAssets"))
 }
 
@@ -391,6 +431,13 @@ android {
         buildConfig = true
     }
 
+    sourceSets.getByName("main").java.directories.add(
+        if (isOcrEnabled) "src/ocr/java" else "src/noOcr/java"
+    )
+    sourceSets.getByName("main").manifest.srcFile(
+        if (isOcrEnabled) "src/ocr/AndroidManifest.xml" else "src/main/AndroidManifest.xml"
+    )
+    if (isOcrEnabled) sourceSets.getByName("main").res.directories.add("src/ocr/res")
 }
 
 androidComponents {

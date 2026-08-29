@@ -288,7 +288,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .search-hero { box-shadow: none; background: #e7eee7; border-color: #d5e0d6; }
 .search-hero.has-query { padding: 14px 16px; }
-.search-hero.has-query .search-intro, .search-hero.has-query .ocr-import-card { display: none; }
+.search-hero.has-query .search-intro { display: none; }
+.search-hero.has-query .ocr-import-card { display: none; }
 .search-hero.has-query .search-box { margin-top: 0; }
 .search-box {
   display: grid;

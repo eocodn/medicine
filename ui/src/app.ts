@@ -76,6 +76,7 @@ function invalidateProductSearch() {
   state.searchLoadingMore = false;
 }
 
+// MEDICINE_OCR_START
 function resetParserTransientState({ clearSearch = false } = {}) {
   const hadParserSearch = Boolean(state.activeParserRow || state.pendingParserRows.length || state.pendingParserDraft);
   state.pendingParserDraft = null;
@@ -132,6 +133,8 @@ function completeParserRowAndContinue() {
   return true;
 }
 
+// MEDICINE_OCR_END
+
 function focusSearchFromBox(event) {
   if (event.target?.closest?.("#drug-query-clear")) return;
   $("#drug-query")?.focus();
@@ -141,7 +144,9 @@ function showScreen(name, { focus = false } = {}) {
   const previousScreenNode = $(".screen.active");
   const previousScreen = previousScreenNode?.dataset.screen || null;
   const focusWasInPrevious = Boolean(previousScreenNode?.contains?.(document.activeElement));
+  // MEDICINE_OCR_START
   if (previousScreen === "search" && name !== "search") resetParserTransientState({ clearSearch: true });
+  // MEDICINE_OCR_END
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
   $$(".nav-item").forEach((node) => {
     const active = node.dataset.nav === name;
@@ -207,7 +212,9 @@ async function loadPeople() {
   if (!state.people.some((person) => person.id === state.currentPersonId)) {
     state.currentPersonId = state.people[0]?.id || null;
   }
+  // MEDICINE_OCR_START
   if (previousPersonId && previousPersonId !== state.currentPersonId) resetParserTransientState({ clearSearch: true });
+  // MEDICINE_OCR_END
   if (state.currentPersonId) {
     localStorage.setItem("medicine.currentPersonId", state.currentPersonId);
     await loadDashboard();
@@ -489,6 +496,7 @@ async function runDrugSearch(successMessage = "") {
 }
 
 function selectProductResult(card) {
+  // MEDICINE_OCR_START
   let parserDraft = null;
   let uncertaintyCodes = [];
   if (state.pendingParserDraft) {
@@ -500,6 +508,9 @@ function selectProductResult(card) {
     }
   }
   previewProduct(card.dataset.productSelect, parserDraft, uncertaintyCodes);
+  // MEDICINE_OCR_ELSE
+  previewProduct(card.dataset.productSelect);
+  // MEDICINE_OCR_END
 }
 
 async function refreshForDateChange() {
@@ -527,9 +538,7 @@ function bindEvents() {
   });
   $("#drug-query").addEventListener("input", () => {
     invalidateProductSearch();
-    // Keep the parser draft while the user edits only the product query. OCR can
-    // misread the product name while the independently parsed regimen is still
-    // correct, so query correction must not silently discard dose/schedule data.
+    // Keep any prefilled medication details while the user edits only the product query.
     $("#search-status").textContent = "";
     $("#drug-results").innerHTML = "";
     updateSearchMode();
@@ -550,6 +559,7 @@ function bindEvents() {
     const detail = (event as CustomEvent).detail;
     if (detail?.id === "stop-medication-sheet") state.pendingStopMedicationId = null;
   });
+  // MEDICINE_OCR_START
   window.addEventListener("medicine:parser-result", (event) => {
     const detail = (event as CustomEvent).detail;
     const rows = Array.isArray(detail?.rows) ? detail.rows : [];
@@ -564,6 +574,7 @@ function bindEvents() {
     showScreen("search", { focus: true });
     void startNextParserSearch();
   });
+  // MEDICINE_OCR_END
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });
   window.addEventListener("focus", refreshForDateChange);
   setInterval(refreshForDateChange, 60000);

@@ -15,9 +15,11 @@ interface Window {
       coalesceKey: string,
     ): void;
   };
+  // MEDICINE_OCR_START
   MedicineOcrIntake?: {
     reset(): void;
   };
+  // MEDICINE_OCR_END
   friendlyErrorMessage?: (message: string) => string;
 }
 

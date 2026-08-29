@@ -551,7 +551,7 @@ async function confirmAddMedication() {
     markDashboardStale();
     closeSheetsAfterMutation();
     renderAll();
-    const continuingParserIntake = typeof completeParserRowAndContinue === "function" && completeParserRowAndContinue();
+    const continuingParserIntake = completeParserRowAndContinue();
     if (!continuingParserIntake)
         showScreen("meds", { focus: true });
     try {

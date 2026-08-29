@@ -333,7 +333,7 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("does not rebuild", docs)
         self.assertIn("debug-signed", docs)
         self.assertIn("does not require GitHub signing secrets", docs)
-        self.assertIn("native GitHub-hosted Ubuntu runner", docs)
+        self.assertIn("self-hosted `wsl-ci` runner", docs)
         self.assertNotIn("ANDROID_RELEASE_KEYSTORE_BASE64", docs)
         self.assertIn("v0.2.0", docs)
         self.assertIn("docs/android-releasing.md", readme)

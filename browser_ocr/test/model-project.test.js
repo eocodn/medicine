@@ -133,13 +133,19 @@ test("model archive names remain confined to the independent OCR project", () =>
   assert.match(source, /export_runtime\.mjs \/downloads \/out/);
 });
 
-test("Android product packaging exposes only generated on-device OCR assets", () => {
+test("Android product packaging exposes OCR only through the explicit capability source set", () => {
   const build = fs.readFileSync(path.join(ROOT, "android/app/build.gradle.kts"), "utf8");
   const activity = fs.readFileSync(path.join(ROOT, "android/app/src/main/java/com/medicine/android/MainActivity.kt"), "utf8");
+  const ocrIntegration = fs.readFileSync(path.join(ROOT, "android/app/src/ocr/java/com/medicine/android/ProductCapabilityIntegration.java"), "utf8");
+  const noOcrIntegration = fs.readFileSync(path.join(ROOT, "android/app/src/noOcr/java/com/medicine/android/ProductCapabilityIntegration.java"), "utf8");
   assert.match(build, /PrepareOcrAssets/);
   assert.match(build, /MEDICINE_OCR_ASSETS_DIR/);
+  assert.match(build, /src\/ocr\/java/);
+  assert.match(build, /src\/noOcr\/java/);
   assert.doesNotMatch(build, /orElse\("\/opt\/medicine-ocr-assets"\)/);
-  assert.match(activity, /\/ocr-assets\//);
+  assert.doesNotMatch(activity, /\/ocr-assets\//);
+  assert.match(ocrIntegration, /\/ocr-assets\//);
+  assert.doesNotMatch(noOcrIntegration, /\/ocr-assets\//);
   assert.doesNotMatch(build, /browser_ocr\/eval|finetune\/work/);
 });
 

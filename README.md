@@ -311,10 +311,11 @@ docker compose run --rm ui screenshot --output data/debug/mobile.png --json
 
 ## Android 빌드·실행과 OCR 연구 경계
 
-제품 웹 UI와 Android APK에는 로컬 사진 인식 진입점과 승인된 on-device OCR detector/recognizer 런타임이 포함됩니다.
-이미지와 OCR 원문은 서버 API나 제품 도메인 경계를 통과하지 않습니다. 현재 rule-based document parser와 중간 OCR
-review UI는 없으며, learned parser runtime도 아직 연결되지 않았으므로 detector/recognizer가 구조화 약 행을 가장하지 않고
-parser unavailable 상태를 명시적으로 반환합니다.
+OCR은 제품의 선택적 build capability입니다. 기본 Android 빌드와 GitHub Developer Release Check는 OCR을 포함하지
+않습니다. `MEDICINE_OCR_ASSETS_DIR`에 승인된 on-device runtime bundle을 명시한 Android 빌드에서만 OCR native integration,
+`/ocr-assets/` route, 처방전 사진 UI/`ocr-intake.js`, detector/recognizer/parser runtime asset이 함께 포함됩니다. 변수를
+설정하지 않은 빌드는 이 OCR UI와 native camera/file-chooser source set 자체를 제외하며 나머지 약 검색·복약 관리 기능은
+동일하게 빌드됩니다. 이미지와 OCR 원문은 OCR-enabled 빌드에서도 서버 API나 제품 도메인 경계를 통과하지 않습니다.
 
 learned parser는 `browser_ocr/document_parsing/contract.py`가 정의하는 구조의 medication row를 출력합니다. 각 행은 `product_query`, 정규화 가능한
 medication draft, 명시적 uncertainty code만 가지며 canonical 제품 identity를 확정하지 않습니다. `product_query`는 별도 OCR
@@ -329,7 +330,10 @@ OCR 모델 연구·평가 코드는 제품과 독립된 `browser_ocr` 디렉터�
 docker compose run --rm ocr-eval
 ```
 
-연구용 runtime export는 별도로 생성할 수 있고, Android/로컬 개발 웹 빌드는 승인된 on-device OCR runtime만 패키징합니다.
+연구용 runtime export는 별도로 생성합니다. Android 제품 빌드는 runtime directory를 명시적으로 넘긴 경우에만 OCR을
+패키징합니다. 예를 들어 runtime bundle이 `/tmp/medicine-ocr-runtime`에 있다면 `MEDICINE_OCR_ASSETS_DIR`로 지정해 빌드합니다.
+공유 UI만 별도로 만들 때는 `MEDICINE_ENABLE_OCR=disabled npm run build`로 OCR UI와 `ocr-intake.js`를 산출물에서 제거할 수
+있으며, 기본 UI 개발 빌드는 OCR 테스트를 위해 `enabled`를 유지합니다.
 
 ```bash
 docker build -f browser_ocr/Dockerfile --target runtime \

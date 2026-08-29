@@ -188,7 +188,11 @@ function applyParserDraftToForm(draft) {
   syncLongTermFields(root);
 }
 
+// MEDICINE_OCR_START
 async function previewProduct(productRef, parserDraft = null, uncertaintyCodes = []) {
+// MEDICINE_OCR_ELSE
+async function previewProduct(productRef) {
+// MEDICINE_OCR_END
   if (!state.currentPersonId) {
     toast("먼저 프로필을 추가해주세요");
     openSheet("#person-sheet");
@@ -200,9 +204,11 @@ async function previewProduct(productRef, parserDraft = null, uncertaintyCodes =
     });
     state.pendingProduct = preview.product;
     state.pendingRequestId = crypto.randomUUID();
+    // MEDICINE_OCR_START
     state.pendingParserDraft = parserDraft && typeof parserDraft === "object" ? { ...parserDraft } : null;
     state.pendingParserPersonId = state.pendingParserDraft ? state.currentPersonId : null;
     state.pendingParserUncertaintyCodes = state.pendingParserDraft && Array.isArray(uncertaintyCodes) ? [...uncertaintyCodes] : [];
+    // MEDICINE_OCR_END
     state.warningToken = null;
     state.reviewedDraftKey = null;
     state.editingMedicationId = null;
@@ -271,13 +277,16 @@ function renderRiskSheet(preview, medication = null) {
   $$('[data-close-sheet]', root).forEach((button) => button.addEventListener("click", closeSheets));
   $("[data-open-prescription]", root)?.addEventListener("click", () => {
     renderPrescriptionForm(preview, medication);
+    // MEDICINE_OCR_START
     if (!medication && state.pendingParserDraft) {
       applyParserDraftToForm(state.pendingParserDraft);
     }
+    // MEDICINE_OCR_END
   });
   refocusRiskSheetIfOpen();
 }
 
+// MEDICINE_OCR_START
 function parserUncertaintyNoticeHtml(codes) {
   if (!Array.isArray(codes) || !codes.length) return "";
   const labels = {
@@ -293,6 +302,8 @@ function parserUncertaintyNoticeHtml(codes) {
   return `<div class="coverage-note limited"><strong>인식 결과를 최종 확인해주세요</strong><br>${messages.map(escapeHtml).join(" ")}</div>`;
 }
 
+// MEDICINE_OCR_END
+
 function renderPrescriptionForm(preview, medication = null) {
   const root = $("#risk-sheet-content");
   root.innerHTML = `
@@ -305,7 +316,9 @@ function renderPrescriptionForm(preview, medication = null) {
       <strong>${escapeHtml(preview.person.name)}님의 복용 방법을 확인해주세요.</strong>
       <p>처방전 또는 약 봉투에 적힌 내용을 기준으로 입력하면 오늘 일정과 DUR 정량 확인에 사용합니다.</p>
     </div>
+    // MEDICINE_OCR_START
     ${!medication ? parserUncertaintyNoticeHtml(state.pendingParserUncertaintyCodes) : ""}
+    // MEDICINE_OCR_END
     ${permitStatusNoticeHtml(preview.product, Boolean(medication))}
     <div class="prescription-form">
       <section class="prescription-section">
@@ -536,7 +549,11 @@ async function confirmAddMedication() {
   markDashboardStale();
   closeSheetsAfterMutation();
   renderAll();
-  const continuingParserIntake = typeof completeParserRowAndContinue === "function" && completeParserRowAndContinue();
+  // MEDICINE_OCR_START
+  const continuingParserIntake = completeParserRowAndContinue();
+  // MEDICINE_OCR_ELSE
+  const continuingParserIntake = false;
+  // MEDICINE_OCR_END
   if (!continuingParserIntake) showScreen("meds", { focus: true });
 
   try {

@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "license": "UNLICENSED",
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json && cp -R public/. dist/",
-    "check": "tsc -p tsconfig.json --noEmit",
-    "verify-dist": "tmp=$(mktemp -d) && trap 'rm -rf \"$tmp\"' EXIT && tsc -p tsconfig.json --outDir \"$tmp\" && cp -R public/. \"$tmp\"/ && diff -ru \"$tmp\" dist"
+    "build": "tmp=$(mktemp -d) && trap 'rm -rf \"$tmp\"' EXIT && node --experimental-strip-types build-capability.ts prepare src \"$tmp/src\" \"${MEDICINE_ENABLE_OCR:-enabled}\" && rm -rf dist && tsc -p \"$tmp/src/tsconfig.json\" --outDir dist && cp -R public/. dist/ && node --experimental-strip-types build-config.ts dist \"${MEDICINE_ENABLE_OCR:-enabled}\"",
+    "check": "tmp=$(mktemp -d) && trap 'rm -rf \"$tmp\"' EXIT && node --experimental-strip-types build-capability.ts prepare src \"$tmp/src\" enabled && tsc -p \"$tmp/src/tsconfig.json\" --noEmit",
+    "verify-dist": "tmp=$(mktemp -d) && trap 'rm -rf \"$tmp\"' EXIT && node --experimental-strip-types build-capability.ts prepare src \"$tmp/src\" \"${MEDICINE_ENABLE_OCR:-enabled}\" && tsc -p \"$tmp/src/tsconfig.json\" --outDir \"$tmp/dist\" && cp -R public/. \"$tmp/dist\"/ && node --experimental-strip-types build-config.ts \"$tmp/dist\" \"${MEDICINE_ENABLE_OCR:-enabled}\" && diff -ru \"$tmp/dist\" dist"
   },
   "devDependencies": {
     "typescript": "5.9.2"
