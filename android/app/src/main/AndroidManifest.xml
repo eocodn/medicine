@@ -13,6 +13,7 @@
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
+            android:enabled="${ocrFileProviderEnabled}"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data

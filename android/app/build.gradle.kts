@@ -48,6 +48,9 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
     @get:Input
     abstract val tscBinary: Property<String>
 
+    @get:Input
+    abstract val ocrEnabled: Property<Boolean>
+
     @get:InputDirectory
     abstract val sourceDirectory: DirectoryProperty
 
@@ -76,6 +79,19 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
             from(publicDirectory)
             into(outputDirectory)
         }
+        val index = outputDirectory.file("index.html").get().asFile
+        val start = "<!-- MEDICINE_OCR_START -->"
+        val end = "<!-- MEDICINE_OCR_END -->"
+        val configuredHtml = if (ocrEnabled.get()) {
+            index.readText().replace(Regex("(?m)^[ \t]*(?:${Regex.escape(start)}|${Regex.escape(end)})[ \t]*\r?\n"), "")
+        } else {
+            outputDirectory.file("ocr-intake.js").get().asFile.delete()
+            index.readText().replace(
+                Regex("(?ms)^[ \t]*${Regex.escape(start)}.*?^[ \t]*${Regex.escape(end)}[ \t]*\r?\n?"),
+                "",
+            )
+        }
+        index.writeText(configuredHtml)
     }
 }
 
@@ -282,11 +298,12 @@ if (releaseReferenceUpdateBaseUrl.isNotEmpty()) {
 }
 val effectiveReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride ?: releaseReferenceUpdateBaseUrl
 
-val prepareOcrAssets = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
+val ocrAssetsDirectory = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
     .orNull
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
-    ?.let { source ->
+val isOcrEnabled = ocrAssetsDirectory != null
+val prepareOcrAssets = ocrAssetsDirectory?.let { source ->
     tasks.register<PrepareOcrAssets>("prepareOcrAssets") {
         sourceDirectory.set(layout.dir(providers.provider { file(source) }))
         outputDirectory.set(layout.buildDirectory.dir("generated/ocrAssets"))
@@ -298,6 +315,7 @@ val sharedUiTscBinary = providers.environmentVariable("MEDICINE_TSC_BINARY")
     .orElse(sharedUiRoot.resolve("node_modules/.bin/tsc").absolutePath)
 val prepareSharedUiAssets = tasks.register<PrepareSharedUiAssets>("prepareSharedUiAssets") {
     tscBinary.set(sharedUiTscBinary)
+    ocrEnabled.set(isOcrEnabled)
     sourceDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("src") }))
     publicDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("public") }))
     tsconfigFile.set(layout.file(providers.provider { sharedUiRoot.resolve("tsconfig.json") }))
@@ -345,6 +363,7 @@ android {
             "REFERENCE_TRUSTED_KEYS_JSON",
             JsonOutput.toJson(referenceSigningTrustedKeysJson),
         )
+        manifestPlaceholders["ocrFileProviderEnabled"] = isOcrEnabled.toString()
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -391,6 +410,9 @@ android {
         buildConfig = true
     }
 
+    sourceSets.getByName("main").java.directories.add(
+        if (isOcrEnabled) "src/ocr/java" else "src/noOcr/java"
+    )
 }
 
 androidComponents {
