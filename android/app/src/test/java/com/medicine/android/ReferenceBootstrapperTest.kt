@@ -212,6 +212,60 @@ class ReferenceBootstrapperTest {
     }
 
     @Test
+    fun firstLaunchPreparationExposesSignedDownloadSizeWithoutDownloading() {
+        val root = Files.createTempDirectory("reference-bootstrap-prepare").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val source = FakeSource(release())
+            val bootstrapper = bootstrapper(
+                root,
+                store,
+                source,
+                FakeRebuilder(),
+                FixedStorageCapacity(Long.MAX_VALUE),
+            )
+
+            val preparation = bootstrapper.prepare(1)
+
+            assertTrue(preparation is ReferenceBootstrapPreparation.Download)
+            preparation as ReferenceBootstrapPreparation.Download
+            assertEquals(FULL_BYTES.size.toLong(), preparation.downloadSizeBytes)
+            assertEquals(FULL_BYTES.size.toLong(), preparation.totalDownloadBytes)
+            assertTrue(source.downloads.isEmpty())
+            assertNull(store.snapshot().active)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun preparedBootstrapInstallsWithoutFetchingManifestAgain() {
+        val root = Files.createTempDirectory("reference-bootstrap-prepared-install").toFile()
+        try {
+            val storage = MemoryStateStorage()
+            val store = ReferenceStore(root, storage, FakeDatabaseVerifier())
+            val source = FakeSource(release())
+            val bootstrapper = bootstrapper(
+                root,
+                store,
+                source,
+                FakeRebuilder(),
+                FixedStorageCapacity(Long.MAX_VALUE),
+            )
+
+            val preparation = bootstrapper.prepare(1)
+            val installed = bootstrapper.installPrepared(preparation, 1)
+
+            assertEquals(1, source.fetches)
+            assertEquals(1, source.downloads.size)
+            assertEquals(12, installed.version.releaseSequence)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun retiredContractWithoutLkgReturnsUnavailableModeAndPersistsRetirement() {
         val root = Files.createTempDirectory("reference-bootstrap-retired-empty").toFile()
         try {

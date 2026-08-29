@@ -192,6 +192,19 @@ class ManifestContractTest {
         assertFalse(activity.contains("\${error.message"))
     }
 
+    @Test
+    fun firstLaunchReferenceDownloadIsBlockingAndShowsByteProgressInOneDialog() {
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        assertTrue(activity.contains("안전 데이터 다운로드"))
+        assertTrue(activity.contains("다운로드하지 않으면 앱을 사용할 수 없습니다"))
+        assertTrue(activity.contains("setNegativeButton(\"앱 종료\""))
+        assertTrue(activity.contains("setPositiveButton(\"다운로드\""))
+        assertTrue(activity.contains("dialog.setCancelable(false)"))
+        assertTrue(activity.contains("formatByteCount(completedBytes)"))
+        assertTrue(activity.contains("formatByteCount(totalBytes)"))
+        assertTrue(activity.contains("updateBootstrapDialog"))
+    }
+
 
     @Test
     fun androidBackDelegatesToOpenSharedModalBeforeActivityExit() {

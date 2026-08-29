@@ -2,6 +2,7 @@ package com.medicine.android
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.app.AlertDialog
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -40,6 +41,10 @@ class MainActivity : ComponentActivity() {
     private val backDispatchGate = BackDispatchGate()
     private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val startupRunning = AtomicBoolean(false)
+    private var bootstrapDialog: AlertDialog? = null
+    private var bootstrapProgressBar: ProgressBar? = null
+    private var bootstrapStatusText: TextView? = null
+    private var bootstrapProgressText: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,7 +81,7 @@ class MainActivity : ComponentActivity() {
         showStartupView("안전 데이터 확인 중…")
         startupExecutor.execute {
             runCatching {
-                val reference = AndroidReferenceInstaller(
+                val installer = AndroidReferenceInstaller(
                     this,
                     object : ReferenceUpdateObserver {
                         override fun phase(name: String) {
@@ -89,7 +94,10 @@ class MainActivity : ComponentActivity() {
                                 else -> return
                             }
                             runOnUiThread {
-                                if (!isFinishing && !isDestroyed) showStartupView(message)
+                                if (!isFinishing && !isDestroyed) {
+                                    if (bootstrapDialog != null) updateBootstrapDialog(message)
+                                    else showStartupView(message)
+                                }
                             }
                         }
 
@@ -103,12 +111,47 @@ class MainActivity : ComponentActivity() {
                             val percent = ((completedBytes * 100L) / totalBytes).coerceIn(0L, 100L).toInt()
                             runOnUiThread {
                                 if (!isFinishing && !isDestroyed) {
-                                    showStartupView(message, progressPercent = percent)
+                                    if (bootstrapDialog != null) {
+                                        updateBootstrapDialog(
+                                            message,
+                                            completedBytes,
+                                            totalBytes,
+                                            percent,
+                                        )
+                                    } else {
+                                        showStartupView(message, progressPercent = percent)
+                                    }
                                 }
                             }
                         }
                     },
-                ).install()
+                )
+                installer to installer.prepare()
+            }.onSuccess { (installer, preparation) ->
+                if (preparation is ReferenceBootstrapPreparation.Download) {
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) {
+                            showBootstrapDownloadPrompt(preparation) {
+                                continueApplicationStartup(installer, preparation)
+                            }
+                        }
+                    }
+                } else {
+                    continueApplicationStartup(installer, preparation)
+                }
+            }.onFailure { error ->
+                handleStartupFailure(error)
+            }
+        }
+    }
+
+    private fun continueApplicationStartup(
+        installer: AndroidReferenceInstaller,
+        preparation: ReferenceBootstrapPreparation?,
+    ) {
+        startupExecutor.execute {
+            runCatching {
+                val reference = installer.installPrepared(preparation)
                 reference.recoveryReason?.let { reason ->
                     Log.w(TAG, "Reference store recovery: $reason")
                 }
@@ -130,17 +173,23 @@ class MainActivity : ComponentActivity() {
             }.onSuccess { session ->
                 startupRunning.set(false)
                 runOnUiThread {
-                    if (!isFinishing && !isDestroyed) setupWebView(session.bridge)
-                }
-                scheduleReferenceUpdate(session.reference, session.bridge)
-            }.onFailure { error ->
-                startupRunning.set(false)
-                Log.e(TAG, "Application startup failed", error)
-                runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
-                        showStartupView(startupFailureMessage(error), retry = true)
+                        dismissBootstrapDialog()
+                        setupWebView(session.bridge)
                     }
                 }
+                scheduleReferenceUpdate(session.reference, session.bridge)
+            }.onFailure(::handleStartupFailure)
+        }
+    }
+
+    private fun handleStartupFailure(error: Throwable) {
+        startupRunning.set(false)
+        Log.e(TAG, "Application startup failed", error)
+        runOnUiThread {
+            if (!isFinishing && !isDestroyed) {
+                dismissBootstrapDialog()
+                showStartupView(startupFailureMessage(error), retry = true)
             }
         }
     }
@@ -295,6 +344,107 @@ class MainActivity : ComponentActivity() {
         view.loadUrl(APP_URL)
     }
 
+    private fun showBootstrapDownloadPrompt(
+        preparation: ReferenceBootstrapPreparation.Download,
+        onDownload: () -> Unit,
+    ) {
+        dismissBootstrapDialog()
+        val totalBytes = preparation.totalDownloadBytes
+        val completedBytes = totalBytes - preparation.downloadSizeBytes
+        val status = TextView(this).apply {
+            text = "처음 사용하려면 약 안전 데이터 DB ${formatByteCount(totalBytes)}를 다운로드해야 합니다.\n다운로드하지 않으면 앱을 사용할 수 없습니다."
+            textSize = 16f
+            setPadding(0, 0, 0, 18)
+        }
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            isIndeterminate = false
+            this.progress = if (totalBytes > 0) {
+                ((completedBytes * 100L) / totalBytes).coerceIn(0L, 100L).toInt()
+            } else {
+                0
+            }
+            visibility = android.view.View.GONE
+        }
+        val progressText = TextView(this).apply {
+            text = "${formatByteCount(completedBytes)} / ${formatByteCount(totalBytes)}"
+            textSize = 14f
+            setPadding(0, 10, 0, 0)
+            visibility = android.view.View.GONE
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 8, 24, 0)
+            addView(status)
+            addView(progress, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+            addView(progressText)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("안전 데이터 다운로드")
+            .setView(content)
+            .setNegativeButton("앱 종료") { _, _ -> finishAndRemoveTask() }
+            .setPositiveButton("다운로드", null)
+            .create()
+        dialog.setCancelable(false)
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = false
+                progress.visibility = android.view.View.VISIBLE
+                progressText.visibility = android.view.View.VISIBLE
+                status.text = "안전 데이터 다운로드 중…"
+                onDownload()
+            }
+        }
+        bootstrapDialog = dialog
+        bootstrapProgressBar = progress
+        bootstrapStatusText = status
+        bootstrapProgressText = progressText
+        dialog.show()
+    }
+
+    private fun updateBootstrapDialog(
+        message: String,
+        completedBytes: Long? = null,
+        totalBytes: Long? = null,
+        progressPercent: Int? = null,
+    ) {
+        bootstrapStatusText?.text = message
+        bootstrapProgressBar?.let { bar ->
+            if (progressPercent != null) {
+                bar.visibility = android.view.View.VISIBLE
+                bar.isIndeterminate = false
+                bar.progress = progressPercent
+            } else if (message.contains("설치") || message.contains("검증")) {
+                bar.visibility = android.view.View.VISIBLE
+                bar.isIndeterminate = true
+            }
+        }
+        if (completedBytes != null && totalBytes != null && totalBytes > 0) {
+            bootstrapProgressText?.apply {
+                visibility = android.view.View.VISIBLE
+                text = "${formatByteCount(completedBytes)} / ${formatByteCount(totalBytes)} · ${progressPercent ?: 0}%"
+            }
+        }
+    }
+
+    private fun dismissBootstrapDialog() {
+        bootstrapDialog?.dismiss()
+        bootstrapDialog = null
+        bootstrapProgressBar = null
+        bootstrapStatusText = null
+        bootstrapProgressText = null
+    }
+
+    private fun formatByteCount(bytes: Long): String {
+        val mib = bytes.toDouble() / (1024.0 * 1024.0)
+        return if (mib >= 10.0) "%.0f MB".format(mib) else "%.1f MB".format(mib)
+    }
+
     private fun isAllowedOrigin(uri: Uri): Boolean =
         uri.scheme == "https" && uri.host == APP_ASSET_DOMAIN
 
@@ -338,6 +488,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        dismissBootstrapDialog()
         ocrIntegration.close()
         startupExecutor.shutdownNow()
         medicineBridge?.close()

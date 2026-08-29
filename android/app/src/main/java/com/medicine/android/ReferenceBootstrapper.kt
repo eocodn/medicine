@@ -35,6 +35,24 @@ class ReferenceBootstrapStorageException(
     val availableBytes: Long,
 ) : IllegalStateException("insufficient storage for reference bootstrap")
 
+sealed interface ReferenceBootstrapPreparation {
+    data class Ready(val installed: InstalledReferenceVersion) : ReferenceBootstrapPreparation
+
+    class Download internal constructor(
+        internal val release: VerifiedReferenceRelease,
+        internal val version: ReferenceVersion,
+        internal val artifact: ReferenceReleaseArtifact,
+        internal val downloaded: File,
+        internal val checkpointBytes: Long,
+    ) : ReferenceBootstrapPreparation {
+        val downloadSizeBytes: Long
+            get() = artifact.sizeBytes - checkpointBytes
+
+        val totalDownloadBytes: Long
+            get() = artifact.sizeBytes
+    }
+}
+
 private object NoOpReferenceBootstrapObserver : ReferenceUpdateObserver {
     override fun phase(name: String) = Unit
     override fun progress(name: String, completedBytes: Long, totalBytes: Long) = Unit
@@ -51,15 +69,27 @@ class ReferenceBootstrapper(
 ) {
     fun ensureInstalled(expectedContractMajor: Int): InstalledReferenceVersion =
         ReferenceOperationCoordinator.exclusive {
-            ensureInstalledExclusive(expectedContractMajor)
+            installPreparedExclusive(prepareExclusive(expectedContractMajor), expectedContractMajor)
         }
+
+    fun prepare(expectedContractMajor: Int): ReferenceBootstrapPreparation =
+        ReferenceOperationCoordinator.exclusive {
+            prepareExclusive(expectedContractMajor)
+        }
+
+    fun installPrepared(
+        preparation: ReferenceBootstrapPreparation,
+        expectedContractMajor: Int,
+    ): InstalledReferenceVersion = ReferenceOperationCoordinator.exclusive {
+        installPreparedExclusive(preparation, expectedContractMajor)
+    }
 
     fun ensureInstalledOrRetired(expectedContractMajor: Int): InstalledReferenceVersion? =
         ReferenceOperationCoordinator.exclusive {
             store.openForStartup(expectedContractMajor)?.let { return@exclusive it }
             if (store.isContractRetired(expectedContractMajor)) return@exclusive null
             try {
-                ensureInstalledExclusive(expectedContractMajor)
+                installPreparedExclusive(prepareExclusive(expectedContractMajor), expectedContractMajor)
             } catch (retired: ReferenceContractRetiredException) {
                 store.markContractRetired(
                     expectedContractMajor,
@@ -70,11 +100,11 @@ class ReferenceBootstrapper(
             }
         }
 
-    private fun ensureInstalledExclusive(expectedContractMajor: Int): InstalledReferenceVersion {
+    private fun prepareExclusive(expectedContractMajor: Int): ReferenceBootstrapPreparation {
         store.openForStartup(expectedContractMajor)?.let {
             cleanupBootstrapFiles()
             observer.phase("ready")
-            return it
+            return ReferenceBootstrapPreparation.Ready(it)
         }
 
         observer.phase("manifest")
@@ -93,7 +123,6 @@ class ReferenceBootstrapper(
             ".bootstrap-artifact-${release.releaseSequence}-${artifact.sha256}.part",
         )
         cleanupBootstrapFiles(keepArtifact = downloaded)
-        store.cleanupForBootstrap(version)
 
         // A process may die after the content-addressed DB rename but before the
         // AtomicFile state commit. Adopt that fully verified target instead of
@@ -103,9 +132,38 @@ class ReferenceBootstrapper(
                 .getOrNull()
                 ?.let {
                     observer.phase("ready")
-                    return it
+                    return ReferenceBootstrapPreparation.Ready(it)
                 }
         }
+
+        val checkpointBytes = usableCheckpointBytes(downloaded, artifact)
+        return ReferenceBootstrapPreparation.Download(
+            release = release,
+            version = version,
+            artifact = artifact,
+            downloaded = downloaded,
+            checkpointBytes = checkpointBytes,
+        )
+    }
+
+    private fun installPreparedExclusive(
+        preparation: ReferenceBootstrapPreparation,
+        expectedContractMajor: Int,
+    ): InstalledReferenceVersion {
+        store.openForStartup(expectedContractMajor)?.let {
+            cleanupBootstrapFiles()
+            observer.phase("ready")
+            return it
+        }
+        if (preparation is ReferenceBootstrapPreparation.Ready) {
+            return preparation.installed
+        }
+        preparation as ReferenceBootstrapPreparation.Download
+        val release = preparation.release
+        val version = preparation.version
+        val artifact = preparation.artifact
+        val downloaded = preparation.downloaded
+        store.cleanupForBootstrap(version)
 
         val candidate = File(
             referenceDir,
@@ -190,31 +248,48 @@ class AndroidReferenceInstaller(
     private val context: Context,
     private val observer: ReferenceUpdateObserver = NoOpReferenceBootstrapObserver,
 ) {
-    fun install(): InstalledReference {
-        val baseUrl = BuildConfig.REFERENCE_UPDATE_BASE_URL.trim()
-        require(baseUrl.isNotEmpty()) { "reference distribution base URL is not configured" }
-        val referenceDir = File(context.filesDir, "reference").apply {
-            check(exists() || mkdirs()) { "cannot create reference data directory" }
-        }
-        val store = ReferenceStore(
+    private val referenceDir = File(context.filesDir, "reference").apply {
+        check(exists() || mkdirs()) { "cannot create reference data directory" }
+    }
+    private val store = ReferenceStore(
             referenceDir,
             AtomicFileReferenceStateStorage(File(referenceDir, REFERENCE_STATE_FILE)),
             RustReferenceDatabaseVerifier(),
             fileSealProvider = AndroidReferenceFileSealProvider(),
         )
-        val source = HttpsReferenceReleaseSource(
-            baseUrl,
-            ReferenceManifestVerifier(ReferenceTrust.trustedPublicKeys),
-        )
-        val bootstrapper = ReferenceBootstrapper(
-            referenceDir,
-            store,
-            source,
-            RustReferenceArtifactRebuilder(),
-            AndroidReferenceStorageCapacity(),
-            observer,
-        )
-        val selected = bootstrapper.ensureInstalledOrRetired(ReferenceRuntimePolicy.CONTRACT_MAJOR)
+    private val source = HttpsReferenceReleaseSource(
+        BuildConfig.REFERENCE_UPDATE_BASE_URL.trim().also {
+            require(it.isNotEmpty()) { "reference distribution base URL is not configured" }
+        },
+        ReferenceManifestVerifier(ReferenceTrust.trustedPublicKeys),
+    )
+    private val bootstrapper = ReferenceBootstrapper(
+        referenceDir,
+        store,
+        source,
+        RustReferenceArtifactRebuilder(),
+        AndroidReferenceStorageCapacity(),
+        observer,
+    )
+
+    fun prepare(): ReferenceBootstrapPreparation? {
+        if (store.isContractRetired(ReferenceRuntimePolicy.CONTRACT_MAJOR)) return null
+        return try {
+            bootstrapper.prepare(ReferenceRuntimePolicy.CONTRACT_MAJOR)
+        } catch (retired: ReferenceContractRetiredException) {
+            store.markContractRetired(
+                ReferenceRuntimePolicy.CONTRACT_MAJOR,
+                retired.releaseSequence,
+                retired.rootHash,
+            )
+            null
+        }
+    }
+
+    fun installPrepared(preparation: ReferenceBootstrapPreparation?): InstalledReference {
+        val selected = preparation?.let {
+            bootstrapper.installPrepared(it, ReferenceRuntimePolicy.CONTRACT_MAJOR)
+        }
         if (selected == null) {
             return InstalledReference(
                 database = null,
@@ -234,5 +309,7 @@ class AndroidReferenceInstaller(
             recoveryReason = selected.recoveryReason,
         )
     }
+
+    fun install(): InstalledReference = installPrepared(prepare())
 
 }
