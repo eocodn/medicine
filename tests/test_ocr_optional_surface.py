@@ -20,6 +20,10 @@ class OcrOptionalSurfaceTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (output / "ocr-intake.js").write_text("ocr", encoding="utf-8")
+            (output / "styles.css").write_text(
+                "before\n/* MEDICINE_OCR_START */\n.ocr-import-card { display: block; }\n#ocr-status { min-height: 1px; }\n/* MEDICINE_OCR_END */\nafter\n",
+                encoding="utf-8",
+            )
             subprocess.run(
                 [node, "--experimental-strip-types", str(ROOT / "ui/build-config.ts"), str(output), "disabled"],
                 cwd=ROOT,
@@ -27,8 +31,12 @@ class OcrOptionalSurfaceTest(unittest.TestCase):
                 env={**os.environ},
             )
             html = (output / "index.html").read_text(encoding="utf-8")
+            css = (output / "styles.css").read_text(encoding="utf-8")
             self.assertNotIn("OCR UI", html)
             self.assertNotIn("MEDICINE_OCR_START", html)
+            self.assertNotIn("MEDICINE_OCR_START", css)
+            self.assertNotIn("ocr-import-card", css)
+            self.assertNotIn("ocr-status", css)
             self.assertFalse((output / "ocr-intake.js").exists())
 
     def test_ui_build_filter_preserves_ocr_surface_when_enabled(self):
