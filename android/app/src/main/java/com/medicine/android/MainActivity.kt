@@ -36,14 +36,14 @@ import org.json.JSONObject
 class MainActivity : ComponentActivity() {
     private var webView: WebView? = null
     private var medicineBridge: MedicineBridge? = null
-    private lateinit var ocrIntegration: OcrIntegration
+    private lateinit var ocrIntegration: ProductCapabilityIntegration
     private val backDispatchGate = BackDispatchGate()
     private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val startupRunning = AtomicBoolean(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        ocrIntegration = OcrIntegration(this)
+        ocrIntegration = ProductCapabilityIntegration(this)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 handleAppBack(this)

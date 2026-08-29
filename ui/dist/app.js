@@ -539,9 +539,7 @@ function bindEvents() {
     });
     $("#drug-query").addEventListener("input", () => {
         invalidateProductSearch();
-        // Keep the parser draft while the user edits only the product query. OCR can
-        // misread the product name while the independently parsed regimen is still
-        // correct, so query correction must not silently discard dose/schedule data.
+        // Keep any prefilled medication details while the user edits only the product query.
         $("#search-status").textContent = "";
         $("#drug-results").innerHTML = "";
         updateSearchMode();

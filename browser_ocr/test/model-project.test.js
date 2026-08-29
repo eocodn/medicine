@@ -136,8 +136,8 @@ test("model archive names remain confined to the independent OCR project", () =>
 test("Android product packaging exposes OCR only through the explicit capability source set", () => {
   const build = fs.readFileSync(path.join(ROOT, "android/app/build.gradle.kts"), "utf8");
   const activity = fs.readFileSync(path.join(ROOT, "android/app/src/main/java/com/medicine/android/MainActivity.kt"), "utf8");
-  const ocrIntegration = fs.readFileSync(path.join(ROOT, "android/app/src/ocr/java/com/medicine/android/OcrIntegration.java"), "utf8");
-  const noOcrIntegration = fs.readFileSync(path.join(ROOT, "android/app/src/noOcr/java/com/medicine/android/OcrIntegration.java"), "utf8");
+  const ocrIntegration = fs.readFileSync(path.join(ROOT, "android/app/src/ocr/java/com/medicine/android/ProductCapabilityIntegration.java"), "utf8");
+  const noOcrIntegration = fs.readFileSync(path.join(ROOT, "android/app/src/noOcr/java/com/medicine/android/ProductCapabilityIntegration.java"), "utf8");
   assert.match(build, /PrepareOcrAssets/);
   assert.match(build, /MEDICINE_OCR_ASSETS_DIR/);
   assert.match(build, /src\/ocr\/java/);

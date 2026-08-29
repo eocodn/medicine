@@ -49,6 +49,9 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
     abstract val tscBinary: Property<String>
 
     @get:Input
+    abstract val nodeBinary: Property<String>
+
+    @get:Input
     abstract val ocrEnabled: Property<Boolean>
 
     @get:InputDirectory
@@ -60,17 +63,33 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
     @get:InputFile
     abstract val tsconfigFile: RegularFileProperty
 
+    @get:InputFile
+    abstract val buildCapabilityScript: RegularFileProperty
+
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
     @TaskAction
     fun prepare() {
         fileSystemOperations.delete { delete(outputDirectory) }
+        val preparedSource = temporaryDir.resolve("src")
+        fileSystemOperations.delete { delete(preparedSource) }
+        execOperations.exec {
+            commandLine(
+                nodeBinary.get(),
+                "--experimental-strip-types",
+                buildCapabilityScript.get().asFile.absolutePath,
+                "prepare",
+                sourceDirectory.get().asFile.absolutePath,
+                preparedSource.absolutePath,
+                if (ocrEnabled.get()) "enabled" else "disabled",
+            )
+        }
         execOperations.exec {
             commandLine(
                 tscBinary.get(),
                 "-p",
-                tsconfigFile.get().asFile.absolutePath,
+                preparedSource.resolve("tsconfig.json").absolutePath,
                 "--outDir",
                 outputDirectory.get().asFile.absolutePath,
             )
@@ -313,12 +332,15 @@ val prepareOcrAssets = ocrAssetsDirectory?.let { source ->
 val sharedUiRoot = rootProject.file("../ui")
 val sharedUiTscBinary = providers.environmentVariable("MEDICINE_TSC_BINARY")
     .orElse(sharedUiRoot.resolve("node_modules/.bin/tsc").absolutePath)
+val sharedUiNodeBinary = providers.environmentVariable("MEDICINE_NODE_BINARY").orElse("node")
 val prepareSharedUiAssets = tasks.register<PrepareSharedUiAssets>("prepareSharedUiAssets") {
     tscBinary.set(sharedUiTscBinary)
+    nodeBinary.set(sharedUiNodeBinary)
     ocrEnabled.set(isOcrEnabled)
     sourceDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("src") }))
     publicDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("public") }))
     tsconfigFile.set(layout.file(providers.provider { sharedUiRoot.resolve("tsconfig.json") }))
+    buildCapabilityScript.set(layout.file(providers.provider { sharedUiRoot.resolve("build-capability.ts") }))
     outputDirectory.set(layout.buildDirectory.dir("generated/sharedUiAssets"))
 }
 
@@ -363,7 +385,6 @@ android {
             "REFERENCE_TRUSTED_KEYS_JSON",
             JsonOutput.toJson(referenceSigningTrustedKeysJson),
         )
-        manifestPlaceholders["ocrFileProviderEnabled"] = isOcrEnabled.toString()
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -413,6 +434,10 @@ android {
     sourceSets.getByName("main").java.directories.add(
         if (isOcrEnabled) "src/ocr/java" else "src/noOcr/java"
     )
+    sourceSets.getByName("main").manifest.srcFile(
+        if (isOcrEnabled) "src/ocr/AndroidManifest.xml" else "src/main/AndroidManifest.xml"
+    )
+    if (isOcrEnabled) sourceSets.getByName("main").res.directories.add("src/ocr/res")
 }
 
 androidComponents {

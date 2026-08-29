@@ -14,14 +14,14 @@ import androidx.core.content.FileProvider;
 import androidx.webkit.WebViewAssetLoader;
 import java.io.File;
 
-final class OcrIntegration {
+final class ProductCapabilityIntegration {
     private final ComponentActivity activity;
     private final ActivityResultLauncher<Intent> fileChooserLauncher;
     private ValueCallback<Uri[]> fileChooserCallback;
     private Uri pendingCaptureUri;
     private File pendingCaptureFile;
 
-    OcrIntegration(ComponentActivity activity) {
+    ProductCapabilityIntegration(ComponentActivity activity) {
         this.activity = activity;
         this.fileChooserLauncher = activity.registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),

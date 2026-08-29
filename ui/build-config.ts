@@ -1,4 +1,4 @@
-const { readFileSync, rmSync, writeFileSync } = require("node:fs");
+const { existsSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
 
 const outputDirectory = process.argv[2];
@@ -22,3 +22,17 @@ if (mode === "disabled") {
 }
 
 writeFileSync(indexPath, html);
+
+function configureMarkedFile(path, start, end) {
+  if (!existsSync(path)) return;
+  let text = readFileSync(path, "utf8");
+  if (mode === "disabled") {
+    const block = new RegExp(`^[ \t]*${start}[\s\S]*?^[ \t]*${end}[ \t]*\r?\n?`, "gm");
+    text = text.replace(block, "");
+  } else {
+    const markerLine = new RegExp(`^[ \t]*(?:${start}|${end})[ \t]*\r?\n`, "gm");
+    text = text.replace(markerLine, "");
+  }
+  writeFileSync(path, text);
+}
+configureMarkedFile(join(outputDirectory, "styles.css"), "/\* MEDICINE_OCR_START \*/", "/\* MEDICINE_OCR_END \*/");
