@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gzip
+import hashlib
 import json
 import re
 import struct
@@ -175,13 +177,55 @@ def verify_root(
     minimum = _positive_int(minimum, "minimum supported contract major")
     if minimum > current or current - minimum > 1:
         raise ValueError("signed reference root support window is invalid")
+    expected_contract_keys = {str(major) for major in range(minimum, current + 1)}
+    if set(contracts) != expected_contract_keys:
+        raise ValueError("signed reference root contracts do not match support window")
     if not (minimum <= contract_major <= current):
         raise ValueError(f"Android contract {contract_major} is not supported by the signed reference root")
     entry = contracts.get(str(contract_major))
     if not isinstance(entry, dict):
         raise ValueError(f"signed reference root omits Android contract {contract_major}")
     _validate_contract_entry(entry, contract_major)
-    return {"contract_major": contract_major, "release_sequence": sequence}
+    target = entry["target"]
+    full = entry["full"]
+    return {
+        "contract_major": contract_major,
+        "release_sequence": sequence,
+        "target_sha256": target["sha256"],
+        "target_size_bytes": target["size_bytes"],
+        "full_key": full["key"],
+        "full_sha256": full["sha256"],
+        "full_size_bytes": full["size_bytes"],
+    }
+
+
+def verify_full_artifact(path: Path, contract: dict) -> None:
+    if not path.is_file():
+        raise ValueError(f"signed full artifact is missing: {path}")
+    compressed_size = path.stat().st_size
+    if compressed_size != contract["full_size_bytes"]:
+        raise ValueError("signed full artifact size does not match reference root")
+    compressed_digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            compressed_digest.update(chunk)
+    compressed_sha = compressed_digest.hexdigest()
+    if compressed_sha != contract["full_sha256"]:
+        raise ValueError("signed full artifact SHA-256 does not match reference root")
+
+    target_digest = hashlib.sha256()
+    target_size = 0
+    try:
+        with gzip.open(path, "rb") as source:
+            while chunk := source.read(1024 * 1024):
+                target_digest.update(chunk)
+                target_size += len(chunk)
+    except OSError as exc:
+        raise ValueError("signed full artifact is not a valid gzip stream") from exc
+    if target_size != contract["target_size_bytes"]:
+        raise ValueError("signed full artifact target size does not match reference root")
+    if target_digest.hexdigest() != contract["target_sha256"]:
+        raise ValueError("signed full artifact target SHA-256 does not match reference root")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -190,6 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--contract-major", type=int)
     parser.add_argument("--key-id")
     parser.add_argument("--public-key-der-hex")
+    parser.add_argument("--print-full-key", action="store_true")
+    parser.add_argument("--full-artifact", type=Path)
     args = parser.parse_args(argv)
     if (args.key_id is None) != (args.public_key_der_hex is None):
         parser.error("--key-id and --public-key-der-hex must be supplied together")
@@ -204,6 +250,16 @@ def main(argv: list[str] | None = None) -> int:
         contract_major=args.contract_major or _android_contract_major(),
         trusted_public_keys=trusted_public_keys,
     )
+    if args.full_artifact is not None:
+        verify_full_artifact(args.full_artifact, result)
+        print(
+            "verified signed full reference artifact for Android contract "
+            f"{result['contract_major']} at sequence {result['release_sequence']}"
+        )
+        return 0
+    if args.print_full_key:
+        print(result["full_key"])
+        return 0
     print(
         "signed reference root supports Android contract "
         f"{result['contract_major']} at sequence {result['release_sequence']}"

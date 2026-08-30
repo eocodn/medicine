@@ -16,6 +16,7 @@ import java.io.File
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.Locale
 import java.util.Properties
 import javax.inject.Inject
 
@@ -66,6 +67,9 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
     @get:InputFile
     abstract val buildCapabilityScript: RegularFileProperty
 
+    @get:InputFile
+    abstract val buildConfigScript: RegularFileProperty
+
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
@@ -98,19 +102,15 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
             from(publicDirectory)
             into(outputDirectory)
         }
-        val index = outputDirectory.file("index.html").get().asFile
-        val start = "<!-- MEDICINE_OCR_START -->"
-        val end = "<!-- MEDICINE_OCR_END -->"
-        val configuredHtml = if (ocrEnabled.get()) {
-            index.readText().replace(Regex("(?m)^[ \t]*(?:${Regex.escape(start)}|${Regex.escape(end)})[ \t]*\r?\n"), "")
-        } else {
-            outputDirectory.file("ocr-intake.js").get().asFile.delete()
-            index.readText().replace(
-                Regex("(?ms)^[ \t]*${Regex.escape(start)}.*?^[ \t]*${Regex.escape(end)}[ \t]*\r?\n?"),
-                "",
+        execOperations.exec {
+            commandLine(
+                nodeBinary.get(),
+                "--experimental-strip-types",
+                buildConfigScript.get().asFile.absolutePath,
+                outputDirectory.get().asFile.absolutePath,
+                if (ocrEnabled.get()) "enabled" else "disabled",
             )
         }
-        index.writeText(configuredHtml)
     }
 }
 
@@ -150,6 +150,16 @@ val releaseVersionCode = releaseVersionProperties.getProperty("versionCode")
     ?.toIntOrNull()
     ?.takeIf { it > 0 }
     ?: error("android/release.properties must define a positive integer versionCode")
+
+val referencePropertiesFile = rootProject.file("reference.properties")
+val referenceProperties = Properties().apply {
+    require(referencePropertiesFile.isFile) { "android/reference.properties is missing" }
+    referencePropertiesFile.inputStream().use(::load)
+}
+val developmentReferenceUpdateBaseUrl = referenceProperties.getProperty("developmentBaseUrl")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: error("android/reference.properties must define developmentBaseUrl")
 
 val referenceTrustManifestFile = rootProject.file("../deploy/reference-signing-trusted-keys.json")
 
@@ -219,6 +229,37 @@ fun referenceTrustedKeysJson(file: File): String {
 
 val referenceSigningTrustedKeysJson = referenceTrustedKeysJson(referenceTrustManifestFile)
 
+fun validateReferenceUpdateBaseUrl(name: String, value: String) {
+    val uri = URI(value)
+    require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.path.endsWith("/")) {
+        "$name must be an HTTPS origin/base path ending in /"
+    }
+    require(uri.query == null && uri.fragment == null && '"' !in value && '\\' !in value) {
+        "$name cannot contain query, fragment, quotes, or backslashes"
+    }
+}
+
+validateReferenceUpdateBaseUrl(
+    "android/reference.properties developmentBaseUrl",
+    developmentReferenceUpdateBaseUrl,
+)
+
+fun requireProductionReferenceUpdateBaseUrl(): String {
+    val name = "MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL"
+    val value = System.getenv(name)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: error("$name is required for Android release tasks")
+    validateReferenceUpdateBaseUrl(name, value)
+    val host = checkNotNull(URI(value).host)
+        .lowercase(Locale.ROOT)
+        .trimEnd('.')
+    require(host != "r2.dev" && !host.endsWith(".r2.dev")) {
+        "$name must not use the development r2.dev endpoint"
+    }
+    return value
+}
+
 data class AndroidReleaseEnvironment(
     val versionCode: Int,
     val versionName: String,
@@ -226,6 +267,7 @@ data class AndroidReleaseEnvironment(
     val keystorePassword: String,
     val keyAlias: String,
     val keyPassword: String,
+    val referenceUpdateBaseUrl: String,
 )
 
 val releaseEnvironmentNames = listOf(
@@ -235,6 +277,7 @@ val releaseEnvironmentNames = listOf(
     "MEDICINE_ANDROID_KEYSTORE_PASSWORD",
     "MEDICINE_ANDROID_KEY_ALIAS",
     "MEDICINE_ANDROID_KEY_PASSWORD",
+    "MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL",
 )
 
 fun requireReleaseEnvironment(): AndroidReleaseEnvironment {
@@ -262,6 +305,7 @@ fun requireReleaseEnvironment(): AndroidReleaseEnvironment {
         keystorePassword = required("MEDICINE_ANDROID_KEYSTORE_PASSWORD"),
         keyAlias = required("MEDICINE_ANDROID_KEY_ALIAS"),
         keyPassword = required("MEDICINE_ANDROID_KEY_PASSWORD"),
+        referenceUpdateBaseUrl = requireProductionReferenceUpdateBaseUrl(),
     )
 }
 
@@ -279,6 +323,9 @@ val verifyReleaseEnvironment = tasks.register("verifyReleaseEnvironment") {
         require(File(release.keystorePath).isFile) {
             "MEDICINE_ANDROID_KEYSTORE_PATH does not point to a readable file"
         }
+        require(System.getenv("MEDICINE_OCR_ASSETS_DIR").isNullOrBlank()) {
+            "OCR is not enabled for the current Android production release"
+        }
     }
 }
 
@@ -290,32 +337,14 @@ tasks.configureEach {
     }
 }
 
-val referenceUpdateBaseUrlOverride = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")?.trim()?.takeIf { it.isNotEmpty() }
-val defaultReleaseReferenceUpdateBaseUrl = "https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/"
-val releaseReferenceUpdateBaseUrl = System.getenv("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL")
+val debugReferenceUpdateBaseUrlOverride = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
-    ?: defaultReleaseReferenceUpdateBaseUrl
-
-fun validateReferenceUpdateBaseUrl(value: String) {
-    if (value.isEmpty()) return
-    val uri = URI(value)
-    require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.path.endsWith("/")) {
-        "MEDICINE_REFERENCE_UPDATE_BASE_URL must be an HTTPS origin/base path ending in /"
-    }
-    require(uri.query == null && uri.fragment == null && '"' !in value && '\\' !in value) {
-        "MEDICINE_REFERENCE_UPDATE_BASE_URL cannot contain query, fragment, quotes, or backslashes"
-    }
+debugReferenceUpdateBaseUrlOverride?.let {
+    validateReferenceUpdateBaseUrl("MEDICINE_REFERENCE_UPDATE_BASE_URL", it)
 }
-validateReferenceUpdateBaseUrl(referenceUpdateBaseUrlOverride.orEmpty())
-validateReferenceUpdateBaseUrl(releaseReferenceUpdateBaseUrl)
-if (releaseReferenceUpdateBaseUrl.isNotEmpty()) {
-    val releaseUri = URI(releaseReferenceUpdateBaseUrl)
-    require(releaseUri.host.endsWith(".r2.dev")) {
-        "MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL must use the development r2.dev endpoint"
-    }
-}
-val effectiveReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride ?: releaseReferenceUpdateBaseUrl
+val debugReferenceUpdateBaseUrl = debugReferenceUpdateBaseUrlOverride ?: developmentReferenceUpdateBaseUrl
+val productionReferenceUpdateBaseUrl = releaseEnvironment?.referenceUpdateBaseUrl.orEmpty()
 
 val ocrAssetsDirectory = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
     .orNull
@@ -341,6 +370,7 @@ val prepareSharedUiAssets = tasks.register<PrepareSharedUiAssets>("prepareShared
     publicDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("public") }))
     tsconfigFile.set(layout.file(providers.provider { sharedUiRoot.resolve("tsconfig.json") }))
     buildCapabilityScript.set(layout.file(providers.provider { sharedUiRoot.resolve("build-capability.ts") }))
+    buildConfigScript.set(layout.file(providers.provider { rootProject.file("../ui/build-config.ts") }))
     outputDirectory.set(layout.buildDirectory.dir("generated/sharedUiAssets"))
 }
 
@@ -375,9 +405,9 @@ android {
     ndkVersion = rustNdkVersion
 
     defaultConfig {
-        applicationId = "com.medicine.android"
+        applicationId = "kr.yakbom.app"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = releaseEnvironment?.versionCode ?: releaseVersionCode
         versionName = releaseEnvironment?.versionName ?: releaseVersionName
         buildConfigField(
@@ -404,10 +434,10 @@ android {
 
     buildTypes {
         getByName("debug") {
-            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$effectiveReferenceUpdateBaseUrl\"")
+            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$debugReferenceUpdateBaseUrl\"")
         }
         getByName("release") {
-            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$effectiveReferenceUpdateBaseUrl\"")
+            buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$productionReferenceUpdateBaseUrl\"")
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true

@@ -18,10 +18,16 @@ for name in \
     MEDICINE_ANDROID_KEYSTORE_PATH \
     MEDICINE_ANDROID_KEYSTORE_PASSWORD \
     MEDICINE_ANDROID_KEY_ALIAS \
-    MEDICINE_ANDROID_KEY_PASSWORD
+    MEDICINE_ANDROID_KEY_PASSWORD \
+    MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL
 do
     require_env "$name"
 done
+
+if [ -n "${MEDICINE_OCR_ASSETS_DIR-}" ]; then
+    echo "OCR is not enabled for the current Android production release" >&2
+    exit 2
+fi
 
 case "$MEDICINE_ANDROID_VERSION_CODE" in
     *[!0-9]*|'')
@@ -37,6 +43,9 @@ if [ ! -f "$MEDICINE_ANDROID_KEYSTORE_PATH" ]; then
     echo "MEDICINE_ANDROID_KEYSTORE_PATH does not point to a readable file" >&2
     exit 2
 fi
+
+MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
+    "$workspace/scripts/verify-android-reference-contract.sh"
 
 cd "$workspace/android"
 gradle --no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease
@@ -60,6 +69,10 @@ if [ ! -x "$apksigner" ]; then
 fi
 
 badging=$("$aapt" dump badging "$apk")
+if ! printf '%s\n' "$badging" | grep -F "package: name='kr.yakbom.app'" >/dev/null; then
+    echo "release APK applicationId is not kr.yakbom.app" >&2
+    exit 3
+fi
 if ! printf '%s\n' "$badging" | grep -F "versionCode='$MEDICINE_ANDROID_VERSION_CODE'" >/dev/null; then
     echo "release APK versionCode does not match MEDICINE_ANDROID_VERSION_CODE" >&2
     exit 3
@@ -70,4 +83,7 @@ if ! printf '%s\n' "$badging" | grep -F "versionName='$MEDICINE_ANDROID_VERSION_
 fi
 
 "$apksigner" verify --verbose --print-certs "$apk"
+python3 "$workspace/scripts/verify-no-ocr-android-artifact.py" "$apk"
+MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
+    "$workspace/scripts/verify-android-reference-contract.sh" --verify-full-artifact
 printf 'verified signed Android release: %s\n' "$apk"

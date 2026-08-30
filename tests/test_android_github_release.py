@@ -1,5 +1,9 @@
+import gzip
+import hashlib
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -167,7 +171,7 @@ class AndroidGithubReleaseTest(unittest.TestCase):
             root_file.write_bytes(envelope(1, 1, c1))
             ok = subprocess.run(
                 [
-                    "python",
+                    sys.executable,
                     str(script),
                     "--root",
                     str(root_file),
@@ -186,6 +190,50 @@ class AndroidGithubReleaseTest(unittest.TestCase):
             self.assertEqual(ok.returncode, 0, ok.stderr)
             self.assertIn("supports Android contract 1", ok.stdout)
 
+            root_file.write_bytes(envelope(2, 1, c1))
+            missing_active = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--root",
+                    str(root_file),
+                    "--contract-major",
+                    "1",
+                    "--key-id",
+                    "test-2026",
+                    "--public-key-der-hex",
+                    public_der_hex,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(missing_active.returncode, 0)
+            self.assertIn("support window", missing_active.stderr)
+
+            root_file.write_bytes(envelope(1, 1, {**c1, "2": {}}))
+            extra_active = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--root",
+                    str(root_file),
+                    "--contract-major",
+                    "1",
+                    "--key-id",
+                    "test-2026",
+                    "--public-key-der-hex",
+                    public_der_hex,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(extra_active.returncode, 0)
+            self.assertIn("support window", extra_active.stderr)
+
             malformed = {
                 "1": {
                     "dataset_id": "NOT-A-DATASET-ID",
@@ -198,7 +246,7 @@ class AndroidGithubReleaseTest(unittest.TestCase):
             root_file.write_bytes(envelope(1, 1, malformed))
             rejected = subprocess.run(
                 [
-                    "python",
+                    sys.executable,
                     str(script),
                     "--root",
                     str(root_file),
@@ -219,7 +267,7 @@ class AndroidGithubReleaseTest(unittest.TestCase):
             root_file.write_bytes(envelope(2, 2, {"2": {}}))
             retired = subprocess.run(
                 [
-                    "python",
+                    sys.executable,
                     str(script),
                     "--root",
                     str(root_file),
@@ -237,6 +285,89 @@ class AndroidGithubReleaseTest(unittest.TestCase):
             )
             self.assertNotEqual(retired.returncode, 0)
             self.assertIn("not supported", retired.stderr)
+
+    def test_signed_reference_root_gate_verifies_full_artifact_bytes(self) -> None:
+        script = ROOT / "scripts" / "verify-reference-contract-root.py"
+        signer = ReleaseSigner.from_private_pem("test-2026", TEST_PRIVATE_KEY_PEM)
+        public_key = serialization.load_pem_public_key(signer.public_key_pem())
+        public_der_hex = public_key.public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).hex()
+        target = b"SQLite format 3\x00test-reference-payload"
+        compressed = gzip.compress(target, mtime=0)
+        target_sha = hashlib.sha256(target).hexdigest()
+        full_sha = hashlib.sha256(compressed).hexdigest()
+        full_key = f"reference/v2/contracts/1/full/{target_sha}.sqlite.gz"
+        root = {
+            "protocol_version": 2,
+            "created_at": "2026-08-30T00:00:00Z",
+            "current_contract_major": 1,
+            "minimum_supported_contract_major": 1,
+            "contracts": {
+                "1": {
+                    "dataset_id": "sha256:" + "1" * 64,
+                    "target": {"sha256": target_sha, "size_bytes": len(target)},
+                    "full": {
+                        "key": full_key,
+                        "compression": "gzip",
+                        "sha256": full_sha,
+                        "size_bytes": len(compressed),
+                    },
+                    "patches": [],
+                    "history": [],
+                }
+            },
+        }
+        payload = (json.dumps(root, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        envelope = encode_signed_envelope(signer.sign_payload(payload, release_sequence=42))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root_file = Path(temp_dir) / "latest.json"
+            artifact_file = Path(temp_dir) / "full.sqlite.gz"
+            root_file.write_bytes(envelope)
+            artifact_file.write_bytes(compressed)
+            common = [
+                sys.executable,
+                str(script),
+                "--root",
+                str(root_file),
+                "--contract-major",
+                "1",
+                "--key-id",
+                "test-2026",
+                "--public-key-der-hex",
+                public_der_hex,
+            ]
+            key_result = subprocess.run(
+                [*common, "--print-full-key"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            verified = subprocess.run(
+                [*common, "--full-artifact", str(artifact_file)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            artifact_file.write_bytes(compressed + b"tampered")
+            rejected = subprocess.run(
+                [*common, "--full-artifact", str(artifact_file)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(key_result.returncode, 0, key_result.stderr)
+        self.assertEqual(key_result.stdout.strip(), full_key)
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        self.assertIn("verified signed full reference artifact", verified.stdout)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("full artifact", rejected.stderr)
 
     def test_android_gradle_wrapper_is_pinned_and_checksum_verified(self) -> None:
         gradlew = ROOT / "android" / "gradlew"
@@ -297,10 +428,69 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertNotIn("MEDICINE_ANDROID_KEYSTORE", script)
         self.assertIn("medicine-${tag}-arm64-v8a.apk", script)
         self.assertIn("app-debug.apk", script)
+        self.assertIn("verify-no-ocr-android-artifact.py", script)
         self.assertIn("aapt", script)
         self.assertIn("apksigner", script)
         self.assertIn("versionCode", script)
         self.assertIn("versionName", script)
+
+    def test_reference_contract_gate_uses_shared_development_url_without_release_env(self) -> None:
+        script = ROOT / "scripts" / "verify-android-reference-contract.sh"
+        expected_url = "https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/reference/v2/latest.json"
+        expected_full = (
+            "https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/"
+            "reference/v2/contracts/1/full/" + "2" * 64 + ".sqlite.gz"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            log_path = root / "calls.log"
+            curl = bin_dir / "curl"
+            curl.write_text(
+                "#!/bin/sh\n"
+                "output=''\n"
+                "url=''\n"
+                "while [ $# -gt 0 ]; do\n"
+                "  case \"$1\" in\n"
+                "    --output) output=$2; shift 2 ;;\n"
+                "    http*) url=$1; shift ;;\n"
+                "    *) shift ;;\n"
+                "  esac\n"
+                "done\n"
+                "printf 'curl:%s\\n' \"$url\" >> \"$REFERENCE_GATE_TEST_LOG\"\n"
+                "printf '{}' > \"$output\"\n"
+            )
+            curl.chmod(0o755)
+            python = bin_dir / "python"
+            python.write_text(
+                "#!/bin/sh\n"
+                "printf 'python:%s\\n' \"$*\" >> \"$REFERENCE_GATE_TEST_LOG\"\n"
+                "case \" $* \" in\n"
+                "  *' --print-full-key '*) printf '%s\\n' 'reference/v2/contracts/1/full/" + "2" * 64 + ".sqlite.gz' ;;\n"
+                "esac\n"
+            )
+            python.chmod(0o755)
+            env = os.environ.copy()
+            env.pop("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", None)
+            env.pop("MEDICINE_PYTHON_BIN", None)
+            env["REFERENCE_GATE_TEST_LOG"] = str(log_path)
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            result = subprocess.run(
+                ["bash", str(script), "--verify-full-artifact"],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = log_path.read_text().splitlines() if log_path.exists() else []
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"curl:{expected_url}", calls)
+        self.assertIn(f"curl:{expected_full}", calls)
+        self.assertTrue(any(call.startswith("python:./scripts/verify-reference-contract-root.py") for call in calls))
+        self.assertTrue(any("--full-artifact" in call for call in calls if call.startswith("python:")))
 
     def test_release_publish_uses_draft_as_retry_boundary_and_requires_apk_and_checksum(self) -> None:
         ensure = (ROOT / "scripts" / "ensure-release-draft.sh").read_text()
