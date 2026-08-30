@@ -12,6 +12,7 @@ FROM gradle:9.4.1-jdk17@sha256:549ab76a04fc532f37945d689207a3fb2642350b1235901eb
 
 ENV ANDROID_HOME=/opt/android-sdk \
     ANDROID_SDK_ROOT=/opt/android-sdk \
+    BUNDLETOOL_JAR=/opt/bundletool/bundletool-all-1.18.3.jar \
     CARGO_HOME=/tmp/cargo-home \
     GRADLE_USER_HOME=/opt/gradle-cache \
     MEDICINE_TSC_BINARY=/opt/medicine-ui-tools/node_modules/.bin/tsc \
@@ -30,6 +31,9 @@ RUN apt-get update \
     && rm /tmp/cmdline-tools.zip \
     && yes | sdkmanager --licenses >/dev/null \
     && sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;${MEDICINE_ANDROID_NDK_VERSION}" \
+    && mkdir -p /opt/bundletool \
+    && wget -q -O "$BUNDLETOOL_JAR" https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
+    && echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  $BUNDLETOOL_JAR" | sha256sum -c - \
     && chmod -R a+rX "$ANDROID_HOME"
 
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo

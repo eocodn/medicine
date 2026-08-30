@@ -18,10 +18,16 @@ for name in \
     MEDICINE_ANDROID_KEYSTORE_PATH \
     MEDICINE_ANDROID_KEYSTORE_PASSWORD \
     MEDICINE_ANDROID_KEY_ALIAS \
-    MEDICINE_ANDROID_KEY_PASSWORD
+    MEDICINE_ANDROID_KEY_PASSWORD \
+    MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL
 do
     require_env "$name"
 done
+
+if [ -n "${MEDICINE_OCR_ASSETS_DIR-}" ]; then
+    echo "OCR is not enabled for the current Android production release" >&2
+    exit 2
+fi
 
 case "$MEDICINE_ANDROID_VERSION_CODE" in
     *[!0-9]*|'')
@@ -60,6 +66,10 @@ if [ ! -x "$apksigner" ]; then
 fi
 
 badging=$("$aapt" dump badging "$apk")
+if ! printf '%s\n' "$badging" | grep -F "package: name='kr.yakbom.app'" >/dev/null; then
+    echo "release APK applicationId is not kr.yakbom.app" >&2
+    exit 3
+fi
 if ! printf '%s\n' "$badging" | grep -F "versionCode='$MEDICINE_ANDROID_VERSION_CODE'" >/dev/null; then
     echo "release APK versionCode does not match MEDICINE_ANDROID_VERSION_CODE" >&2
     exit 3

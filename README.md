@@ -189,11 +189,11 @@ R2 bucket은 public 개발 URL을 켜기 전에 `medicine-canonical r2-public-au
 
 개발 단계의 Android 앱과 standalone development web은 Cloudflare R2의 동일한 non-production `r2.dev`
 reference channel을 사용합니다. 현재 개발 endpoint는
-`https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/`입니다. Android는 이 값을 Gradle debug/release
-기본값으로 사용하고, standalone web은 Compose의 `MEDICINE_REFERENCE_UPDATE_BASE_URL` 기본값으로 사용합니다.
-Android의 `MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL`은 개발 endpoint를 교체하며,
-`MEDICINE_REFERENCE_UPDATE_BASE_URL`은 Android와 standalone web 모두에서 명시적 테스트 override로 사용할 수
-있습니다. 출시 준비 시 Android 배포 channel은 `r2.dev` 대신 custom domain으로 교체합니다.
+`https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/`입니다. Android debug와 standalone web은 이 개발
+channel을 기본값으로 사용하며, `MEDICINE_REFERENCE_UPDATE_BASE_URL`로 명시적 테스트 override를 줄 수 있습니다.
+Android production release는 개발 endpoint를 상속하지 않습니다. release task는
+`MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL`에 별도의 HTTPS production base URL이 없거나 `*.r2.dev`를 가리키면
+실패합니다.
 
 `canonical verify`가 실패하면 앱은 데이터셋을 verified로 취급하지 않습니다. Reference publish workflow는
 `canonical mobile-build`로 `mobile.sqlite`와 manifest를 생성해 signed hosted release로 배포하지만, Android
@@ -377,6 +377,7 @@ export MEDICINE_ANDROID_VERSION_CODE="$(sed -n 's/^versionCode=//p' android/rele
 export MEDICINE_ANDROID_VERSION_NAME="$(sed -n 's/^versionName=//p' android/release.properties)"
 export MEDICINE_ANDROID_KEY_ALIAS='...'
 export ANDROID_RELEASE_KEYSTORE=/absolute/path/to/release.jks
+export MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL='https://reference.example.com/'
 
 printf 'Android keystore password: '
 read -r -s MEDICINE_ANDROID_KEYSTORE_PASSWORD
@@ -397,6 +398,7 @@ docker compose -p medicine_android_release run --rm \
   -e MEDICINE_ANDROID_KEY_ALIAS \
   -e MEDICINE_ANDROID_KEY_PASSWORD \
   -e MEDICINE_ANDROID_KEYSTORE_PATH=/run/secrets/medicine-release.jks \
+  -e MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL \
   android sh /workspace/scripts/android_release_build.sh
 ```
 
@@ -411,6 +413,11 @@ Actions workflow가 native GitHub-hosted Ubuntu runner에서 별도 signing secr
 같은 commit에 `vX.Y.Z` 태그를 push하면 **Android Developer Release** workflow가 검증된 APK를 재빌드하지 않고
 GitHub Release에 게시합니다. 이 경로는 정식 release signing/Play 배포와 별개이며, 버전 변경과 태그 순서는
 `docs/android-releasing.md`를 따릅니다.
+
+Google Play production은 `kr.yakbom.app`, targetSdk 36, signed no-OCR AAB를 사용합니다. Play용 AAB 생성과
+application ID/version/target SDK/signature/no-OCR 검증은 `scripts/android_play_bundle.sh`에 묶여 있으며,
+운영 reference hostname, Play App Signing/upload key, 개인정보처리방침·Health Apps/Data safety, MFDS 판단 및
+데이터 이용조건처럼 저장소 밖 결정이 필요한 항목은 `docs/android-play-releasing.md`의 체크리스트를 따릅니다.
 
 데이터 이용조건 검토는 제품 배포 전 별도 release 절차로 남아 있습니다.
 

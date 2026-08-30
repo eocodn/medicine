@@ -122,14 +122,31 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("gh issue close", incident)
         self.assertIn("--label bug", incident)
         self.assertIn("actions/runs/${GITHUB_RUN_ID}", incident)
-    def test_android_debug_and_release_default_to_r2_dev_reference_bootstrap(self) -> None:
+    def test_android_public_identity_targets_api_36(self) -> None:
+        gradle = Path("android/app/build.gradle.kts").read_text()
+        activity = Path("android/app/src/main/java/com/medicine/android/MainActivity.kt").read_text()
+
+        self.assertIn('namespace = "com.medicine.android"', gradle)
+        self.assertIn('applicationId = "kr.yakbom.app"', gradle)
+        self.assertNotIn('applicationId = "com.medicine.android"', gradle)
+        self.assertIn("compileSdk = 36", gradle)
+        self.assertIn("targetSdk = 36", gradle)
+        self.assertIn("WindowInsetsCompat.Type.systemBars()", activity)
+        self.assertIn("WindowInsetsCompat.Type.displayCutout()", activity)
+        self.assertIn("ViewCompat.setOnApplyWindowInsetsListener", activity)
+
+    def test_android_debug_defaults_to_r2_dev_but_release_requires_production_reference_url(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         compose = Path("compose.yaml").read_text()
 
         self.assertIn("https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/", gradle)
         self.assertIn("REFERENCE_UPDATE_BASE_URL", gradle)
-        self.assertIn("releaseReferenceUpdateBaseUrl", gradle)
-        self.assertIn("effectiveReferenceUpdateBaseUrl", gradle)
+        self.assertIn("developmentReferenceUpdateBaseUrl", gradle)
+        self.assertIn("debugReferenceUpdateBaseUrl", gradle)
+        self.assertIn("productionReferenceUpdateBaseUrl", gradle)
+        self.assertIn('val name = "MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL"', gradle)
+        self.assertIn('error("$name is required for Android release tasks")', gradle)
+        self.assertIn("must not use the development r2.dev endpoint", gradle)
         self.assertIn("debug", gradle)
         self.assertIn("release", gradle)
         self.assertIn("r2.dev", gradle)
@@ -252,6 +269,7 @@ class DeploymentConfigTest(unittest.TestCase):
                 "MEDICINE_ANDROID_KEYSTORE_PASSWORD",
                 "MEDICINE_ANDROID_KEY_ALIAS",
                 "MEDICINE_ANDROID_KEY_PASSWORD",
+                "MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL",
             ):
                 env.pop(name, None)
             env["ANDROID_RELEASE_TEST_LOG"] = str(log_path)
@@ -303,7 +321,7 @@ class DeploymentConfigTest(unittest.TestCase):
             aapt_stub.write_text(
                 "#!/bin/sh\n"
                 "printf 'aapt:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
-                "printf \"package: name='com.medicine.android' versionCode='23' versionName='1.4.0'\\n\"\n"
+                "printf \"package: name='kr.yakbom.app' versionCode='23' versionName='1.4.0'\\n\"\n"
             )
             aapt_stub.chmod(0o755)
             apksigner_stub = build_tools / "apksigner"
@@ -325,6 +343,7 @@ class DeploymentConfigTest(unittest.TestCase):
                     "MEDICINE_ANDROID_KEYSTORE_PASSWORD": "store-secret",
                     "MEDICINE_ANDROID_KEY_ALIAS": "medicine-release",
                     "MEDICINE_ANDROID_KEY_PASSWORD": "key-secret",
+                    "MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL": "https://reference.yakbom.example/",
                     "PATH": f"{bin_dir}:{env['PATH']}",
                 }
             )
@@ -345,3 +364,44 @@ class DeploymentConfigTest(unittest.TestCase):
         )
         self.assertTrue(any(call.startswith("aapt:dump badging ") for call in calls))
         self.assertTrue(any(call.startswith("apksigner:verify --verbose --print-certs ") for call in calls))
+
+    def test_android_play_bundle_script_builds_signed_no_ocr_aab(self) -> None:
+        script = Path("scripts/android_play_bundle.sh")
+        self.assertTrue(script.is_file())
+        text = script.read_text()
+
+        self.assertIn("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", text)
+        self.assertIn("MEDICINE_OCR_ASSETS_DIR", text)
+        self.assertIn("bundleRelease", text)
+        self.assertNotIn("assembleRelease", text)
+        self.assertIn("app-release.aab", text)
+        self.assertIn("jarsigner", text)
+        self.assertIn('java -jar "$BUNDLETOOL_JAR" dump manifest', text)
+        self.assertIn("/manifest/@package", text)
+        self.assertIn("/manifest/@android:versionCode", text)
+        self.assertIn("/manifest/@android:versionName", text)
+        self.assertIn("/manifest/uses-sdk/@android:targetSdkVersion", text)
+        self.assertIn("kr.yakbom.app", text)
+        self.assertIn("targetSdk 36", text)
+        self.assertIn("verify-no-ocr-android-artifact.py", text)
+
+        dockerfile = Path("Dockerfile.android").read_text()
+        self.assertIn("bundletool-all-1.18.3.jar", dockerfile)
+        self.assertIn("a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29", dockerfile)
+        self.assertIn("BUNDLETOOL_JAR", dockerfile)
+
+    def test_android_play_release_documentation_separates_code_and_operator_gates(self) -> None:
+        docs = Path("docs/android-play-releasing.md")
+        self.assertTrue(docs.is_file())
+        text = docs.read_text()
+
+        self.assertIn("kr.yakbom.app", text)
+        self.assertIn("targetSdk 36", text)
+        self.assertIn("android_play_bundle.sh", text)
+        self.assertIn("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", text)
+        self.assertIn("Play App Signing", text)
+        self.assertIn("upload key", text)
+        self.assertIn("개인정보처리방침", text)
+        self.assertIn("Health Apps", text)
+        self.assertIn("MFDS", text)
+        self.assertIn("데이터 이용조건", text)

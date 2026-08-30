@@ -52,6 +52,7 @@ if ! printf '%s\n' "${badging}" | grep -F "versionName='${versionName}'" >/dev/n
 fi
 
 "${apksigner}" verify --verbose --print-certs "${source_apk}"
+python "${workspace}/scripts/verify-no-ocr-android-artifact.py" "${source_apk}"
 
 mkdir -p "${output_dir}"
 artifact="${output_dir}/medicine-${tag}-arm64-v8a.apk"

@@ -297,6 +297,7 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertNotIn("MEDICINE_ANDROID_KEYSTORE", script)
         self.assertIn("medicine-${tag}-arm64-v8a.apk", script)
         self.assertIn("app-debug.apk", script)
+        self.assertIn("verify-no-ocr-android-artifact.py", script)
         self.assertIn("aapt", script)
         self.assertIn("apksigner", script)
         self.assertIn("versionCode", script)
