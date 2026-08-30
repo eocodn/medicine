@@ -567,6 +567,7 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("durable release signing identity", docs)
         self.assertIn("GCP Secret Manager", docs)
         self.assertIn("Workload Identity Federation", docs)
+        self.assertIn("yakbom-android-signing-vault", docs)
         self.assertIn("does not require GitHub signing secrets", docs)
         self.assertIn("self-hosted `wsl-ci` runner", docs)
         self.assertIn("GitHub-hosted", docs)

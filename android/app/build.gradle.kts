@@ -287,6 +287,19 @@ val verifyReleaseEnvironment = tasks.register("verifyReleaseEnvironment") {
     }
 }
 
+// CI intentionally builds an unsigned release candidate with no signing environment.
+// Once a signing identity is supplied, every resolved release task must pass the
+// operator release policy gate rather than relying on callers to remember it.
+tasks.configureEach {
+    if (
+        releaseEnvironment != null &&
+        name != verifyReleaseEnvironment.name &&
+        name.contains("Release", ignoreCase = true)
+    ) {
+        dependsOn(verifyReleaseEnvironment)
+    }
+}
+
 val referenceUpdateBaseUrlOverride = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")?.trim()?.takeIf { it.isNotEmpty() }
 val defaultReleaseReferenceUpdateBaseUrl = "https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/"
 val releaseReferenceUpdateBaseUrl = System.getenv("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL")

@@ -187,7 +187,10 @@ class DeploymentConfigTest(unittest.TestCase):
 
         self.assertIn("configuredReleaseEnvironmentNames", gradle)
         self.assertIn("release signing environment must be fully specified or omitted", gradle)
-        self.assertNotIn("tasks.configureEach", gradle)
+        self.assertIn("tasks.configureEach", gradle)
+        self.assertIn("releaseEnvironment != null", gradle)
+        self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
+        self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
         self.assertIn("verifyReleaseEnvironment", release_script)
     def test_android_release_keystores_are_ignored_recursively(self) -> None:
         gitignore = Path(".gitignore").read_text()
