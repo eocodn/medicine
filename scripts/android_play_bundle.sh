@@ -41,10 +41,10 @@ if [ "${#upload_cert_sha256}" -ne 64 ]; then
     exit 2
 fi
 
-# The host release wrapper owns the authoritative clean-tree checks before and
-# after this container runs. Git metadata is not a release input inside the
-# mounted build container; this value binds the certified artifact provenance
-# to the exact commit already observed by that wrapper.
+# The host release wrapper owns the authoritative clean-tree checks and builds
+# this container from an exact-commit source snapshot. Git metadata is not a
+# release input inside the snapshot; this value binds certified provenance to
+# the same commit whose tracked bytes were materialized for the build.
 source_commit=$(printf '%s' "$MEDICINE_RELEASE_SOURCE_COMMIT" | tr '[:upper:]' '[:lower:]')
 case "$source_commit" in
     *[!0-9a-f]*)

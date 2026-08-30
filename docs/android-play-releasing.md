@@ -57,9 +57,10 @@ from the Play signing setup; do not substitute the fingerprint of an ad-hoc test
 ## Build the Play AAB
 
 Run the repository wrapper from a clean Git worktree. It binds the release to the exact source
-commit, uses the shared `medicine-android:latest` standard image, mounts the upload keystore
-read-only, and stores release artifacts outside the worktree under the durable medicine artifact
-root. Do not set `MEDICINE_OCR_ASSETS_DIR`.
+commit, materializes that commit into a disposable source snapshot, uses the shared
+`medicine-android:latest` standard image, mounts the upload keystore read-only, and stores release
+artifacts outside the worktree under the durable medicine artifact root. Do not set
+`MEDICINE_OCR_ASSETS_DIR`.
 
 ```bash
 export MEDICINE_ANDROID_KEYSTORE_PATH=/absolute/path/to/yakbom-upload.jks
@@ -68,8 +69,10 @@ export MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL='https://<production-reference
 ./scripts/android_play_release.sh
 ```
 
-The wrapper refuses a dirty source tree, records the exact source commit, and verifies that HEAD and
-the clean state did not change during the containerized build. `android_play_bundle.sh` verifies the
+The wrapper refuses a dirty source tree, records the exact source commit, builds only from the
+materialized commit snapshot, and verifies that the operator worktree's HEAD and clean state did not
+change during the containerized build. Same-commit release attempts are serialized so only one
+certification can publish the final commit directory. `android_play_bundle.sh` verifies the
 configured signed Reference Contract before the expensive build, runs Android unit tests, release
 lint, and `bundleRelease`, then runs `bundletool validate` and verifies the produced AAB's
 application ID, versionCode, versionName, target SDK, complete JAR signature, reviewed upload
