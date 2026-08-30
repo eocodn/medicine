@@ -2,6 +2,7 @@
 set -eu
 
 workspace=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
+python_bin=${MEDICINE_PYTHON_BIN:-python3}
 
 require_env() {
     name=$1
@@ -18,14 +19,13 @@ for name in \
     MEDICINE_ANDROID_KEYSTORE_PATH \
     MEDICINE_ANDROID_KEYSTORE_PASSWORD \
     MEDICINE_ANDROID_KEY_ALIAS \
-    MEDICINE_ANDROID_KEY_PASSWORD \
-    MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL
+    MEDICINE_ANDROID_KEY_PASSWORD
 do
     require_env "$name"
 done
 
 if [ -n "${MEDICINE_OCR_ASSETS_DIR-}" ]; then
-    echo "OCR is not enabled for the current Android production release" >&2
+    echo "OCR is not enabled for the current Android release" >&2
     exit 2
 fi
 
@@ -44,8 +44,7 @@ if [ ! -f "$MEDICINE_ANDROID_KEYSTORE_PATH" ]; then
     exit 2
 fi
 
-MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
-    "$workspace/scripts/verify-android-reference-contract.sh"
+"$workspace/scripts/verify-android-reference-contract.sh"
 
 cd "$workspace/android"
 gradle --no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease
@@ -83,7 +82,6 @@ if ! printf '%s\n' "$badging" | grep -F "versionName='$MEDICINE_ANDROID_VERSION_
 fi
 
 "$apksigner" verify --verbose --print-certs "$apk"
-python3 "$workspace/scripts/verify-no-ocr-android-artifact.py" "$apk"
-MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
-    "$workspace/scripts/verify-android-reference-contract.sh" --verify-full-artifact
+"$python_bin" "$workspace/scripts/verify-no-ocr-android-artifact.py" "$apk"
+"$workspace/scripts/verify-android-reference-contract.sh" --verify-full-artifact
 printf 'verified signed Android release: %s\n' "$apk"

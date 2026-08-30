@@ -56,6 +56,6 @@ medicine-v0.2.0-arm64-v8a.apk
 SHA256SUMS
 ```
 
-The current Android package intentionally targets `arm64-v8a` only. This developer GitHub Release path is not a production signing path. Google Play/AAB publishing and durable release signing remain separate distribution work.
+The current Android package intentionally targets `arm64-v8a` only. Distribution is APK-only: the GitHub Developer Release path publishes its verified APK, while `scripts/android_release_build.sh` produces a separately signed APK when a durable release key is required.
 
 Local Android development and verification still use Docker/Compose. The self-hosted `wsl-ci` runner path is CI-only, so the local host does not need a Gradle or Android SDK installation.

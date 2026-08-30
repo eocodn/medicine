@@ -115,8 +115,8 @@ class OcrOptionalSurfaceTest(unittest.TestCase):
         verifier = ROOT / "scripts" / "verify-no-ocr-android-artifact.py"
         self.assertTrue(verifier.is_file())
         with tempfile.TemporaryDirectory() as tmp:
-            clean = Path(tmp) / "clean.aab"
-            dirty = Path(tmp) / "dirty.aab"
+            clean = Path(tmp) / "clean.apk"
+            dirty = Path(tmp) / "dirty.apk"
             with zipfile.ZipFile(clean, "w") as archive:
                 archive.writestr("base/assets/index.html", "<main>약봄</main>")
                 archive.writestr("base/lib/arm64-v8a/libmedicine_core.so", b"native")
