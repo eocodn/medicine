@@ -27,6 +27,7 @@ from .release_window import (
 )
 from .release_signing import verify_signed_envelope
 from .source_layout import MfdsSourceLayout
+from .sources import preflight_permit_api
 from .substance_build import (
     assemble_substance_database,
     rebuild_substance_database,
@@ -90,6 +91,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync = sub.add_parser("sync", parents=[common_api], help="Download the complete MFDS permit, item-level DUR, and ingredient DUR source set")
     sync.set_defaults(command="sync")
+
+    mfds_preflight = sub.add_parser(
+        "mfds-preflight",
+        help="Check authenticated MFDS permit API availability with one short request",
+    )
+    mfds_preflight.add_argument("--service-key", default=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
+    mfds_preflight.add_argument("--timeout-seconds", type=float, default=8.0)
+    mfds_preflight.add_argument("--json", action="store_true")
 
     build = sub.add_parser("build", help="Build the canonical DB from preserved MFDS API snapshots")
     build.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -289,7 +298,12 @@ def _mfds_source_layout(args: argparse.Namespace) -> MfdsSourceLayout:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command == "sync":
+    if args.command == "mfds-preflight":
+        payload = preflight_permit_api(
+            _require_key(args.service_key),
+            timeout=args.timeout_seconds,
+        )
+    elif args.command == "sync":
         payload = sync_reference_sources(
             _mfds_source_layout(args),
             service_key=_require_key(args.service_key),

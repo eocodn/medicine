@@ -47,6 +47,33 @@ def _extract_response(payload: dict, label: str) -> tuple[list[dict], int]:
     return [row for row in items if isinstance(row, dict)], total
 
 
+def preflight_permit_api(service_key: str, *, timeout: float = 8.0) -> dict:
+    key = service_key.strip()
+    if not key:
+        raise ValueError("service key is required")
+    if timeout <= 0:
+        raise ValueError("timeout must be positive")
+    params = urllib.parse.urlencode(
+        {"serviceKey": key, "pageNo": 1, "numOfRows": 1, "type": "json"},
+        safe="%",
+    )
+    rows, total = _extract_response(
+        request_json(
+            f"{MFDS_PERMIT_API_BASE}?{params}",
+            label="MFDS permit API preflight",
+            timeout=timeout,
+            attempts=1,
+        ),
+        "MFDS permit API preflight",
+    )
+    return {
+        "status": "available",
+        "dataset_key": PERMIT_SOURCE.dataset_key,
+        "total_count": total,
+        "sample_rows": len(rows),
+    }
+
+
 def fetch_permit_page(service_key: str, page: int, page_size: int) -> tuple[list[dict], int]:
     params = urllib.parse.urlencode(
         {"serviceKey": service_key, "pageNo": page, "numOfRows": page_size, "type": "json"}, safe="%"
