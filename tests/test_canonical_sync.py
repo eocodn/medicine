@@ -112,6 +112,21 @@ class CanonicalSyncTest(CanonicalDatabaseTestFixture):
         self.assertEqual(len(completed), expected_sources)
         self.assertEqual(result["source_rows"], sum(int(event["row_count"]) for event in completed))
         self.assertTrue(all(event.get("job") == "mfds-source-sync" for event in events))
+
+    def test_mfds_preflight_cli_uses_explicit_short_timeout(self) -> None:
+        payload = {"status": "available", "dataset_key": "mfds_permit:products", "total_count": 1}
+        with (
+            mock.patch("medicine_canonical.cli.preflight_permit_api", return_value=payload) as preflight,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(
+                canonical_main(["mfds-preflight", "--service-key", "test-key", "--timeout-seconds", "8", "--json"]),
+                0,
+            )
+
+        preflight.assert_called_once_with("test-key", timeout=8.0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "available")
+
     def test_sync_cli_enables_structured_progress_unless_quiet(self) -> None:
         payload = {"source_rows": 0, "product_sources": {}, "ingredient_sources": {}}
         for quiet in (False, True):

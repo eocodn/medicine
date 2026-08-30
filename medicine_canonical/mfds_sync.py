@@ -158,7 +158,7 @@ def _raise_service_error(payload: dict, label: str) -> None:
     # endpoint-specific success normalization remains in each source module.
 
 
-def request_json(url: str, *, label: str, timeout: int = 45, attempts: int = 4) -> dict:
+def request_json(url: str, *, label: str, timeout: float = 45, attempts: int = 4) -> dict:
     last_error: Exception | None = None
     for attempt in range(attempts):
         request = urllib.request.Request(url, headers={"Accept": "application/json"})

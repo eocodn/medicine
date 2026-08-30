@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from medicine_canonical.mfds_sync import request_json, sync_paginated_jsonl
+from medicine_canonical.sources import preflight_permit_api
 
 
 class MfdsSyncEngineTest(unittest.TestCase):
@@ -29,6 +30,26 @@ class MfdsSyncEngineTest(unittest.TestCase):
         self.assertNotIn("from .sources import _sync_paginated_jsonl", ingredient_source)
         self.assertIn("from .mfds_sync import request_json, sync_paginated_jsonl", product_source)
         self.assertIn("from .mfds_sync import request_json, sync_paginated_jsonl", ingredient_source)
+
+    def test_permit_preflight_uses_one_small_short_timeout_request(self) -> None:
+        payload = {
+            "response": {
+                "header": {"resultCode": "00"},
+                "body": {"totalCount": 42990, "items": [{"ITEM_SEQ": "1"}]},
+            }
+        }
+        with mock.patch("medicine_canonical.sources.request_json", return_value=payload) as request:
+            result = preflight_permit_api("test-key", timeout=8)
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["dataset_key"], "mfds_permit:products")
+        self.assertEqual(result["total_count"], 42990)
+        url = request.call_args.args[0]
+        self.assertIn("pageNo=1", url)
+        self.assertIn("numOfRows=1", url)
+        self.assertIn("serviceKey=test-key", url)
+        self.assertEqual(request.call_args.kwargs["timeout"], 8)
+        self.assertEqual(request.call_args.kwargs["attempts"], 1)
 
     def test_nonretryable_http_error_preserves_malformed_envelope_failure(self) -> None:
         error = urllib.error.HTTPError(
