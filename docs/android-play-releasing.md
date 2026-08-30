@@ -45,43 +45,51 @@ MEDICINE_ANDROID_KEYSTORE_PATH
 MEDICINE_ANDROID_KEYSTORE_PASSWORD
 MEDICINE_ANDROID_KEY_ALIAS
 MEDICINE_ANDROID_KEY_PASSWORD
+MEDICINE_ANDROID_UPLOAD_CERT_SHA256
 MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL
 ```
 
 `MEDICINE_ANDROID_VERSION_CODE` and `MEDICINE_ANDROID_VERSION_NAME` must match
-`android/release.properties`.
+`android/release.properties`. `MEDICINE_ANDROID_UPLOAD_CERT_SHA256` is the SHA-256 certificate
+fingerprint of the upload certificate registered for this Play application. Copy the reviewed value
+from the Play signing setup; do not substitute the fingerprint of an ad-hoc test key.
 
 ## Build the Play AAB
 
-Run the Play build inside the standard Android development image with the upload keystore mounted
-read-only. Do not set `MEDICINE_OCR_ASSETS_DIR`.
+Run the repository wrapper from a clean Git worktree. It binds the release to the exact source
+commit, uses the shared `medicine-android:latest` standard image, mounts the upload keystore
+read-only, and stores release artifacts outside the worktree under the durable medicine artifact
+root. Do not set `MEDICINE_OCR_ASSETS_DIR`.
 
 ```bash
-docker compose -p medicine_android_play build android
-docker compose -p medicine_android_play run --rm \
-  -v "$ANDROID_RELEASE_KEYSTORE:/run/secrets/yakbom-upload.jks:ro" \
-  -e MEDICINE_ANDROID_VERSION_CODE \
-  -e MEDICINE_ANDROID_VERSION_NAME \
-  -e MEDICINE_ANDROID_KEYSTORE_PASSWORD \
-  -e MEDICINE_ANDROID_KEY_ALIAS \
-  -e MEDICINE_ANDROID_KEY_PASSWORD \
-  -e MEDICINE_ANDROID_KEYSTORE_PATH=/run/secrets/yakbom-upload.jks \
-  -e MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL \
-  android sh /workspace/scripts/android_play_bundle.sh
+export MEDICINE_ANDROID_KEYSTORE_PATH=/absolute/path/to/yakbom-upload.jks
+export MEDICINE_ANDROID_UPLOAD_CERT_SHA256='<reviewed-play-upload-certificate-sha256>'
+export MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL='https://<production-reference-host>/'
+./scripts/android_play_release.sh
 ```
 
-`android_play_bundle.sh` verifies the exact configured production signed Reference Contract before
-the expensive build, runs Android unit tests, release lint, and `bundleRelease`, then verifies the
-produced AAB's application ID, versionCode, versionName, target SDK, complete JAR signature, and
-no-OCR artifact boundary. It rechecks the production Reference Contract immediately before
-preserving the bundle. The preserved output is `dist/play/yakbom-v<versionName>.aab`.
+The wrapper refuses a dirty source tree, records the exact source commit, and verifies that HEAD and
+the clean state did not change during the containerized build. `android_play_bundle.sh` verifies the
+configured signed Reference Contract before the expensive build, runs Android unit tests, release
+lint, and `bundleRelease`, then runs `bundletool validate` and verifies the produced AAB's
+application ID, versionCode, versionName, target SDK, complete JAR signature, reviewed upload
+certificate SHA-256, and no-OCR artifact boundary. Immediately before certification it downloads
+the signed full reference artifact from the production channel and verifies both the compressed
+artifact SHA-256/size and the decompressed target SHA-256/size from the authenticated root.
+
+The preserved release directory is
+`${MEDICINE_ARTIFACTS_DIR:-$HOME/dev/.artifacts/medicine}/android-play/<source commit>/`. It contains
+the AAB, an AAB SHA-256 file, and provenance recording the source commit, AAB SHA-256, package and
+version contract, upload-certificate fingerprint, and production reference base URL. Preserve those
+files together for the Play upload handoff.
 
 ## Operator / policy gates before production
 
 The repository cannot complete these gates by itself. They require Play Console configuration,
 public policy information, or a product/legal decision:
 
-1. Create the Play Console app with package ID `kr.yakbom.app` and enable Play App Signing.
+1. Create the Play Console app with package ID `kr.yakbom.app`, enable Play App Signing, register the
+   upload certificate, and record its reviewed SHA-256 for `MEDICINE_ANDROID_UPLOAD_CERT_SHA256`.
 2. Provision the production reference hostname and set `MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL`.
 3. Publish a public, non-PDF 개인정보처리방침 URL and expose the policy or link from the app before
    production submission. Developer/controller identity and contact details must be supplied by the

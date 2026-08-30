@@ -85,5 +85,5 @@ fi
 "$apksigner" verify --verbose --print-certs "$apk"
 python3 "$workspace/scripts/verify-no-ocr-android-artifact.py" "$apk"
 MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
-    "$workspace/scripts/verify-android-reference-contract.sh"
+    "$workspace/scripts/verify-android-reference-contract.sh" --verify-full-artifact
 printf 'verified signed Android release: %s\n' "$apk"

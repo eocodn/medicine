@@ -414,10 +414,12 @@ Actions workflow가 native GitHub-hosted Ubuntu runner에서 별도 signing secr
 GitHub Release에 게시합니다. 이 경로는 정식 release signing/Play 배포와 별개이며, 버전 변경과 태그 순서는
 `docs/android-releasing.md`를 따릅니다.
 
-Google Play production은 `kr.yakbom.app`, targetSdk 36, signed no-OCR AAB를 사용합니다. Play용 AAB 생성과
-application ID/version/target SDK/signature/no-OCR 검증은 `scripts/android_play_bundle.sh`에 묶여 있으며,
-운영 reference hostname, Play App Signing/upload key, 개인정보처리방침·Health Apps/Data safety, MFDS 판단 및
-데이터 이용조건처럼 저장소 밖 결정이 필요한 항목은 `docs/android-play-releasing.md`의 체크리스트를 따릅니다.
+Google Play production은 `kr.yakbom.app`, targetSdk 36, signed no-OCR AAB를 사용합니다. 정식 Play 빌드는
+clean Git commit을 고정하는 `scripts/android_play_release.sh`에서 시작하며, 내부 AAB gate는 `bundletool validate`,
+application ID/version/target SDK, 등록된 upload-certificate SHA-256, no-OCR, 실제 production full reference artifact,
+AAB SHA-256/provenance까지 검증합니다. 산출물은 저장소가 아니라 `~/dev/.artifacts/medicine/android-play/<commit>/`
+아래에 보존합니다. 운영 reference hostname, Play App Signing/upload key, 개인정보처리방침·Health Apps/Data safety,
+MFDS 판단 및 데이터 이용조건처럼 저장소 밖 결정이 필요한 항목은 `docs/android-play-releasing.md`의 체크리스트를 따릅니다.
 
 데이터 이용조건 검토는 제품 배포 전 별도 release 절차로 남아 있습니다.
 

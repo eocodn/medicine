@@ -20,10 +20,42 @@ for name in \
     MEDICINE_ANDROID_KEYSTORE_PASSWORD \
     MEDICINE_ANDROID_KEY_ALIAS \
     MEDICINE_ANDROID_KEY_PASSWORD \
+    MEDICINE_ANDROID_UPLOAD_CERT_SHA256 \
+    MEDICINE_RELEASE_SOURCE_COMMIT \
     MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL
 do
     require_env "$name"
 done
+
+upload_cert_sha256=$(printf '%s' "$MEDICINE_ANDROID_UPLOAD_CERT_SHA256" \
+    | tr -d '[:space:]:' \
+    | tr '[:upper:]' '[:lower:]')
+case "$upload_cert_sha256" in
+    *[!0-9a-f]*|'')
+        echo "MEDICINE_ANDROID_UPLOAD_CERT_SHA256 must be a SHA-256 certificate fingerprint" >&2
+        exit 2
+        ;;
+esac
+if [ "${#upload_cert_sha256}" -ne 64 ]; then
+    echo "MEDICINE_ANDROID_UPLOAD_CERT_SHA256 must be a SHA-256 certificate fingerprint" >&2
+    exit 2
+fi
+
+# The host release wrapper owns the authoritative clean-tree checks before and
+# after this container runs. Git metadata is not a release input inside the
+# mounted build container; this value binds the certified artifact provenance
+# to the exact commit already observed by that wrapper.
+source_commit=$(printf '%s' "$MEDICINE_RELEASE_SOURCE_COMMIT" | tr '[:upper:]' '[:lower:]')
+case "$source_commit" in
+    *[!0-9a-f]*)
+        echo "MEDICINE_RELEASE_SOURCE_COMMIT must be an exact Git commit ID" >&2
+        exit 2
+        ;;
+esac
+if [ "${#source_commit}" -ne 40 ] && [ "${#source_commit}" -ne 64 ]; then
+    echo "MEDICINE_RELEASE_SOURCE_COMMIT must be an exact Git commit ID" >&2
+    exit 2
+fi
 
 if [ -n "${MEDICINE_OCR_ASSETS_DIR-}" ]; then
     echo "OCR is not enabled for the current Android production release" >&2
@@ -38,6 +70,10 @@ if [ ! -r "$BUNDLETOOL_JAR" ]; then
 fi
 if ! command -v jarsigner >/dev/null 2>&1; then
     echo "jarsigner is unavailable" >&2
+    exit 3
+fi
+if ! command -v keytool >/dev/null 2>&1; then
+    echo "keytool is unavailable" >&2
     exit 3
 fi
 if ! command -v python3 >/dev/null 2>&1; then
@@ -56,6 +92,8 @@ if [ ! -f "$aab" ]; then
     echo "signed Play AAB was not produced at $aab" >&2
     exit 3
 fi
+
+java -jar "$BUNDLETOOL_JAR" validate --bundle="$aab"
 
 bundle_manifest_value() {
     xpath=$1
@@ -84,14 +122,30 @@ if [ "$target_sdk" != "36" ]; then
     exit 3
 fi
 
-"$workspace/scripts/verify-signed-android-bundle.sh" "$aab"
+"$workspace/scripts/verify-signed-android-bundle.sh" "$aab" "$upload_cert_sha256"
 python3 "$workspace/scripts/verify-no-ocr-android-artifact.py" "$aab"
 MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
-    "$workspace/scripts/verify-android-reference-contract.sh"
+    "$workspace/scripts/verify-android-reference-contract.sh" --verify-full-artifact
 
 mkdir -p "$output_dir"
 artifact="$output_dir/yakbom-v${MEDICINE_ANDROID_VERSION_NAME}.aab"
 install -m 0644 "$aab" "$artifact"
 cmp -s "$aab" "$artifact"
+artifact_sha256=$(sha256sum "$artifact" | awk '{print $1}')
+checksum="$artifact.sha256"
+provenance="$output_dir/yakbom-v${MEDICINE_ANDROID_VERSION_NAME}.provenance.txt"
+printf '%s  %s\n' "$artifact_sha256" "$(basename "$artifact")" >"$checksum"
+cat >"$provenance" <<EOF
+source_commit=$source_commit
+artifact_sha256=$artifact_sha256
+application_id=$application_id
+version_name=$version_name
+version_code=$version_code
+target_sdk=$target_sdk
+upload_certificate_sha256=$upload_cert_sha256
+reference_base_url=$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL
+EOF
 printf 'verified Android Play bundle: %s (applicationId=%s versionName=%s versionCode=%s targetSdk=%s)\n' \
     "$artifact" "$application_id" "$version_name" "$version_code" "$target_sdk"
+printf 'Play bundle provenance: %s (sourceCommit=%s sha256=%s)\n' \
+    "$provenance" "$source_commit" "$artifact_sha256"
