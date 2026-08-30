@@ -178,33 +178,32 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("signingConfigs", gradle)
         release = gradle.split('getByName("release") {', 1)[1].split("\n        }", 1)[0]
         self.assertIn("signingConfig", release)
+        self.assertIn("releaseEnvironment?.let", release)
         self.assertIn("requireReleaseEnvironment", gradle)
         self.assertIn('tasks.register("verifyReleaseEnvironment")', gradle)
-    def test_android_aggregate_bundle_requires_release_environment(self) -> None:
+    def test_android_release_allows_unsigned_build_but_rejects_partial_signing_environment(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
-        self.assertIn("tasks.configureEach", gradle)
-        self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
-        self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
-    def test_android_release_guard_uses_resolved_tasks_not_raw_cli_names(self) -> None:
-        gradle = Path("android/app/build.gradle.kts").read_text()
+        release_script = Path("scripts/android_release_build.sh").read_text()
 
-        self.assertNotIn("gradle.startParameter.taskNames", gradle)
-        self.assertIn('tasks.register("verifyReleaseEnvironment")', gradle)
-        self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
-        self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
+        self.assertIn("configuredReleaseEnvironmentNames", gradle)
+        self.assertIn("release signing environment must be fully specified or omitted", gradle)
+        self.assertNotIn("tasks.configureEach", gradle)
+        self.assertIn("verifyReleaseEnvironment", release_script)
     def test_android_release_keystores_are_ignored_recursively(self) -> None:
         gitignore = Path(".gitignore").read_text()
 
         self.assertIn("android/**/*.jks", gitignore)
         self.assertIn("android/**/*.keystore", gitignore)
+        self.assertIn("gha-creds-*.json", gitignore)
     def test_android_release_keystores_are_excluded_from_docker_context(self) -> None:
         dockerignore = Path(".dockerignore").read_text()
 
         self.assertIn("android/**/*.jks", dockerignore)
         self.assertIn("android/**/*.keystore", dockerignore)
+        self.assertIn("gha-creds-*.json", dockerignore)
     def test_android_release_passwords_are_prompted_without_literal_secret_exports(self) -> None:
         readme = Path("README.md").read_text()
-        release_section = readme.split("release 변형은", 1)[1].split("## 의료 정보 주의", 1)[0]
+        release_section = readme.split("직접 signed release APK", 1)[1].split("## 의료 정보 주의", 1)[0]
 
         self.assertNotIn("export MEDICINE_ANDROID_KEYSTORE_PASSWORD='...'", release_section)
         self.assertNotIn("export MEDICINE_ANDROID_KEY_PASSWORD='...'", release_section)
@@ -366,7 +365,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls[0], "reference:")
         self.assertIn(
-            "gradlew:--no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease",
+            "gradlew:--no-daemon --dependency-verification strict verifyReleaseEnvironment testDebugUnitTest lintRelease assembleRelease",
             calls,
         )
         self.assertTrue(any(call.startswith("aapt:dump badging ") for call in calls))

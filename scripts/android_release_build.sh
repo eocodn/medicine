@@ -47,7 +47,8 @@ fi
 "$workspace/scripts/verify-android-reference-contract.sh"
 
 cd "$workspace/android"
-./gradlew --no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease
+./gradlew --no-daemon --dependency-verification strict \
+    verifyReleaseEnvironment testDebugUnitTest lintRelease assembleRelease
 
 apk="$workspace/android/app/build/outputs/apk/release/app-release.apk"
 if [ ! -f "$apk" ]; then

@@ -398,8 +398,9 @@ APK는 `android/app/build/outputs/apk/debug/app-debug.apk`에 생성됩니다. �
 별도 웹 서버 없이 동작합니다. 최초 bootstrap 완료 후에는 reference LKG를 로컬에서 사용합니다. 현재 Gradle 설정은
 개인 기기 우선으로 `arm64-v8a`만 패키징합니다.
 
-release 변형은 배포 실수 방지를 위해 서명키와 버전을 명시하지 않으면 빌드하지 않습니다. 서명키 파일은 저장소에
-두지 말고 컨테이너에 read-only로 마운트합니다. 아래 환경변수의 비밀번호 값은 shell history나 문서에 기록하지 않습니다.
+직접 signed release APK를 만드는 운영자 경로는 배포 실수 방지를 위해 서명키와 버전을 모두 명시해야 합니다.
+서명키 파일은 저장소에 두지 말고 컨테이너에 read-only로 마운트합니다. 아래 환경변수의 비밀번호 값은 shell history나
+문서에 기록하지 않습니다. 일반 `assembleRelease`는 CI의 secret-free unsigned 후보 빌드를 위해 서명 입력 없이도 허용됩니다.
 
 ```bash
 export MEDICINE_ANDROID_VERSION_CODE="$(sed -n 's/^versionCode=//p' android/release.properties)"
@@ -436,7 +437,8 @@ Docker 이미지 빌드 중 고정 SHA-256을 확인합니다. 의존성을 의�
 `--write-locks --write-verification-metadata sha256`로 두 파일을 함께 갱신하고 변경 내용을 검토합니다.
 
 개발자용 GitHub 배포는 COWI와 같은 exact-SHA handoff를 사용합니다. 태그 전에 **Android Developer Release Check**
-Actions workflow가 self-hosted `wsl-ci` runner에서 GitHub OIDC/Workload Identity Federation으로 GCP Secret Manager의 Android release signing identity를 일시적으로 가져와 release APK를 한 번 빌드·검증하고 해당 workflow run에 묶어 보관하며,
+Actions workflow가 self-hosted `wsl-ci` runner에서 signing secret 없이 unsigned release 후보를 먼저 빌드·검증하고,
+별도의 GitHub-hosted ephemeral signing job이 GitHub OIDC/Workload Identity Federation으로 GCP Secret Manager의 Android release signing identity를 일시적으로 가져와 그 exact candidate만 `apksigner`로 서명합니다.
 같은 commit에 `vX.Y.Z` 태그를 push하면 **Android Developer Release** workflow가 검증된 APK를 재빌드하지 않고
 GitHub Release에 게시합니다. GitHub 자체에는 signing secret을 저장하지 않으며, release certificate SHA-256은
 `deploy/android-release-signing-certificate.sha256`에 고정되어 잘못된 signing identity로의 배포를 차단합니다.

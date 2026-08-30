@@ -19,7 +19,9 @@ class AndroidDirectApkDistributionTest(unittest.TestCase):
         self.assertIn("verify-no-ocr-android-artifact.py", release)
         self.assertIn("package: name='kr.yakbom.app'", release)
         self.assertNotIn("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", release)
-        self.assertIn("./scripts/android_release_build.sh", github_release)
+        self.assertIn("app-release-unsigned.apk", github_release)
+        self.assertIn("-u MEDICINE_ANDROID_KEYSTORE_PATH", github_release)
+        self.assertNotIn("${MEDICINE_ANDROID_KEYSTORE", github_release)
 
 
 if __name__ == "__main__":

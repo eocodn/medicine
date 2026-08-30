@@ -264,10 +264,13 @@ fun requireReleaseEnvironment(): AndroidReleaseEnvironment {
     )
 }
 
-val releaseEnvironment = if (releaseEnvironmentNames.all { !System.getenv(it).isNullOrEmpty() }) {
-    requireReleaseEnvironment()
-} else {
-    null
+val configuredReleaseEnvironmentNames = releaseEnvironmentNames.filter {
+    !System.getenv(it).isNullOrEmpty()
+}
+val releaseEnvironment = when (configuredReleaseEnvironmentNames.size) {
+    0 -> null
+    releaseEnvironmentNames.size -> requireReleaseEnvironment()
+    else -> error("release signing environment must be fully specified or omitted")
 }
 
 val verifyReleaseEnvironment = tasks.register("verifyReleaseEnvironment") {
@@ -281,14 +284,6 @@ val verifyReleaseEnvironment = tasks.register("verifyReleaseEnvironment") {
         require(System.getenv("MEDICINE_OCR_ASSETS_DIR").isNullOrBlank()) {
             "OCR is not enabled for the current Android release"
         }
-    }
-}
-
-// Gradle accepts abbreviated task names (for example, `assRel`), so guard the
-// resolved release tasks rather than trying to infer intent from raw CLI names.
-tasks.configureEach {
-    if (name != verifyReleaseEnvironment.name && name.contains("Release", ignoreCase = true)) {
-        dependsOn(verifyReleaseEnvironment)
     }
 }
 
@@ -411,7 +406,9 @@ android {
         }
         getByName("release") {
             buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$effectiveReferenceUpdateBaseUrl\"")
-            signingConfig = signingConfigs.getByName("release")
+            releaseEnvironment?.let {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

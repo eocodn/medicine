@@ -4,6 +4,7 @@ set -euo pipefail
 tag="${1:?usage: check-android-release.sh <tag> <output-dir>}"
 output_dir="${2:?usage: check-android-release.sh <tag> <output-dir>}"
 workspace=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
+python_bin=${MEDICINE_PYTHON_BIN:-python3}
 cd "${workspace}"
 
 ./scripts/verify-android-release-version.sh "${tag}"
@@ -16,59 +17,53 @@ fi
 
 versionName="$(sed -n 's/^versionName=//p' android/release.properties | head -n 1)"
 versionCode="$(sed -n 's/^versionCode=//p' android/release.properties | head -n 1)"
-export MEDICINE_ANDROID_VERSION_NAME="$versionName"
-export MEDICINE_ANDROID_VERSION_CODE="$versionCode"
 
-for name in \
-    MEDICINE_ANDROID_KEYSTORE_PATH \
-    MEDICINE_ANDROID_KEYSTORE_PASSWORD \
-    MEDICINE_ANDROID_KEY_ALIAS \
-    MEDICINE_ANDROID_KEY_PASSWORD
-do
-    if [[ -z "${!name:-}" ]]; then
-        printf '%s is required for Android developer releases\n' "$name" >&2
-        exit 1
-    fi
-done
+./scripts/verify-android-reference-contract.sh
+(
+    cd android
+    env \
+        -u MEDICINE_ANDROID_VERSION_CODE \
+        -u MEDICINE_ANDROID_VERSION_NAME \
+        -u MEDICINE_ANDROID_KEYSTORE_PATH \
+        -u MEDICINE_ANDROID_KEYSTORE_PASSWORD \
+        -u MEDICINE_ANDROID_KEY_ALIAS \
+        -u MEDICINE_ANDROID_KEY_PASSWORD \
+        ./gradlew --no-daemon --dependency-verification strict \
+            testDebugUnitTest lintRelease assembleRelease
+)
 
-./scripts/android_release_build.sh
-
-source_apk="android/app/build/outputs/apk/release/app-release.apk"
+source_apk="android/app/build/outputs/apk/release/app-release-unsigned.apk"
 if [[ ! -f "${source_apk}" ]]; then
-    printf 'release-signed Android APK is missing: %s\n' "${source_apk}" >&2
+    printf 'unsigned Android release APK is missing: %s\n' "${source_apk}" >&2
     exit 1
 fi
 
-: "${ANDROID_HOME:?ANDROID_HOME is required to verify the release APK}"
-apksigner="${ANDROID_HOME}/build-tools/36.0.0/apksigner"
-if [[ ! -x "${apksigner}" ]]; then
-    printf 'apksigner is unavailable at %s\n' "${apksigner}" >&2
+: "${ANDROID_HOME:?ANDROID_HOME is required to verify the unsigned release APK}"
+aapt="${ANDROID_HOME}/build-tools/36.0.0/aapt"
+if [[ ! -x "${aapt}" ]]; then
+    printf 'aapt is unavailable at %s\n' "${aapt}" >&2
     exit 1
 fi
 
-fingerprint_file="deploy/android-release-signing-certificate.sha256"
-if [[ ! -f "${fingerprint_file}" ]]; then
-    printf 'Android release signing certificate fingerprint is missing: %s\n' "${fingerprint_file}" >&2
+badging="$("${aapt}" dump badging "${source_apk}")"
+if ! printf '%s\n' "${badging}" | grep -F "package: name='kr.yakbom.app'" >/dev/null; then
+    printf 'unsigned release APK applicationId is not kr.yakbom.app\n' >&2
     exit 1
 fi
-expected_fingerprint="$(tr -d '[:space:]' < "${fingerprint_file}" | tr '[:upper:]' '[:lower:]')"
-if [[ ! "${expected_fingerprint}" =~ ^[0-9a-f]{64}$ ]]; then
-    printf 'Android release signing certificate fingerprint is invalid\n' >&2
+if ! printf '%s\n' "${badging}" | grep -F "versionCode='${versionCode}'" >/dev/null; then
+    printf 'unsigned release APK versionCode does not match android/release.properties\n' >&2
     exit 1
 fi
-certificate_output="$("${apksigner}" verify --print-certs "${source_apk}")"
-actual_fingerprint="$(printf '%s\n' "${certificate_output}" \
-    | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
-    | head -n 1 \
-    | tr '[:upper:]' '[:lower:]')"
-if [[ "${actual_fingerprint}" != "${expected_fingerprint}" ]]; then
-    printf 'Android release certificate SHA-256 digest does not match the pinned signing identity\n' >&2
+if ! printf '%s\n' "${badging}" | grep -F "versionName='${versionName}'" >/dev/null; then
+    printf 'unsigned release APK versionName does not match android/release.properties\n' >&2
     exit 1
 fi
+"${python_bin}" "${workspace}/scripts/verify-no-ocr-android-artifact.py" "${source_apk}"
+./scripts/verify-android-reference-contract.sh --verify-full-artifact
 
 mkdir -p "${output_dir}"
-artifact="${output_dir}/medicine-${tag}-arm64-v8a.apk"
+artifact="${output_dir}/medicine-${tag}-arm64-v8a-unsigned.apk"
 install -m 0644 "${source_apk}" "${artifact}"
 cmp --silent "${source_apk}" "${artifact}"
-printf 'validated durable-signed Android release artifact: %s (versionName=%s versionCode=%s)\n' \
+printf 'validated unsigned Android release candidate: %s (versionName=%s versionCode=%s)\n' \
     "${artifact}" "${versionName}" "${versionCode}"
