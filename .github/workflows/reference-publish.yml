@@ -16,6 +16,14 @@ on:
   schedule:
     - cron: '17 3 * * *'
       timezone: "Asia/Seoul"
+    - cron: '32 3 * * *'
+      timezone: "Asia/Seoul"
+    - cron: '52 3 * * *'
+      timezone: "Asia/Seoul"
+    - cron: '22 4 * * *'
+      timezone: "Asia/Seoul"
+    - cron: '22 5 * * *'
+      timezone: "Asia/Seoul"
 
 permissions:
   contents: read
@@ -25,8 +33,65 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sources:
+  gate:
     if: ${{ github.event_name != 'schedule' || vars.REFERENCE_PUBLISH_SCHEDULE_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      should_run: ${{ steps.gate.outputs.should_run }}
+      day: ${{ steps.day.outputs.day }}
+    steps:
+      - name: Resolve Seoul publication day
+        id: day
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "day=$(TZ=Asia/Seoul date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether today's scheduled publish already succeeded
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          DAY: ${{ steps.day.outputs.day }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" != "schedule" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          runs="$(
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow reference-publish.yml \
+              --event schedule \
+              --limit 10 \
+              --json databaseId,createdAt
+          )"
+          while IFS=$'\t' read -r run_id created_at; do
+            [[ -n "$run_id" && "$run_id" != "$GITHUB_RUN_ID" ]] || continue
+            run_day="$(TZ=Asia/Seoul date -d "$created_at" +%F)"
+            [[ "$run_day" == "$DAY" ]] || continue
+            if gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" \
+              --jq '.jobs[] | select(.name == "publish" and .conclusion == "success") | .id' \
+              | grep -q .; then
+              echo "Scheduled Reference DB publish already succeeded for ${DAY}; skipping retry slot."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done < <(jq -r '.[] | [.databaseId, .createdAt] | @tsv' <<<"$runs")
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+  sources:
+    needs: gate
+    if: ${{ needs.gate.result == 'success' && needs.gate.outputs.should_run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -55,8 +120,19 @@ jobs:
       - name: Install source tooling
         run: python -m pip install --disable-pip-version-check --no-cache-dir .
 
-      - name: Restore latest verified source snapshot
-        id: source-cache-restore
+      - name: Restore today's completed scheduled source snapshot
+        id: scheduled-source-cache-restore
+        if: ${{ github.event_name == 'schedule' }}
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            data/canonical/raw
+            data/canonical/mfds_ingredient
+            data/canonical/substances
+          key: reference-sources-v4-${{ needs.gate.outputs.day }}
+
+      - name: Restore latest completed source snapshot for manual publish
+        id: manual-source-cache-restore
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.refresh_sources != true }}
         uses: actions/cache/restore@v5
         with:
@@ -64,9 +140,9 @@ jobs:
             data/canonical/raw
             data/canonical/mfds_ingredient
             data/canonical/substances
-          key: reference-sources-v3-reuse-${{ github.run_id }}
+          key: reference-sources-v4-reuse-${{ github.run_id }}
           restore-keys: |
-            reference-sources-v3-
+            reference-sources-v4-
 
       - name: Resolve source snapshot state
         id: source-state
@@ -74,16 +150,37 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REFRESH_SOURCES: ${{ inputs.refresh_sources }}
-          MATCHED_KEY: ${{ steps.source-cache-restore.outputs.cache-matched-key }}
+          SCHEDULED_MATCHED_KEY: ${{ steps.scheduled-source-cache-restore.outputs.cache-matched-key }}
+          MANUAL_MATCHED_KEY: ${{ steps.manual-source-cache-restore.outputs.cache-matched-key }}
+          DAY: ${{ needs.gate.outputs.day }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == "schedule" || "$REFRESH_SOURCES" == "true" || -z "$MATCHED_KEY" ]]; then
-            echo "sync=true" >> "$GITHUB_OUTPUT"
-            echo "key=reference-sources-v3-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
-          else
-            echo "sync=false" >> "$GITHUB_OUTPUT"
-            echo "key=$MATCHED_KEY" >> "$GITHUB_OUTPUT"
+          matched_key="${SCHEDULED_MATCHED_KEY:-}"
+          if [[ -z "$matched_key" ]]; then
+            matched_key="${MANUAL_MATCHED_KEY:-}"
           fi
+
+          if [[ "$EVENT_NAME" == "schedule" && -n "$matched_key" ]]; then
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+            echo "key=$matched_key" >> "$GITHUB_OUTPUT"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" && "$REFRESH_SOURCES" != "true" && -n "$matched_key" ]]; then
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+            echo "key=$matched_key" >> "$GITHUB_OUTPUT"
+          else
+            echo "sync=true" >> "$GITHUB_OUTPUT"
+            if [[ "$EVENT_NAME" == "schedule" ]]; then
+              echo "key=reference-sources-v4-${DAY}" >> "$GITHUB_OUTPUT"
+            else
+              echo "key=reference-sources-v4-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Preflight current MFDS permit API
+        if: ${{ steps.source-state.outputs.sync == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          medicine-canonical mfds-preflight --timeout-seconds 8 --json
 
       - name: Sync official substance identity snapshots
         if: ${{ steps.source-state.outputs.sync == 'true' }}
@@ -97,16 +194,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            echo "MFDS sync attempt ${attempt}/3"
-            if medicine-canonical sync --json; then
-              exit 0
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              sleep $((attempt * 5))
-            fi
-          done
-          exit 1
+          medicine-canonical sync --json
 
       - name: Save refreshed source snapshot
         if: ${{ steps.source-state.outputs.sync == 'true' }}
@@ -213,8 +301,8 @@ jobs:
             --json
 
   incident:
-    if: ${{ always() && github.event_name == 'schedule' && vars.REFERENCE_PUBLISH_SCHEDULE_ENABLED == 'true' }}
-    needs: [sources, publish]
+    if: ${{ always() && github.event_name == 'schedule' && vars.REFERENCE_PUBLISH_SCHEDULE_ENABLED == 'true' && needs.gate.outputs.should_run != 'false' }}
+    needs: [gate, sources, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: read

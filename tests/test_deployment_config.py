@@ -15,7 +15,14 @@ class DeploymentConfigTest(unittest.TestCase):
 
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("schedule:", workflow)
-        self.assertIn("cron: '17 3 * * *'", workflow)
+        for cron in (
+            "17 3 * * *",
+            "32 3 * * *",
+            "52 3 * * *",
+            "22 4 * * *",
+            "22 5 * * *",
+        ):
+            self.assertIn(f"cron: '{cron}'", workflow)
         self.assertIn('timezone: "Asia/Seoul"', workflow)
         self.assertIn("REFERENCE_PUBLISH_SCHEDULE_ENABLED", workflow)
         self.assertIn('"$EVENT_NAME" == "schedule"', workflow)
@@ -50,10 +57,15 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("data/canonical/substances", workflow)
         self.assertIn("data/canonical/mfds_ingredient", workflow)
         self.assertIn("cache-matched-key", workflow)
+        self.assertIn("Check whether today's scheduled publish already succeeded", workflow)
+        self.assertIn("needs.gate.outputs.should_run == 'true'", workflow)
+        self.assertIn("reference-sources-v4-${{ needs.gate.outputs.day }}", workflow)
+        self.assertIn("medicine-canonical mfds-preflight --timeout-seconds 8 --json", workflow)
         self.assertIn("substance-sync", workflow)
         self.assertIn("medicine-canonical sync", workflow)
-        self.assertIn("MFDS sync attempt ${attempt}/3", workflow)
-        self.assertIn("for attempt in 1 2 3", workflow)
+        self.assertNotIn("MFDS sync attempt ${attempt}/3", workflow)
+        self.assertNotIn("for attempt in 1 2 3", workflow)
+        self.assertNotIn("sleep $((attempt * 5))", workflow)
         self.assertIn("integrated-build", workflow)
         self.assertNotIn("integrated-rebuild", workflow)
         self.assertLess(workflow.index("substance-sync"), workflow.index("medicine-canonical sync"))
@@ -104,7 +116,8 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("always()", incident)
         self.assertIn("github.event_name == 'schedule'", incident)
         self.assertIn("REFERENCE_PUBLISH_SCHEDULE_ENABLED == 'true'", incident)
-        self.assertIn("needs: [sources, publish]", incident)
+        self.assertIn("needs: [gate, sources, publish]", incident)
+        self.assertIn("needs.gate.outputs.should_run != 'false'", incident)
         self.assertIn("issues: write", incident)
         self.assertIn("contents: read", incident)
         self.assertNotIn("id-token: write", incident)
