@@ -177,6 +177,9 @@ def verify_root(
     minimum = _positive_int(minimum, "minimum supported contract major")
     if minimum > current or current - minimum > 1:
         raise ValueError("signed reference root support window is invalid")
+    expected_contract_keys = {str(major) for major in range(minimum, current + 1)}
+    if set(contracts) != expected_contract_keys:
+        raise ValueError("signed reference root contracts do not match support window")
     if not (minimum <= contract_major <= current):
         raise ValueError(f"Android contract {contract_major} is not supported by the signed reference root")
     entry = contracts.get(str(contract_major))

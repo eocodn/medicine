@@ -190,6 +190,50 @@ class AndroidGithubReleaseTest(unittest.TestCase):
             self.assertEqual(ok.returncode, 0, ok.stderr)
             self.assertIn("supports Android contract 1", ok.stdout)
 
+            root_file.write_bytes(envelope(2, 1, c1))
+            missing_active = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--root",
+                    str(root_file),
+                    "--contract-major",
+                    "1",
+                    "--key-id",
+                    "test-2026",
+                    "--public-key-der-hex",
+                    public_der_hex,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(missing_active.returncode, 0)
+            self.assertIn("support window", missing_active.stderr)
+
+            root_file.write_bytes(envelope(1, 1, {**c1, "2": {}}))
+            extra_active = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--root",
+                    str(root_file),
+                    "--contract-major",
+                    "1",
+                    "--key-id",
+                    "test-2026",
+                    "--public-key-der-hex",
+                    public_der_hex,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(extra_active.returncode, 0)
+            self.assertIn("support window", extra_active.stderr)
+
             malformed = {
                 "1": {
                     "dataset_id": "NOT-A-DATASET-ID",
