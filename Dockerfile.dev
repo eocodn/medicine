@@ -1,9 +1,25 @@
 FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS node-toolchain
 
+WORKDIR /opt/medicine-ui-tools
+COPY ui/package.json ui/package-lock.json /opt/medicine-ui-tools/
+RUN npm ci
+
 FROM rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS rust-toolchain
 
 RUN rustup component add rustfmt clippy \
     && rustup target add aarch64-linux-android
+
+WORKDIR /opt/medicine-rust
+COPY rust/medicine_core/Cargo.toml rust/medicine_core/Cargo.lock /opt/medicine-rust/
+RUN mkdir -p src/bin \
+    && printf 'pub fn dependency_seed() {}\n' > src/lib.rs \
+    && printf 'fn main() {}\n' > src/bin/medicine_agentctl.rs \
+    && printf 'fn main() {}\n' > src/bin/medicine_core_web.rs \
+    && CARGO_HOME=/opt/medicine-cargo-home cargo fetch --locked \
+    && cat Cargo.toml Cargo.lock | sha256sum | cut -d' ' -f1 > /opt/medicine-rust-seed-id \
+    && find /opt/medicine-cargo-home -type f -name '*.lock' -delete \
+    && chmod -R a+rX /opt/medicine-cargo-home \
+    && chmod a+r /opt/medicine-rust-seed-id
 
 FROM python:3.13-slim-bookworm@sha256:c45a22ea000adfd9cda29364bbe7edd23001ce5cc2ad15857cfbf7766943b9ca
 
@@ -14,11 +30,16 @@ ENV ANDROID_HOME=/opt/android-sdk \
     GRADLE_USER_HOME=/home/build-farm/.gradle \
     HOME=/home/build-farm \
     MEDICINE_ANDROID_NDK_VERSION=29.0.14206865 \
+    MEDICINE_CARGO_HOME_SEED=/opt/medicine-cargo-home \
+    MEDICINE_CARGO_SEED_ID_FILE=/opt/medicine-rust-seed-id \
     MEDICINE_CHROMIUM_BINARY=/usr/bin/chromium \
+    MEDICINE_GRADLE_HOME_SEED=/opt/medicine-gradle-home \
+    MEDICINE_GRADLE_SEED_ID_FILE=/opt/medicine-gradle-seed-id \
+    MEDICINE_TSC_BINARY=/opt/medicine-ui-tools/node_modules/.bin/tsc \
     NPM_CONFIG_CACHE=/home/build-farm/.npm \
     RUSTUP_HOME=/usr/local/rustup \
     RUSTUP_TOOLCHAIN=1.89.0 \
-    PATH=/usr/local/cargo/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:$PATH
+    PATH=/opt/medicine-ui-tools/node_modules/.bin:/usr/local/cargo/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:$PATH
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -40,8 +61,11 @@ RUN apt-get update \
 
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+COPY --from=rust-toolchain /opt/medicine-cargo-home /opt/medicine-cargo-home
+COPY --from=rust-toolchain /opt/medicine-rust-seed-id /opt/medicine-rust-seed-id
 COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-toolchain /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node-toolchain /opt/medicine-ui-tools/node_modules /opt/medicine-ui-tools/node_modules
 
 RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
@@ -58,6 +82,45 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
         "build-tools;36.0.0" \
         "ndk;${MEDICINE_ANDROID_NDK_VERSION}" \
     && chmod -R a+rX "$ANDROID_HOME"
+
+RUN mkdir -p \
+        /opt/medicine-android-deps/android/app \
+        /opt/medicine-android-deps/android/gradle/wrapper \
+        /opt/medicine-android-deps/deploy
+COPY android/gradlew android/gradle.properties android/settings.gradle.kts android/build.gradle.kts android/release.properties /opt/medicine-android-deps/android/
+COPY android/app/build.gradle.kts android/app/gradle.lockfile /opt/medicine-android-deps/android/app/
+COPY android/gradle/verification-metadata.xml /opt/medicine-android-deps/android/gradle/
+COPY android/gradle/prefetch-dependencies.init.gradle.kts /opt/medicine-android-deps/android/gradle/
+COPY android/gradle/wrapper/gradle-wrapper.jar android/gradle/wrapper/gradle-wrapper.jar.sha256 android/gradle/wrapper/gradle-wrapper.properties /opt/medicine-android-deps/android/gradle/wrapper/
+COPY deploy/reference-signing-trusted-keys.json /opt/medicine-android-deps/deploy/
+
+RUN cd /opt/medicine-android-deps/android/gradle/wrapper \
+    && sha256sum -c gradle-wrapper.jar.sha256 \
+    && cd /opt/medicine-android-deps/android \
+    && chmod +x ./gradlew \
+    && ANDROID_USER_HOME=/tmp/medicine-android-home \
+        HOME=/tmp/medicine-gradle-home \
+        GRADLE_USER_HOME=/opt/medicine-gradle-home \
+        ./gradlew \
+        --no-daemon \
+        --dependency-verification strict \
+        --init-script gradle/prefetch-dependencies.init.gradle.kts \
+        prefetchLockedDependencies prefetchMedicineAapt2 \
+    && cat \
+        settings.gradle.kts \
+        build.gradle.kts \
+        gradle.properties \
+        app/build.gradle.kts \
+        app/gradle.lockfile \
+        gradle/verification-metadata.xml \
+        gradle/prefetch-dependencies.init.gradle.kts \
+        gradle/wrapper/gradle-wrapper.properties \
+        | sha256sum | cut -d' ' -f1 > /opt/medicine-gradle-seed-id \
+    && rm -rf /opt/medicine-gradle-home/daemon \
+    && find /opt/medicine-gradle-home -type f -name '*.lock' -delete \
+    && chmod -R a+rX /opt/medicine-gradle-home \
+    && chmod a+r /opt/medicine-gradle-seed-id \
+    && rm -rf /opt/medicine-android-deps /tmp/medicine-android-home /tmp/medicine-gradle-home
 
 ENV ANDROID_USER_HOME=/home/build-farm/.android
 
