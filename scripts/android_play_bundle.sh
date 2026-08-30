@@ -45,6 +45,9 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 3
 fi
 
+MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
+    "$workspace/scripts/verify-android-reference-contract.sh"
+
 cd "$workspace/android"
 ./gradlew --no-daemon --dependency-verification strict testDebugUnitTest lintRelease bundleRelease
 
@@ -81,8 +84,10 @@ if [ "$target_sdk" != "36" ]; then
     exit 3
 fi
 
-jarsigner -verify "$aab" >/dev/null
+"$workspace/scripts/verify-signed-android-bundle.sh" "$aab"
 python3 "$workspace/scripts/verify-no-ocr-android-artifact.py" "$aab"
+MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
+    "$workspace/scripts/verify-android-reference-contract.sh"
 
 mkdir -p "$output_dir"
 artifact="$output_dir/yakbom-v${MEDICINE_ANDROID_VERSION_NAME}.aab"

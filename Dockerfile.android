@@ -4,6 +4,10 @@ WORKDIR /opt/medicine-ui-tools
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS python-toolchain
+
+RUN pip install --no-cache-dir cryptography==50.0.0
+
 FROM rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS rust-toolchain
 
 RUN rustup target add aarch64-linux-android
@@ -15,6 +19,7 @@ ENV ANDROID_HOME=/opt/android-sdk \
     BUNDLETOOL_JAR=/opt/bundletool/bundletool-all-1.18.3.jar \
     CARGO_HOME=/tmp/cargo-home \
     GRADLE_USER_HOME=/opt/gradle-cache \
+    MEDICINE_PYTHON_BIN=/opt/medicine-python/bin/python3.13 \
     MEDICINE_TSC_BINARY=/opt/medicine-ui-tools/node_modules/.bin/tsc \
     MEDICINE_ANDROID_NDK_VERSION=29.0.14206865 \
     RUSTUP_HOME=/usr/local/rustup \
@@ -40,6 +45,7 @@ COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 COPY --from=ui-toolchain /usr/local/bin/node /usr/local/bin/node
 COPY --from=ui-toolchain /opt/medicine-ui-tools/node_modules /opt/medicine-ui-tools/node_modules
+COPY --from=python-toolchain /usr/local /opt/medicine-python
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*

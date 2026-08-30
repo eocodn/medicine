@@ -70,9 +70,11 @@ docker compose -p medicine_android_play run --rm \
   android sh /workspace/scripts/android_play_bundle.sh
 ```
 
-`android_play_bundle.sh` runs Android unit tests, release lint, and `bundleRelease`; then it verifies
-the produced AAB's application ID, versionCode, versionName, target SDK, JAR signature, and no-OCR
-artifact boundary. The preserved output is `dist/play/yakbom-v<versionName>.aab`.
+`android_play_bundle.sh` verifies the exact configured production signed Reference Contract before
+the expensive build, runs Android unit tests, release lint, and `bundleRelease`, then verifies the
+produced AAB's application ID, versionCode, versionName, target SDK, complete JAR signature, and
+no-OCR artifact boundary. It rechecks the production Reference Contract immediately before
+preserving the bundle. The preserved output is `dist/play/yakbom-v<versionName>.aab`.
 
 ## Operator / policy gates before production
 

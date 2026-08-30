@@ -44,6 +44,9 @@ if [ ! -f "$MEDICINE_ANDROID_KEYSTORE_PATH" ]; then
     exit 2
 fi
 
+MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
+    "$workspace/scripts/verify-android-reference-contract.sh"
+
 cd "$workspace/android"
 gradle --no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease
 
@@ -80,4 +83,7 @@ if ! printf '%s\n' "$badging" | grep -F "versionName='$MEDICINE_ANDROID_VERSION_
 fi
 
 "$apksigner" verify --verbose --print-certs "$apk"
+python3 "$workspace/scripts/verify-no-ocr-android-artifact.py" "$apk"
+MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL="$MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL" \
+    "$workspace/scripts/verify-android-reference-contract.sh"
 printf 'verified signed Android release: %s\n' "$apk"

@@ -12,8 +12,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -215,13 +213,6 @@ class MainActivity : ComponentActivity() {
                     !isAllowedOrigin(Uri.parse(url))
             }
         }
-        ViewCompat.setOnApplyWindowInsetsListener(view) { target, insets ->
-            val safeArea = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
-            target.setPadding(safeArea.left, safeArea.top, safeArea.right, safeArea.bottom)
-            insets
-        }
         webView = view
         bootstrapBridge.setResponseHandler { requestId, response ->
             runOnUiThread {
@@ -234,7 +225,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContentView(view)
-        ViewCompat.requestApplyInsets(view)
         view.loadUrl(APP_URL)
     }
 

@@ -16,6 +16,7 @@ import java.io.File
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.Locale
 import java.util.Properties
 import javax.inject.Inject
 
@@ -150,6 +151,16 @@ val releaseVersionCode = releaseVersionProperties.getProperty("versionCode")
     ?.takeIf { it > 0 }
     ?: error("android/release.properties must define a positive integer versionCode")
 
+val referencePropertiesFile = rootProject.file("reference.properties")
+val referenceProperties = Properties().apply {
+    require(referencePropertiesFile.isFile) { "android/reference.properties is missing" }
+    referencePropertiesFile.inputStream().use(::load)
+}
+val developmentReferenceUpdateBaseUrl = referenceProperties.getProperty("developmentBaseUrl")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: error("android/reference.properties must define developmentBaseUrl")
+
 val referenceTrustManifestFile = rootProject.file("../deploy/reference-signing-trusted-keys.json")
 
 fun decodeReviewedPublicKeyPem(pem: String, keyId: String): ByteArray {
@@ -228,6 +239,11 @@ fun validateReferenceUpdateBaseUrl(name: String, value: String) {
     }
 }
 
+validateReferenceUpdateBaseUrl(
+    "android/reference.properties developmentBaseUrl",
+    developmentReferenceUpdateBaseUrl,
+)
+
 fun requireProductionReferenceUpdateBaseUrl(): String {
     val name = "MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL"
     val value = System.getenv(name)
@@ -236,7 +252,9 @@ fun requireProductionReferenceUpdateBaseUrl(): String {
         ?: error("$name is required for Android release tasks")
     validateReferenceUpdateBaseUrl(name, value)
     val host = checkNotNull(URI(value).host)
-    require(!host.endsWith(".r2.dev")) {
+        .lowercase(Locale.ROOT)
+        .trimEnd('.')
+    require(host != "r2.dev" && !host.endsWith(".r2.dev")) {
         "$name must not use the development r2.dev endpoint"
     }
     return value
@@ -319,7 +337,6 @@ tasks.configureEach {
     }
 }
 
-val developmentReferenceUpdateBaseUrl = "https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/"
 val debugReferenceUpdateBaseUrlOverride = System.getenv("MEDICINE_REFERENCE_UPDATE_BASE_URL")
     ?.trim()
     ?.takeIf { it.isNotEmpty() }

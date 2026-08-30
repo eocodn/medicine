@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -302,6 +303,54 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("apksigner", script)
         self.assertIn("versionCode", script)
         self.assertIn("versionName", script)
+
+    def test_reference_contract_gate_uses_shared_development_url_without_release_env(self) -> None:
+        script = ROOT / "scripts" / "verify-android-reference-contract.sh"
+        expected_url = "https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/reference/v2/latest.json"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            log_path = root / "calls.log"
+            curl = bin_dir / "curl"
+            curl.write_text(
+                "#!/bin/sh\n"
+                "output=''\n"
+                "url=''\n"
+                "while [ $# -gt 0 ]; do\n"
+                "  case \"$1\" in\n"
+                "    --output) output=$2; shift 2 ;;\n"
+                "    http*) url=$1; shift ;;\n"
+                "    *) shift ;;\n"
+                "  esac\n"
+                "done\n"
+                "printf 'curl:%s\\n' \"$url\" >> \"$REFERENCE_GATE_TEST_LOG\"\n"
+                "printf '{}' > \"$output\"\n"
+            )
+            curl.chmod(0o755)
+            python = bin_dir / "python"
+            python.write_text(
+                "#!/bin/sh\n"
+                "printf 'python:%s\\n' \"$*\" >> \"$REFERENCE_GATE_TEST_LOG\"\n"
+            )
+            python.chmod(0o755)
+            env = os.environ.copy()
+            env.pop("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", None)
+            env["REFERENCE_GATE_TEST_LOG"] = str(log_path)
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = log_path.read_text().splitlines() if log_path.exists() else []
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"curl:{expected_url}", calls)
+        self.assertTrue(any(call.startswith("python:./scripts/verify-reference-contract-root.py") for call in calls))
 
     def test_release_publish_uses_draft_as_retry_boundary_and_requires_apk_and_checksum(self) -> None:
         ensure = (ROOT / "scripts" / "ensure-release-draft.sh").read_text()
