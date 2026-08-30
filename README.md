@@ -31,6 +31,39 @@ MEDICINE_PORT=19000 docker compose up -d web
 docker compose down
 ```
 
+### 표준 개발 환경
+
+일반적인 빌드와 테스트는 `Dockerfile.dev` 하나를 표준 개발 image로 사용합니다. 이 image에는
+Python 3.13, Rust 1.89, Node 22, Chromium, JDK 17, Android SDK/NDK 같은 toolchain만 들어가며
+repository 소스나 lockfile은 image에 복사하지 않습니다. 소스는 `/workspace`에 mount하고 Cargo,
+Gradle, npm의 변경 가능한 cache는 Build Farm의 worktree별 persistent HOME 아래에 둡니다.
+
+Docker에서 같은 표준 image와 repository-native check 명령을 실행할 수 있습니다.
+
+```bash
+export LOCAL_UID="$(id -u)"
+export LOCAL_GID="$(id -g)"
+docker compose run --rm --build dev sh /workspace/scripts/check.sh core
+docker compose run --rm dev sh /workspace/scripts/check.sh ui
+docker compose run --rm dev sh /workspace/scripts/check.sh android
+```
+
+Build Farm에 repository를 `medicine/dev:local` + `Dockerfile.dev`로 등록한 뒤에는 같은 명령을
+그대로 실행합니다. `farmctl`은 command 자체를 정의하지 않고 CPU/RAM만 workload별로 할당합니다.
+
+```bash
+farmctl env rebuild --cores 2 --memory 4GiB
+farmctl env apply
+farmctl exec --cores 2 --memory 2GiB -- ./scripts/check.sh core
+farmctl exec --cores 2 --memory 2GiB -- ./scripts/check.sh ui
+farmctl exec --cores 4 --memory 4GiB -- ./scripts/check.sh android
+```
+
+`./scripts/check.sh all`은 core, UI, Android 순서로 모두 실행합니다. OCR detector/parser 학습과 대형
+corpus 작업은 현재의 전용 Compose image와 `/artifacts` mount를 계속 사용합니다. 향후 제품에 포함되는
+OCR runtime은 배포 build input으로 준비되어야 하며 연구용 `/artifacts` mount나 대형 shared memory를
+runtime 전제조건으로 두지 않습니다.
+
 ## 현재 기능
 
 - 모바일 1열 UI + 하단 탭: 홈 / 복용 / 약 검색 / 가족 / 설정

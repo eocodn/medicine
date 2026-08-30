@@ -1,0 +1,64 @@
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS node-toolchain
+
+FROM rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS rust-toolchain
+
+RUN rustup component add rustfmt clippy \
+    && rustup target add aarch64-linux-android
+
+FROM python:3.13-slim-bookworm@sha256:c45a22ea000adfd9cda29364bbe7edd23001ce5cc2ad15857cfbf7766943b9ca
+
+ENV ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk \
+    CARGO_HOME=/home/build-farm/.cargo \
+    CARGO_TARGET_DIR=/home/build-farm/target \
+    GRADLE_USER_HOME=/home/build-farm/.gradle \
+    HOME=/home/build-farm \
+    MEDICINE_ANDROID_NDK_VERSION=29.0.14206865 \
+    MEDICINE_CHROMIUM_BINARY=/usr/bin/chromium \
+    NPM_CONFIG_CACHE=/home/build-farm/.npm \
+    RUSTUP_HOME=/usr/local/rustup \
+    RUSTUP_TOOLCHAIN=1.89.0 \
+    PATH=/usr/local/cargo/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:$PATH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        chromium \
+        curl \
+        fonts-noto-cjk \
+        gcc \
+        git \
+        libc6-dev \
+        openjdk-17-jdk-headless \
+        unzip \
+        wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir cryptography==50.0.0 \
+    && mkdir -p /home/build-farm \
+    && chmod 1777 /home/build-farm
+
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-toolchain /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && mkdir -p "$ANDROID_HOME/cmdline-tools" \
+    && wget -q -O /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+    && echo "7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee  /tmp/cmdline-tools.zip" | sha256sum -c - \
+    && unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools" \
+    && mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest" \
+    && rm /tmp/cmdline-tools.zip \
+    && yes | sdkmanager --licenses >/dev/null \
+    && sdkmanager \
+        "platform-tools" \
+        "platforms;android-36" \
+        "build-tools;36.0.0" \
+        "ndk;${MEDICINE_ANDROID_NDK_VERSION}" \
+    && chmod -R a+rX "$ANDROID_HOME"
+
+ENV ANDROID_USER_HOME=/home/build-farm/.android
+
+WORKDIR /workspace

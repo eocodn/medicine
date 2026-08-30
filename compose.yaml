@@ -1,4 +1,15 @@
 services:
+  dev:
+    image: medicine/dev:local
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    command: ["sh", "/workspace/scripts/check.sh", "core"]
+
   canonical:
     build: .
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
