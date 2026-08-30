@@ -93,18 +93,31 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), expected_tag)
 
-    def test_release_check_builds_and_preserves_one_verified_debug_signed_apk_without_secrets(self) -> None:
+    def test_release_check_uses_gcp_managed_durable_signing_identity(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "android-release-check.yml").read_text()
 
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("contents: read", workflow)
+        self.assertIn("id-token: write", workflow)
         self.assertIn("runs-on: [self-hosted, wsl-ci]", workflow)
         self.assertNotIn("runs-on: ubuntu-latest", workflow)
         self.assertNotIn("secrets.", workflow)
         self.assertNotIn("ANDROID_RELEASE_KEYSTORE_BASE64", workflow)
-        self.assertNotIn("ANDROID_RELEASE_KEYSTORE_PASSWORD", workflow)
-        self.assertNotIn("ANDROID_RELEASE_KEY_ALIAS", workflow)
-        self.assertNotIn("ANDROID_RELEASE_KEY_PASSWORD", workflow)
+        self.assertIn("google-github-actions/auth@v3", workflow)
+        self.assertIn(
+            "projects/173565993547/locations/global/workloadIdentityPools/github-actions/providers/medicine-android-signer",
+            workflow,
+        )
+        self.assertIn("google-github-actions/get-secretmanager-secrets@v3", workflow)
+        self.assertIn("medicine-android-release-keystore-b64", workflow)
+        self.assertIn("medicine-android-release-signing-password", workflow)
+        self.assertIn("MEDICINE_ANDROID_KEYSTORE_PATH", workflow)
+        self.assertIn("MEDICINE_ANDROID_KEYSTORE_PASSWORD", workflow)
+        self.assertIn("MEDICINE_ANDROID_KEY_ALIAS", workflow)
+        self.assertIn("MEDICINE_ANDROID_KEY_PASSWORD", workflow)
+        self.assertIn("medicine-release", workflow)
+        self.assertIn("base64 --decode", workflow)
+        self.assertIn("trap", workflow)
         self.assertIn("./scripts/current-android-release-tag.sh", workflow)
         self.assertIn("check-android-release.sh", workflow)
         self.assertIn("actions/setup-java@v4", workflow)
@@ -415,24 +428,34 @@ class AndroidGithubReleaseTest(unittest.TestCase):
 
     def test_android_release_check_packages_the_verified_apk_with_stable_name(self) -> None:
         script = (ROOT / "scripts" / "check-android-release.sh").read_text()
+        release_build = (ROOT / "scripts" / "android_release_build.sh").read_text()
         root_gate = (ROOT / "scripts" / "verify-android-reference-contract.sh").read_text()
         self.assertIn('workspace=$(CDPATH= cd "$(dirname "$0")/.." && pwd)', script)
         self.assertIn('cd "${workspace}"', script)
         self.assertIn("./scripts/verify-android-release-version.sh", script)
-        self.assertIn("./scripts/verify-android-reference-contract.sh", script)
+        self.assertIn("scripts/verify-android-reference-contract.sh", release_build)
         self.assertNotIn("--location", root_gate)
         self.assertNotIn(" -L", root_gate)
-        self.assertIn("./gradlew --no-daemon --dependency-verification strict testDebugUnitTest lintDebug assembleDebug", script)
-        self.assertNotIn("\ngradle --no-daemon", script)
-        self.assertNotIn("./scripts/android_release_build.sh", script)
-        self.assertNotIn("MEDICINE_ANDROID_KEYSTORE", script)
+        self.assertIn("./scripts/android_release_build.sh", script)
+        self.assertIn("MEDICINE_ANDROID_KEYSTORE_PATH", script)
+        self.assertIn("MEDICINE_ANDROID_KEYSTORE_PASSWORD", script)
+        self.assertIn("MEDICINE_ANDROID_KEY_ALIAS", script)
+        self.assertIn("MEDICINE_ANDROID_KEY_PASSWORD", script)
         self.assertIn("medicine-${tag}-arm64-v8a.apk", script)
-        self.assertIn("app-debug.apk", script)
-        self.assertIn("verify-no-ocr-android-artifact.py", script)
-        self.assertIn("aapt", script)
+        self.assertIn("app-release.apk", script)
+        self.assertIn("verify-no-ocr-android-artifact.py", release_build)
+        self.assertIn("aapt", release_build)
         self.assertIn("apksigner", script)
+        self.assertIn("android-release-signing-certificate.sha256", script)
+        self.assertIn("certificate SHA-256 digest", script)
         self.assertIn("versionCode", script)
         self.assertIn("versionName", script)
+
+    def test_android_release_signing_certificate_fingerprint_is_source_controlled(self) -> None:
+        fingerprint = ROOT / "deploy" / "android-release-signing-certificate.sha256"
+        self.assertTrue(fingerprint.is_file())
+        value = fingerprint.read_text().strip()
+        self.assertRegex(value, r"^[0-9a-f]{64}$")
 
     def test_reference_contract_gate_uses_shared_development_url_without_release_env(self) -> None:
         script = ROOT / "scripts" / "verify-android-reference-contract.sh"
@@ -521,11 +544,14 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("Release Check", docs)
         self.assertIn("exact commit SHA", docs)
         self.assertIn("does not rebuild", docs)
-        self.assertIn("debug-signed", docs)
+        self.assertIn("durable release signing identity", docs)
+        self.assertIn("GCP Secret Manager", docs)
+        self.assertIn("Workload Identity Federation", docs)
         self.assertIn("does not require GitHub signing secrets", docs)
         self.assertIn("self-hosted `wsl-ci` runner", docs)
         self.assertNotIn("ANDROID_RELEASE_KEYSTORE_BASE64", docs)
-        self.assertIn("v0.2.0", docs)
+        self.assertIn("API 28", docs)
+        self.assertIn("v0.2.1", docs)
         self.assertIn("docs/android-releasing.md", readme)
 
 

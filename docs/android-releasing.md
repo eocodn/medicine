@@ -1,25 +1,27 @@
 # Releasing the Android developer APK
 
-Medicine follows the same release handoff used by COWI: build and validate the artifact once before tagging, then publish that exact artifact after the tag is created. This GitHub Release path is for developer/tester distribution and publishes a Gradle debug-signed APK.
+Medicine follows the same release handoff used by COWI: build and validate the artifact once before tagging, then publish that exact artifact after the tag is created. This GitHub Release path is for developer/tester distribution and publishes an APK signed by Medicine's durable release signing identity.
 
 ## Signing model
 
-This developer release path **does not require GitHub signing secrets**. Gradle creates and uses its normal debug signing key inside the ephemeral Release Check runner, and `apksigner` verifies that the produced APK is signed before it is preserved.
+This developer release path **does not require GitHub signing secrets**. The Android release keystore and its password live in GCP Secret Manager. GitHub Actions authenticates to GCP with Workload Identity Federation through the dedicated `medicine-android-signer` provider, reads only those signing secrets, materializes the keystore under the runner's temporary directory for the build, and deletes it when the build step exits.
 
-Because the debug key is runner-local and not a durable application signing identity, separately validated GitHub Releases may not install as an in-place update over one another. If Android reports a signing mismatch, uninstall the previous developer APK and install the new one. The existing explicit release-signing path remains separate for any future production or Play distribution where a stable signing identity is required.
+The public signing certificate identity is pinned in `deploy/android-release-signing-certificate.sha256`. `scripts/check-android-release.sh` rejects a release APK unless `apksigner` reports that exact certificate digest. This prevents an accidental Secret Manager replacement from silently creating a new Android application identity. Keep the private signing key for the lifetime of the application; future releases are expected to install in place over earlier releases with the same package ID and signing lineage.
+
+The app now uses `minSdk = 28` (Android 9). This removes the pre-API 28 compatibility floor and keeps the supported device set aligned with APK signing lineage rotation support if a future signing-key rotation is ever required. Raising the minimum SDK does not itself rotate the current key.
 
 ## Release version
 
 `android/release.properties` is the source-controlled Android release version. `versionName` becomes the `vX.Y.Z` tag and `versionCode` must increase monotonically for Android upgrades.
 
-The initial configuration is:
+The current configuration is:
 
 ```properties
-versionName=0.2.0
-versionCode=1
+versionName=0.2.1
+versionCode=2
 ```
 
-For the next release, update both values in the release-preparation commit, for example `versionName=0.2.1` with a larger `versionCode`. The same file also drives the debug build metadata used by this GitHub Release path.
+For the next release, update both values in the release-preparation commit, for example `versionName=0.2.2` with a `versionCode` larger than `2`. The same file also drives the release build metadata used by this GitHub Release path.
 
 
 ## Optional OCR capability
@@ -32,9 +34,9 @@ The normal Developer Release workflows intentionally leave this variable unset. 
 
 1. Merge the release-preparation changes and identify the exact commit SHA intended for release.
 2. In GitHub Actions, manually run **Android Developer Release Check** against that exact ref.
-3. Developer Release Check runs on a self-hosted `wsl-ci` runner with JDK 17, Node 22, Android SDK 36, and the checked-in Gradle Wrapper. It does not set `MEDICINE_OCR_ASSETS_DIR`, so the validated developer APK is intentionally built without OCR UI, OCR runtime assets, or the Android OCR camera/file-chooser source set. It then runs `scripts/check-android-release.sh` with no signing secrets or Docker.
-4. The check runs `testDebugUnitTest`, `lintDebug`, and `assembleDebug`, verifies the debug APK version and signature, packages `medicine-vX.Y.Z-arm64-v8a.apk`, and saves `dist` under a cache key containing the exact commit SHA and Release Check run ID.
-5. After that workflow succeeds, create and push the matching tag on the same commit, for example `v0.2.0`.
+3. Developer Release Check runs on a self-hosted `wsl-ci` runner with JDK 17, Node 22, Android SDK 36, and the checked-in Gradle Wrapper. It obtains the durable release signing identity from GCP Secret Manager through Workload Identity Federation. It does not set `MEDICINE_OCR_ASSETS_DIR`, so the validated developer APK is intentionally built without OCR UI, OCR runtime assets, or the Android OCR camera/file-chooser source set.
+4. The check runs `testDebugUnitTest`, `lintRelease`, and `assembleRelease`, verifies the package/version/signature and pinned release certificate digest, packages `medicine-vX.Y.Z-arm64-v8a.apk`, and saves `dist` under a cache key containing the exact commit SHA and Release Check run ID.
+5. After that workflow succeeds, create and push the matching tag on the same commit, for example `v0.2.1`.
 6. **Android Developer Release** verifies that the tag matches `android/release.properties` and that the exact tag commit has a successful Android Developer Release Check.
 7. The tag workflow restores that run's exact-SHA APK and **does not rebuild** it. It uploads the APK to a draft GitHub Release, creates `SHA256SUMS`, and only then publishes the release.
 
@@ -45,17 +47,17 @@ A tag whose commit has no successful Developer Release Check cannot publish. The
 After Android Developer Release Check succeeds on the intended commit:
 
 ```bash
-git tag v0.2.0 <validated-commit-sha>
-git push origin v0.2.0
+git tag v0.2.1 <validated-commit-sha>
+git push origin v0.2.1
 ```
 
 The resulting GitHub Release contains:
 
 ```text
-medicine-v0.2.0-arm64-v8a.apk
+medicine-v0.2.1-arm64-v8a.apk
 SHA256SUMS
 ```
 
-The current Android package intentionally targets `arm64-v8a` only. Distribution is APK-only: the GitHub Developer Release path publishes its verified APK, while `scripts/android_release_build.sh` produces a separately signed APK when a durable release key is required.
+The current Android package intentionally targets `arm64-v8a` only. Distribution is APK-only, and both the GitHub Developer Release Check and explicit `scripts/android_release_build.sh` path build the release variant using the configured signing inputs.
 
 Local Android development and verification still use Docker/Compose. The self-hosted `wsl-ci` runner path is CI-only, so the local host does not need a Gradle or Android SDK installation.

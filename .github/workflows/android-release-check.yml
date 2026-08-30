@@ -5,15 +5,30 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   check-android:
-    name: Check debug-signed Android arm64 release
+    name: Check durable-signed Android arm64 release
     runs-on: [self-hosted, wsl-ci]
     timeout-minutes: 45
     steps:
       - name: Check out selected ref
         uses: actions/checkout@v6
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: medicine-505813
+          workload_identity_provider: projects/173565993547/locations/global/workloadIdentityPools/github-actions/providers/medicine-android-signer
+
+      - name: Read Android signing identity
+        id: android-signing
+        uses: google-github-actions/get-secretmanager-secrets@v3
+        with:
+          secrets: |-
+            keystore_b64:medicine-505813/medicine-android-release-keystore-b64
+            signing_password:medicine-505813/medicine-android-release-signing-password
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -81,10 +96,20 @@ jobs:
           tag="$(./scripts/current-android-release-tag.sh)"
           printf 'tag=%s\n' "${tag}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build and verify debug-signed Android release
+      - name: Build and verify durable-signed Android release
+        env:
+          MEDICINE_ANDROID_KEYSTORE_B64: ${{ steps.android-signing.outputs.keystore_b64 }}
+          MEDICINE_ANDROID_KEYSTORE_PASSWORD: ${{ steps.android-signing.outputs.signing_password }}
+          MEDICINE_ANDROID_KEY_ALIAS: medicine-release
+          MEDICINE_ANDROID_KEY_PASSWORD: ${{ steps.android-signing.outputs.signing_password }}
         shell: bash
         run: |
           set -euo pipefail
+          umask 077
+          keystore="${RUNNER_TEMP}/medicine-android-release.p12"
+          trap 'rm -f "${keystore}"' EXIT
+          printf '%s' "${MEDICINE_ANDROID_KEYSTORE_B64}" | base64 --decode > "${keystore}"
+          export MEDICINE_ANDROID_KEYSTORE_PATH="${keystore}"
           rm -rf dist
           mkdir -p dist
           ./scripts/check-android-release.sh \

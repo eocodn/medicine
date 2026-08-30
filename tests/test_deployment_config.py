@@ -312,10 +312,10 @@ class DeploymentConfigTest(unittest.TestCase):
             log_path = Path(temp_dir) / "calls.log"
             bin_dir = Path(temp_dir) / "bin"
             bin_dir.mkdir()
-            gradle_stub = bin_dir / "gradle"
+            gradle_stub = android_dir / "gradlew"
             gradle_stub.write_text(
                 "#!/bin/sh\n"
-                "printf 'gradle:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
+                "printf 'gradlew:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
                 "mkdir -p \"$ANDROID_RELEASE_TEST_WORKSPACE/android/app/build/outputs/apk/release\"\n"
                 ": > \"$ANDROID_RELEASE_TEST_WORKSPACE/android/app/build/outputs/apk/release/app-release.apk\"\n"
             )
@@ -366,7 +366,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls[0], "reference:")
         self.assertIn(
-            "gradle:--no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease",
+            "gradlew:--no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease",
             calls,
         )
         self.assertTrue(any(call.startswith("aapt:dump badging ") for call in calls))
