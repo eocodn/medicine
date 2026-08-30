@@ -1,4 +1,20 @@
 services:
+  dev:
+    image: medicine/dev:local
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - type: bind
+        source: ${MEDICINE_DEV_HOME:-${HOME}/dev/.artifacts/medicine/dev-home/${COMPOSE_PROJECT_NAME}}
+        target: /home/build-farm
+        bind:
+          create_host_path: false
+    command: ["sh", "/workspace/scripts/check.sh", "core"]
+
   canonical:
     build: .
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"

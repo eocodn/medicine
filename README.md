@@ -31,6 +31,34 @@ MEDICINE_PORT=19000 docker compose up -d web
 docker compose down
 ```
 
+### 표준 개발 환경
+
+일반적인 빌드와 테스트는 `Dockerfile.dev` 하나를 표준 개발 image로 사용합니다. 이 image에는
+Python 3.13, Rust 1.89, Node 22, Chromium, JDK 17, Android SDK/NDK 같은 toolchain과 함께 Cargo,
+npm, Gradle dependency를 미리 준비합니다. dependency manifest와 lockfile, Android build metadata는
+image build input으로 사용할 수 있지만 실제 Rust/Python/TypeScript/Kotlin 소스는 image에 복사하지
+않고 `/workspace`에 mount합니다. 실행 중 생기는 mutable build/cache state는 image의 HOME 아래에 둡니다.
+
+Docker에서 같은 표준 image와 repository-native check 명령을 실행할 수 있습니다.
+
+```bash
+export LOCAL_UID="$(id -u)"
+export LOCAL_GID="$(id -g)"
+export MEDICINE_DEV_HOME="${MEDICINE_DEV_HOME:-$HOME/dev/.artifacts/medicine/dev-home/$(basename "$PWD")}"
+mkdir -p "$MEDICINE_DEV_HOME"
+docker compose run --rm --build dev sh /workspace/scripts/check.sh core
+docker compose run --rm dev sh /workspace/scripts/check.sh ui
+docker compose run --rm dev sh /workspace/scripts/check.sh android
+```
+
+`MEDICINE_DEV_HOME`은 source와 분리된 writable build/cache state입니다. 기본 예시는 worktree별 경로를
+사용하므로 disposable `docker compose run --rm`을 반복해도 Cargo/Gradle cache와 build output을 재사용합니다.
+
+`./scripts/check.sh all`은 core, UI, Android 순서로 모두 실행합니다. OCR detector/parser 학습과 대형
+corpus 작업은 현재의 전용 Compose image와 `/artifacts` mount를 계속 사용합니다. 향후 제품에 포함되는
+OCR runtime은 배포 build input으로 준비되어야 하며 연구용 `/artifacts` mount나 대형 shared memory를
+runtime 전제조건으로 두지 않습니다.
+
 ## 현재 기능
 
 - 모바일 1열 UI + 하단 탭: 홈 / 복용 / 약 검색 / 가족 / 설정
