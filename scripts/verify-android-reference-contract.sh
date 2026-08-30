@@ -15,7 +15,8 @@ case "${1:-}" in
 esac
 
 reference_base_url="${MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL:-$(
-    sed -n 's/^developmentBaseUrl=//p' android/reference.properties | head -n 1
+    sed -n 's/^val defaultReleaseReferenceUpdateBaseUrl = "\([^"]*\)"/\1/p' \
+        android/app/build.gradle.kts | head -n 1
 )}"
 if [[ -z "${reference_base_url}" || "${reference_base_url}" != https://*/ ]]; then
     printf 'cannot resolve Android release reference base URL\n' >&2

@@ -99,7 +99,6 @@ class ManifestContractTest {
     @Test
     fun referenceUpdaterPackagesSharedPatchCoreAndUsesDevelopmentDistributionEndpoint() {
         val build = java.io.File("build.gradle.kts").readText()
-        val referenceProperties = java.io.File("../reference.properties").readText()
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
         val bootstrapper = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapper.kt").readText()
         val bootstrapBridge = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapJsBridge.kt").readText()
@@ -108,8 +107,7 @@ class ManifestContractTest {
         val source = java.io.File("src/main/java/com/medicine/android/ReferenceReleaseHttpSource.kt").readText()
         assertTrue(build.contains("MEDICINE_REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
-        assertTrue(build.contains("reference.properties"))
-        assertTrue(referenceProperties.contains("pub-539f06de795a469c85ab40570a8634a2.r2.dev"))
+        assertTrue(build.contains("pub-539f06de795a469c85ab40570a8634a2.r2.dev"))
         assertFalse(build.contains("medicine_canonical"))
         assertTrue(bootstrapper.contains("RustReferenceDatabaseVerifier()"))
         assertTrue(activity.contains("RustReferenceArtifactRebuilder()"))
