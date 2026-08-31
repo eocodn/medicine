@@ -9,7 +9,7 @@ permissions:
 jobs:
   build-unsigned:
     name: Build unsigned Android arm64 release
-    runs-on: [self-hosted, wsl-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
