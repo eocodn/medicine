@@ -192,6 +192,9 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
         self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
         self.assertIn("verifyReleaseEnvironment", release_script)
+        self.assertIn("android-release-signing-certificate.sha256", release_script)
+        self.assertIn("Signer #1 certificate SHA-256 digest", release_script)
+        self.assertIn("does not match pinned identity", release_script)
     def test_android_release_keystores_are_ignored_recursively(self) -> None:
         gitignore = Path(".gitignore").read_text()
 
@@ -292,10 +295,14 @@ class DeploymentConfigTest(unittest.TestCase):
             workspace = Path(temp_dir) / "workspace"
             scripts_dir = workspace / "scripts"
             android_dir = workspace / "android"
+            deploy_dir = workspace / "deploy"
             scripts_dir.mkdir(parents=True)
             android_dir.mkdir()
+            deploy_dir.mkdir()
             script = scripts_dir / "android_release_build.sh"
             script.write_text(release_script)
+            signing_fingerprint = "12" * 32
+            (deploy_dir / "android-release-signing-certificate.sha256").write_text(signing_fingerprint + "\n")
             reference_gate_stub = scripts_dir / "verify-android-reference-contract.sh"
             reference_gate_stub.write_text(
                 "#!/bin/sh\n"
@@ -337,6 +344,7 @@ class DeploymentConfigTest(unittest.TestCase):
             apksigner_stub.write_text(
                 "#!/bin/sh\n"
                 "printf 'apksigner:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
+                "printf 'Signer #1 certificate SHA-256 digest: %s\\n' \"$ANDROID_RELEASE_TEST_SIGNER_SHA256\"\n"
             )
             apksigner_stub.chmod(0o755)
 
@@ -345,6 +353,7 @@ class DeploymentConfigTest(unittest.TestCase):
                 {
                     "ANDROID_HOME": str(android_home),
                     "ANDROID_RELEASE_TEST_LOG": str(log_path),
+                    "ANDROID_RELEASE_TEST_SIGNER_SHA256": signing_fingerprint,
                     "ANDROID_RELEASE_TEST_WORKSPACE": str(workspace),
                     "MEDICINE_ANDROID_VERSION_CODE": "23",
                     "MEDICINE_ANDROID_VERSION_NAME": "1.4.0",
@@ -365,6 +374,17 @@ class DeploymentConfigTest(unittest.TestCase):
             )
             calls = log_path.read_text().splitlines()
 
+            wrong_env = env.copy()
+            wrong_env["ANDROID_RELEASE_TEST_SIGNER_SHA256"] = "34" * 32
+            wrong_result = subprocess.run(
+                ["sh", str(script)],
+                cwd=workspace,
+                env=wrong_env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls[0], "reference:")
         self.assertIn(
@@ -375,3 +395,5 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertTrue(any(call.startswith("apksigner:verify --verbose --print-certs ") for call in calls))
         self.assertTrue(any(call.startswith("no-ocr:") for call in calls))
         self.assertEqual(calls[-1], "reference:--verify-full-artifact")
+        self.assertNotEqual(wrong_result.returncode, 0)
+        self.assertIn("does not match pinned identity", wrong_result.stderr)
