@@ -137,6 +137,11 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertIn("dtolnay/rust-toolchain@1d1eb14921d9c2d8ea575663e5fe3a0b57868a05", workflow)
         self.assertIn("targets: aarch64-linux-android", workflow)
         self.assertIn("actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065", workflow)
+        self.assertIn("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", workflow)
+        self.assertIn("node-version: '22'", workflow)
+        self.assertIn("cache-dependency-path: ui/package-lock.json", workflow)
+        self.assertIn("npm ci", workflow)
+        self.assertIn("working-directory: ui", workflow)
         self.assertIn("cryptography==50.0.0", workflow)
         self.assertIn("java-version: '17'", workflow)
         self.assertIn("commandlinetools-linux-13114758_latest.zip", workflow)
@@ -538,12 +543,16 @@ class AndroidGithubReleaseTest(unittest.TestCase):
     def test_release_publish_uses_draft_as_retry_boundary_and_requires_apk_and_checksum(self) -> None:
         ensure = (ROOT / "scripts" / "ensure-release-draft.sh").read_text()
         publish = (ROOT / "scripts" / "publish-release.sh").read_text()
+        workflow = (ROOT / ".github" / "workflows" / "android-release.yml").read_text()
 
         self.assertIn("--draft", ensure)
         self.assertIn("--verify-tag", ensure)
         self.assertIn("already published; refusing to reuse it", ensure)
         self.assertIn('apks=("${asset_dir}"/*.apk)', publish)
         self.assertIn("SHA256SUMS", publish)
+        self.assertIn("THIRD_PARTY_NOTICES.txt", publish)
+        self.assertIn("android/app/src/main/assets/THIRD_PARTY_NOTICES.txt", workflow)
+        self.assertIn("sha256sum ./*.apk THIRD_PARTY_NOTICES.txt > SHA256SUMS", workflow)
         self.assertIn("--clobber", publish)
         self.assertIn("verify-android-reference-contract.sh", publish)
         self.assertIn("--draft=false", publish)
@@ -577,7 +586,7 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertNotIn("ANDROID_RELEASE_KEYSTORE_BASE64", docs)
         self.assertIn("API 28", docs)
         self.assertIn("v0.1.0", docs)
-        self.assertIn("docs/android-releasing.md", readme)
+        self.assertNotIn("docs/android-releasing.md", readme)
 
 
 if __name__ == "__main__":
