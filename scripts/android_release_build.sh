@@ -47,7 +47,8 @@ fi
 "$workspace/scripts/verify-android-reference-contract.sh"
 
 cd "$workspace/android"
-gradle --no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease
+./gradlew --no-daemon --dependency-verification strict \
+    verifyReleaseEnvironment testDebugUnitTest lintRelease assembleRelease
 
 apk="$workspace/android/app/build/outputs/apk/release/app-release.apk"
 if [ ! -f "$apk" ]; then
@@ -81,7 +82,27 @@ if ! printf '%s\n' "$badging" | grep -F "versionName='$MEDICINE_ANDROID_VERSION_
     exit 3
 fi
 
-"$apksigner" verify --verbose --print-certs "$apk"
+certificate_output=$("$apksigner" verify --verbose --print-certs "$apk")
+printf '%s\n' "$certificate_output"
+expected_fingerprint=$(tr -d '[:space:]' < "$workspace/deploy/android-release-signing-certificate.sha256" | tr '[:upper:]' '[:lower:]')
+actual_fingerprint=$(printf '%s\n' "$certificate_output" \
+    | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+    | head -n 1 \
+    | tr '[:upper:]' '[:lower:]')
+case "$expected_fingerprint" in
+    *[!0-9a-f]*|'')
+        echo "pinned Android signing certificate SHA-256 is invalid" >&2
+        exit 3
+        ;;
+esac
+if [ "${#expected_fingerprint}" -ne 64 ]; then
+    echo "pinned Android signing certificate SHA-256 is invalid" >&2
+    exit 3
+fi
+if [ "$actual_fingerprint" != "$expected_fingerprint" ]; then
+    echo "Android release certificate SHA-256 digest does not match pinned identity" >&2
+    exit 3
+fi
 "$python_bin" "$workspace/scripts/verify-no-ocr-android-artifact.py" "$apk"
 "$workspace/scripts/verify-android-reference-contract.sh" --verify-full-artifact
 printf 'verified signed Android release: %s\n' "$apk"

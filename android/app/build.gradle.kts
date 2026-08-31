@@ -264,10 +264,13 @@ fun requireReleaseEnvironment(): AndroidReleaseEnvironment {
     )
 }
 
-val releaseEnvironment = if (releaseEnvironmentNames.all { !System.getenv(it).isNullOrEmpty() }) {
-    requireReleaseEnvironment()
-} else {
-    null
+val configuredReleaseEnvironmentNames = releaseEnvironmentNames.filter {
+    !System.getenv(it).isNullOrEmpty()
+}
+val releaseEnvironment = when (configuredReleaseEnvironmentNames.size) {
+    0 -> null
+    releaseEnvironmentNames.size -> requireReleaseEnvironment()
+    else -> error("release signing environment must be fully specified or omitted")
 }
 
 val verifyReleaseEnvironment = tasks.register("verifyReleaseEnvironment") {
@@ -284,10 +287,15 @@ val verifyReleaseEnvironment = tasks.register("verifyReleaseEnvironment") {
     }
 }
 
-// Gradle accepts abbreviated task names (for example, `assRel`), so guard the
-// resolved release tasks rather than trying to infer intent from raw CLI names.
+// CI intentionally builds an unsigned release candidate with no signing environment.
+// Once a signing identity is supplied, every resolved release task must pass the
+// operator release policy gate rather than relying on callers to remember it.
 tasks.configureEach {
-    if (name != verifyReleaseEnvironment.name && name.contains("Release", ignoreCase = true)) {
+    if (
+        releaseEnvironment != null &&
+        name != verifyReleaseEnvironment.name &&
+        name.contains("Release", ignoreCase = true)
+    ) {
         dependsOn(verifyReleaseEnvironment)
     }
 }
@@ -379,7 +387,7 @@ android {
 
     defaultConfig {
         applicationId = "kr.yakbom.app"
-        minSdk = 24
+        minSdk = 28
         targetSdk = 35
         versionCode = releaseEnvironment?.versionCode ?: releaseVersionCode
         versionName = releaseEnvironment?.versionName ?: releaseVersionName
@@ -411,7 +419,9 @@ android {
         }
         getByName("release") {
             buildConfigField("String", "REFERENCE_UPDATE_BASE_URL", "\"$effectiveReferenceUpdateBaseUrl\"")
-            signingConfig = signingConfigs.getByName("release")
+            releaseEnvironment?.let {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

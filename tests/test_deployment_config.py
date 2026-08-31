@@ -178,33 +178,38 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("signingConfigs", gradle)
         release = gradle.split('getByName("release") {', 1)[1].split("\n        }", 1)[0]
         self.assertIn("signingConfig", release)
+        self.assertIn("releaseEnvironment?.let", release)
         self.assertIn("requireReleaseEnvironment", gradle)
         self.assertIn('tasks.register("verifyReleaseEnvironment")', gradle)
-    def test_android_aggregate_bundle_requires_release_environment(self) -> None:
+    def test_android_release_allows_unsigned_build_but_rejects_partial_signing_environment(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
-        self.assertIn("tasks.configureEach", gradle)
-        self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
-        self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
-    def test_android_release_guard_uses_resolved_tasks_not_raw_cli_names(self) -> None:
-        gradle = Path("android/app/build.gradle.kts").read_text()
+        release_script = Path("scripts/android_release_build.sh").read_text()
 
-        self.assertNotIn("gradle.startParameter.taskNames", gradle)
-        self.assertIn('tasks.register("verifyReleaseEnvironment")', gradle)
+        self.assertIn("configuredReleaseEnvironmentNames", gradle)
+        self.assertIn("release signing environment must be fully specified or omitted", gradle)
+        self.assertIn("tasks.configureEach", gradle)
+        self.assertIn("releaseEnvironment != null", gradle)
         self.assertIn('name.contains("Release", ignoreCase = true)', gradle)
         self.assertIn("dependsOn(verifyReleaseEnvironment)", gradle)
+        self.assertIn("verifyReleaseEnvironment", release_script)
+        self.assertIn("android-release-signing-certificate.sha256", release_script)
+        self.assertIn("Signer #1 certificate SHA-256 digest", release_script)
+        self.assertIn("does not match pinned identity", release_script)
     def test_android_release_keystores_are_ignored_recursively(self) -> None:
         gitignore = Path(".gitignore").read_text()
 
         self.assertIn("android/**/*.jks", gitignore)
         self.assertIn("android/**/*.keystore", gitignore)
+        self.assertIn("gha-creds-*.json", gitignore)
     def test_android_release_keystores_are_excluded_from_docker_context(self) -> None:
         dockerignore = Path(".dockerignore").read_text()
 
         self.assertIn("android/**/*.jks", dockerignore)
         self.assertIn("android/**/*.keystore", dockerignore)
+        self.assertIn("gha-creds-*.json", dockerignore)
     def test_android_release_passwords_are_prompted_without_literal_secret_exports(self) -> None:
         readme = Path("README.md").read_text()
-        release_section = readme.split("release 변형은", 1)[1].split("## 의료 정보 주의", 1)[0]
+        release_section = readme.split("직접 signed release APK", 1)[1].split("## 의료 정보 주의", 1)[0]
 
         self.assertNotIn("export MEDICINE_ANDROID_KEYSTORE_PASSWORD='...'", release_section)
         self.assertNotIn("export MEDICINE_ANDROID_KEY_PASSWORD='...'", release_section)
@@ -290,10 +295,14 @@ class DeploymentConfigTest(unittest.TestCase):
             workspace = Path(temp_dir) / "workspace"
             scripts_dir = workspace / "scripts"
             android_dir = workspace / "android"
+            deploy_dir = workspace / "deploy"
             scripts_dir.mkdir(parents=True)
             android_dir.mkdir()
+            deploy_dir.mkdir()
             script = scripts_dir / "android_release_build.sh"
             script.write_text(release_script)
+            signing_fingerprint = "12" * 32
+            (deploy_dir / "android-release-signing-certificate.sha256").write_text(signing_fingerprint + "\n")
             reference_gate_stub = scripts_dir / "verify-android-reference-contract.sh"
             reference_gate_stub.write_text(
                 "#!/bin/sh\n"
@@ -312,10 +321,10 @@ class DeploymentConfigTest(unittest.TestCase):
             log_path = Path(temp_dir) / "calls.log"
             bin_dir = Path(temp_dir) / "bin"
             bin_dir.mkdir()
-            gradle_stub = bin_dir / "gradle"
+            gradle_stub = android_dir / "gradlew"
             gradle_stub.write_text(
                 "#!/bin/sh\n"
-                "printf 'gradle:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
+                "printf 'gradlew:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
                 "mkdir -p \"$ANDROID_RELEASE_TEST_WORKSPACE/android/app/build/outputs/apk/release\"\n"
                 ": > \"$ANDROID_RELEASE_TEST_WORKSPACE/android/app/build/outputs/apk/release/app-release.apk\"\n"
             )
@@ -335,6 +344,7 @@ class DeploymentConfigTest(unittest.TestCase):
             apksigner_stub.write_text(
                 "#!/bin/sh\n"
                 "printf 'apksigner:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
+                "printf 'Signer #1 certificate SHA-256 digest: %s\\n' \"$ANDROID_RELEASE_TEST_SIGNER_SHA256\"\n"
             )
             apksigner_stub.chmod(0o755)
 
@@ -343,6 +353,7 @@ class DeploymentConfigTest(unittest.TestCase):
                 {
                     "ANDROID_HOME": str(android_home),
                     "ANDROID_RELEASE_TEST_LOG": str(log_path),
+                    "ANDROID_RELEASE_TEST_SIGNER_SHA256": signing_fingerprint,
                     "ANDROID_RELEASE_TEST_WORKSPACE": str(workspace),
                     "MEDICINE_ANDROID_VERSION_CODE": "23",
                     "MEDICINE_ANDROID_VERSION_NAME": "1.4.0",
@@ -363,13 +374,26 @@ class DeploymentConfigTest(unittest.TestCase):
             )
             calls = log_path.read_text().splitlines()
 
+            wrong_env = env.copy()
+            wrong_env["ANDROID_RELEASE_TEST_SIGNER_SHA256"] = "34" * 32
+            wrong_result = subprocess.run(
+                ["sh", str(script)],
+                cwd=workspace,
+                env=wrong_env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls[0], "reference:")
         self.assertIn(
-            "gradle:--no-daemon --dependency-verification strict testDebugUnitTest lintRelease assembleRelease",
+            "gradlew:--no-daemon --dependency-verification strict verifyReleaseEnvironment testDebugUnitTest lintRelease assembleRelease",
             calls,
         )
         self.assertTrue(any(call.startswith("aapt:dump badging ") for call in calls))
         self.assertTrue(any(call.startswith("apksigner:verify --verbose --print-certs ") for call in calls))
         self.assertTrue(any(call.startswith("no-ocr:") for call in calls))
         self.assertEqual(calls[-1], "reference:--verify-full-artifact")
+        self.assertNotEqual(wrong_result.returncode, 0)
+        self.assertIn("does not match pinned identity", wrong_result.stderr)

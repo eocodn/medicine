@@ -3,6 +3,7 @@ data
 tests
 __pycache__
 *.pyc
+gha-creds-*.json
 android/.gradle
 android/build
 android/app/build
