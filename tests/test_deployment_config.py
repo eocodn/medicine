@@ -39,7 +39,7 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("REFERENCE_RELEASE_SEQUENCE", workflow)
         self.assertIn("github.run_number", workflow)
         self.assertIn("id-token: write", workflow)
-        self.assertIn("google-github-actions/auth@v3", workflow)
+        self.assertIn("google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093", workflow)
         self.assertIn("medicine-505813", workflow)
         self.assertIn(
             "projects/173565993547/locations/global/workloadIdentityPools/github-actions/providers/medicine-reference-publisher",
@@ -49,10 +49,11 @@ class DeploymentConfigTest(unittest.TestCase):
             "projects/medicine-505813/locations/global/keyRings/medicine-release/cryptoKeys/reference-release-signing/cryptoKeyVersions/1",
             workflow,
         )
-        self.assertIn("google-cloud-kms", workflow)
+        requirements = Path("deploy/reference-publish-requirements.txt").read_text()
+        self.assertIn("google-cloud-kms==", requirements)
         self.assertIn("refresh_sources", workflow)
-        self.assertIn("actions/cache/restore@v5", workflow)
-        self.assertIn("actions/cache/save@v5", workflow)
+        self.assertIn("actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25", workflow)
+        self.assertIn("actions/cache/save@caa296126883cff596d87d8935842f9db880ef25", workflow)
         self.assertIn("data/canonical/raw", workflow)
         self.assertIn("data/canonical/substances", workflow)
         self.assertIn("data/canonical/mfds_ingredient", workflow)
@@ -60,19 +61,19 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("Check whether today's scheduled publish already succeeded", workflow)
         self.assertIn("needs.gate.outputs.should_run == 'true'", workflow)
         self.assertIn("reference-sources-v4-${{ needs.gate.outputs.day }}", workflow)
-        self.assertIn("medicine-canonical mfds-preflight --timeout-seconds 8 --json", workflow)
+        self.assertIn("python -m medicine_canonical.cli mfds-preflight --timeout-seconds 8 --json", workflow)
         self.assertIn("substance-sync", workflow)
-        self.assertIn("medicine-canonical sync", workflow)
+        self.assertIn("python -m medicine_canonical.cli sync", workflow)
         self.assertNotIn("MFDS sync attempt ${attempt}/3", workflow)
         self.assertNotIn("for attempt in 1 2 3", workflow)
         self.assertNotIn("sleep $((attempt * 5))", workflow)
         self.assertIn("integrated-build", workflow)
         self.assertNotIn("integrated-rebuild", workflow)
-        self.assertLess(workflow.index("substance-sync"), workflow.index("medicine-canonical sync"))
-        self.assertLess(workflow.index("medicine-canonical sync"), workflow.index("integrated-build"))
-        self.assertIn("canonical verify", workflow)
-        self.assertIn("canonical substance-verify", workflow)
-        self.assertIn("canonical reference-build-publish-r2", workflow)
+        self.assertLess(workflow.index("substance-sync"), workflow.index("python -m medicine_canonical.cli sync"))
+        self.assertLess(workflow.index("python -m medicine_canonical.cli sync"), workflow.index("integrated-build"))
+        self.assertIn("medicine_canonical.cli verify", workflow)
+        self.assertIn("medicine_canonical.cli substance-verify", workflow)
+        self.assertIn("medicine_canonical.cli reference-build-publish-r2", workflow)
         self.assertIn("--output-dir artifacts/reference-release", workflow)
         self.assertIn("--allow-retired-previous-failure", workflow)
         self.assertIn("r2-public-audit", workflow)
@@ -84,6 +85,40 @@ class DeploymentConfigTest(unittest.TestCase):
             workflow.index("r2-public-audit"),
             workflow.index("reference-build-publish-r2"),
         )
+
+    def test_reference_publish_workflow_uses_immutable_actions_and_hash_locked_python(self) -> None:
+        workflow = Path(".github/workflows/reference-publish.yml").read_text()
+        requirements = Path("deploy/reference-publish-requirements.txt").read_text()
+
+        self.assertNotRegex(workflow, r"uses:\s+[^\n]+@v\d+(?:\s|$)")
+        self.assertIn("actions/checkout@11d5960a326750d5838078e36cf38b85af677262", workflow)
+        self.assertIn("actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065", workflow)
+        self.assertIn("actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25", workflow)
+        self.assertIn("actions/cache/save@caa296126883cff596d87d8935842f9db880ef25", workflow)
+        self.assertIn("google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093", workflow)
+        self.assertIn("--require-hashes -r deploy/reference-publish-requirements.txt", workflow)
+        self.assertNotIn("pip install --disable-pip-version-check --no-cache-dir .", workflow)
+        self.assertNotIn("boto3>=", workflow)
+        self.assertNotIn("google-cloud-kms>=", workflow)
+        self.assertIn("python -m medicine_canonical.cli", workflow)
+
+        publish = workflow.split("\n  publish:\n", 1)[1].split("\n  incident:\n", 1)[0]
+        self.assertLess(publish.index("Install locked Python dependencies"), publish.index("Authenticate to Google Cloud"))
+        self.assertLess(publish.index("Verify canonical release gates"), publish.index("Authenticate to Google Cloud"))
+        self.assertLess(publish.index("Authenticate to Google Cloud"), publish.index("Build verified Reference Contract window"))
+        install_step = publish.split("- name: Install locked Python dependencies", 1)[1].split("\n      - name:", 1)[0]
+        self.assertNotIn("R2_ACCESS_KEY_ID", install_step)
+        self.assertNotIn("R2_SECRET_ACCESS_KEY", install_step)
+
+        locked_lines = [
+            line.strip()
+            for line in requirements.splitlines()
+            if line.strip() and not line.lstrip().startswith("#") and not line.startswith("    ")
+        ]
+        self.assertTrue(locked_lines)
+        self.assertTrue(all("==" in line for line in locked_lines))
+        self.assertNotIn(">=", requirements)
+        self.assertGreaterEqual(requirements.count("--hash=sha256:"), len(locked_lines))
     def test_release_trust_manifest_is_the_android_and_publisher_source_of_truth(self) -> None:
         trust = json.loads(Path("deploy/reference-signing-trusted-keys.json").read_text())
         workflow = Path(".github/workflows/reference-publish.yml").read_text()
@@ -207,16 +242,36 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("android/**/*.jks", dockerignore)
         self.assertIn("android/**/*.keystore", dockerignore)
         self.assertIn("gha-creds-*.json", dockerignore)
-    def test_android_release_passwords_are_prompted_without_literal_secret_exports(self) -> None:
+    def test_readme_is_end_user_facing_android_install_guide(self) -> None:
         readme = Path("README.md").read_text()
-        release_section = readme.split("직접 signed release APK", 1)[1].split("## 의료 정보 주의", 1)[0]
 
-        self.assertNotIn("export MEDICINE_ANDROID_KEYSTORE_PASSWORD='...'", release_section)
-        self.assertNotIn("export MEDICINE_ANDROID_KEY_PASSWORD='...'", release_section)
-        self.assertIn("read -r -s MEDICINE_ANDROID_KEYSTORE_PASSWORD", release_section)
-        self.assertIn("read -r -s MEDICINE_ANDROID_KEY_PASSWORD", release_section)
-        self.assertIn("export MEDICINE_ANDROID_KEYSTORE_PASSWORD", release_section)
-        self.assertIn("export MEDICINE_ANDROID_KEY_PASSWORD", release_section)
+        for user_term in (
+            "약봄",
+            "Android 9",
+            "arm64-v8a",
+            "GitHub Releases",
+            "APK",
+            "300MB",
+            "자동 업데이트",
+            "SHA256SUMS",
+            "의사",
+            "약사",
+        ):
+            self.assertIn(user_term, readme)
+
+        for developer_term in (
+            "docker compose",
+            "MEDICINE_ANDROID_KEYSTORE",
+            "GCP Secret Manager",
+            "Workload Identity Federation",
+            "medicine-canonical",
+            "Gradle",
+            "Cargo",
+            "앱 제어 CLI",
+            "DB 구조",
+            "docs/android-releasing.md",
+        ):
+            self.assertNotIn(developer_term, readme)
     def test_android_dependencies_are_locked_and_checksum_verified(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         self.assertIn("dependencyLocking", gradle)

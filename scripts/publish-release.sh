@@ -8,7 +8,8 @@ repository="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must identify owner/repositor
 shopt -s nullglob
 apks=("${asset_dir}"/*.apk)
 checksum_file="${asset_dir}/SHA256SUMS"
-if (( ${#apks[@]} != 1 )) || [[ ! -f "${checksum_file}" ]]; then
+notice_file="${asset_dir}/THIRD_PARTY_NOTICES.txt"
+if (( ${#apks[@]} != 1 )) || [[ ! -f "${checksum_file}" || ! -f "${notice_file}" ]]; then
     printf 'release assets are incomplete under %s\n' "${asset_dir}" >&2
     exit 1
 fi
@@ -41,6 +42,7 @@ fi
 # resumed, while an already-published release is treated as terminal.
 gh release upload "${tag}" \
     "${apks[@]}" \
+    "${notice_file}" \
     "${checksum_file}" \
     --repo "${repository}" \
     --clobber

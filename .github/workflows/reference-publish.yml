@@ -94,21 +94,22 @@ jobs:
     if: ${{ needs.gate.result == 'success' && needs.gate.outputs.should_run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    env:
-      DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
     outputs:
       cache_key: ${{ steps.source-state.outputs.key }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
           cache: pip
+          cache-dependency-path: deploy/reference-publish-requirements.txt
 
       - name: Validate source prerequisites
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -117,13 +118,13 @@ jobs:
             exit 1
           fi
 
-      - name: Install source tooling
-        run: python -m pip install --disable-pip-version-check --no-cache-dir .
+      - name: Install locked Python dependencies
+        run: python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes -r deploy/reference-publish-requirements.txt
 
       - name: Restore today's completed scheduled source snapshot
         id: scheduled-source-cache-restore
         if: ${{ github.event_name == 'schedule' }}
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             data/canonical/raw
@@ -134,7 +135,7 @@ jobs:
       - name: Restore latest completed source snapshot for manual publish
         id: manual-source-cache-restore
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.refresh_sources != true }}
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             data/canonical/raw
@@ -177,28 +178,34 @@ jobs:
 
       - name: Preflight current MFDS permit API
         if: ${{ steps.source-state.outputs.sync == 'true' }}
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          medicine-canonical mfds-preflight --timeout-seconds 8 --json
+          python -m medicine_canonical.cli mfds-preflight --timeout-seconds 8 --json
 
       - name: Sync official substance identity snapshots
         if: ${{ steps.source-state.outputs.sync == 'true' }}
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          medicine-canonical substance-sync --json
+          python -m medicine_canonical.cli substance-sync --json
 
       - name: Sync current MFDS permit and DUR snapshots
         if: ${{ steps.source-state.outputs.sync == 'true' }}
+        env:
+          DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          medicine-canonical sync --json
+          python -m medicine_canonical.cli sync --json
 
       - name: Save refreshed source snapshot
         if: ${{ steps.source-state.outputs.sync == 'true' }}
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             data/canonical/raw
@@ -213,32 +220,30 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    env:
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      R2_BUCKET: ${{ secrets.R2_BUCKET }}
-      REFERENCE_SIGNING_KEY_ID: reference-prod-2026-01
-      REFERENCE_SIGNING_KMS_KEY_VERSION: projects/medicine-505813/locations/global/keyRings/medicine-release/cryptoKeys/reference-release-signing/cryptoKeyVersions/1
-      REFERENCE_SIGNING_TRUSTED_KEYS_FILE: deploy/reference-signing-trusted-keys.json
-      REFERENCE_RELEASE_SEQUENCE: ${{ github.run_number }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
-        with:
-          project_id: medicine-505813
-          workload_identity_provider: projects/173565993547/locations/global/workloadIdentityPools/github-actions/providers/medicine-reference-publisher
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.13'
           cache: pip
+          cache-dependency-path: deploy/reference-publish-requirements.txt
+
+      - name: Install locked Python dependencies
+        run: python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes -r deploy/reference-publish-requirements.txt
 
       - name: Validate publication prerequisites
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          REFERENCE_SIGNING_KEY_ID: reference-prod-2026-01
+          REFERENCE_SIGNING_KMS_KEY_VERSION: projects/medicine-505813/locations/global/keyRings/medicine-release/cryptoKeys/reference-release-signing/cryptoKeyVersions/1
+          REFERENCE_SIGNING_TRUSTED_KEYS_FILE: deploy/reference-signing-trusted-keys.json
+          REFERENCE_RELEASE_SEQUENCE: ${{ github.run_number }}
         shell: bash
         run: |
           set -euo pipefail
@@ -250,17 +255,19 @@ jobs:
           done
           test -f "$REFERENCE_SIGNING_TRUSTED_KEYS_FILE"
 
-      - name: Install publisher dependencies
-        run: python -m pip install --disable-pip-version-check --no-cache-dir . 'boto3>=1.34,<2' 'google-cloud-kms>=3,<4'
-
       - name: Audit R2 bucket namespace before public exposure
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         shell: bash
         run: |
           set -euo pipefail
-          medicine-canonical r2-public-audit --json
+          python -m medicine_canonical.cli r2-public-audit --json
 
       - name: Restore exact source snapshot
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             data/canonical/raw
@@ -273,26 +280,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          medicine-canonical integrated-build --json
+          python -m medicine_canonical.cli integrated-build --json
 
       - name: Verify canonical release gates
         shell: bash
         run: |
           set -euo pipefail
-          medicine-canonical verify --json
-          medicine-canonical substance-verify --json
+          python -m medicine_canonical.cli verify --json
+          python -m medicine_canonical.cli substance-verify --json
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: medicine-505813
+          workload_identity_provider: projects/173565993547/locations/global/workloadIdentityPools/github-actions/providers/medicine-reference-publisher
 
       - name: Build verified Reference Contract window and publish latest last
         shell: bash
         env:
           RETIRE_PREVIOUS_CONTRACT: ${{ github.event_name == 'workflow_dispatch' && inputs.retire_previous_contract || false }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          REFERENCE_SIGNING_KEY_ID: reference-prod-2026-01
+          REFERENCE_SIGNING_KMS_KEY_VERSION: projects/medicine-505813/locations/global/keyRings/medicine-release/cryptoKeys/reference-release-signing/cryptoKeyVersions/1
+          REFERENCE_SIGNING_TRUSTED_KEYS_FILE: deploy/reference-signing-trusted-keys.json
+          REFERENCE_RELEASE_SEQUENCE: ${{ github.run_number }}
         run: |
           set -euo pipefail
           retirement_args=()
           if [[ "${RETIRE_PREVIOUS_CONTRACT:-false}" == "true" ]]; then
             retirement_args+=(--retire-previous-contract)
           fi
-          medicine-canonical reference-build-publish-r2 \
+          python -m medicine_canonical.cli reference-build-publish-r2 \
             --db data/db/canonical.sqlite \
             --contract-dir data/db/reference-contracts \
             --output-dir artifacts/reference-release \

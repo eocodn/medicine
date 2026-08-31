@@ -37,7 +37,7 @@ The normal Developer Release workflows intentionally leave this variable unset. 
 
 1. Merge the release-preparation changes and identify the exact commit SHA intended for release.
 2. In GitHub Actions, manually run **Android Developer Release Check** against that exact `main` commit.
-3. `build-unsigned` runs on self-hosted `wsl-ci` with no GCP/OIDC permission. It runs `testDebugUnitTest`, `lintRelease`, and `assembleRelease`, verifies package/version/no-OCR/reference-contract requirements, and preserves exactly one `medicine-vX.Y.Z-arm64-v8a-unsigned.apk` candidate under a commit-SHA + workflow-run cache key.
+3. `build-unsigned` runs on self-hosted `wsl-ci` with no GCP/OIDC permission. It provisions Node 22 and installs the checked-in `ui/package-lock.json` with `npm ci`, then runs `testDebugUnitTest`, `lintRelease`, and `assembleRelease`, verifies package/version/no-OCR/reference-contract requirements, and preserves exactly one `medicine-vX.Y.Z-arm64-v8a-unsigned.apk` candidate under a commit-SHA + workflow-run cache key.
 4. `sign-and-validate` runs on a fresh GitHub-hosted runner. It restores only that exact candidate, validates that it is unsigned, authenticates to GCP, reads only the primary Android signing secrets, signs with APK Signature Scheme v3 for the API 28+ application floor, verifies the pinned certificate SHA-256, deletes temporary signing/GCP credentials, and preserves `medicine-vX.Y.Z-arm64-v8a.apk` under the existing exact-SHA cache handoff key.
 5. After the full Release Check succeeds, create and push the matching tag on the same commit, starting with `v0.1.0`.
 6. **Android Developer Release** verifies that the tag matches `android/release.properties` and that the exact tag commit has a successful Android Developer Release Check.
@@ -58,8 +58,19 @@ The resulting GitHub Release contains:
 
 ```text
 medicine-v0.1.0-arm64-v8a.apk
+THIRD_PARTY_NOTICES.txt
 SHA256SUMS
 ```
+
+`THIRD_PARTY_NOTICES.txt` is also packaged inside the APK. It is generated from the locked Android release runtime dependencies and Rust lockfile, with upstream license/notice texts preserved. When either dependency lock changes, regenerate and review the notice bundle in the standard development image:
+
+```bash
+docker compose run --rm dev python scripts/generate-android-third-party-notices.py \
+  --cargo-registry-src /opt/medicine-cargo-home/registry/src \
+  --gradle-module-cache /opt/medicine-gradle-home/caches/modules-2/files-2.1
+```
+
+The committed notice embeds the SHA-256 of both lockfiles, so release tests fail if dependency locks change without a reviewed notice update.
 
 The current Android package intentionally targets `arm64-v8a` only. Distribution is APK-only. `scripts/check-android-release.sh` is the secret-free unsigned GitHub release gate; `scripts/android_release_build.sh` remains the explicit local/operator path for producing a directly signed release APK when signing inputs are intentionally supplied.
 

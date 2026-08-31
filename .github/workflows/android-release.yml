@@ -126,7 +126,8 @@ jobs:
       - name: Create checksums
         run: |
           cd dist
-          sha256sum ./*.apk > SHA256SUMS
+          cp ../android/app/src/main/assets/THIRD_PARTY_NOTICES.txt THIRD_PARTY_NOTICES.txt
+          sha256sum ./*.apk THIRD_PARTY_NOTICES.txt > SHA256SUMS
 
       - name: Publish GitHub Release
         env:
