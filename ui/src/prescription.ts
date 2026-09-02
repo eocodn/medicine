@@ -165,34 +165,7 @@ function refocusRiskSheetIfOpen() {
   if (sheet && !sheet.classList.contains("hidden")) focusSheetContent(sheet);
 }
 
-function applyParserDraftToForm(draft) {
-  if (!draft || typeof draft !== "object") return;
-  const root = $("#risk-sheet-content");
-  const unit = { tablet: "정", capsule: "캡슐", packet: "포" }[draft.dose_unit] || draft.dose_unit || "";
-  if (draft.dose_amount != null) $("#pending-dose-amount", root).value = draft.dose_amount;
-  if (unit) $("#pending-dose-unit", root).value = unit;
-  if (draft.frequency_per_day != null) $("#pending-frequency", root).value = draft.frequency_per_day;
-  if (draft.prescription_days != null) $("#pending-days", root).value = draft.prescription_days;
-  if (draft.start_date) $("#pending-start-date", root).value = draft.start_date;
-  if (Array.isArray(draft.schedule_times)) setScheduleTimeControls(root, draft.schedule_times);
-  if (draft.meal_relation && $("#pending-meal", root).querySelector(`option[value="${CSS.escape(draft.meal_relation)}"]`)) {
-    $("#pending-meal", root).value = draft.meal_relation;
-  }
-  if (draft.administration_route && $("#pending-route", root).querySelector(`option[value="${CSS.escape(draft.administration_route)}"]`)) {
-    $("#pending-route", root).value = draft.administration_route;
-  }
-  if (draft.as_needed === true) $("#pending-prn", root).checked = true;
-  state.warningToken = null;
-  state.reviewedDraftKey = null;
-  syncPrnFields(root);
-  syncLongTermFields(root);
-}
-
-// MEDICINE_OCR_START
-async function previewProduct(productRef, parserDraft = null, uncertaintyCodes = []) {
-// MEDICINE_OCR_ELSE
 async function previewProduct(productRef) {
-// MEDICINE_OCR_END
   if (!state.currentPersonId) {
     toast("먼저 프로필을 추가해주세요");
     openSheet("#person-sheet");
@@ -204,11 +177,6 @@ async function previewProduct(productRef) {
     });
     state.pendingProduct = preview.product;
     state.pendingRequestId = crypto.randomUUID();
-    // MEDICINE_OCR_START
-    state.pendingParserDraft = parserDraft && typeof parserDraft === "object" ? { ...parserDraft } : null;
-    state.pendingParserPersonId = state.pendingParserDraft ? state.currentPersonId : null;
-    state.pendingParserUncertaintyCodes = state.pendingParserDraft && Array.isArray(uncertaintyCodes) ? [...uncertaintyCodes] : [];
-    // MEDICINE_OCR_END
     state.warningToken = null;
     state.reviewedDraftKey = null;
     state.editingMedicationId = null;
@@ -277,32 +245,9 @@ function renderRiskSheet(preview, medication = null) {
   $$('[data-close-sheet]', root).forEach((button) => button.addEventListener("click", closeSheets));
   $("[data-open-prescription]", root)?.addEventListener("click", () => {
     renderPrescriptionForm(preview, medication);
-    // MEDICINE_OCR_START
-    if (!medication && state.pendingParserDraft) {
-      applyParserDraftToForm(state.pendingParserDraft);
-    }
-    // MEDICINE_OCR_END
   });
   refocusRiskSheetIfOpen();
 }
-
-// MEDICINE_OCR_START
-function parserUncertaintyNoticeHtml(codes) {
-  if (!Array.isArray(codes) || !codes.length) return "";
-  const labels = {
-    LOW_CONFIDENCE_OCR: "일부 글자의 인식 신뢰도가 낮았습니다.",
-    LOW_CONFIDENCE_DOSE: "복용량 인식이 불확실합니다.",
-    UNRESOLVED_REGIMEN_ASSOCIATION: "약과 복용정보의 연결이 불확실합니다.",
-    AMBIGUOUS_PRODUCT: "제품명 인식이 불확실합니다.",
-    MISSING_PRODUCT: "제품명을 충분히 인식하지 못했습니다.",
-    UNSUPPORTED_AS_NEEDED: "필요시 복용 여부를 확정하지 못했습니다.",
-    UNSUPPORTED_ROUTE: "투여 경로를 확정하지 못했습니다.",
-  };
-  const messages = [...new Set(codes.map((code) => labels[code] || "모델이 일부 정보를 확정하지 못했습니다."))];
-  return `<div class="coverage-note limited"><strong>인식 결과를 최종 확인해주세요</strong><br>${messages.map(escapeHtml).join(" ")}</div>`;
-}
-
-// MEDICINE_OCR_END
 
 function renderPrescriptionForm(preview, medication = null) {
   const root = $("#risk-sheet-content");
@@ -316,9 +261,6 @@ function renderPrescriptionForm(preview, medication = null) {
       <strong>${escapeHtml(preview.person.name)}님의 복용 방법을 확인해주세요.</strong>
       <p>처방전 또는 약 봉투에 적힌 내용을 기준으로 입력하면 오늘 일정과 DUR 정량 확인에 사용합니다.</p>
     </div>
-    // MEDICINE_OCR_START
-    ${!medication ? parserUncertaintyNoticeHtml(state.pendingParserUncertaintyCodes) : ""}
-    // MEDICINE_OCR_END
     ${permitStatusNoticeHtml(preview.product, Boolean(medication))}
     <div class="prescription-form">
       <section class="prescription-section">
@@ -550,11 +492,11 @@ async function confirmAddMedication() {
   closeSheetsAfterMutation();
   renderAll();
   // MEDICINE_OCR_START
-  const continuingParserIntake = completeParserRowAndContinue();
+  const continuingOcrIntake = completeOcrProductRowAndContinue();
   // MEDICINE_OCR_ELSE
-  const continuingParserIntake = false;
+  const continuingOcrIntake = false;
   // MEDICINE_OCR_END
-  if (!continuingParserIntake) showScreen("meds", { focus: true });
+  if (!continuingOcrIntake) showScreen("meds", { focus: true });
 
   try {
     await loadDashboard();

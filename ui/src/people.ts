@@ -67,8 +67,8 @@ function renderPeople() {
 
 async function selectPerson(personId) {
   // MEDICINE_OCR_START
-  if (personId !== state.currentPersonId && typeof resetParserTransientState === "function") {
-    resetParserTransientState({ clearSearch: true });
+  if (personId !== state.currentPersonId && typeof resetOcrProductDiscovery === "function") {
+    resetOcrProductDiscovery({ clearSearch: true });
   }
   // MEDICINE_OCR_END
   state.currentPersonId = personId;

@@ -8,13 +8,10 @@ const state = {
   pendingProduct: null,
   pendingRequestId: null,
   // MEDICINE_OCR_START
-  pendingParserDraft: null,
-  pendingParserPersonId: null,
-  pendingParserUncertaintyCodes: [],
-  pendingParserRows: [],
-  activeParserRow: null,
-  parserRowTotal: 0,
-  parserRowIndex: 0,
+  pendingOcrProductRows: [],
+  activeOcrProductRow: null,
+  ocrProductRowTotal: 0,
+  ocrProductRowIndex: 0,
   // MEDICINE_OCR_END
   warningToken: null,
   reviewedDraftKey: null,
@@ -201,8 +198,8 @@ function reconcileCommittedPerson(person, { select = false } = {}) {
     : [...state.people, person];
   if (select) {
     // MEDICINE_OCR_START
-    if (state.currentPersonId && state.currentPersonId !== person.id && typeof resetParserTransientState === "function") {
-      resetParserTransientState({ clearSearch: true });
+    if (state.currentPersonId && state.currentPersonId !== person.id && typeof resetOcrProductDiscovery === "function") {
+      resetOcrProductDiscovery({ clearSearch: true });
     }
     // MEDICINE_OCR_END
     state.currentPersonId = person.id;
@@ -218,7 +215,7 @@ function reconcileDeletedPerson(personId) {
   state.people = state.people.filter((person) => person.id !== personId);
   if (!deletingCurrent) return false;
   // MEDICINE_OCR_START
-  if (typeof resetParserTransientState === "function") resetParserTransientState({ clearSearch: true });
+  if (typeof resetOcrProductDiscovery === "function") resetOcrProductDiscovery({ clearSearch: true });
   // MEDICINE_OCR_END
   state.currentPersonId = state.people[0]?.id || null;
   state.dashboard = null;

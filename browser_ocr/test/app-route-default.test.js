@@ -41,7 +41,7 @@ function appContext() {
     document,
     window: { MedicineLocalApi: null, location: { search: "" } },
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
-    state: { pendingParserUncertaintyCodes: [] },
+    state: {},
     profileMeta: () => "",
     MedicineOcr: {
       getReview: () => null,

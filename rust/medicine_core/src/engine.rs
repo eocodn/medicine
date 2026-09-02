@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::{
-    dashboard, doses, medication_list, medications, people, personal_schema, planning, preview,
-    prn, product_search, reference_capabilities,
+    dashboard, doses, medication_list, medications, ocr_medication_candidates, people, personal_schema,
+    planning, preview, prn, product_search, reference_capabilities,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -124,6 +124,7 @@ impl MedicineEngine {
         let path = request_path(raw_path);
         (normalized_method(method) == "GET" && path == "/api/health")
             || product_search::handles_request(method, raw_path)
+            || ocr_medication_candidates::handles_request(method, path)
             || people::handles_request(method, path)
             || medication_list::handles_request(method, path)
             || dashboard::handles_request(method, path)
@@ -156,6 +157,11 @@ impl MedicineEngine {
         if let Some((status, body)) =
             product_search::handle_request(self.canonical_db.as_deref(), method, raw_path)
         {
+            return json!({"status": status, "body": body}).to_string();
+        }
+        if let Some((status, body)) = ocr_medication_candidates::handle_request(
+            self.canonical_db.as_deref(), method, path, body_json,
+        ) {
             return json!({"status": status, "body": body}).to_string();
         }
         if let Some((status, body)) =
@@ -287,6 +293,9 @@ fn classify_request(method: &str, raw_path: &str) -> RequestPolicy {
         return RequestPolicy::new(AccessClass::Reference, false);
     }
     if method == "GET" && path == "/api/products" {
+        return RequestPolicy::new(AccessClass::Reference, true);
+    }
+    if method == "POST" && path == "/api/products/ocr-candidates" {
         return RequestPolicy::new(AccessClass::Reference, true);
     }
     if method == "GET" && path == "/api/people" {
