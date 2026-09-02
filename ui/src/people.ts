@@ -66,11 +66,9 @@ function renderPeople() {
 }
 
 async function selectPerson(personId) {
-  // MEDICINE_OCR_START
   if (personId !== state.currentPersonId && typeof resetOcrProductDiscovery === "function") {
     resetOcrProductDiscovery({ clearSearch: true });
   }
-  // MEDICINE_OCR_END
   state.currentPersonId = personId;
   localStorage.setItem("medicine.currentPersonId", personId);
   await loadDashboard();

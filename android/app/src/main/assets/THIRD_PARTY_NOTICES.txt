@@ -1,7 +1,7 @@
 THIRD-PARTY NOTICES FOR YAKBOM ANDROID
 =======================================
 
-This file accompanies the no-OCR Android APK. It records the locked Android runtime dependencies and the
+This file accompanies the Android APK. It records the locked Android runtime dependencies and the
 Rust dependency lock used to build the native core. The Rust inventory intentionally covers the complete
 Cargo.lock (a conservative superset of the Android-selected feature graph) so a dependency cannot lose its
 attribution merely because Cargo feature resolution changes.

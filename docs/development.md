@@ -58,7 +58,7 @@ Run `docker compose run --rm app --help` for the complete command surface.
 
 ## Android
 
-The Android UI is packaged with the APK and calls the Rust core through JNI. It does not depend on the standalone development web service at runtime. The release build is currently `arm64-v8a`, Android 9+ (API 28+), and no-OCR by default.
+The Android UI is packaged with the APK and calls the Rust core through JNI. It does not depend on the standalone development web service at runtime. The release build is currently `arm64-v8a`, Android 9+ (API 28+), with on-device OCR packaged in the APK.
 
 ```bash
 docker compose run --rm android
@@ -66,8 +66,6 @@ docker compose run --rm android
 
 Release signing, exact-SHA handoff, versioning, and GitHub Release publication are documented in `docs/android-releasing.md`.
 
-## OCR research boundary
+## OCR runtime
 
-OCR research and training live under `browser_ocr/` and are not part of the default Android release. `MEDICINE_OCR_ASSETS_DIR` is the explicit Android build capability boundary; leaving it unset produces the no-OCR product build.
-
-Large OCR datasets and model artifacts belong under the project artifact storage rather than Git.
+The Android product always packages the validated on-device OCR runtime under `android/app/src/main/assets/ocr-assets`. OCR images and recognized text stay on-device; medication rows are created only from canonical catalog matches, and regimen fields are entered by the user.

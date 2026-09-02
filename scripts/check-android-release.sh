@@ -58,7 +58,7 @@ if ! printf '%s\n' "${badging}" | grep -F "versionName='${versionName}'" >/dev/n
     printf 'unsigned release APK versionName does not match android/release.properties\n' >&2
     exit 1
 fi
-"${python_bin}" "${workspace}/scripts/verify-no-ocr-android-artifact.py" "${source_apk}"
+"${python_bin}" "${workspace}/scripts/verify-ocr-android-artifact.py" "${source_apk}"
 ./scripts/verify-android-reference-contract.sh --verify-full-artifact
 
 mkdir -p "${output_dir}"

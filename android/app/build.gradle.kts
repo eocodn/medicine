@@ -19,25 +19,6 @@ import java.util.Base64
 import java.util.Properties
 import javax.inject.Inject
 
-abstract class PrepareOcrAssets : DefaultTask() {
-    @get:Inject
-    abstract val fileSystemOperations: FileSystemOperations
-
-    @get:InputDirectory
-    abstract val sourceDirectory: DirectoryProperty
-
-    @get:OutputDirectory
-    abstract val outputDirectory: DirectoryProperty
-
-    @TaskAction
-    fun prepare() {
-        fileSystemOperations.sync {
-            from(sourceDirectory)
-            into(outputDirectory)
-        }
-    }
-}
-
 abstract class PrepareSharedUiAssets : DefaultTask() {
     @get:Inject
     abstract val execOperations: ExecOperations
@@ -48,12 +29,6 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
     @get:Input
     abstract val tscBinary: Property<String>
 
-    @get:Input
-    abstract val nodeBinary: Property<String>
-
-    @get:Input
-    abstract val ocrEnabled: Property<Boolean>
-
     @get:InputDirectory
     abstract val sourceDirectory: DirectoryProperty
 
@@ -63,36 +38,17 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
     @get:InputFile
     abstract val tsconfigFile: RegularFileProperty
 
-    @get:InputFile
-    abstract val buildCapabilityScript: RegularFileProperty
-
-    @get:InputFile
-    abstract val buildConfigScript: RegularFileProperty
-
     @get:OutputDirectory
     abstract val outputDirectory: DirectoryProperty
 
     @TaskAction
     fun prepare() {
         fileSystemOperations.delete { delete(outputDirectory) }
-        val preparedSource = temporaryDir.resolve("src")
-        fileSystemOperations.delete { delete(preparedSource) }
-        execOperations.exec {
-            commandLine(
-                nodeBinary.get(),
-                "--experimental-strip-types",
-                buildCapabilityScript.get().asFile.absolutePath,
-                "prepare",
-                sourceDirectory.get().asFile.absolutePath,
-                preparedSource.absolutePath,
-                if (ocrEnabled.get()) "enabled" else "disabled",
-            )
-        }
         execOperations.exec {
             commandLine(
                 tscBinary.get(),
                 "-p",
-                preparedSource.resolve("tsconfig.json").absolutePath,
+                sourceDirectory.get().asFile.parentFile.resolve("tsconfig.json").absolutePath,
                 "--outDir",
                 outputDirectory.get().asFile.absolutePath,
             )
@@ -100,15 +56,6 @@ abstract class PrepareSharedUiAssets : DefaultTask() {
         fileSystemOperations.copy {
             from(publicDirectory)
             into(outputDirectory)
-        }
-        execOperations.exec {
-            commandLine(
-                nodeBinary.get(),
-                "--experimental-strip-types",
-                buildConfigScript.get().asFile.absolutePath,
-                outputDirectory.get().asFile.absolutePath,
-                if (ocrEnabled.get()) "enabled" else "disabled",
-            )
         }
     }
 }
@@ -281,9 +228,6 @@ val verifyReleaseEnvironment = tasks.register("verifyReleaseEnvironment") {
         require(File(release.keystorePath).isFile) {
             "MEDICINE_ANDROID_KEYSTORE_PATH does not point to a readable file"
         }
-        require(System.getenv("MEDICINE_OCR_ASSETS_DIR").isNullOrBlank()) {
-            "OCR is not enabled for the current Android release"
-        }
     }
 }
 
@@ -327,31 +271,14 @@ if (releaseReferenceUpdateBaseUrl.isNotEmpty()) {
 }
 val effectiveReferenceUpdateBaseUrl = referenceUpdateBaseUrlOverride ?: releaseReferenceUpdateBaseUrl
 
-val ocrAssetsDirectory = providers.environmentVariable("MEDICINE_OCR_ASSETS_DIR")
-    .orNull
-    ?.trim()
-    ?.takeIf { it.isNotEmpty() }
-val isOcrEnabled = ocrAssetsDirectory != null
-val prepareOcrAssets = ocrAssetsDirectory?.let { source ->
-    tasks.register<PrepareOcrAssets>("prepareOcrAssets") {
-        sourceDirectory.set(layout.dir(providers.provider { file(source) }))
-        outputDirectory.set(layout.buildDirectory.dir("generated/ocrAssets"))
-    }
-}
-
 val sharedUiRoot = rootProject.file("../ui")
 val sharedUiTscBinary = providers.environmentVariable("MEDICINE_TSC_BINARY")
     .orElse(sharedUiRoot.resolve("node_modules/.bin/tsc").absolutePath)
-val sharedUiNodeBinary = providers.environmentVariable("MEDICINE_NODE_BINARY").orElse("node")
 val prepareSharedUiAssets = tasks.register<PrepareSharedUiAssets>("prepareSharedUiAssets") {
     tscBinary.set(sharedUiTscBinary)
-    nodeBinary.set(sharedUiNodeBinary)
-    ocrEnabled.set(isOcrEnabled)
     sourceDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("src") }))
     publicDirectory.set(layout.dir(providers.provider { sharedUiRoot.resolve("public") }))
     tsconfigFile.set(layout.file(providers.provider { sharedUiRoot.resolve("tsconfig.json") }))
-    buildCapabilityScript.set(layout.file(providers.provider { sharedUiRoot.resolve("build-capability.ts") }))
-    buildConfigScript.set(layout.file(providers.provider { rootProject.file("../ui/build-config.ts") }))
     outputDirectory.set(layout.buildDirectory.dir("generated/sharedUiAssets"))
 }
 
@@ -444,13 +371,6 @@ android {
         buildConfig = true
     }
 
-    sourceSets.getByName("main").java.directories.add(
-        if (isOcrEnabled) "src/ocr/java" else "src/noOcr/java"
-    )
-    sourceSets.getByName("main").manifest.srcFile(
-        if (isOcrEnabled) "src/ocr/AndroidManifest.xml" else "src/main/AndroidManifest.xml"
-    )
-    if (isOcrEnabled) sourceSets.getByName("main").res.directories.add("src/ocr/res")
 }
 
 androidComponents {
@@ -459,9 +379,6 @@ androidComponents {
             "Android assets source API is unavailable for ${variant.name}"
         }
         assets.addGeneratedSourceDirectory(prepareSharedUiAssets, PrepareSharedUiAssets::outputDirectory)
-        prepareOcrAssets?.let { task ->
-            assets.addGeneratedSourceDirectory(task, PrepareOcrAssets::outputDirectory)
-        }
         val jniLibs = checkNotNull(variant.sources.jniLibs) {
             "Android JNI source API is unavailable for ${variant.name}"
         }

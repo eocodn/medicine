@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "model_id": "pp-ocrv5-mobile-korean-onnx-2026-08-13",
+  "source_manifest_sha256": "a39bbbc13600349fcc15a08411136464d9a5f36e7aa04f65d4dc16233591dcb4",
+  "runtime": {
+    "backend": "onnxruntime-web-wasm",
+    "onnxruntime_web": "1.27.0",
+    "detector": "PP-OCRv5_mobile_det",
+    "recognizer": "korean_PP-OCRv5_mobile_rec"
+  },
+  "files": {
+    "direct/ocr-worker.js": {
+      "sha256": "2cb6326968c4c6c8cac2926a15006e2a0cfbe0c9db100eb789c0ba0350245ca4",
+      "size_bytes": 117864
+    },
+    "licenses/THIRD_PARTY_NOTICES.md": {
+      "sha256": "f19a09f8b0d9cd78c6ec99d73529f92b41291620f864b5ac8458e273c25c12a8",
+      "size_bytes": 555
+    },
+    "licenses/js-yaml-MIT.txt": {
+      "sha256": "a07bc24468b9654ce76a547d47a2db282d07733b715db4c73a98bd63961f9550",
+      "size_bytes": 1084
+    },
+    "models/detection.onnx": {
+      "sha256": "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d",
+      "size_bytes": 4826518
+    },
+    "models/korean-recognition-dictionary.json": {
+      "sha256": "6b04c646985f4bf27b79d488cbdc4e99e2d06973cbd36c8cc4d68da510687f30",
+      "size_bytes": 71349
+    },
+    "models/korean-recognition.onnx": {
+      "sha256": "92f0b7785e64fc9090106a241cf4c1eb97472824558272751b88a2a4476d3a08",
+      "size_bytes": 13418787
+    },
+    "ort/ort-wasm-simd-threaded.mjs": {
+      "sha256": "0a1e718d99c41b22c21f2520ff4f9e883a6b5533856e398d21816ee8eb8185d3",
+      "size_bytes": 24180
+    },
+    "ort/ort-wasm-simd-threaded.wasm": {
+      "sha256": "d1ab1b94b16a65b29d710d0b587b29e7bed336827577623913479b8afe8113e6",
+      "size_bytes": 13479978
+    }
+  }
+}

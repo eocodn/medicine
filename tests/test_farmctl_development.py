@@ -43,7 +43,6 @@ class FarmctlDevelopmentTest(unittest.TestCase):
             "android/app/src",
             "medicine_canonical",
             "medicine_reference",
-            "browser_ocr",
         ):
             self.assertNotIn(
                 f"COPY {source_path}",

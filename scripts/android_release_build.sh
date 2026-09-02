@@ -24,11 +24,6 @@ do
     require_env "$name"
 done
 
-if [ -n "${MEDICINE_OCR_ASSETS_DIR-}" ]; then
-    echo "OCR is not enabled for the current Android release" >&2
-    exit 2
-fi
-
 case "$MEDICINE_ANDROID_VERSION_CODE" in
     *[!0-9]*|'')
         echo "MEDICINE_ANDROID_VERSION_CODE must be a positive integer" >&2
@@ -103,6 +98,6 @@ if [ "$actual_fingerprint" != "$expected_fingerprint" ]; then
     echo "Android release certificate SHA-256 digest does not match pinned identity" >&2
     exit 3
 fi
-"$python_bin" "$workspace/scripts/verify-no-ocr-android-artifact.py" "$apk"
+"$python_bin" "$workspace/scripts/verify-ocr-android-artifact.py" "$apk"
 "$workspace/scripts/verify-android-reference-contract.sh" --verify-full-artifact
 printf 'verified signed Android release: %s\n' "$apk"

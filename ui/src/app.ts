@@ -76,7 +76,6 @@ function invalidateProductSearch() {
   state.searchLoadingMore = false;
 }
 
-// MEDICINE_OCR_START
 function resetOcrProductDiscovery({ clearSearch = false } = {}) {
   const hadOcrSearch = Boolean(state.activeOcrProductRow || state.pendingOcrProductRows.length);
   state.pendingOcrProductRows = [];
@@ -123,7 +122,6 @@ function completeOcrProductRowAndContinue() {
   void startNextOcrProductSearch();
   return true;
 }
-// MEDICINE_OCR_END
 
 function focusSearchFromBox(event) {
   if (event.target?.closest?.("#drug-query-clear")) return;
@@ -134,9 +132,7 @@ function showScreen(name, { focus = false } = {}) {
   const previousScreenNode = $(".screen.active");
   const previousScreen = previousScreenNode?.dataset.screen || null;
   const focusWasInPrevious = Boolean(previousScreenNode?.contains?.(document.activeElement));
-  // MEDICINE_OCR_START
   if (previousScreen === "search" && name !== "search") resetOcrProductDiscovery({ clearSearch: true });
-  // MEDICINE_OCR_END
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
   $$(".nav-item").forEach((node) => {
     const active = node.dataset.nav === name;
@@ -202,9 +198,7 @@ async function loadPeople() {
   if (!state.people.some((person) => person.id === state.currentPersonId)) {
     state.currentPersonId = state.people[0]?.id || null;
   }
-  // MEDICINE_OCR_START
   if (previousPersonId && previousPersonId !== state.currentPersonId) resetOcrProductDiscovery({ clearSearch: true });
-  // MEDICINE_OCR_END
   if (state.currentPersonId) {
     localStorage.setItem("medicine.currentPersonId", state.currentPersonId);
     await loadDashboard();
@@ -535,7 +529,6 @@ function bindEvents() {
     const detail = (event as CustomEvent).detail;
     if (detail?.id === "stop-medication-sheet") state.pendingStopMedicationId = null;
   });
-  // MEDICINE_OCR_START
   window.addEventListener("medicine:ocr-result", (event) => {
     const detail = (event as CustomEvent).detail;
     void window.MedicineOcrIntake?.discoverMedicationRows(detail?.items, api).then(async (rows) => {
@@ -547,7 +540,6 @@ function bindEvents() {
       await startNextOcrProductSearch();
     });
   });
-  // MEDICINE_OCR_END
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });
   window.addEventListener("focus", refreshForDateChange);
   setInterval(refreshForDateChange, 60000);

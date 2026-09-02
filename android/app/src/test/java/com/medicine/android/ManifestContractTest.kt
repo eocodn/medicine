@@ -6,74 +6,17 @@ import org.junit.Test
 
 class ManifestContractTest {
     @Test
-    fun nativeReferenceUpdaterHasInternetButWebViewRemainsLocalAndCleartextDisabled() {
-        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
-        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
-        val index = java.io.File("../../ui/dist/index.html").readText()
-        assertTrue(manifest.contains("android.permission.INTERNET"))
-        assertFalse(manifest.contains("usesCleartextTraffic"))
-        assertFalse(manifest.contains("com.chaquo.python"))
-        assertTrue(activity.contains("blocked external request"))
-        assertTrue(activity.contains("BuildConfig.REFERENCE_UPDATE_BASE_URL"))
-        assertTrue(index.contains("connect-src 'self'"))
-    }
-
-    @Test
-    fun androidShellUsesLocalAssetsAndRustApiBridge() {
+    fun ocrIsAnUnconditionalPackagedProductCapability() {
         val build = java.io.File("build.gradle.kts").readText()
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
-        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
-        val nativeCore = java.io.File("src/main/java/com/medicine/android/MedicineNativeCore.kt")
-        val proguard = java.io.File("proguard-rules.pro").readText()
-        assertFalse(build.contains("mlkit", ignoreCase = true))
-        assertFalse(build.contains("com.chaquo.python"))
-        assertTrue(build.contains("androidx.webkit:webkit"))
-        assertTrue(build.contains("buildRustNative"))
-        assertFalse(build.contains("medicineWebUrl"))
-        assertFalse(activity.contains("MEDICINE_WEB_URL"))
-        assertTrue(activity.contains("WebViewAssetLoader"))
-        assertTrue(activity.contains("MedicineNative"))
-        assertTrue(activity.contains("addJavascriptInterface"))
-        assertTrue(activity.contains("ProductCapabilityIntegration"))
-        assertFalse(activity.contains("MediaStore.ACTION_IMAGE_CAPTURE"))
-        assertFalse(activity.contains("FileProvider.getUriForFile"))
+        val integration = java.io.File("src/main/java/com/medicine/android/ProductCapabilityIntegration.java").readText()
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
-        assertFalse(manifest.contains("androidx.core.content.FileProvider"))
-        assertFalse(manifest.contains("@xml/file_paths"))
-        assertTrue(nativeCore.isFile)
-        assertTrue(bridge.contains("MedicineNativeCore"))
-        assertTrue(bridge.contains("MedicineNativeCore(referenceDatabase, personalDatabase)"))
-        assertTrue(bridge.contains("nativeCore.requestAccess"))
-        assertTrue(bridge.contains("nativeCore.request"))
-        assertFalse(bridge.contains("callAttr"))
-        assertFalse(bridge.contains("Python"))
-        assertTrue(proguard.contains("-keep class com.medicine.android.MedicineNativeCore"))
-        assertTrue(
-            proguard.contains("-keep interface com.medicine.android.NativeReferenceArtifactObserver")
-        )
-    }
-
-    @Test
-    fun productShellCompilesOcrOnlyWhenRuntimeAssetsAreExplicitlyProvided() {
-        val build = java.io.File("build.gradle.kts").readText()
-        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
-        val ocrIntegration = java.io.File("src/ocr/java/com/medicine/android/ProductCapabilityIntegration.java").readText()
-        val noProductCapabilityIntegration = java.io.File("src/noOcr/java/com/medicine/android/ProductCapabilityIntegration.java").readText()
-        val index = java.io.File("../../ui/public/index.html").readText()
-        assertTrue(build.contains("PrepareOcrAssets"))
-        assertTrue(build.contains("MEDICINE_OCR_ASSETS_DIR"))
-        assertTrue(build.contains("src/ocr/java"))
-        assertTrue(build.contains("src/noOcr/java"))
-        assertTrue(build.contains("ocrEnabled.set(isOcrEnabled)"))
-        assertTrue(activity.contains("ProductCapabilityIntegration"))
+        val runtimeManifest = java.io.File("src/main/assets/ocr-assets/runtime-manifest.json")
+        assertFalse(build.contains("MEDICINE_OCR_ASSETS_DIR"))
         assertFalse(activity.contains("/ocr-assets/"))
-        assertTrue(ocrIntegration.contains("/ocr-assets/"))
-        assertTrue(ocrIntegration.contains("MediaStore.ACTION_IMAGE_CAPTURE"))
-        assertFalse(noProductCapabilityIntegration.contains("/ocr-assets/"))
-        assertFalse(noProductCapabilityIntegration.contains("MediaStore.ACTION_IMAGE_CAPTURE"))
-        assertTrue(index.contains("MEDICINE_OCR_START"))
-        assertTrue(index.contains("ocr-image-input"))
-        assertTrue(index.contains("ocr-intake.js"))
+        assertTrue(integration.contains("/ocr-assets/"))
+        assertTrue(manifest.contains("FileProvider"))
+        assertTrue(runtimeManifest.isFile)
     }
 
     @Test

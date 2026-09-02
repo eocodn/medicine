@@ -7,12 +7,10 @@ const state = {
   fullCatalog: false,
   pendingProduct: null,
   pendingRequestId: null,
-  // MEDICINE_OCR_START
   pendingOcrProductRows: [],
   activeOcrProductRow: null,
   ocrProductRowTotal: 0,
   ocrProductRowIndex: 0,
-  // MEDICINE_OCR_END
   warningToken: null,
   reviewedDraftKey: null,
   editingMedicationId: null,
@@ -197,11 +195,9 @@ function reconcileCommittedPerson(person, { select = false } = {}) {
     ? state.people.map((item) => item.id === person.id ? person : item)
     : [...state.people, person];
   if (select) {
-    // MEDICINE_OCR_START
     if (state.currentPersonId && state.currentPersonId !== person.id && typeof resetOcrProductDiscovery === "function") {
       resetOcrProductDiscovery({ clearSearch: true });
     }
-    // MEDICINE_OCR_END
     state.currentPersonId = person.id;
     localStorage.setItem("medicine.currentPersonId", person.id);
     state.dashboard = null;
@@ -214,9 +210,7 @@ function reconcileDeletedPerson(personId) {
   const deletingCurrent = state.currentPersonId === personId;
   state.people = state.people.filter((person) => person.id !== personId);
   if (!deletingCurrent) return false;
-  // MEDICINE_OCR_START
   if (typeof resetOcrProductDiscovery === "function") resetOcrProductDiscovery({ clearSearch: true });
-  // MEDICINE_OCR_END
   state.currentPersonId = state.people[0]?.id || null;
   state.dashboard = null;
   state.dashboardDate = null;

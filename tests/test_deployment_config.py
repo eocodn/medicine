@@ -364,8 +364,8 @@ class DeploymentConfigTest(unittest.TestCase):
                 "printf 'reference:%s\\n' \"$*\" >> \"$ANDROID_RELEASE_TEST_LOG\"\n"
             )
             reference_gate_stub.chmod(0o755)
-            no_ocr_stub = scripts_dir / "verify-no-ocr-android-artifact.py"
-            no_ocr_stub.write_text(
+            ocr_verifier_stub = scripts_dir / "verify-ocr-android-artifact.py"
+            ocr_verifier_stub.write_text(
                 "import os, sys\n"
                 "with open(os.environ['ANDROID_RELEASE_TEST_LOG'], 'a') as log:\n"
                 "    log.write('no-ocr:' + ' '.join(sys.argv[1:]) + '\\n')\n"

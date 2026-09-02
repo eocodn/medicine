@@ -52,14 +52,14 @@
             <input id="drug-query" type="search" aria-label="약 검색" placeholder="제품명 · 제조사 · 성분명" autocomplete="off">
             <button id="drug-query-clear" class="search-clear" type="button" aria-label="검색어 지우기">×</button>
           </div>
-          <!-- MEDICINE_OCR_START -->
+
           <div class="ocr-import-card">
             <label class="secondary-button wide ocr-file-button" for="ocr-image-input">처방전 사진으로 불러오기</label>
             <input id="ocr-image-input" class="visually-hidden" type="file" accept="image/*" capture="environment">
             <p class="muted small">사진은 서버로 전송되지 않고 이 기기에서만 인식해요. 파서 결과는 바로 제품 검색에 사용되고, 복용정보는 저장 전 최종 화면에서 수정할 수 있어요.</p>
             <div id="ocr-status" class="muted small" role="status"></div>
           </div>
-          <!-- MEDICINE_OCR_END -->
+
         </div>
         <div id="search-status" class="muted small search-status"></div>
         <div id="drug-results" class="stack"></div>
@@ -174,8 +174,8 @@
   <script src="/static/app.js?v=20260823search1" defer></script>
   <script src="/static/product-search.js?v=20260823search1" defer></script>
   <script src="/static/dose-actions.js?v=20260820perf4" defer></script>
-  <!-- MEDICINE_OCR_START -->
+
   <script src="/static/ocr-intake.js?v=20260821parser2" defer></script>
-  <!-- MEDICINE_OCR_END -->
+
 </body>
 </html>
