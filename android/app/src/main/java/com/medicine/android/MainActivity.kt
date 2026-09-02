@@ -16,9 +16,6 @@ import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.security.KeyStore
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.RejectedExecutionException
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import org.json.JSONObject
@@ -28,7 +25,6 @@ class MainActivity : ComponentActivity() {
     private var medicineBridge: MedicineBridge? = null
     private lateinit var ocrIntegration: ProductCapabilityIntegration
     private val backDispatchGate = BackDispatchGate()
-    private val startupExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val medicineNativeProxy = MedicineNativeProxy()
     private var referenceBootstrapBridge: ReferenceBootstrapJsBridge? = null
 
@@ -96,52 +92,6 @@ class MainActivity : ComponentActivity() {
         }
         medicineBridge = bridge
         medicineNativeProxy.attach(bridge)
-        scheduleReferenceUpdate(reference, bridge)
-    }
-
-    private fun scheduleReferenceUpdate(reference: InstalledReference, bridge: MedicineBridge) {
-        val installedVersion = reference.version ?: return
-        val installedDatabase = reference.database ?: return
-        val baseUrl = BuildConfig.REFERENCE_UPDATE_BASE_URL.trim()
-        if (baseUrl.isEmpty()) {
-            Log.i(TAG, "Reference updater is disabled: no distribution base URL configured")
-            return
-        }
-        if (isDestroyed || startupExecutor.isShutdown) return
-        try {
-            startupExecutor.execute {
-                val result = runCatching {
-                    val source = HttpsReferenceReleaseSource(
-                        baseUrl,
-                        ReferenceManifestVerifier(ReferenceTrust.trustedPublicKeys),
-                    )
-                    ReferenceUpdater(
-                        reference.referenceDir,
-                        reference.store,
-                        source,
-                        RustReferenceArtifactRebuilder(),
-                        ReferenceUpdateLogObserver(),
-                    ).checkForUpdate(InstalledReferenceVersion(installedVersion, installedDatabase))
-                }.getOrElse { error ->
-                    ReferenceUpdateResult(
-                        status = ReferenceUpdateStatus.FAILED,
-                        detail = error.message ?: error.javaClass.simpleName,
-                    )
-                }
-                if (result.status == ReferenceUpdateStatus.FAILED) {
-                    Log.e(TAG, "Reference update failed: ${result.detail}")
-                } else if (result.status == ReferenceUpdateStatus.UPDATE_REQUIRED) {
-                    bridge.setReferenceAvailable(false, "update_required")
-                    Log.w(TAG, "Reference contract retired; safety-data operations are blocked")
-                } else {
-                    Log.i(TAG, "Reference update result=${result.status} sequence=${result.releaseSequence}")
-                }
-            }
-        } catch (_: RejectedExecutionException) {
-            // Activity destruction can race a completed startup worker. Reference
-            // state is already safe; simply avoid queueing lifecycle-owned OTA work.
-            Log.i(TAG, "Reference updater skipped because Activity executor is closed")
-        }
     }
 
     private fun personalDatabaseKey(): SecretKey {
@@ -167,7 +117,11 @@ class MainActivity : ComponentActivity() {
             .addPathHandler("/static/", WebViewAssetLoader.AssetsPathHandler(this))
         ocrIntegration.configureAssetLoader(assetLoaderBuilder)
         val assetLoader = assetLoaderBuilder.build()
-        val bootstrapBridge = ReferenceBootstrapJsBridge(this, ::activateReference)
+        val bootstrapBridge = ReferenceBootstrapJsBridge(
+            this,
+            ::activateReference,
+            onReferenceRetired = { reason -> medicineBridge?.setReferenceAvailable(false, reason) },
+        )
         referenceBootstrapBridge = bootstrapBridge
 
         val view = WebView(this).apply {
@@ -234,7 +188,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         ocrIntegration.close()
-        startupExecutor.shutdownNow()
         referenceBootstrapBridge?.close()
         referenceBootstrapBridge = null
         medicineBridge?.close()

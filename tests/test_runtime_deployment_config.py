@@ -89,11 +89,11 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
             self.assertNotIn("COPY ui/dist", dockerfile)
     def test_android_bootstrap_contract_matches_embedded_runtime_contract(self) -> None:
         kotlin = Path(
-            "android/app/src/main/java/com/medicine/android/ReferenceRuntimeAdapters.kt"
+            "android/app/src/main/java/com/medicine/android/ReferenceNativeCore.kt"
         ).read_text()
         python_runtime = Path("medicine_reference/reference_contracts/v1.py").read_text()
 
-        android_contract = re.search(r'const val CONTRACT_MAJOR = ([0-9]+)', kotlin)
+        android_contract = re.search(r'REFERENCE_CONTRACT_MAJOR = ([0-9]+)', kotlin)
         runtime_contract = re.search(r'REFERENCE_CONTRACT_MAJOR = ([0-9]+)', python_runtime)
         self.assertIsNotNone(android_contract)
         self.assertIsNotNone(runtime_contract)
@@ -263,6 +263,7 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         compose = Path("compose.yaml").read_text()
         web_service = compose.split("\n  web:\n", 1)[1].split("\n  ui:\n", 1)[0]
         web_binary = Path("rust/medicine_core/src/bin/medicine_core_web.rs").read_text()
+        web_runtime = Path("rust/medicine_core/src/web.rs").read_text()
         app_commands = Path(
             "rust/medicine_core/src/bin/agentctl/app_commands/support.rs"
         ).read_text()
@@ -273,8 +274,12 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         )
         self.assertIn("MEDICINE_REFERENCE_DIR: ${MEDICINE_REFERENCE_DIR:-data/reference}", web_service)
         self.assertIn("MEDICINE_REFERENCE_UPDATE_BASE_URL", web_service)
-        self.assertIn("open_development_reference", web_binary)
-        self.assertIn("inspect_development_reference_bootstrap", web_binary)
+        self.assertIn("development_reference_runtime", web_binary)
+        self.assertIn("prepare_runtime.prepare()", web_binary)
+        self.assertIn("schedule_reference_update", web_binary)
+        self.assertIn("update_runtime.check_for_update()", web_runtime)
+        self.assertNotIn("open_development_reference", web_binary)
+        self.assertNotIn("inspect_development_reference_bootstrap", web_binary)
         self.assertIn('const DEFAULT_REFERENCE_DIR: &str = "data/reference";', web_binary)
         self.assertNotIn('const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";', web_binary)
         self.assertIn('const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";', app_commands)

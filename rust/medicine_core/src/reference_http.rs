@@ -1,5 +1,5 @@
-use super::storage::{io_error, normalize_checkpoint, verify_file_identity};
-use super::{DevelopmentReferenceError, ReferenceReleaseSource};
+use crate::reference_manager::storage::{io_error, normalize_checkpoint, verify_file_identity};
+use crate::reference_manager::{ReferenceReleaseSource, ReferenceRuntimeError};
 use crate::reference_signature::{
     ReferenceManifestVerifier, ReferenceReleaseArtifact, ReferenceReleaseProtocolV2,
     ReferenceRootSelection,
@@ -18,7 +18,7 @@ const IO_BUFFER_SIZE: usize = 1024 * 1024;
 const PROGRESS_BUCKETS: u64 = 20;
 
 #[derive(Debug, Clone)]
-pub(super) struct HttpsReferenceReleaseSource {
+pub(crate) struct ReferenceHttpSource {
     base_url: Url,
     client: Client,
     verifier: ReferenceManifestVerifier,
@@ -35,33 +35,33 @@ struct SignedEnvelope {
     signature_base64: String,
 }
 
-impl HttpsReferenceReleaseSource {
-    pub(super) fn new(
+impl ReferenceHttpSource {
+    pub(crate) fn new(
         base_url: &str,
         verifier: ReferenceManifestVerifier,
         contract_major: u64,
-    ) -> Result<Self, DevelopmentReferenceError> {
+    ) -> Result<Self, ReferenceRuntimeError> {
         let base_url = Url::parse(base_url)
-            .map_err(|_| DevelopmentReferenceError::new("reference update base URL is invalid"))?;
+            .map_err(|_| ReferenceRuntimeError::new("reference update base URL is invalid"))?;
         if base_url.scheme() != "https"
             || base_url.host_str().is_none()
             || base_url.query().is_some()
             || base_url.fragment().is_some()
             || !base_url.path().ends_with('/')
         {
-            return Err(DevelopmentReferenceError::new(
+            return Err(ReferenceRuntimeError::new(
                 "reference update base URL must be an HTTPS base path ending in /",
             ));
         }
         if contract_major == 0 {
-            return Err(DevelopmentReferenceError::new(
+            return Err(ReferenceRuntimeError::new(
                 "reference contract major must be positive",
             ));
         }
         let client = Client::builder()
-            .user_agent("medicine-core-web/0.1")
+            .user_agent("medicine-core/0.1")
             .build()
-            .map_err(|error| DevelopmentReferenceError::new(format!("HTTP client: {error}")))?;
+            .map_err(|error| ReferenceRuntimeError::new(format!("network_failed: {error}")))?;
         Ok(Self {
             base_url,
             client,
@@ -70,39 +70,39 @@ impl HttpsReferenceReleaseSource {
         })
     }
 
-    fn object_url(&self, key: &str) -> Result<Url, DevelopmentReferenceError> {
+    fn object_url(&self, key: &str) -> Result<Url, ReferenceRuntimeError> {
         let url = self
             .base_url
             .join(key)
-            .map_err(|_| DevelopmentReferenceError::new("invalid reference object key"))?;
+            .map_err(|_| ReferenceRuntimeError::new("invalid reference object key"))?;
         if url.scheme() != self.base_url.scheme()
             || url.host_str() != self.base_url.host_str()
             || url.port_or_known_default() != self.base_url.port_or_known_default()
         {
-            return Err(DevelopmentReferenceError::new(
+            return Err(ReferenceRuntimeError::new(
                 "reference object escaped configured origin",
             ));
         }
         Ok(url)
     }
 
-    fn small_body(&self, key: &str) -> Result<Vec<u8>, DevelopmentReferenceError> {
+    fn small_body(&self, key: &str) -> Result<Vec<u8>, ReferenceRuntimeError> {
         let response = self
             .client
             .get(self.object_url(key)?)
             .send()
-            .map_err(|error| DevelopmentReferenceError::new(format!("reference HTTP: {error}")))?;
+            .map_err(|error| ReferenceRuntimeError::new(format!("network_failed: {error}")))?;
         if !response.status().is_success() {
-            return Err(DevelopmentReferenceError::new(format!(
-                "reference HTTP status {}",
-                response.status()
+            return Err(ReferenceRuntimeError::new(format!(
+                "manifest_http_{}",
+                response.status().as_u16()
             )));
         }
         if response
             .content_length()
             .is_some_and(|length| length > MAX_ROOT_BYTES)
         {
-            return Err(DevelopmentReferenceError::new(
+            return Err(ReferenceRuntimeError::new(
                 "signed reference root is too large",
             ));
         }
@@ -110,9 +110,9 @@ impl HttpsReferenceReleaseSource {
         response
             .take(MAX_ROOT_BYTES + 1)
             .read_to_end(&mut body)
-            .map_err(|error| DevelopmentReferenceError::new(format!("reference HTTP: {error}")))?;
+            .map_err(|error| ReferenceRuntimeError::new(format!("network_failed: {error}")))?;
         if body.len() as u64 > MAX_ROOT_BYTES {
-            return Err(DevelopmentReferenceError::new(
+            return Err(ReferenceRuntimeError::new(
                 "signed reference root is too large",
             ));
         }
@@ -120,11 +120,11 @@ impl HttpsReferenceReleaseSource {
     }
 }
 
-impl ReferenceReleaseSource for HttpsReferenceReleaseSource {
-    fn fetch_latest(&self) -> Result<ReferenceRootSelection, DevelopmentReferenceError> {
+impl ReferenceReleaseSource for ReferenceHttpSource {
+    fn fetch_latest(&self) -> Result<ReferenceRootSelection, ReferenceRuntimeError> {
         let body = self.small_body(ROOT_KEY)?;
         let envelope: SignedEnvelope = serde_json::from_slice(&body)
-            .map_err(|_| DevelopmentReferenceError::new("signed reference root is invalid JSON"))?;
+            .map_err(|_| ReferenceRuntimeError::new("manifest_json"))?;
         let verified = self
             .verifier
             .verify(
@@ -136,20 +136,20 @@ impl ReferenceReleaseSource for HttpsReferenceReleaseSource {
                 &envelope.signature_base64,
                 None,
             )
-            .map_err(|error| DevelopmentReferenceError::new(error.to_string()))?;
+            .map_err(|error| ReferenceRuntimeError::new(format!("manifest_signature: {error}")))?;
         ReferenceReleaseProtocolV2::select_verified_root(
             verified.release_sequence,
             &verified.payload,
             self.contract_major,
         )
-        .map_err(|error| DevelopmentReferenceError::new(error.to_string()))
+        .map_err(|error| ReferenceRuntimeError::new(format!("manifest_release: {error}")))
     }
 
     fn download(
         &self,
         artifact: &ReferenceReleaseArtifact,
         target: &Path,
-    ) -> Result<(), DevelopmentReferenceError> {
+    ) -> Result<(), ReferenceRuntimeError> {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(io_error("create reference download directory"))?;
         }
@@ -164,7 +164,7 @@ impl ReferenceReleaseSource for HttpsReferenceReleaseSource {
         }
         let response = request
             .send()
-            .map_err(|error| DevelopmentReferenceError::new(format!("reference HTTP: {error}")))?;
+            .map_err(|error| ReferenceRuntimeError::new(format!("network_failed: {error}")))?;
         let status = response.status();
         let append = completed > 0 && status == StatusCode::PARTIAL_CONTENT;
         if completed > 0 && status == StatusCode::OK {
@@ -172,11 +172,11 @@ impl ReferenceReleaseSource for HttpsReferenceReleaseSource {
         } else if append {
             validate_content_range(&response, completed, artifact.size_bytes)?;
         } else if completed == 0 && status != StatusCode::OK {
-            return Err(DevelopmentReferenceError::new(format!(
+            return Err(ReferenceRuntimeError::new(format!(
                 "reference artifact HTTP status {status}"
             )));
         } else if completed > 0 {
-            return Err(DevelopmentReferenceError::new(format!(
+            return Err(ReferenceRuntimeError::new(format!(
                 "reference artifact resume HTTP status {status}"
             )));
         }
@@ -191,16 +191,16 @@ fn validate_content_range(
     response: &Response,
     completed: u64,
     total: u64,
-) -> Result<(), DevelopmentReferenceError> {
+) -> Result<(), ReferenceRuntimeError> {
     let value = response
         .headers()
         .get(CONTENT_RANGE)
         .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| DevelopmentReferenceError::new("missing reference Content-Range"))?;
+        .ok_or_else(|| ReferenceRuntimeError::new("missing reference Content-Range"))?;
     let expected = format!("bytes {completed}-{}-{total}", total - 1);
     let normalized = value.replace('/', "-");
     if normalized != expected {
-        return Err(DevelopmentReferenceError::new(
+        return Err(ReferenceRuntimeError::new(
             "reference artifact Content-Range mismatch",
         ));
     }
@@ -210,7 +210,7 @@ fn validate_content_range(
 fn validate_content_length(
     response: &Response,
     expected: u64,
-) -> Result<(), DevelopmentReferenceError> {
+) -> Result<(), ReferenceRuntimeError> {
     if let Some(length) = response
         .headers()
         .get(CONTENT_LENGTH)
@@ -218,7 +218,7 @@ fn validate_content_length(
         .and_then(|value| value.parse::<u64>().ok())
     {
         if length != expected {
-            return Err(DevelopmentReferenceError::new(
+            return Err(ReferenceRuntimeError::new(
                 "reference artifact Content-Length mismatch",
             ));
         }
@@ -232,7 +232,7 @@ fn write_response(
     append: bool,
     mut completed: u64,
     total: u64,
-) -> Result<(), DevelopmentReferenceError> {
+) -> Result<(), ReferenceRuntimeError> {
     let mut options = OpenOptions::new();
     options.create(true).write(true);
     if append {
@@ -252,15 +252,15 @@ fn write_response(
     loop {
         let count = response
             .read(&mut buffer)
-            .map_err(|error| DevelopmentReferenceError::new(format!("reference HTTP: {error}")))?;
+            .map_err(|error| ReferenceRuntimeError::new(format!("network_failed: {error}")))?;
         if count == 0 {
             break;
         }
         completed = completed
             .checked_add(count as u64)
-            .ok_or_else(|| DevelopmentReferenceError::new("reference download size overflow"))?;
+            .ok_or_else(|| ReferenceRuntimeError::new("reference download size overflow"))?;
         if completed > total {
-            return Err(DevelopmentReferenceError::new(
+            return Err(ReferenceRuntimeError::new(
                 "reference artifact exceeds signed size",
             ));
         }

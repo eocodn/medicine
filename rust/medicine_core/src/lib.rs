@@ -38,7 +38,10 @@ pub mod reference_artifacts;
 mod reference_bootstrap;
 mod reference_capabilities;
 mod reference_db_verifier;
+mod reference_http;
 mod reference_lifecycle;
+pub mod reference_lifecycle_runtime;
+pub mod reference_manager;
 mod reference_runtime;
 mod reference_semantics;
 mod reference_signature;
@@ -53,6 +56,9 @@ pub mod web;
 #[cfg(feature = "agentctl")]
 pub use engine::RequestObservation;
 pub use engine::{AccessClass, MedicineEngine};
+pub use reference_bootstrap::{
+    ReferenceBootstrapCoordinator, ReferenceBootstrapSnapshot, ReferenceBootstrapState,
+};
 pub use reference_capabilities::{
     verify_reference_runtime_capabilities, ReferenceRuntimeCapabilityError,
 };
@@ -62,9 +68,6 @@ pub use reference_db_verifier::{
 pub use reference_lifecycle::{
     plan_reference_bootstrap, plan_reference_update, ReferenceBootstrapPlan,
     ReferenceLifecycleError, ReferenceUpdatePlan,
-};
-pub use reference_bootstrap::{
-    ReferenceBootstrapCoordinator, ReferenceBootstrapSnapshot, ReferenceBootstrapState,
 };
 pub use reference_signature::{
     ReferenceArtifactKind, ReferenceManifestVerifier, ReferenceReleaseArtifact,
