@@ -48,23 +48,24 @@ function productSearchContext() {
   return { context, query, status, results };
 }
 
-test("leaving Search clears the parser intake session", () => {
+test("leaving Search clears the OCR product discovery session", () => {
   const app = source("app.js");
   const intake = source("ocr-intake.js");
 
-  assert.match(app, /function resetParserTransientState/);
-  assert.match(app, /previousScreen === "search"[\s\S]{0,260}resetParserTransientState/);
+  assert.match(app, /function resetOcrProductDiscovery/);
+  assert.match(app, /previousScreen === "search"[\s\S]{0,260}resetOcrProductDiscovery/);
   assert.match(app, /MedicineOcrIntake\?\.reset\?\.\(\)/);
   assert.match(intake, /function reset\(/);
 });
 
-test("parser-derived drafts are bound to the active profile", () => {
+test("OCR product discovery carries no regimen draft or profile-bound parser state", () => {
   const app = source("app.js");
-  const people = source("people.js");
+  const state = source("app-state.js");
+  const prescription = source("prescription.js");
 
-  assert.match(app, /pendingParserPersonId/);
-  assert.match(app, /pendingParserPersonId !== state\.currentPersonId/);
-  assert.match(people, /selectPerson[\s\S]{0,340}resetParserTransientState/);
+  assert.doesNotMatch(app, /pendingParser|parserDraft|uncertainty/i);
+  assert.doesNotMatch(state, /pendingParser|parserDraft|uncertainty/i);
+  assert.doesNotMatch(prescription, /pendingParser|parserDraft|uncertainty|applyParserDraft/i);
 });
 
 test("visible OCR import control mirrors disabled and busy state", () => {
@@ -101,40 +102,37 @@ test("editing a drug query invalidates any in-flight search before debounce", ()
   assert.match(app, /#drug-query[\s\S]{0,520}addEventListener\("input"[\s\S]{0,220}invalidateProductSearch\(\)[\s\S]{0,420}setTimeout\(runDrugSearch, 280\)/);
 });
 
-test("parser query replacement clears stale clickable results before async search", () => {
+test("OCR candidate query replacement clears stale clickable results before async search", () => {
   const app = source("app.js");
   assert.match(
     app,
-    /medicine:parser-result[\s\S]{0,1200}startNextParserSearch/,
+    /medicine:ocr-result[\s\S]{0,1000}MedicineOcrIntake\?\.discoverMedicationRows[\s\S]{0,1000}startNextOcrProductSearch/,
   );
   assert.match(
     app,
-    /function startNextParserSearch[\s\S]{0,900}#drug-query[\s\S]{0,220}value = query[\s\S]{0,320}#drug-results[\s\S]{0,220}innerHTML = ""[\s\S]{0,420}runDrugSearch/,
+    /function startNextOcrProductSearch[\s\S]{0,900}#drug-query[\s\S]{0,220}value = query[\s\S]{0,320}#drug-results[\s\S]{0,220}innerHTML = ""[\s\S]{0,420}runDrugSearch/,
   );
 });
 
-test("completing the final parser row clears its search UI and state", () => {
+test("completing the final OCR row clears its search UI and state", () => {
   const { context, query, status, results } = productSearchContext();
   query.value = "타이레놀정";
   status.textContent = "인식된 약 · 제품 후보를 선택해주세요.";
   results.innerHTML = '<article data-product-select="123">타이레놀정</article>';
   vm.runInContext(`
-    state.activeParserRow = { row_id: "row-1", product_query: "타이레놀정" };
-    state.pendingParserDraft = { dose_amount: 1 };
-    state.pendingParserPersonId = "person-1";
-    state.pendingParserUncertaintyCodes = ["LOW_CONFIDENCE_DOSE"];
-    state.pendingParserRows = [];
-    state.parserRowTotal = 1;
-    state.parserRowIndex = 1;
+    state.activeOcrProductRow = { row_id: "row-1", product_query: "타이레놀정" };
+    state.pendingOcrProductRows = [];
+    state.ocrProductRowTotal = 1;
+    state.ocrProductRowIndex = 1;
   `, context);
 
-  assert.equal(vm.runInContext("completeParserRowAndContinue()", context), false);
+  assert.equal(vm.runInContext("completeOcrProductRowAndContinue()", context), false);
   assert.equal(query.value, "");
   assert.equal(status.textContent, "");
   assert.equal(results.innerHTML, "");
-  assert.equal(vm.runInContext("state.activeParserRow", context), null);
-  assert.equal(vm.runInContext("state.parserRowTotal", context), 0);
-  assert.equal(vm.runInContext("state.parserRowIndex", context), 0);
+  assert.equal(vm.runInContext("state.activeOcrProductRow", context), null);
+  assert.equal(vm.runInContext("state.ocrProductRowTotal", context), 0);
+  assert.equal(vm.runInContext("state.ocrProductRowIndex", context), 0);
 });
 
 test("editing a query rejects an already in-flight search response", async () => {

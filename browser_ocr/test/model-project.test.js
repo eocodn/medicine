@@ -44,19 +44,10 @@ test("deployment export is an explicit runtime allowlist and excludes evaluation
     "runtime-manifest.json",
   ]);
   for (const name of layout.RUNTIME_FILES) assert.doesNotMatch(name, /(?:eval|corpus|report|fetch|package|test)/i);
-  assert.deepEqual([...layout.PARSER_RUNTIME_FILES].sort(), [
-    "models/parser-manifest.json",
-    "models/parser.onnx",
-  ]);
-  assert.deepEqual([...layout.runtimeFiles(true)].sort(), [
-    ...layout.RUNTIME_FILES.filter((name) => name !== "runtime-manifest.json"),
-    ...layout.PARSER_RUNTIME_FILES,
-    "runtime-manifest.json",
-  ].sort());
+  assert.deepEqual([...layout.runtimeFiles()].sort(), [...layout.RUNTIME_FILES].sort());
   const exporter = fs.readFileSync(path.join(OCR, "export_runtime.mjs"), "utf8");
   assert.match(exporter, /runtimeFiles/);
-  assert.match(exporter, /PARSER_EXPORT_DIR/);
-  assert.match(exporter, /__MEDICINE_PARSER_ENABLED__/);
+  assert.doesNotMatch(exporter, /PARSER_EXPORT_DIR|parser\.onnx|__MEDICINE_PARSER_ENABLED__/);
 });
 
 test("checked-in model corpus has no patient data and declares model-level release gates", () => {

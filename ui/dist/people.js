@@ -64,8 +64,8 @@ function renderPeople() {
     $$('[data-person-delete]', root).forEach((button) => button.addEventListener("click", () => deletePerson(button.dataset.personDelete)));
 }
 async function selectPerson(personId) {
-    if (personId !== state.currentPersonId && typeof resetParserTransientState === "function") {
-        resetParserTransientState({ clearSearch: true });
+    if (personId !== state.currentPersonId && typeof resetOcrProductDiscovery === "function") {
+        resetOcrProductDiscovery({ clearSearch: true });
     }
     state.currentPersonId = personId;
     localStorage.setItem("medicine.currentPersonId", personId);

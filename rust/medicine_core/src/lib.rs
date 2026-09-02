@@ -21,6 +21,7 @@ mod medication_list;
 mod medication_records;
 mod medication_update;
 mod medications;
+mod ocr_medication_candidates;
 mod people;
 mod personal_db;
 mod personal_schema;

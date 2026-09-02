@@ -77,17 +77,14 @@ function invalidateProductSearch() {
 }
 
 // MEDICINE_OCR_START
-function resetParserTransientState({ clearSearch = false } = {}) {
-  const hadParserSearch = Boolean(state.activeParserRow || state.pendingParserRows.length || state.pendingParserDraft);
-  state.pendingParserDraft = null;
-  state.pendingParserPersonId = null;
-  state.pendingParserUncertaintyCodes = [];
-  state.pendingParserRows = [];
-  state.activeParserRow = null;
-  state.parserRowTotal = 0;
-  state.parserRowIndex = 0;
+function resetOcrProductDiscovery({ clearSearch = false } = {}) {
+  const hadOcrSearch = Boolean(state.activeOcrProductRow || state.pendingOcrProductRows.length);
+  state.pendingOcrProductRows = [];
+  state.activeOcrProductRow = null;
+  state.ocrProductRowTotal = 0;
+  state.ocrProductRowIndex = 0;
   window.MedicineOcrIntake?.reset?.();
-  if (!clearSearch || !hadParserSearch) return;
+  if (!clearSearch || !hadOcrSearch) return;
   invalidateProductSearch();
   const query = $("#drug-query");
   const status = $("#search-status");
@@ -98,41 +95,34 @@ function resetParserTransientState({ clearSearch = false } = {}) {
   updateSearchMode();
 }
 
-async function startNextParserSearch() {
-  const row = state.pendingParserRows.shift();
+async function startNextOcrProductSearch() {
+  const row = state.pendingOcrProductRows.shift();
   if (!row) return false;
-  state.activeParserRow = row;
-  state.parserRowIndex += 1;
-  state.pendingParserDraft = row.draft && typeof row.draft === "object" ? { ...row.draft } : {};
-  state.pendingParserPersonId = state.currentPersonId;
-  state.pendingParserUncertaintyCodes = Array.isArray(row.uncertainty_codes) ? [...row.uncertainty_codes] : [];
+  state.activeOcrProductRow = row;
+  state.ocrProductRowIndex += 1;
   invalidateProductSearch();
   const query = row.product_query.trim();
   $("#drug-query").value = query;
   $("#search-status").textContent = "";
   $("#drug-results").innerHTML = "";
   updateSearchMode();
-  const position = state.parserRowTotal > 1 ? ` (${state.parserRowIndex}/${state.parserRowTotal})` : "";
+  const position = state.ocrProductRowTotal > 1 ? ` (${state.ocrProductRowIndex}/${state.ocrProductRowTotal})` : "";
   const found = await runDrugSearch(`인식된 약${position} · “${query}” 제품 후보를 선택해주세요.`);
   if (found) $("#drug-results").scrollIntoView({ behavior: "smooth", block: "start" });
   return found;
 }
 
-function completeParserRowAndContinue() {
-  if (!state.activeParserRow) return false;
-  if (!state.pendingParserRows.length) {
-    resetParserTransientState({ clearSearch: true });
+function completeOcrProductRowAndContinue() {
+  if (!state.activeOcrProductRow) return false;
+  if (!state.pendingOcrProductRows.length) {
+    resetOcrProductDiscovery({ clearSearch: true });
     return false;
   }
-  state.activeParserRow = null;
-  state.pendingParserDraft = null;
-  state.pendingParserPersonId = null;
-  state.pendingParserUncertaintyCodes = [];
+  state.activeOcrProductRow = null;
   showScreen("search", { focus: true });
-  void startNextParserSearch();
+  void startNextOcrProductSearch();
   return true;
 }
-
 // MEDICINE_OCR_END
 
 function focusSearchFromBox(event) {
@@ -145,7 +135,7 @@ function showScreen(name, { focus = false } = {}) {
   const previousScreen = previousScreenNode?.dataset.screen || null;
   const focusWasInPrevious = Boolean(previousScreenNode?.contains?.(document.activeElement));
   // MEDICINE_OCR_START
-  if (previousScreen === "search" && name !== "search") resetParserTransientState({ clearSearch: true });
+  if (previousScreen === "search" && name !== "search") resetOcrProductDiscovery({ clearSearch: true });
   // MEDICINE_OCR_END
   $$(".screen").forEach((node) => node.classList.toggle("active", node.dataset.screen === name));
   $$(".nav-item").forEach((node) => {
@@ -213,7 +203,7 @@ async function loadPeople() {
     state.currentPersonId = state.people[0]?.id || null;
   }
   // MEDICINE_OCR_START
-  if (previousPersonId && previousPersonId !== state.currentPersonId) resetParserTransientState({ clearSearch: true });
+  if (previousPersonId && previousPersonId !== state.currentPersonId) resetOcrProductDiscovery({ clearSearch: true });
   // MEDICINE_OCR_END
   if (state.currentPersonId) {
     localStorage.setItem("medicine.currentPersonId", state.currentPersonId);
@@ -496,21 +486,7 @@ async function runDrugSearch(successMessage = "") {
 }
 
 function selectProductResult(card) {
-  // MEDICINE_OCR_START
-  let parserDraft = null;
-  let uncertaintyCodes = [];
-  if (state.pendingParserDraft) {
-    if (state.pendingParserPersonId !== state.currentPersonId) {
-      resetParserTransientState({ clearSearch: true });
-    } else {
-      parserDraft = { ...state.pendingParserDraft };
-      uncertaintyCodes = [...state.pendingParserUncertaintyCodes];
-    }
-  }
-  previewProduct(card.dataset.productSelect, parserDraft, uncertaintyCodes);
-  // MEDICINE_OCR_ELSE
   previewProduct(card.dataset.productSelect);
-  // MEDICINE_OCR_END
 }
 
 async function refreshForDateChange() {
@@ -538,7 +514,7 @@ function bindEvents() {
   });
   $("#drug-query").addEventListener("input", () => {
     invalidateProductSearch();
-    // Keep any prefilled medication details while the user edits only the product query.
+    // Keep the OCR-discovered row active while the user corrects only the product query.
     $("#search-status").textContent = "";
     $("#drug-results").innerHTML = "";
     updateSearchMode();
@@ -560,19 +536,16 @@ function bindEvents() {
     if (detail?.id === "stop-medication-sheet") state.pendingStopMedicationId = null;
   });
   // MEDICINE_OCR_START
-  window.addEventListener("medicine:parser-result", (event) => {
+  window.addEventListener("medicine:ocr-result", (event) => {
     const detail = (event as CustomEvent).detail;
-    const rows = Array.isArray(detail?.rows) ? detail.rows : [];
-    if (!rows.length) return;
-    resetParserTransientState({ clearSearch: true });
-    state.pendingParserRows = rows.map((row) => ({
-      ...row,
-      draft: row.draft && typeof row.draft === "object" ? { ...row.draft } : {},
-      uncertainty_codes: Array.isArray(row.uncertainty_codes) ? [...row.uncertainty_codes] : [],
-    }));
-    state.parserRowTotal = state.pendingParserRows.length;
-    showScreen("search", { focus: true });
-    void startNextParserSearch();
+    void window.MedicineOcrIntake?.discoverMedicationRows(detail?.items, api).then(async (rows) => {
+      if (!rows?.length) return;
+      resetOcrProductDiscovery({ clearSearch: true });
+      state.pendingOcrProductRows = rows;
+      state.ocrProductRowTotal = rows.length;
+      showScreen("search", { focus: true });
+      await startNextOcrProductSearch();
+    });
   });
   // MEDICINE_OCR_END
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });
@@ -583,7 +556,6 @@ function bindEvents() {
 document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
   try {
-    await window.MedicineBootstrapUi?.ensureReady();
     await loadHealth();
     await loadPeople();
     const requestedScreen = new URLSearchParams(window.location.search).get("screen");

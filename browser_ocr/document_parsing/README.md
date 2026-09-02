@@ -1,7 +1,11 @@
 # Medication document parsing research
 
-This package isolates document-structure parsing from OCR recognition quality.
-It is research-only and does not reconnect OCR to the product.
+This package is research-only. The application does not load a learned document
+parser from this directory. The product path is deliberately smaller: on-device
+OCR emits text boxes, the UI forms short adjacent spans, and the Rust canonical
+product index accepts only catalog-backed medication-name candidates. After the
+user selects a product, dose, frequency, duration, route, and schedule are entered
+manually.
 
 ## Boundary
 
@@ -11,17 +15,9 @@ Input fixtures contain only synthetic OCR boxes:
 - recognition confidence
 - four-point polygon geometry
 
-Expected output is a set of medication rows shaped like the dormant medication
-intake boundary: `product_query`, structured draft fields, and explicit
-`uncertainty_codes`. Schema v2 also requires source-box `evidence` for the
-product query and every non-null structured field. The row id is the first
-product-evidence box id, so repeated identical product text remains representable
-as distinct document rows. Canonical product identity remains outside this layer.
-
-The runtime parser is intentionally not implemented here. The production direction
-is a learned document/KIE model trained and evaluated against the contracts in this
-package. OCR observations remain independent inputs so parser model changes do not
-change detector/recognizer provenance.
+Research fixtures may still model richer medication rows and source-box evidence
+for experiments. Those schemas are not an application contract and are not
+packaged into the OCR runtime.
 
 ## Safety metrics
 

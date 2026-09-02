@@ -25,7 +25,11 @@ interface Window {
   };
   // MEDICINE_OCR_START
   MedicineOcrIntake?: {
+    buildMedicationQueries(items: unknown): Array<{ query_id: string; text: string; node_ids: string[] }>;
+    discoverMedicationRows(items: unknown, request: (path: string, options?: any) => Promise<any>): Promise<any[]>;
+    normalizeOcrItems(items: unknown): any[];
     reset(): void;
+    setStatus(message: string): void;
   };
   // MEDICINE_OCR_END
   friendlyErrorMessage?: (message: string) => string;

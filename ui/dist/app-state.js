@@ -7,13 +7,10 @@ const state = {
     fullCatalog: false,
     pendingProduct: null,
     pendingRequestId: null,
-    pendingParserDraft: null,
-    pendingParserPersonId: null,
-    pendingParserUncertaintyCodes: [],
-    pendingParserRows: [],
-    activeParserRow: null,
-    parserRowTotal: 0,
-    parserRowIndex: 0,
+    pendingOcrProductRows: [],
+    activeOcrProductRow: null,
+    ocrProductRowTotal: 0,
+    ocrProductRowIndex: 0,
     warningToken: null,
     reviewedDraftKey: null,
     editingMedicationId: null,
@@ -192,8 +189,8 @@ function reconcileCommittedPerson(person, { select = false } = {}) {
         ? state.people.map((item) => item.id === person.id ? person : item)
         : [...state.people, person];
     if (select) {
-        if (state.currentPersonId && state.currentPersonId !== person.id && typeof resetParserTransientState === "function") {
-            resetParserTransientState({ clearSearch: true });
+        if (state.currentPersonId && state.currentPersonId !== person.id && typeof resetOcrProductDiscovery === "function") {
+            resetOcrProductDiscovery({ clearSearch: true });
         }
         state.currentPersonId = person.id;
         localStorage.setItem("medicine.currentPersonId", person.id);
@@ -207,8 +204,8 @@ function reconcileDeletedPerson(personId) {
     state.people = state.people.filter((person) => person.id !== personId);
     if (!deletingCurrent)
         return false;
-    if (typeof resetParserTransientState === "function")
-        resetParserTransientState({ clearSearch: true });
+    if (typeof resetOcrProductDiscovery === "function")
+        resetOcrProductDiscovery({ clearSearch: true });
     state.currentPersonId = state.people[0]?.id || null;
     state.dashboard = null;
     state.dashboardDate = null;

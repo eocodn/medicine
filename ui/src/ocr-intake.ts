@@ -6,177 +6,13 @@
 })(typeof window === "object" ? window : globalThis, function createMedicineOcrIntake(root) {
   "use strict";
 
-  const MAX_ROWS = 24;
   const TIMEOUT_MS = 120000;
-  const STRING_DRAFT_FIELDS = new Set([
-    "dosage_text", "dose_unit", "meal_relation", "administration_route", "start_date", "end_date",
-  ]);
-  const NUMBER_DRAFT_FIELDS = new Set(["dose_amount", "frequency_per_day", "prescription_days"]);
-  const ROW_FIELDS = new Set(["row_id", "product_query", "draft", "uncertainty_codes"]);
-  const MEAL_RELATIONS = new Set(["unspecified", "before_meal", "after_meal", "with_meal", "empty_stomach", "regardless"]);
-  const ADMINISTRATION_ROUTES = new Set(["oral", "topical", "inhaled", "ophthalmic", "otic", "nasal", "injection", "other", "unknown"]);
-  const TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+  const MAX_QUERY_COUNT = 96;
+  const MAX_SPAN_NODES = 3;
+  const MAX_QUERY_LENGTH = 512;
   let activeWorker = null;
   let timeout = null;
   let supported = false;
-
-  function parserIssue(issues, rowIndex, field, reason, action = "dropped") {
-    issues.push({ row_index: rowIndex + 1, field, reason, action });
-  }
-
-  function reportParserSanitization(issues) {
-    if (!issues.length) return;
-    // This UI boundary is intentionally tolerant: one malformed model field
-    // should not throw away the rest of a usable medication row. Never log raw
-    // medication values, but always surface what was discarded or rewritten so
-    // parser-contract regressions remain observable during development.
-    root.console?.warn?.("medicine parser output sanitized", {
-      event: "parser_output_sanitized",
-      issue_count: issues.length,
-      issues,
-    });
-  }
-
-  function isIsoDate(value) {
-    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-    const [year, month, day] = value.split("-").map(Number);
-    const parsed = new Date(Date.UTC(year, month - 1, day));
-    return parsed.getUTCFullYear() === year
-      && parsed.getUTCMonth() === month - 1
-      && parsed.getUTCDate() === day;
-  }
-
-  function normalizeDraft(rawDraft, rowIndex, issues) {
-    if (!rawDraft || typeof rawDraft !== "object" || Array.isArray(rawDraft)) {
-      parserIssue(issues, rowIndex, "draft", rawDraft == null ? "missing" : "not_object");
-      return {};
-    }
-    const draft: Record<string, any> = {};
-    for (const [key, item] of Object.entries(rawDraft)) {
-      if (key === "schedule_times") {
-        if (item == null) continue;
-        if (!Array.isArray(item)) {
-          parserIssue(issues, rowIndex, key, "not_array");
-          continue;
-        }
-        const times = [];
-        let sanitized = item.length > 24;
-        for (const entry of item.slice(0, 24)) {
-          if (typeof entry !== "string" || !TIME_RE.test(entry) || times.includes(entry)) {
-            sanitized = true;
-            continue;
-          }
-          times.push(entry);
-        }
-        if (sanitized) parserIssue(issues, rowIndex, key, "invalid_duplicate_or_excess_items");
-        if (times.length) draft.schedule_times = times;
-      } else if (NUMBER_DRAFT_FIELDS.has(key)) {
-        if (item == null) continue;
-        const valid = typeof item === "number" && Number.isFinite(item) && item > 0
-          && (key === "dose_amount" || (Number.isInteger(item) && item <= (key === "frequency_per_day" ? 24 : 3650)));
-        if (valid) draft[key] = item;
-        else parserIssue(issues, rowIndex, key, "invalid_number");
-      } else if (key === "as_needed") {
-        if (typeof item === "boolean") draft.as_needed = item;
-        else if (item != null) parserIssue(issues, rowIndex, key, "not_boolean");
-      } else if (STRING_DRAFT_FIELDS.has(key)) {
-        const text = typeof item === "string" ? item.trim() : "";
-        let valid = Boolean(text) && !/[\r\n\0]/.test(text);
-        if (key === "dose_unit") valid = valid && text.length <= 64;
-        else valid = valid && text.length <= 256;
-        if (key === "meal_relation") valid = valid && MEAL_RELATIONS.has(text);
-        if (key === "administration_route") valid = valid && ADMINISTRATION_ROUTES.has(text);
-        if (key === "start_date" || key === "end_date") valid = valid && isIsoDate(text);
-        if (valid) draft[key] = text;
-        else if (item != null) parserIssue(issues, rowIndex, key, "invalid_text");
-      } else {
-        parserIssue(issues, rowIndex, key, "unsupported_field");
-      }
-    }
-
-    if (draft.as_needed === true) {
-      for (const field of ["frequency_per_day", "schedule_times"]) {
-        if (Object.hasOwn(draft, field)) {
-          delete draft[field];
-          parserIssue(issues, rowIndex, field, "conflicts_with_as_needed");
-        }
-      }
-    } else if (draft.schedule_times && draft.frequency_per_day != null
-      && draft.schedule_times.length !== draft.frequency_per_day) {
-      delete draft.schedule_times;
-      parserIssue(issues, rowIndex, "schedule_times", "frequency_mismatch");
-    }
-
-    if (draft.start_date && draft.end_date) {
-      const start = new Date(`${draft.start_date}T00:00:00Z`);
-      const end = new Date(`${draft.end_date}T00:00:00Z`);
-      if (end < start) {
-        delete draft.end_date;
-        parserIssue(issues, rowIndex, "end_date", "before_start_date");
-      } else if (draft.prescription_days != null) {
-        const expected = new Date(start);
-        expected.setUTCDate(expected.getUTCDate() + draft.prescription_days - 1);
-        if (expected.toISOString().slice(0, 10) !== draft.end_date) {
-          delete draft.end_date;
-          parserIssue(issues, rowIndex, "end_date", "duration_mismatch");
-        }
-      }
-    }
-    return draft;
-  }
-
-  function normalizeParserRows(value) {
-    const diagnostics = [];
-    if (!Array.isArray(value)) {
-      if (value != null) parserIssue(diagnostics, 0, "rows", "not_array");
-      reportParserSanitization(diagnostics);
-      return [];
-    }
-    if (value.length > MAX_ROWS) parserIssue(diagnostics, MAX_ROWS, "rows", "row_limit_exceeded", "truncated");
-    const rows = value.slice(0, MAX_ROWS).flatMap((raw, index) => {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-        parserIssue(diagnostics, index, "row", "not_object", "row_dropped");
-        return [];
-      }
-      for (const key of Object.keys(raw)) {
-        if (!ROW_FIELDS.has(key)) parserIssue(diagnostics, index, key, "unsupported_row_field");
-      }
-      if (typeof raw.product_query !== "string" || !raw.product_query.trim()) {
-        parserIssue(diagnostics, index, "product_query", "missing_or_not_string", "row_dropped");
-        return [];
-      }
-      let productQuery = raw.product_query.trim();
-      if (productQuery.length > 256) {
-        productQuery = productQuery.slice(0, 256);
-        parserIssue(diagnostics, index, "product_query", "too_long", "truncated");
-      }
-      let rowId = String(raw.row_id || "");
-      if (!/^[A-Za-z0-9_-]{1,64}$/.test(rowId)) {
-        rowId = `parser-row-${index + 1}`;
-        parserIssue(diagnostics, index, "row_id", "invalid_identifier", "rewritten");
-      }
-      const draft = normalizeDraft(raw.draft, index, diagnostics);
-      const issueCodes = [];
-      if (raw.uncertainty_codes == null) {
-        parserIssue(diagnostics, index, "uncertainty_codes", "missing");
-      } else if (!Array.isArray(raw.uncertainty_codes)) {
-        parserIssue(diagnostics, index, "uncertainty_codes", "not_array");
-      } else {
-        let sanitized = raw.uncertainty_codes.length > 16;
-        for (const item of raw.uncertainty_codes) {
-          if (typeof item !== "string" || !/^[A-Z][A-Z0-9_]{0,63}$/.test(item)) {
-            sanitized = true;
-            continue;
-          }
-          if (!issueCodes.includes(item) && issueCodes.length < 16) issueCodes.push(item);
-        }
-        if (sanitized) parserIssue(diagnostics, index, "uncertainty_codes", "invalid_or_excess_codes");
-      }
-      return [{ row_id: rowId, product_query: productQuery, draft, uncertainty_codes: issueCodes }];
-    });
-    reportParserSanitization(diagnostics);
-    return rows;
-  }
 
   function setStatus(message) {
     const status = root.document?.querySelector("#ocr-status");
@@ -192,6 +28,103 @@
     button.setAttribute("aria-disabled", disabled ? "true" : "false");
     if (busy) button.setAttribute("aria-busy", "true");
     else button.removeAttribute("aria-busy");
+  }
+
+  function safeId(value, index) {
+    const id = String(value || "").trim();
+    return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : `region-${String(index + 1).padStart(4, "0")}`;
+  }
+
+  function bounds(poly) {
+    if (!Array.isArray(poly) || poly.length !== 4) return null;
+    const xs = [];
+    const ys = [];
+    for (const point of poly) {
+      if (!Array.isArray(point) || point.length !== 2) return null;
+      const x = Number(point[0]);
+      const y = Number(point[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      xs.push(x);
+      ys.push(y);
+    }
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  }
+
+  function normalizeOcrItems(value) {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((raw, index) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+      const text = typeof raw.text === "string" ? raw.text.trim() : "";
+      const box = bounds(raw.poly);
+      if (!text || !box) return [];
+      return [{ id: safeId(raw.id, index), text, poly: raw.poly, bounds: box }];
+    });
+  }
+
+  function spatiallyContiguous(left, right) {
+    const [lx1, ly1, lx2, ly2] = left.bounds;
+    const [rx1, ry1, rx2, ry2] = right.bounds;
+    const leftHeight = Math.max(1, ly2 - ly1);
+    const rightHeight = Math.max(1, ry2 - ry1);
+    const smallerHeight = Math.min(leftHeight, rightHeight);
+    if (Math.max(leftHeight, rightHeight) / smallerHeight > 1.8) return false;
+    const horizontalGap = Math.max(0, rx1 - lx2, lx1 - rx2);
+    const verticalGap = Math.max(0, ry1 - ly2, ly1 - ry2);
+    return Math.hypot(horizontalGap, verticalGap) <= 1.5 * smallerHeight;
+  }
+
+  function buildMedicationQueries(value) {
+    const items = normalizeOcrItems(value);
+    const queries = [];
+    let serial = 0;
+    for (let start = 0; start < items.length && queries.length < MAX_QUERY_COUNT; start += 1) {
+      let maxLength = 1;
+      while (maxLength < MAX_SPAN_NODES && start + maxLength < items.length
+        && spatiallyContiguous(items[start + maxLength - 1], items[start + maxLength])) {
+        maxLength += 1;
+      }
+      for (let length = maxLength; length >= 1 && queries.length < MAX_QUERY_COUNT; length -= 1) {
+        const span = items.slice(start, start + length);
+        const text = span.map((item) => item.text).join(" ").trim();
+        if (!text || text.length > MAX_QUERY_LENGTH) continue;
+        serial += 1;
+        queries.push({
+          query_id: `ocr-q-${String(serial).padStart(3, "0")}`,
+          text,
+          node_ids: span.map((item) => item.id),
+        });
+      }
+    }
+    return queries;
+  }
+
+  async function discoverMedicationRows(items, request) {
+    const queries = buildMedicationQueries(items);
+    if (!queries.length) {
+      setStatus("약품 검색에 사용할 문자를 찾지 못했어요.");
+      return [];
+    }
+    try {
+      const response = await request("/api/products/ocr-candidates", {
+        method: "POST",
+        body: JSON.stringify({ queries }),
+        coalesceKey: "ocr-product-candidates",
+      });
+      const rows = Array.isArray(response?.rows) ? response.rows.flatMap((row) => {
+        const rowId = typeof row?.row_id === "string" ? row.row_id.trim() : "";
+        const productQuery = typeof row?.product_query === "string" ? row.product_query.trim() : "";
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(rowId) || !productQuery || productQuery.length > 256) return [];
+        return [{ row_id: rowId, product_query: productQuery }];
+      }) : [];
+      setStatus(rows.length
+        ? `약 ${rows.length}개를 찾았어요. 제품을 확인해주세요.`
+        : "약품으로 확인되는 문자를 찾지 못했어요.");
+      return rows;
+    } catch (error) {
+      root.console?.error?.("OCR medication candidate search failed", error);
+      setStatus("약품 후보를 찾지 못했어요. 직접 검색해주세요.");
+      return [];
+    }
   }
 
   function cleanup() {
@@ -228,15 +161,13 @@
         return;
       }
       if (message.type === "result") {
-        const rows = normalizeParserRows(message.rows);
+        const items = normalizeOcrItems(message.items);
         cleanup();
-        if (rows.length) {
-          setStatus(`약 ${rows.length}개를 인식했어요. 제품 후보를 찾고 있어요.`);
-          root.dispatchEvent(new root.CustomEvent("medicine:parser-result", { detail: { rows } }));
-        } else if (message.parser_status === "unavailable") {
-          setStatus("문자 인식은 완료됐지만 처방전 파서 모델이 아직 준비되지 않았어요.");
+        if (items.length) {
+          setStatus("문자 인식이 끝났어요. 약품 후보를 찾고 있어요.");
+          root.dispatchEvent(new root.CustomEvent("medicine:ocr-result", { detail: { items } }));
         } else {
-          setStatus("약 정보를 찾지 못했어요.");
+          setStatus("사진에서 검색할 문자를 찾지 못했어요.");
         }
       } else if (message.type === "error") {
         cleanup();
@@ -284,5 +215,5 @@
   }
 
   if (root.document) root.document.addEventListener("DOMContentLoaded", () => { void bind(); });
-  return { normalizeParserRows, reset };
+  return { buildMedicationQueries, discoverMedicationRows, normalizeOcrItems, reset, setStatus };
 });
