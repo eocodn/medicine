@@ -97,7 +97,11 @@
         progress.value = percent;
         bytes.textContent = total > 0 ? `${formatBytes(completed)} / ${formatBytes(total)} · ${percent}%` : "";
         error.classList.toggle("hidden", current.state !== "failed");
-        error.textContent = current.state === "failed" ? "안전 데이터를 준비하지 못했습니다. 다시 시도해주세요." : "";
+        error.textContent = current.state === "failed"
+            ? current.detail?.startsWith("manifest_")
+                ? `진단 코드: ${current.detail}`
+                : "안전 데이터를 준비하지 못했습니다. 다시 시도해주세요."
+            : "";
         exitButton.disabled = current.state === "downloading" || current.state === "installing";
         if (current.state === "checking") {
             message.textContent = "다운로드할 안전 데이터 정보를 확인하고 있어요.";
@@ -124,13 +128,21 @@
                 ? "안전 데이터를 저장할 공간이 부족합니다. 공간을 확보한 뒤 다시 시도해주세요."
                 : current.detail === "network_failed"
                     ? "안전 데이터를 다운로드하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해주세요."
-                    : current.detail === "manifest_failed"
-                        ? "안전 데이터 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요."
-                        : current.detail === "download_failed"
-                            ? "안전 데이터 다운로드가 완료되지 않았습니다. 다시 시도해주세요."
-                            : current.detail === "install_failed"
-                                ? "안전 데이터 설치 또는 검증에 실패했습니다. 다시 시도해주세요."
-                                : "안전 데이터 준비에 실패했습니다. 다시 시도해주세요.";
+                    : current.detail?.startsWith("manifest_http")
+                        ? "안전 데이터 서버에서 정보를 받지 못했습니다. 잠시 후 다시 시도해주세요."
+                        : current.detail === "manifest_json"
+                            ? "안전 데이터 서버 응답을 읽지 못했습니다. 잠시 후 다시 시도해주세요."
+                            : current.detail === "manifest_signature"
+                                ? "안전 데이터 정보의 서명을 검증하지 못했습니다. 앱을 업데이트한 뒤 다시 시도해주세요."
+                                : current.detail === "manifest_release"
+                                    ? "현재 앱과 맞는 안전 데이터 정보를 해석하지 못했습니다. 앱을 업데이트해주세요."
+                                    : current.detail === "manifest_failed"
+                                        ? "안전 데이터 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요."
+                                        : current.detail === "download_failed"
+                                            ? "안전 데이터 다운로드가 완료되지 않았습니다. 다시 시도해주세요."
+                                            : current.detail === "install_failed"
+                                                ? "안전 데이터 설치 또는 검증에 실패했습니다. 다시 시도해주세요."
+                                                : "안전 데이터 준비에 실패했습니다. 다시 시도해주세요.";
             startButton.textContent = "다시 시도";
             startButton.disabled = false;
             startButton.classList.remove("hidden");
