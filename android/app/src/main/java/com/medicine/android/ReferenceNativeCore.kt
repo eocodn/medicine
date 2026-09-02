@@ -1,6 +1,7 @@
 package com.medicine.android
 
 import android.util.Base64
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -45,7 +46,7 @@ object ReferenceNativeCore {
             nativePlanReferenceBootstrap(
                 expectedContractMajor.toLong(),
                 highestActivatedSequence,
-                releaseJson(release).toString(),
+                ReferencePlannerWire.releaseJson(release).toString(),
             )
         )
         check(result.getString("status") == "bootstrap") {
@@ -66,7 +67,7 @@ object ReferenceNativeCore {
             nativePlanReferenceUpdate(
                 versionJson(current).toString(),
                 highestActivatedSequence,
-                releaseJson(release).toString(),
+                ReferencePlannerWire.releaseJson(release).toString(),
             )
         )
         return when (result.getString("status")) {
@@ -289,7 +290,17 @@ object ReferenceNativeCore {
         .put("contractMajor", version.contractMajor)
         .put("releaseSequence", version.releaseSequence)
 
-    private fun releaseJson(release: VerifiedReferenceRelease): JSONObject = JSONObject()
+    private fun VerifiedReferenceRelease.targetVersion() = ReferenceVersion(
+        datasetId = datasetId,
+        sha256 = targetSha256,
+        sizeBytes = targetSizeBytes,
+        contractMajor = contractMajor,
+        releaseSequence = releaseSequence,
+    )
+}
+
+internal object ReferencePlannerWire {
+    fun releaseJson(release: VerifiedReferenceRelease): JSONObject = JSONObject()
         .put("release_sequence", release.releaseSequence)
         .put("root_hash", release.rootHash)
         .put("dataset_id", release.datasetId)
@@ -297,7 +308,12 @@ object ReferenceNativeCore {
         .put("target_sha256", release.targetSha256)
         .put("target_size_bytes", release.targetSizeBytes)
         .put("full", artifactJson(release.full))
-        .put("patches", release.patches.map(::artifactJson))
+        .put(
+            "patches",
+            JSONArray().apply {
+                release.patches.forEach { put(artifactJson(it)) }
+            },
+        )
 
     private fun artifactJson(artifact: ReferenceReleaseArtifact): JSONObject = JSONObject()
         .put("contract_major", artifact.contractMajor)
@@ -310,12 +326,4 @@ object ReferenceNativeCore {
         )
         .put("from_sha256", artifact.fromSha256 ?: JSONObject.NULL)
         .put("from_size_bytes", artifact.fromSizeBytes ?: JSONObject.NULL)
-
-    private fun VerifiedReferenceRelease.targetVersion() = ReferenceVersion(
-        datasetId = datasetId,
-        sha256 = targetSha256,
-        sizeBytes = targetSizeBytes,
-        contractMajor = contractMajor,
-        releaseSequence = releaseSequence,
-    )
 }
