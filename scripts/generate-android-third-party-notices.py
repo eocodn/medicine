@@ -100,7 +100,7 @@ def add_text(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate notices for the no-OCR Android distribution")
+    parser = argparse.ArgumentParser(description="Generate notices for the Android distribution")
     parser.add_argument("--cargo-registry-src", type=Path, required=True)
     parser.add_argument("--gradle-module-cache", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -185,7 +185,7 @@ def main() -> int:
         "THIRD-PARTY NOTICES FOR YAKBOM ANDROID",
         "=======================================",
         "",
-        "This file accompanies the no-OCR Android APK. It records the locked Android runtime dependencies and the",
+        "This file accompanies the Android APK. It records the locked Android runtime dependencies and the",
         "Rust dependency lock used to build the native core. The Rust inventory intentionally covers the complete",
         "Cargo.lock (a conservative superset of the Android-selected feature graph) so a dependency cannot lose its",
         "attribution merely because Cargo feature resolution changes.",

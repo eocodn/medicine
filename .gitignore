@@ -20,11 +20,8 @@ android/**/*.jks
 android/**/*.keystore
 
 # OCR local private inputs must stay out of Git.
-browser_ocr/finetune/private/
 
 # Detector model caches are reproducible from pinned manifests.
-browser_ocr/detection/.cache/
-browser_ocr/mobile/work/
 android/.kotlin/
 .android-gradle-cache/
 
@@ -33,3 +30,4 @@ rust/**/target/
 
 # Shared UI build dependencies are reproducible from ui/package-lock.json.
 ui/node_modules/
+ocr_runtime/node_modules/

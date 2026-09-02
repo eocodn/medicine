@@ -18,7 +18,7 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
             "Dockerfile.ui",
             "Dockerfile.web",
             "Dockerfile.android",
-            "browser_ocr/Dockerfile",
+            "ocr_runtime/Dockerfile",
         )
         forbidden_source_patterns = (
             r"(?m)^COPY\s+medicine_(?:canonical|reference)\b",
@@ -26,8 +26,6 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
             r"(?m)^COPY\s+ui/src\b",
             r"(?m)^COPY\s+ui/public\b",
             r"(?m)^COPY\s+android/app\b",
-            r"(?m)^COPY\s+browser_ocr/(?:src|eval)\b",
-            r"(?m)^COPY\s+browser_ocr/[^\s]+\.mjs\b",
         )
 
         for dockerfile in dockerfiles:
@@ -160,11 +158,6 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
             "ui",
             "test",
             "browser-test",
-            "ocr-detection-test",
-            "ocr-detection-benchmark",
-            "ocr-corpus",
-            "ocr-finetune-train",
-            "ocr-full-document",
             "android",
         )
         service_starts = [match.start() for match in re.finditer(r"(?m)^  [a-z0-9-]+:\n", compose)]
@@ -256,7 +249,6 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertIn("--features web", runner)
         self.assertIn("--bin medicine-core-web", runner)
         self.assertNotIn("AS ocr-assets", dockerfile)
-        self.assertNotIn("browser_ocr/mobile", dockerfile)
         self.assertNotIn("medicine-ocr-assets", dockerfile)
         self.assertIn("MEDICINE_OCR_ASSETS_DIR", web_binary)
         self.assertIn("--ocr-assets-dir", web_binary)

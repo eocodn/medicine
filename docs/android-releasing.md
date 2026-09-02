@@ -27,17 +27,15 @@ versionCode=1
 
 For the next release, update both values in the release-preparation commit, for example `versionName=0.1.1` with a `versionCode` larger than `1`.
 
-## Optional OCR capability
+## OCR packaging
 
-OCR is opt-in at Android build time. `MEDICINE_OCR_ASSETS_DIR` is the single capability boundary: when it points to an approved runtime bundle, Gradle packages that bundle, retains the OCR controls and `ocr-intake.js` in the generated shared UI, enables the OCR `FileProvider`, and compiles `src/ocr/java`. When the variable is absent, Gradle strips the OCR UI/script, disables the provider, omits OCR assets, and compiles only `src/noOcr/java`.
-
-The normal Developer Release workflows intentionally leave this variable unset. An OCR-enabled distribution therefore requires an explicit release-policy change plus a validated runtime bundle; it must not happen implicitly because an OCR research artifact happens to exist on a builder.
+OCR is part of every Android build. The validated runtime is checked in under `android/app/src/main/assets/ocr-assets`; there is no build-time enable/disable switch or external OCR asset directory.
 
 ## Release flow
 
 1. Merge the release-preparation changes and identify the exact commit SHA intended for release.
 2. In GitHub Actions, manually run **Android Developer Release Check** against that exact `main` commit.
-3. `build-unsigned` runs on a GitHub-hosted runner with no GCP/OIDC permission. It provisions Node 22 and installs the checked-in `ui/package-lock.json` with `npm ci`, then runs `testDebugUnitTest`, `lintRelease`, and `assembleRelease`, verifies package/version/no-OCR/reference-contract requirements, and preserves exactly one `medicine-vX.Y.Z-arm64-v8a-unsigned.apk` candidate under a commit-SHA + workflow-run cache key.
+3. `build-unsigned` runs on a GitHub-hosted runner with no GCP/OIDC permission. It provisions Node 22 and installs the checked-in `ui/package-lock.json` with `npm ci`, then runs `testDebugUnitTest`, `lintRelease`, and `assembleRelease`, verifies package/version/packaged-OCR/reference-contract requirements, and preserves exactly one `medicine-vX.Y.Z-arm64-v8a-unsigned.apk` candidate under a commit-SHA + workflow-run cache key.
 4. `sign-and-validate` runs on a fresh GitHub-hosted runner. It restores only that exact candidate, validates that it is unsigned, authenticates to GCP, reads only the primary Android signing secrets, signs with APK Signature Scheme v3 for the API 28+ application floor, verifies the pinned certificate SHA-256, deletes temporary signing/GCP credentials, and preserves `medicine-vX.Y.Z-arm64-v8a.apk` under the existing exact-SHA cache handoff key.
 5. After the full Release Check succeeds, create and push the matching tag on the same commit, starting with `v0.1.0`.
 6. **Android Developer Release** verifies that the tag matches `android/release.properties` and that the exact tag commit has a successful Android Developer Release Check.

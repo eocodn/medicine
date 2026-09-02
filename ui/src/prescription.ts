@@ -491,11 +491,7 @@ async function confirmAddMedication() {
   markDashboardStale();
   closeSheetsAfterMutation();
   renderAll();
-  // MEDICINE_OCR_START
   const continuingOcrIntake = completeOcrProductRowAndContinue();
-  // MEDICINE_OCR_ELSE
-  const continuingOcrIntake = false;
-  // MEDICINE_OCR_END
   if (!continuingOcrIntake) showScreen("meds", { focus: true });
 
   try {
