@@ -3,11 +3,18 @@ use serde_json::json;
 pub(super) fn capabilities(args: &[String], usage: fn() -> String) -> Result<(), String> {
     let json_output = json_flag(args, usage)?;
     #[cfg(not(feature = "web"))]
-    let observation = vec!["health", "reference-state", "scenario-events", "logs"];
+    let observation = vec![
+        "health",
+        "reference-state",
+        "reference-bootstrap",
+        "scenario-events",
+        "logs",
+    ];
     #[cfg(feature = "web")]
     let observation = vec![
         "health",
         "reference-state",
+        "reference-bootstrap",
         "scenario-events",
         "logs",
         "screenshot",
@@ -19,6 +26,7 @@ pub(super) fn capabilities(args: &[String], usage: fn() -> String) -> Result<(),
         "personal-checkpoint",
         "reference-verify",
         "reference-apply",
+        "reference-bootstrap",
         "product",
         "draft-normalize",
         "safety-basis",
@@ -35,6 +43,7 @@ pub(super) fn capabilities(args: &[String], usage: fn() -> String) -> Result<(),
         "personal-checkpoint",
         "reference-verify",
         "reference-apply",
+        "reference-bootstrap",
         "product",
         "draft-normalize",
         "safety-basis",
@@ -70,8 +79,8 @@ pub(super) fn targets(args: &[String], usage: fn() -> String) -> Result<(), Stri
         json!({
             "id": "reference-store",
             "kind": "state-store",
-            "controls": ["reference-apply"],
-            "observations": ["reference-state"]
+            "controls": ["reference-apply", "reference-bootstrap"],
+            "observations": ["reference-state", "reference-bootstrap"]
         }),
     ];
     #[cfg(feature = "web")]
@@ -85,8 +94,8 @@ pub(super) fn targets(args: &[String], usage: fn() -> String) -> Result<(), Stri
         json!({
             "id": "reference-store",
             "kind": "state-store",
-            "controls": ["reference-apply"],
-            "observations": ["reference-state"]
+            "controls": ["reference-apply", "reference-bootstrap"],
+            "observations": ["reference-state", "reference-bootstrap"]
         }),
         json!({
             "id": "shared-ui",
