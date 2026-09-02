@@ -27,24 +27,45 @@ class HttpsReferenceReleaseSource(
     }
 
     override fun fetchLatest(): VerifiedReferenceRelease {
-        val envelopeText = fetchSmallText(ReferenceReleaseProtocolV2.ROOT_KEY)
-        val envelope = JSONObject(envelopeText)
+        val envelopeText = try {
+            fetchSmallText(ReferenceReleaseProtocolV2.ROOT_KEY)
+        } catch (error: Throwable) {
+            val stage = if (error is ReferenceManifestHttpStatusException) {
+                "manifest_http_${error.statusCode}"
+            } else {
+                "manifest_http"
+            }
+            throw ReferenceManifestStageException(stage, error)
+        }
+        val envelope = try {
+            JSONObject(envelopeText)
+        } catch (error: Throwable) {
+            throw ReferenceManifestStageException("manifest_json", error)
+        }
         // The signature contract is strict on required security fields but does
         // not reject additive server metadata which is outside the signed-frame
         // interpretation used by this client.
-        val verified = verifier.verify(
-            envelopeVersion = envelope.getInt("envelope_version"),
-            algorithm = envelope.getString("algorithm"),
-            keyId = envelope.getString("key_id"),
-            releaseSequence = envelope.getLong("release_sequence"),
-            payloadBase64 = envelope.getString("payload_base64"),
-            signatureBase64 = envelope.getString("signature_base64"),
-        )
-        return ReferenceReleaseProtocolV2.parseVerifiedRoot(
-            verified.releaseSequence,
-            verified.payload,
-            contractMajor,
-        )
+        val verified = try {
+            verifier.verify(
+                envelopeVersion = envelope.getInt("envelope_version"),
+                algorithm = envelope.getString("algorithm"),
+                keyId = envelope.getString("key_id"),
+                releaseSequence = envelope.getLong("release_sequence"),
+                payloadBase64 = envelope.getString("payload_base64"),
+                signatureBase64 = envelope.getString("signature_base64"),
+            )
+        } catch (error: Throwable) {
+            throw ReferenceManifestStageException("manifest_signature", error)
+        }
+        return try {
+            ReferenceReleaseProtocolV2.parseVerifiedRoot(
+                verified.releaseSequence,
+                verified.payload,
+                contractMajor,
+            )
+        } catch (error: Throwable) {
+            throw ReferenceManifestStageException("manifest_release", error)
+        }
     }
 
     override fun download(
@@ -147,8 +168,8 @@ class HttpsReferenceReleaseSource(
         try {
             connection.instanceFollowRedirects = false
             val response = connection.responseCode
-            require(response == HttpsURLConnection.HTTP_OK) {
-                "reference manifest HTTP status $response"
+            if (response != HttpsURLConnection.HTTP_OK) {
+                throw ReferenceManifestHttpStatusException(response)
             }
             val contentLength = connection.contentLengthLong
             require(contentLength < 0 || contentLength <= MAX_MANIFEST_BYTES) {
@@ -231,3 +252,12 @@ class HttpsReferenceReleaseSource(
         private val CONTENT_RANGE = Regex("bytes ([0-9]+)-([0-9]+)/([0-9]+)")
     }
 }
+
+class ReferenceManifestStageException(
+    val stage: String,
+    cause: Throwable,
+) : IllegalStateException("reference manifest stage failed: $stage", cause)
+
+class ReferenceManifestHttpStatusException(
+    val statusCode: Int,
+) : IllegalStateException("reference manifest HTTP status $statusCode")

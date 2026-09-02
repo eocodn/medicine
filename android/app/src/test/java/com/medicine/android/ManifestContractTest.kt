@@ -54,7 +54,7 @@ class ManifestContractTest {
         assertFalse(build.contains("medicine_canonical"))
         assertTrue(bootstrapper.contains("RustReferenceDatabaseVerifier()"))
         assertTrue(activity.contains("RustReferenceArtifactRebuilder()"))
-        assertTrue(bootstrapBridge.contains("\"rebuild\", \"rebuild-checkpoint\", \"verify-and-install\""))
+        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.bootstrapPhase(coordinatorHandle, name)"))
         val nativeReference = java.io.File(
             "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
         ).readText()
@@ -132,17 +132,25 @@ class ManifestContractTest {
         assertTrue(strings.contains("<string name=\"app_name\">약봄</string>"))
         assertFalse(strings.contains(">Medicine</string>"))
         assertTrue(activity.contains("ReferenceBootstrapJsBridge"))
-        assertTrue(bootstrapUi.contains("안전 데이터 준비에 실패했습니다. 인터넷 연결을 확인한 뒤 다시 시도해주세요."))
+        assertTrue(bootstrapUi.contains("network_failed"))
+        assertTrue(bootstrapUi.contains("install_failed"))
+        assertTrue(bootstrapUi.contains("안전 데이터 설치 또는 검증에 실패했습니다. 다시 시도해주세요."))
         assertFalse(bootstrapUi.contains("error.message"))
     }
 
     @Test
     fun firstLaunchReferenceDownloadUsesSharedBlockingUiWithByteProgress() {
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val bootstrapBridge = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapJsBridge.kt").readText()
         val bootstrapUi = java.io.File("../../ui/src/reference-bootstrap.ts").readText()
         assertTrue(activity.contains("MedicineBootstrapNative"))
         assertTrue(activity.contains("MedicineNativeProxy"))
+        assertTrue(activity.contains("WebSettings.LOAD_NO_CACHE"))
         assertFalse(activity.contains("AlertDialog"))
+        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.createBootstrapCoordinator()"))
+        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.bootstrapSnapshot(coordinatorHandle)"))
+        assertFalse(bootstrapBridge.contains("private var state ="))
+        assertFalse(bootstrapBridge.contains("private var operationRunning ="))
         assertTrue(bootstrapUi.contains("다운로드하지 않으면 앱을 사용할 수 없습니다"))
         assertTrue(bootstrapUi.contains("completed_bytes"))
         assertTrue(bootstrapUi.contains("total_bytes"))

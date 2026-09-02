@@ -1,8 +1,13 @@
 package com.medicine.android
 
 import android.app.Activity
+import android.util.Log
 import android.webkit.JavascriptInterface
-import org.json.JSONObject
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -12,15 +17,10 @@ class ReferenceBootstrapJsBridge(
 ) : AutoCloseable {
     private val lock = Any()
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val coordinatorHandle = ReferenceNativeCore.createBootstrapCoordinator()
     private var responseHandler: ((String, String) -> Unit)? = null
     private var installer: AndroidReferenceInstaller? = null
     private var preparation: ReferenceBootstrapPreparation? = null
-    private var initialized = false
-    private var operationRunning = false
-    private var state = "checking"
-    private var completedBytes = 0L
-    private var totalBytes = 0L
-    private var detail: String? = null
 
     fun setResponseHandler(handler: (String, String) -> Unit) {
         responseHandler = handler
@@ -41,63 +41,42 @@ class ReferenceBootstrapJsBridge(
     }
 
     private fun ensurePrepared() {
-        val shouldStart = synchronized(lock) {
-            if (initialized || operationRunning) false
-            else {
-                operationRunning = true
-                true
-            }
-        }
-        if (!shouldStart) return
+        if (!ReferenceNativeCore.bootstrapBeginPrepare(coordinatorHandle)) return
         executor.execute {
             val result = runCatching {
-                val installer = installer ?: AndroidReferenceInstaller(activity, observer()).also {
-                    this.installer = it
-                }
-                installer to installer.prepare()
-            }
-            result.onSuccess { (installer, prepared) ->
-                preparation = prepared
-                if (prepared is ReferenceBootstrapPreparation.Download) {
-                    synchronized(lock) {
-                        initialized = true
-                        operationRunning = false
-                        state = "download_required"
-                        totalBytes = prepared.totalDownloadBytes
-                        completedBytes = totalBytes - prepared.downloadSizeBytes
-                        detail = null
+                val currentInstaller = synchronized(lock) {
+                    installer ?: AndroidReferenceInstaller(activity, observer()).also {
+                        installer = it
                     }
+                }
+                currentInstaller to currentInstaller.prepare()
+            }
+            result.onSuccess { (currentInstaller, prepared) ->
+                synchronized(lock) { preparation = prepared }
+                if (prepared is ReferenceBootstrapPreparation.Download) {
+                    ReferenceNativeCore.bootstrapPreparedDownload(
+                        coordinatorHandle,
+                        prepared.totalDownloadBytes - prepared.downloadSizeBytes,
+                        prepared.totalDownloadBytes,
+                    )
                 } else {
-                    completeInstall(installer, prepared)
+                    completeInstall(currentInstaller, prepared)
                 }
             }.onFailure(::fail)
         }
     }
 
     private fun startInstall() {
-        var retryPrepare = false
         val work = synchronized(lock) {
-            if (operationRunning || state !in setOf("download_required", "failed")) {
-                null
-            } else if (preparation == null) {
-                initialized = false
-                state = "checking"
-                detail = null
-                retryPrepare = true
-                null
-            } else {
-                val currentInstaller = installer ?: return@synchronized null
-                operationRunning = true
-                state = "downloading"
-                detail = null
-                currentInstaller to preparation
-            }
+            val prepared = preparation
+            if (prepared == null) null else installer?.let { it to prepared }
         }
-        if (retryPrepare) {
+        if (work == null) {
+            ReferenceNativeCore.bootstrapResetForPrepare(coordinatorHandle)
             ensurePrepared()
             return
         }
-        if (work == null) return
+        if (!ReferenceNativeCore.bootstrapBeginInstall(coordinatorHandle)) return
         executor.execute { completeInstall(work.first, work.second) }
     }
 
@@ -110,60 +89,81 @@ class ReferenceBootstrapJsBridge(
             onReferenceReady(reference)
             reference
         }.onSuccess { reference ->
-            synchronized(lock) {
-                initialized = true
-                operationRunning = false
-                state = if (reference.referenceAvailable) "ready" else "unavailable"
-                if (state == "ready" && totalBytes > 0) completedBytes = totalBytes
-                detail = reference.referenceUnavailableReason
+            if (reference.referenceAvailable) {
+                ReferenceNativeCore.bootstrapReady(coordinatorHandle)
+            } else {
+                ReferenceNativeCore.bootstrapUnavailable(
+                    coordinatorHandle,
+                    reference.referenceUnavailableReason ?: "update_required",
+                )
             }
         }.onFailure(::fail)
     }
 
     private fun observer(): ReferenceUpdateObserver = object : ReferenceUpdateObserver {
         override fun phase(name: String) {
-            synchronized(lock) {
-                when (name) {
-                    "manifest" -> state = "checking"
-                    "full-download" -> state = "downloading"
-                    "rebuild", "rebuild-checkpoint", "verify-and-install" -> state = "installing"
-                }
-            }
+            ReferenceNativeCore.bootstrapPhase(coordinatorHandle, name)
         }
 
         override fun progress(name: String, completedBytes: Long, totalBytes: Long) {
             if (name != "download" || totalBytes <= 0) return
-            synchronized(lock) {
-                state = "downloading"
-                this@ReferenceBootstrapJsBridge.completedBytes = completedBytes
-                this@ReferenceBootstrapJsBridge.totalBytes = totalBytes
-            }
+            ReferenceNativeCore.bootstrapProgress(coordinatorHandle, completedBytes, totalBytes)
         }
     }
 
     private fun fail(error: Throwable) {
-        synchronized(lock) {
-            initialized = true
-            operationRunning = false
-            state = "failed"
-            detail = when {
-                error is ReferenceBootstrapStorageException -> "insufficient_storage"
-                else -> "bootstrap_failed"
-            }
+        Log.e(TAG, "Reference bootstrap failed", error)
+        val detail = when {
+            error is ReferenceBootstrapStorageException -> "insufficient_storage"
+            error.hasCause<UnknownHostException>() ||
+                error.hasCause<ConnectException>() ||
+                error.hasCause<NoRouteToHostException>() ||
+                error.hasCause<SocketTimeoutException>() ||
+                error.hasCause<SSLException>() -> "network_failed"
+            error is ReferenceManifestStageException -> error.stage
+            error is ReferenceBootstrapPrepareStageException -> error.stage
+            BuildConfig.DEBUG -> debugFailureDetail(error)
+            else -> "phase_failed"
         }
+        ReferenceNativeCore.bootstrapFailed(
+            coordinatorHandle,
+            detail,
+        )
     }
 
-    private fun snapshot(): String = synchronized(lock) {
-        JSONObject()
-            .put("state", state)
-            .put("completed_bytes", completedBytes)
-            .put("total_bytes", totalBytes)
-            .put("detail", detail)
-            .toString()
+    private fun debugFailureDetail(error: Throwable): String {
+        val type = error.javaClass.simpleName
+            .replace(Regex("[^A-Za-z0-9]+"), "_")
+            .trim('_')
+            .take(80)
+            .ifEmpty { "Throwable" }
+        val message = error.message
+            ?.replace(Regex("[\r\n\t]+"), " ")
+            ?.replace(Regex("[^A-Za-z0-9 ._:/-]+"), "_")
+            ?.trim()
+            ?.take(160)
+            .orEmpty()
+        return if (message.isEmpty()) "debug_$type" else "debug_${type}_$message"
     }
+
+    private inline fun <reified T : Throwable> Throwable.hasCause(): Boolean {
+        var current: Throwable? = this
+        while (current != null) {
+            if (current is T) return true
+            current = current.cause
+        }
+        return false
+    }
+
+    private fun snapshot(): String = ReferenceNativeCore.bootstrapSnapshot(coordinatorHandle)
 
     override fun close() {
         responseHandler = null
         executor.shutdownNow()
+        ReferenceNativeCore.destroyBootstrapCoordinator(coordinatorHandle)
+    }
+
+    companion object {
+        private const val TAG = "ReferenceBootstrap"
     }
 }

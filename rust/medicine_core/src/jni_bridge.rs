@@ -8,6 +8,7 @@ use std::ptr;
 use std::sync::Mutex;
 
 mod reference_lifecycle;
+mod reference_bootstrap;
 
 type EngineHandle = Mutex<MedicineEngine>;
 

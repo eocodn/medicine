@@ -1,6 +1,7 @@
 package com.medicine.android
 
 import android.util.Base64
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -10,6 +11,32 @@ interface NativeReferenceArtifactObserver {
 }
 
 object ReferenceNativeCore {
+    fun createBootstrapCoordinator(): Long = nativeCreateBootstrapCoordinator()
+
+    fun destroyBootstrapCoordinator(handle: Long) = nativeDestroyBootstrapCoordinator(handle)
+
+    fun bootstrapBeginPrepare(handle: Long): Boolean = nativeBootstrapBeginPrepare(handle)
+
+    fun bootstrapResetForPrepare(handle: Long) = nativeBootstrapResetForPrepare(handle)
+
+    fun bootstrapPreparedDownload(handle: Long, completedBytes: Long, totalBytes: Long) =
+        nativeBootstrapPreparedDownload(handle, completedBytes, totalBytes)
+
+    fun bootstrapBeginInstall(handle: Long): Boolean = nativeBootstrapBeginInstall(handle)
+
+    fun bootstrapPhase(handle: Long, phase: String) = nativeBootstrapPhase(handle, phase)
+
+    fun bootstrapProgress(handle: Long, completedBytes: Long, totalBytes: Long) =
+        nativeBootstrapProgress(handle, completedBytes, totalBytes)
+
+    fun bootstrapReady(handle: Long) = nativeBootstrapReady(handle)
+
+    fun bootstrapUnavailable(handle: Long, detail: String) = nativeBootstrapUnavailable(handle, detail)
+
+    fun bootstrapFailed(handle: Long, detail: String) = nativeBootstrapFailed(handle, detail)
+
+    fun bootstrapSnapshot(handle: Long): String = nativeBootstrapSnapshot(handle)
+
     fun planReferenceBootstrap(
         expectedContractMajor: Int,
         highestActivatedSequence: Long,
@@ -19,7 +46,7 @@ object ReferenceNativeCore {
             nativePlanReferenceBootstrap(
                 expectedContractMajor.toLong(),
                 highestActivatedSequence,
-                releaseJson(release).toString(),
+                ReferencePlannerWire.releaseJson(release).toString(),
             )
         )
         check(result.getString("status") == "bootstrap") {
@@ -40,7 +67,7 @@ object ReferenceNativeCore {
             nativePlanReferenceUpdate(
                 versionJson(current).toString(),
                 highestActivatedSequence,
-                releaseJson(release).toString(),
+                ReferencePlannerWire.releaseJson(release).toString(),
             )
         )
         return when (result.getString("status")) {
@@ -235,6 +262,23 @@ object ReferenceNativeCore {
         releaseJson: String,
     ): String
 
+    private external fun nativeCreateBootstrapCoordinator(): Long
+    private external fun nativeDestroyBootstrapCoordinator(handle: Long)
+    private external fun nativeBootstrapBeginPrepare(handle: Long): Boolean
+    private external fun nativeBootstrapResetForPrepare(handle: Long)
+    private external fun nativeBootstrapPreparedDownload(
+        handle: Long,
+        completedBytes: Long,
+        totalBytes: Long,
+    )
+    private external fun nativeBootstrapBeginInstall(handle: Long): Boolean
+    private external fun nativeBootstrapPhase(handle: Long, phase: String)
+    private external fun nativeBootstrapProgress(handle: Long, completedBytes: Long, totalBytes: Long)
+    private external fun nativeBootstrapReady(handle: Long)
+    private external fun nativeBootstrapUnavailable(handle: Long, detail: String)
+    private external fun nativeBootstrapFailed(handle: Long, detail: String)
+    private external fun nativeBootstrapSnapshot(handle: Long): String
+
     init {
         System.loadLibrary("medicine_core")
     }
@@ -246,7 +290,17 @@ object ReferenceNativeCore {
         .put("contractMajor", version.contractMajor)
         .put("releaseSequence", version.releaseSequence)
 
-    private fun releaseJson(release: VerifiedReferenceRelease): JSONObject = JSONObject()
+    private fun VerifiedReferenceRelease.targetVersion() = ReferenceVersion(
+        datasetId = datasetId,
+        sha256 = targetSha256,
+        sizeBytes = targetSizeBytes,
+        contractMajor = contractMajor,
+        releaseSequence = releaseSequence,
+    )
+}
+
+internal object ReferencePlannerWire {
+    fun releaseJson(release: VerifiedReferenceRelease): JSONObject = JSONObject()
         .put("release_sequence", release.releaseSequence)
         .put("root_hash", release.rootHash)
         .put("dataset_id", release.datasetId)
@@ -254,7 +308,12 @@ object ReferenceNativeCore {
         .put("target_sha256", release.targetSha256)
         .put("target_size_bytes", release.targetSizeBytes)
         .put("full", artifactJson(release.full))
-        .put("patches", release.patches.map(::artifactJson))
+        .put(
+            "patches",
+            JSONArray().apply {
+                release.patches.forEach { put(artifactJson(it)) }
+            },
+        )
 
     private fun artifactJson(artifact: ReferenceReleaseArtifact): JSONObject = JSONObject()
         .put("contract_major", artifact.contractMajor)
@@ -267,12 +326,4 @@ object ReferenceNativeCore {
         )
         .put("from_sha256", artifact.fromSha256 ?: JSONObject.NULL)
         .put("from_size_bytes", artifact.fromSizeBytes ?: JSONObject.NULL)
-
-    private fun VerifiedReferenceRelease.targetVersion() = ReferenceVersion(
-        datasetId = datasetId,
-        sha256 = targetSha256,
-        sizeBytes = targetSizeBytes,
-        contractMajor = contractMajor,
-        releaseSequence = releaseSequence,
-    )
 }

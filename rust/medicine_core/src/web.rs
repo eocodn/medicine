@@ -18,7 +18,7 @@ use tower_http::services::ServeDir;
 use crate::development_reference::{
     ensure_development_reference, DevelopmentReferenceConfig,
 };
-use crate::MedicineEngine;
+use crate::{MedicineEngine, ReferenceBootstrapCoordinator, ReferenceBootstrapState};
 
 pub const BROWSER_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const MAX_API_BODY_BYTES: usize = 2 * 1024 * 1024;
@@ -68,10 +68,7 @@ struct DevelopmentWebStatusState {
     reference_update_state: String,
     reference_update_phase: Option<String>,
     reference_update_detail: Option<String>,
-    reference_bootstrap_state: String,
-    reference_bootstrap_completed_bytes: u64,
-    reference_bootstrap_total_bytes: u64,
-    reference_bootstrap_detail: Option<String>,
+    reference_bootstrap: ReferenceBootstrapCoordinator,
 }
 
 impl DevelopmentWebStatus {
@@ -85,10 +82,7 @@ impl DevelopmentWebStatus {
                 reference_update_state: "idle".to_owned(),
                 reference_update_phase: None,
                 reference_update_detail: None,
-                reference_bootstrap_state: "ready".to_owned(),
-                reference_bootstrap_completed_bytes: 0,
-                reference_bootstrap_total_bytes: 0,
-                reference_bootstrap_detail: None,
+                reference_bootstrap: ReferenceBootstrapCoordinator::ready_initial(),
             })),
         }
     }
@@ -117,52 +111,55 @@ impl DevelopmentWebStatus {
     }
 
     pub fn reference_bootstrap_required(&self, completed_bytes: u64, total_bytes: u64) {
-        self.set_reference_bootstrap(
-            "download_required",
-            completed_bytes,
-            total_bytes,
-            None,
-        );
+        if let Ok(mut state) = self.inner.write() {
+            state
+                .reference_bootstrap
+                .prepared_download(completed_bytes, total_bytes);
+        }
     }
 
     fn begin_reference_bootstrap(&self) -> Result<(), &'static str> {
         let Ok(mut state) = self.inner.write() else {
             return Err("unavailable");
         };
-        match state.reference_bootstrap_state.as_str() {
-            "downloading" | "installing" => return Err("running"),
-            "download_required" | "failed" => {}
-            _ => return Err("not_required"),
+        if state.reference_bootstrap.begin_install() {
+            return Ok(());
         }
-        state.reference_bootstrap_state = "downloading".to_owned();
-        state.reference_bootstrap_detail = None;
-        Ok(())
+        match state.reference_bootstrap.snapshot().state {
+            ReferenceBootstrapState::Downloading | ReferenceBootstrapState::Installing => {
+                Err("running")
+            }
+            _ => Err("not_required"),
+        }
     }
 
     fn reference_bootstrap_progress(&self, completed_bytes: u64, total_bytes: u64) {
-        self.set_reference_bootstrap("downloading", completed_bytes, total_bytes, None);
+        if let Ok(mut state) = self.inner.write() {
+            state
+                .reference_bootstrap
+                .progress(completed_bytes, total_bytes);
+        }
     }
 
     fn reference_bootstrap_installing(&self, completed_bytes: u64, total_bytes: u64) {
-        self.set_reference_bootstrap("installing", completed_bytes, total_bytes, None);
+        if let Ok(mut state) = self.inner.write() {
+            state
+                .reference_bootstrap
+                .progress(completed_bytes, total_bytes);
+            state.reference_bootstrap.installing();
+        }
     }
 
-    fn reference_bootstrap_completed(&self, total_bytes: u64) {
-        self.set_reference_bootstrap("ready", total_bytes, total_bytes, None);
+    fn reference_bootstrap_completed(&self, _total_bytes: u64) {
+        if let Ok(mut state) = self.inner.write() {
+            state.reference_bootstrap.ready();
+        }
     }
 
     fn reference_bootstrap_failed(&self, detail: &str) {
-        let (completed, total) = self
-            .inner
-            .read()
-            .map(|state| {
-                (
-                    state.reference_bootstrap_completed_bytes,
-                    state.reference_bootstrap_total_bytes,
-                )
-            })
-            .unwrap_or((0, 0));
-        self.set_reference_bootstrap("failed", completed, total, Some(detail));
+        if let Ok(mut state) = self.inner.write() {
+            state.reference_bootstrap.failed(detail);
+        }
     }
 
     fn set_reference_update(&self, state: &str, phase: Option<&str>, detail: Option<&str>) {
@@ -170,21 +167,6 @@ impl DevelopmentWebStatus {
             current.reference_update_state = state.to_owned();
             current.reference_update_phase = phase.map(str::to_owned);
             current.reference_update_detail = detail.map(str::to_owned);
-        }
-    }
-
-    fn set_reference_bootstrap(
-        &self,
-        state: &str,
-        completed_bytes: u64,
-        total_bytes: u64,
-        detail: Option<&str>,
-    ) {
-        if let Ok(mut current) = self.inner.write() {
-            current.reference_bootstrap_state = state.to_owned();
-            current.reference_bootstrap_completed_bytes = completed_bytes.min(total_bytes);
-            current.reference_bootstrap_total_bytes = total_bytes;
-            current.reference_bootstrap_detail = detail.map(str::to_owned);
         }
     }
 
@@ -204,12 +186,7 @@ impl DevelopmentWebStatus {
                 "phase": state.reference_update_phase,
                 "detail": state.reference_update_detail,
             },
-            "reference_bootstrap": {
-                "state": state.reference_bootstrap_state,
-                "completed_bytes": state.reference_bootstrap_completed_bytes,
-                "total_bytes": state.reference_bootstrap_total_bytes,
-                "detail": state.reference_bootstrap_detail,
-            }
+            "reference_bootstrap": state.reference_bootstrap.snapshot(),
         }))
     }
 }

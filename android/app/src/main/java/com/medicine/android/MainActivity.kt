@@ -177,6 +177,7 @@ class MainActivity : ComponentActivity() {
             settings.allowContentAccess = false
             settings.javaScriptCanOpenWindowsAutomatically = false
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            settings.cacheMode = WebSettings.LOAD_NO_CACHE
 
             addJavascriptInterface(medicineNativeProxy, "MedicineNative")
             addJavascriptInterface(bootstrapBridge, "MedicineBootstrapNative")

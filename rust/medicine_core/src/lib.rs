@@ -35,6 +35,7 @@ mod profile_age;
 mod profile_safety;
 mod quantitative_safety;
 pub mod reference_artifacts;
+mod reference_bootstrap;
 mod reference_capabilities;
 mod reference_db_verifier;
 mod reference_lifecycle;
@@ -61,6 +62,9 @@ pub use reference_db_verifier::{
 pub use reference_lifecycle::{
     plan_reference_bootstrap, plan_reference_update, ReferenceBootstrapPlan,
     ReferenceLifecycleError, ReferenceUpdatePlan,
+};
+pub use reference_bootstrap::{
+    ReferenceBootstrapCoordinator, ReferenceBootstrapSnapshot, ReferenceBootstrapState,
 };
 pub use reference_signature::{
     ReferenceArtifactKind, ReferenceManifestVerifier, ReferenceReleaseArtifact,

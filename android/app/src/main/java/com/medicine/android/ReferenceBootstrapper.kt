@@ -101,7 +101,10 @@ class ReferenceBootstrapper(
         }
 
     private fun prepareExclusive(expectedContractMajor: Int): ReferenceBootstrapPreparation {
-        store.openForStartup(expectedContractMajor)?.let {
+        val startup = prepareStage("prepare_open_startup") {
+            store.openForStartup(expectedContractMajor)
+        }
+        startup?.let {
             cleanupBootstrapFiles()
             observer.phase("ready")
             return ReferenceBootstrapPreparation.Ready(it)
@@ -109,20 +112,26 @@ class ReferenceBootstrapper(
 
         observer.phase("manifest")
         val release = source.fetchLatest()
-        store.observeSignedRoot(release.releaseSequence, release.rootHash)
-        val state = store.snapshot()
-        val plan = planner.planBootstrap(
-            expectedContractMajor,
-            state.highestActivatedSequence,
-            release,
-        )
+        prepareStage("prepare_observe_root") {
+            store.observeSignedRoot(release.releaseSequence, release.rootHash)
+        }
+        val state = prepareStage("prepare_snapshot") { store.snapshot() }
+        val plan = prepareStage("prepare_plan") {
+            planner.planBootstrap(
+                expectedContractMajor,
+                state.highestActivatedSequence,
+                release,
+            )
+        }
         val version = (plan as ReferenceBootstrapPlan.Download).target
         val artifact = plan.full
         val downloaded = File(
             referenceDir,
             ".bootstrap-artifact-${release.releaseSequence}-${artifact.sha256}.part",
         )
-        cleanupBootstrapFiles(keepArtifact = downloaded)
+        prepareStage("prepare_cleanup") {
+            cleanupBootstrapFiles(keepArtifact = downloaded)
+        }
 
         // A process may die after the content-addressed DB rename but before the
         // AtomicFile state commit. Adopt that fully verified target instead of
@@ -136,7 +145,9 @@ class ReferenceBootstrapper(
                 }
         }
 
-        val checkpointBytes = usableCheckpointBytes(downloaded, artifact)
+        val checkpointBytes = prepareStage("prepare_checkpoint") {
+            usableCheckpointBytes(downloaded, artifact)
+        }
         return ReferenceBootstrapPreparation.Download(
             release = release,
             version = version,
@@ -144,6 +155,14 @@ class ReferenceBootstrapper(
             downloaded = downloaded,
             checkpointBytes = checkpointBytes,
         )
+    }
+
+    private fun <T> prepareStage(stage: String, block: () -> T): T = try {
+        block()
+    } catch (error: ReferenceBootstrapPrepareStageException) {
+        throw error
+    } catch (error: Throwable) {
+        throw ReferenceBootstrapPrepareStageException(stage, error)
     }
 
     private fun installPreparedExclusive(
@@ -243,6 +262,11 @@ class ReferenceBootstrapper(
         }
     }
 }
+
+class ReferenceBootstrapPrepareStageException(
+    val stage: String,
+    cause: Throwable,
+) : IllegalStateException("reference bootstrap prepare stage failed: $stage: ${cause.message}", cause)
 
 class AndroidReferenceInstaller(
     private val context: Context,

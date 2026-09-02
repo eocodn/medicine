@@ -136,10 +136,12 @@ test("changed shared assets use fresh cache keys", () => {
 
   assert.match(index, /native-api\.js\?v=20260820perf1/);
   assert.match(index, /prescription-dur\.js\?v=20260818dur1/);
-  assert.match(index, /prescription\.js\?v=20260821parser2/);
-  assert.match(index, /app-state\.js\?v=20260823search1/);
-  assert.match(index, /app\.js\?v=20260823search1/);
+  assert.match(index, /styles\.css\?v=20260902product2/);
+  assert.match(index, /prescription\.js\?v=20260902product2/);
+  assert.match(index, /people\.js\?v=20260902product2/);
+  assert.match(index, /app-state\.js\?v=20260902product2/);
+  assert.match(index, /app\.js\?v=20260902product2/);
   assert.match(index, /product-search\.js\?v=20260823search1/);
   assert.match(index, /dose-actions\.js\?v=20260820perf4/);
-  assert.match(index, /ocr-intake\.js\?v=20260821parser2/);
+  assert.match(index, /ocr-intake\.js\?v=20260902product2/);
 });
