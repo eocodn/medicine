@@ -12,7 +12,7 @@ use crate::people::{self, PeopleError};
 use crate::prescriptions::{self, DraftError};
 use crate::profile_safety;
 use crate::quantitative_safety;
-use crate::reference_runtime;
+use crate::reference_queries;
 use crate::regimen_review;
 use crate::safety_basis;
 use crate::safety_time::age_years;
@@ -132,14 +132,14 @@ pub(crate) fn evaluate_scoped(
     );
     let risks = dedupe_and_sort_risks(risks);
 
-    let dataset = reference_runtime::manifest(canonical).map_err(|_| AssessmentError::Internal)?;
+    let dataset = reference_queries::manifest(canonical).map_err(|_| AssessmentError::Internal)?;
     let issues = match target_item_seq {
-        Some(item_seq) => reference_runtime::category_resolution_issues(canonical, item_seq)
+        Some(item_seq) => reference_queries::category_resolution_issues(canonical, item_seq)
             .map_err(|_| AssessmentError::Internal)?,
         None => BTreeMap::new(),
     };
     let pregnancy_relevant = match target_item_seq {
-        Some(item_seq) => reference_runtime::has_product_category(
+        Some(item_seq) => reference_queries::has_product_category(
             canonical,
             item_seq,
             "pregnancy_contraindication",

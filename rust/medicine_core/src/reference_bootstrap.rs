@@ -1,5 +1,8 @@
 use serde::Serialize;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceBootstrapState {
@@ -21,14 +24,14 @@ pub struct ReferenceBootstrapSnapshot {
 }
 
 #[derive(Clone, Debug)]
-pub struct ReferenceBootstrapCoordinator {
+pub(crate) struct ReferenceBootstrapCoordinator {
     snapshot: ReferenceBootstrapSnapshot,
     initialized: bool,
     operation_running: bool,
 }
 
 impl ReferenceBootstrapCoordinator {
-    pub fn checking() -> Self {
+    pub(crate) fn checking() -> Self {
         Self {
             snapshot: ReferenceBootstrapSnapshot {
                 state: ReferenceBootstrapState::Checking,
@@ -41,24 +44,11 @@ impl ReferenceBootstrapCoordinator {
         }
     }
 
-    pub fn ready_initial() -> Self {
-        Self {
-            snapshot: ReferenceBootstrapSnapshot {
-                state: ReferenceBootstrapState::Ready,
-                completed_bytes: 0,
-                total_bytes: 0,
-                detail: None,
-            },
-            initialized: true,
-            operation_running: false,
-        }
-    }
-
-    pub fn snapshot(&self) -> ReferenceBootstrapSnapshot {
+    pub(crate) fn snapshot(&self) -> ReferenceBootstrapSnapshot {
         self.snapshot.clone()
     }
 
-    pub fn begin_prepare(&mut self) -> bool {
+    pub(crate) fn begin_prepare(&mut self) -> bool {
         if self.initialized || self.operation_running {
             return false;
         }
@@ -68,7 +58,7 @@ impl ReferenceBootstrapCoordinator {
         true
     }
 
-    pub fn reset_for_prepare(&mut self) {
+    pub(crate) fn reset_for_prepare(&mut self) {
         if self.operation_running {
             return;
         }
@@ -77,7 +67,7 @@ impl ReferenceBootstrapCoordinator {
         self.snapshot.detail = None;
     }
 
-    pub fn prepared_download(&mut self, completed_bytes: u64, total_bytes: u64) {
+    pub(crate) fn prepared_download(&mut self, completed_bytes: u64, total_bytes: u64) {
         self.initialized = true;
         self.operation_running = false;
         self.set_progress(
@@ -88,14 +78,14 @@ impl ReferenceBootstrapCoordinator {
         );
     }
 
-    pub fn unavailable(&mut self, detail: Option<&str>) {
+    pub(crate) fn unavailable(&mut self, detail: Option<&str>) {
         self.initialized = true;
         self.operation_running = false;
         self.snapshot.state = ReferenceBootstrapState::Unavailable;
         self.snapshot.detail = detail.map(str::to_owned);
     }
 
-    pub fn begin_install(&mut self) -> bool {
+    pub(crate) fn begin_install(&mut self) -> bool {
         if self.operation_running
             || !matches!(
                 self.snapshot.state,
@@ -110,11 +100,7 @@ impl ReferenceBootstrapCoordinator {
         true
     }
 
-    pub fn checking_phase(&mut self) {
-        self.snapshot.state = ReferenceBootstrapState::Checking;
-    }
-
-    pub fn progress(&mut self, completed_bytes: u64, total_bytes: u64) {
+    pub(crate) fn progress(&mut self, completed_bytes: u64, total_bytes: u64) {
         self.set_progress(
             ReferenceBootstrapState::Downloading,
             completed_bytes,
@@ -123,12 +109,12 @@ impl ReferenceBootstrapCoordinator {
         );
     }
 
-    pub fn installing(&mut self) {
+    pub(crate) fn installing(&mut self) {
         self.snapshot.state = ReferenceBootstrapState::Installing;
         self.snapshot.detail = None;
     }
 
-    pub fn ready(&mut self) {
+    pub(crate) fn ready(&mut self) {
         self.initialized = true;
         self.operation_running = false;
         self.snapshot.state = ReferenceBootstrapState::Ready;
@@ -138,14 +124,14 @@ impl ReferenceBootstrapCoordinator {
         self.snapshot.detail = None;
     }
 
-    pub fn failed(&mut self, detail: &str) {
+    pub(crate) fn failed(&mut self, detail: &str) {
         self.initialized = true;
         self.operation_running = false;
         self.snapshot.state = ReferenceBootstrapState::Failed;
         self.snapshot.detail = Some(detail.to_owned());
     }
 
-    pub fn failed_for_current_phase(&mut self) {
+    pub(crate) fn failed_for_current_phase(&mut self) {
         let detail = match self.snapshot.state {
             ReferenceBootstrapState::Checking => "manifest_failed",
             ReferenceBootstrapState::DownloadRequired | ReferenceBootstrapState::Downloading => {

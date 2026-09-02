@@ -123,8 +123,8 @@ class DeploymentConfigTest(unittest.TestCase):
         trust = json.loads(Path("deploy/reference-signing-trusted-keys.json").read_text())
         workflow = Path(".github/workflows/reference-publish.yml").read_text()
         gradle = Path("android/app/build.gradle.kts").read_text()
-        android_trust = Path(
-            "android/app/src/main/java/com/medicine/android/ReferenceTrust.kt"
+        android_runtime = Path(
+            "android/app/src/main/java/com/medicine/android/ReferenceNativeCore.kt"
         ).read_text()
         workflow_key_id = re.search(r"REFERENCE_SIGNING_KEY_ID:\s*([A-Za-z0-9._-]+)", workflow).group(1)
         entries = {entry["key_id"]: entry for entry in trust["keys"]}
@@ -132,9 +132,9 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertEqual(trust["active_key_id"], workflow_key_id)
         self.assertIn(trust["active_key_id"], entries)
         self.assertIn("../deploy/reference-signing-trusted-keys.json", gradle)
-        self.assertIn("REFERENCE_TRUSTED_KEYS_JSON", gradle)
-        self.assertIn("BuildConfig.REFERENCE_TRUSTED_KEYS_JSON", android_trust)
-        self.assertNotIn("reference-prod-2026-01", android_trust)
+        self.assertIn("REFERENCE_TRUST_MANIFEST_JSON", gradle)
+        self.assertIn("BuildConfig.REFERENCE_TRUST_MANIFEST_JSON", android_runtime)
+        self.assertNotIn("reference-prod-2026-01", android_runtime)
         for key_id, entry in entries.items():
             pem = entry["public_key_pem"]
             der = base64.b64decode(

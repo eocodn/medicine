@@ -6,14 +6,74 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use medicine_core::development_reference::DevelopmentReferenceConfig;
 use medicine_core::web::{
-    build_router, build_runtime, WebConfig, WebReferenceBootstrapConfig, BROWSER_CSP,
+    build_router, build_runtime, WebConfig, WebReferenceRuntime, BROWSER_CSP,
+};
+use medicine_core::{
+    ReferenceBootstrapSnapshot, ReferenceBootstrapState, ReferenceRuntimeError,
+    ReferenceRuntimeResult, ReferenceSelection, ReferenceUpdateStatus,
 };
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::Notify;
 use tower::ServiceExt;
+
+struct FakeWebReferenceRuntime {
+    snapshot: Mutex<ReferenceBootstrapSnapshot>,
+    start_called: Notify,
+    update_called: Notify,
+    database: PathBuf,
+}
+
+impl FakeWebReferenceRuntime {
+    fn download_required(completed_bytes: u64, total_bytes: u64, database: PathBuf) -> Self {
+        Self {
+            snapshot: Mutex::new(ReferenceBootstrapSnapshot {
+                state: ReferenceBootstrapState::DownloadRequired,
+                completed_bytes,
+                total_bytes,
+                detail: None,
+            }),
+            start_called: Notify::new(),
+            update_called: Notify::new(),
+            database,
+        }
+    }
+}
+
+impl WebReferenceRuntime for FakeWebReferenceRuntime {
+    fn start(&self) -> Result<ReferenceRuntimeResult, ReferenceRuntimeError> {
+        let mut snapshot = self
+            .snapshot
+            .lock()
+            .map_err(|_| ReferenceRuntimeError::from_message("fake runtime lock poisoned"))?;
+        snapshot.state = ReferenceBootstrapState::Ready;
+        snapshot.completed_bytes = snapshot.total_bytes;
+        let snapshot = snapshot.clone();
+        self.start_called.notify_one();
+        Ok(ReferenceRuntimeResult {
+            selection: Some(ReferenceSelection {
+                database: Some(self.database.clone()),
+                unavailable_reason: None,
+            }),
+            snapshot,
+        })
+    }
+
+    fn status(&self) -> ReferenceBootstrapSnapshot {
+        self.snapshot.lock().unwrap().clone()
+    }
+
+    fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError> {
+        self.update_called.notify_one();
+        Ok(ReferenceUpdateStatus::NoChange)
+    }
+}
 
 fn temp_dir(label: &str) -> PathBuf {
     let path = common::temp_sqlite_path(label);
@@ -101,7 +161,7 @@ fn fixture_config(reference: Option<PathBuf>, reason: Option<&str>) -> (WebConfi
             static_dir,
             ocr_assets_dir: Some(ocr_dir),
             reference_unavailable_reason: reason.map(str::to_owned),
-            reference_bootstrap: None,
+            reference_runtime: None,
         },
         root,
     )
@@ -432,19 +492,17 @@ async fn development_status_exposes_heartbeat_reference_phase_and_authoritative_
 #[tokio::test]
 async fn development_status_exposes_shared_reference_bootstrap_contract() {
     let (mut config, root) = fixture_config(None, Some("bootstrap_required"));
-    config.reference_bootstrap = Some(WebReferenceBootstrapConfig {
-        development: DevelopmentReferenceConfig {
-            reference_dir: root.join("reference"),
-            base_url: "https://example.invalid/".to_owned(),
-            trust_manifest: root.join("trust.json"),
-            contract_major: 1,
-        },
-        download_size_bytes: 75,
-        total_download_bytes: 100,
-    });
+    let reference = reference_db("web-server-bootstrap-reference");
+    let reference_runtime = Arc::new(FakeWebReferenceRuntime::download_required(
+        25,
+        100,
+        reference.clone(),
+    ));
+    config.reference_runtime = Some(reference_runtime.clone());
     let app = build_router(config).expect("build bootstrap-required router");
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/development/status")
@@ -461,5 +519,46 @@ async fn development_status_exposes_shared_reference_bootstrap_contract() {
     assert_eq!(body["reference_bootstrap"]["completed_bytes"], 25);
     assert_eq!(body["reference_bootstrap"]["total_bytes"], 100);
 
+    let started = reference_runtime.start_called.notified();
+    let update_checked = reference_runtime.update_called.notified();
+    let start_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/development/reference-bootstrap/start")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("bootstrap start response");
+    assert_eq!(start_response.status(), StatusCode::ACCEPTED);
+    started.await;
+    update_checked.await;
+
+    let mut ready = Value::Null;
+    for _ in 0..100 {
+        let ready_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/development/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("ready bootstrap development status response");
+        ready = response_json(ready_response).await;
+        if ready["reference_update"]["state"] == "no_change" {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(ready["reference_bootstrap"]["state"], "ready");
+    assert_eq!(ready["reference_bootstrap"]["completed_bytes"], 100);
+    assert_eq!(ready["reference"]["available"], true);
+    assert_eq!(ready["reference_update"]["state"], "no_change");
+
+    fs::remove_file(reference).ok();
     fs::remove_dir_all(root).ok();
 }

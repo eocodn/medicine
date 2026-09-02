@@ -9,35 +9,48 @@ use axum::{
 use serde_json::{json, Value};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, RwLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tower_http::services::ServeDir;
 
-use crate::development_reference::{
-    ensure_development_reference, DevelopmentReferenceConfig,
-};
-use crate::{MedicineEngine, ReferenceBootstrapCoordinator, ReferenceBootstrapState};
+use crate::reference_lifecycle_runtime::ReferenceRuntimeResult;
+use crate::reference_manager::{ReferenceRuntimeError, ReferenceUpdateStatus};
+use crate::reference_runtime::ReferenceRuntime;
+use crate::{MedicineEngine, ReferenceBootstrapSnapshot, ReferenceBootstrapState};
 
 pub const BROWSER_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const MAX_API_BODY_BYTES: usize = 2 * 1024 * 1024;
 
-#[derive(Clone, Debug)]
+pub trait WebReferenceRuntime: Send + Sync {
+    fn start(&self) -> Result<ReferenceRuntimeResult, ReferenceRuntimeError>;
+    fn status(&self) -> ReferenceBootstrapSnapshot;
+    fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError>;
+}
+
+impl WebReferenceRuntime for ReferenceRuntime {
+    fn start(&self) -> Result<ReferenceRuntimeResult, ReferenceRuntimeError> {
+        ReferenceRuntime::start(self)
+    }
+
+    fn status(&self) -> ReferenceBootstrapSnapshot {
+        ReferenceRuntime::status(self)
+    }
+
+    fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError> {
+        ReferenceRuntime::check_for_update(self)
+    }
+}
+
+#[derive(Clone)]
 pub struct WebConfig {
     pub canonical_db: Option<PathBuf>,
     pub personal_db: PathBuf,
     pub static_dir: PathBuf,
     pub ocr_assets_dir: Option<PathBuf>,
     pub reference_unavailable_reason: Option<String>,
-    pub reference_bootstrap: Option<WebReferenceBootstrapConfig>,
-}
-
-#[derive(Clone, Debug)]
-pub struct WebReferenceBootstrapConfig {
-    pub development: DevelopmentReferenceConfig,
-    pub download_size_bytes: u64,
-    pub total_download_bytes: u64,
+    pub reference_runtime: Option<Arc<dyn WebReferenceRuntime>>,
 }
 
 #[derive(Clone)]
@@ -46,7 +59,7 @@ struct AppState {
     index_html: Arc<String>,
     status: DevelopmentWebStatus,
     personal_db: PathBuf,
-    reference_bootstrap: Option<WebReferenceBootstrapConfig>,
+    reference_runtime: Option<Arc<dyn WebReferenceRuntime>>,
 }
 
 pub struct WebRuntime {
@@ -58,6 +71,7 @@ pub struct WebRuntime {
 #[derive(Clone)]
 pub struct DevelopmentWebStatus {
     inner: Arc<RwLock<DevelopmentWebStatusState>>,
+    reference_runtime: Option<Arc<dyn WebReferenceRuntime>>,
 }
 
 #[derive(Debug)]
@@ -68,11 +82,10 @@ struct DevelopmentWebStatusState {
     reference_update_state: String,
     reference_update_phase: Option<String>,
     reference_update_detail: Option<String>,
-    reference_bootstrap: ReferenceBootstrapCoordinator,
 }
 
 impl DevelopmentWebStatus {
-    fn new() -> Self {
+    fn new(reference_runtime: Option<Arc<dyn WebReferenceRuntime>>) -> Self {
         let now = unix_ms();
         Self {
             inner: Arc::new(RwLock::new(DevelopmentWebStatusState {
@@ -82,8 +95,8 @@ impl DevelopmentWebStatus {
                 reference_update_state: "idle".to_owned(),
                 reference_update_phase: None,
                 reference_update_detail: None,
-                reference_bootstrap: ReferenceBootstrapCoordinator::ready_initial(),
             })),
+            reference_runtime,
         }
     }
 
@@ -110,58 +123,6 @@ impl DevelopmentWebStatus {
         self.set_reference_update("disabled", None, Some(detail));
     }
 
-    pub fn reference_bootstrap_required(&self, completed_bytes: u64, total_bytes: u64) {
-        if let Ok(mut state) = self.inner.write() {
-            state
-                .reference_bootstrap
-                .prepared_download(completed_bytes, total_bytes);
-        }
-    }
-
-    fn begin_reference_bootstrap(&self) -> Result<(), &'static str> {
-        let Ok(mut state) = self.inner.write() else {
-            return Err("unavailable");
-        };
-        if state.reference_bootstrap.begin_install() {
-            return Ok(());
-        }
-        match state.reference_bootstrap.snapshot().state {
-            ReferenceBootstrapState::Downloading | ReferenceBootstrapState::Installing => {
-                Err("running")
-            }
-            _ => Err("not_required"),
-        }
-    }
-
-    fn reference_bootstrap_progress(&self, completed_bytes: u64, total_bytes: u64) {
-        if let Ok(mut state) = self.inner.write() {
-            state
-                .reference_bootstrap
-                .progress(completed_bytes, total_bytes);
-        }
-    }
-
-    fn reference_bootstrap_installing(&self, completed_bytes: u64, total_bytes: u64) {
-        if let Ok(mut state) = self.inner.write() {
-            state
-                .reference_bootstrap
-                .progress(completed_bytes, total_bytes);
-            state.reference_bootstrap.installing();
-        }
-    }
-
-    fn reference_bootstrap_completed(&self, _total_bytes: u64) {
-        if let Ok(mut state) = self.inner.write() {
-            state.reference_bootstrap.ready();
-        }
-    }
-
-    fn reference_bootstrap_failed(&self, detail: &str) {
-        if let Ok(mut state) = self.inner.write() {
-            state.reference_bootstrap.failed(detail);
-        }
-    }
-
     fn set_reference_update(&self, state: &str, phase: Option<&str>, detail: Option<&str>) {
         if let Ok(mut current) = self.inner.write() {
             current.reference_update_state = state.to_owned();
@@ -175,6 +136,16 @@ impl DevelopmentWebStatus {
             .inner
             .read()
             .map_err(|_| "development status state is unavailable".to_owned())?;
+        let reference_bootstrap = self
+            .reference_runtime
+            .as_ref()
+            .map(|runtime| runtime.status())
+            .unwrap_or(ReferenceBootstrapSnapshot {
+                state: ReferenceBootstrapState::Ready,
+                completed_bytes: 0,
+                total_bytes: 0,
+                detail: None,
+            });
         Ok(json!({
             "process": {
                 "started_unix_ms": state.started_unix_ms,
@@ -186,9 +157,63 @@ impl DevelopmentWebStatus {
                 "phase": state.reference_update_phase,
                 "detail": state.reference_update_detail,
             },
-            "reference_bootstrap": state.reference_bootstrap.snapshot(),
+            "reference_bootstrap": reference_bootstrap,
         }))
     }
+}
+
+pub fn schedule_reference_update(
+    reference_runtime: Arc<dyn WebReferenceRuntime>,
+    engine: Arc<RwLock<MedicineEngine>>,
+    status: DevelopmentWebStatus,
+) {
+    status.reference_update_running("check");
+    tokio::spawn(async move {
+        let update_runtime = Arc::clone(&reference_runtime);
+        let result = tokio::task::spawn_blocking(move || update_runtime.check_for_update()).await;
+        match result {
+            Err(error) => {
+                let detail = format!("reference update task failed: {error}");
+                status.reference_update_failed("join", &detail);
+                eprintln!("{detail}");
+            }
+            Ok(Err(error)) => {
+                let detail = format!("reference update skipped; using LKG: {error}");
+                status.reference_update_failed("check", &detail);
+                eprintln!("{detail}");
+            }
+            Ok(Ok(ReferenceUpdateStatus::NoChange)) => {
+                status.reference_update_completed("no_change");
+                eprintln!("reference update check completed: no change");
+            }
+            Ok(Ok(ReferenceUpdateStatus::Staged)) => {
+                status.reference_update_completed("staged");
+                eprintln!("reference update staged for next startup");
+            }
+            Ok(Ok(ReferenceUpdateStatus::UpdateRequired)) => match engine.write() {
+                Ok(mut engine) => {
+                    if let Err(error) =
+                        engine.set_reference_available(false, Some("update_required"))
+                    {
+                        let detail =
+                            format!("cannot apply reference retirement to live engine: {error}");
+                        status.reference_update_failed("retire", &detail);
+                        eprintln!("{detail}");
+                    } else {
+                        status.reference_update_completed("update_required");
+                        eprintln!("reference contract retired; live safety-data access disabled");
+                    }
+                }
+                Err(_) => {
+                    status.reference_update_failed(
+                        "retire",
+                        "cannot lock live medicine engine after reference retirement",
+                    );
+                    eprintln!("cannot lock live medicine engine after reference retirement");
+                }
+            },
+        }
+    });
 }
 
 pub fn build_router(config: WebConfig) -> Result<Router, String> {
@@ -230,21 +255,13 @@ pub fn build_runtime(config: WebConfig) -> Result<WebRuntime, String> {
     );
     engine.initialize_personal_database()?;
     let engine = Arc::new(RwLock::new(engine));
-    let status = DevelopmentWebStatus::new();
-    if let Some(bootstrap) = config.reference_bootstrap.as_ref() {
-        status.reference_bootstrap_required(
-            bootstrap
-                .total_download_bytes
-                .saturating_sub(bootstrap.download_size_bytes),
-            bootstrap.total_download_bytes,
-        );
-    }
+    let status = DevelopmentWebStatus::new(config.reference_runtime.clone());
     let state = AppState {
         engine: Arc::clone(&engine),
         index_html: Arc::new(index_html),
         status: status.clone(),
         personal_db: config.personal_db.clone(),
-        reference_bootstrap: config.reference_bootstrap.clone(),
+        reference_runtime: config.reference_runtime.clone(),
     };
 
     let mut router = Router::new()
@@ -316,18 +333,18 @@ async fn development_status(State(state): State<AppState>) -> Response {
 }
 
 async fn start_reference_bootstrap(State(state): State<AppState>) -> Response {
-    let Some(bootstrap) = state.reference_bootstrap.clone() else {
+    let Some(reference_runtime) = state.reference_runtime.clone() else {
         return json_response(
             StatusCode::CONFLICT,
             json!({"detail": "reference bootstrap is not required"}),
         );
     };
-    match state.status.begin_reference_bootstrap() {
-        Ok(()) => {}
-        Err("running") => {
+    match reference_runtime.status().state {
+        ReferenceBootstrapState::Downloading | ReferenceBootstrapState::Installing => {
             return json_response(StatusCode::ACCEPTED, json!({"status": "already_running"}));
         }
-        Err(_) => {
+        ReferenceBootstrapState::DownloadRequired | ReferenceBootstrapState::Failed => {}
+        _ => {
             return json_response(
                 StatusCode::CONFLICT,
                 json!({"detail": "reference bootstrap is not required"}),
@@ -336,83 +353,46 @@ async fn start_reference_bootstrap(State(state): State<AppState>) -> Response {
     }
 
     let engine = Arc::clone(&state.engine);
-    let status = state.status.clone();
+    let update_runtime = Arc::clone(&reference_runtime);
+    let update_status = state.status.clone();
     let personal_db = state.personal_db.clone();
     tokio::spawn(async move {
-        let total_bytes = bootstrap.total_download_bytes;
-        let reference_dir = bootstrap.development.reference_dir.clone();
-        let mut worker = tokio::task::spawn_blocking(move || {
-            ensure_development_reference(bootstrap.development)
-        });
-
-        loop {
-            tokio::select! {
-                result = &mut worker => {
-                    match result {
-                        Err(error) => {
-                            status.reference_bootstrap_failed(&format!("reference bootstrap task failed: {error}"));
-                        }
-                        Ok(Err(error)) => {
-                            status.reference_bootstrap_failed(&error.to_string());
-                        }
-                        Ok(Ok(selection)) => {
-                            let Some(database) = selection.database else {
-                                status.reference_bootstrap_failed(
-                                    selection.unavailable_reason.as_deref().unwrap_or("reference unavailable"),
-                                );
-                                break;
-                            };
-                            let replacement = MedicineEngine::new(
-                                Some(database.as_path()),
-                                Some(personal_db.as_path()),
-                                None,
-                            );
-                            if let Err(error) = replacement.initialize_personal_database() {
-                                status.reference_bootstrap_failed(&error);
-                                break;
-                            }
-                            match engine.write() {
-                                Ok(mut current) => {
-                                    *current = replacement;
-                                    status.reference_bootstrap_completed(total_bytes);
-                                }
-                                Err(_) => status.reference_bootstrap_failed(
-                                    "medicine engine state is unavailable after reference bootstrap",
-                                ),
-                            }
-                        }
+        match tokio::task::spawn_blocking(move || reference_runtime.start()).await {
+            Err(error) => {
+                eprintln!("reference bootstrap task failed: {error}");
+            }
+            Ok(Err(error)) => eprintln!("reference bootstrap failed: {error}"),
+            Ok(Ok(result)) => {
+                let Some(selection) = result.selection else {
+                    return;
+                };
+                let Some(database) = selection.database else {
+                    if let Ok(mut current) = engine.write() {
+                        let _ = current.set_reference_available(
+                            false,
+                            selection.unavailable_reason.as_deref(),
+                        );
                     }
-                    break;
+                    return;
+                };
+                let replacement = MedicineEngine::new(
+                    Some(database.as_path()),
+                    Some(personal_db.as_path()),
+                    None,
+                );
+                if let Err(error) = replacement.initialize_personal_database() {
+                    eprintln!("reference bootstrap engine replacement failed: {error}");
+                    return;
                 }
-                _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                    let completed = bootstrap_checkpoint_bytes(&reference_dir).min(total_bytes);
-                    if total_bytes > 0 && completed >= total_bytes {
-                        status.reference_bootstrap_installing(completed, total_bytes);
-                    } else {
-                        status.reference_bootstrap_progress(completed, total_bytes);
-                    }
+                if let Ok(mut current) = engine.write() {
+                    *current = replacement;
                 }
+                schedule_reference_update(update_runtime, Arc::clone(&engine), update_status);
             }
         }
     });
 
     json_response(StatusCode::ACCEPTED, json!({"status": "started"}))
-}
-
-fn bootstrap_checkpoint_bytes(reference_dir: &Path) -> u64 {
-    fs::read_dir(reference_dir)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            name.starts_with(".bootstrap-artifact-") && name.ends_with(".part")
-        })
-        .filter_map(|entry| entry.metadata().ok().map(|metadata| metadata.len()))
-        .max()
-        .unwrap_or(0)
 }
 
 async fn api_request(State(state): State<AppState>, request: Request<Body>) -> Response {

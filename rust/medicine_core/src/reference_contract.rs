@@ -1,0 +1,1 @@
+pub const REFERENCE_CONTRACT_MAJOR: i32 = 1;

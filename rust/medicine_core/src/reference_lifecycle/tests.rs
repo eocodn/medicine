@@ -1,8 +1,8 @@
-use medicine_core::reference_state::{ReferenceStoreState, ReferenceVersion};
-use medicine_core::{
-    plan_reference_bootstrap, plan_reference_update, ReferenceArtifactKind, ReferenceBootstrapPlan,
-    ReferenceReleaseArtifact, ReferenceUpdatePlan, VerifiedReferenceRelease,
+use super::{
+    plan_reference_bootstrap, plan_reference_update, ReferenceBootstrapPlan, ReferenceUpdatePlan,
 };
+use crate::reference_state::{ReferenceStoreState, ReferenceVersion};
+use crate::{ReferenceArtifactKind, ReferenceReleaseArtifact, VerifiedReferenceRelease};
 
 fn sha(ch: char) -> String {
     std::iter::repeat_n(ch, 64).collect()

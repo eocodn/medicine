@@ -61,8 +61,25 @@ pub fn load_reference_trust_manifest(
     }
     let bytes = std::fs::read(path)
         .map_err(|_| ReferenceTrustError("trusted release signing key file is invalid".into()))?;
-    let raw: RawManifest = serde_json::from_slice(&bytes).map_err(|_| {
-        ReferenceTrustError("trusted release signing key file shape is invalid".into())
+    parse_reference_trust_manifest_bytes(&bytes)
+}
+
+pub fn parse_reference_trust_manifest_json(
+    raw: &str,
+) -> Result<ReferenceTrustManifest, ReferenceTrustError> {
+    if raw.len() as u64 > MAX_TRUST_MANIFEST_BYTES {
+        return Err(ReferenceTrustError(
+            "trusted release signing key manifest is too large".into(),
+        ));
+    }
+    parse_reference_trust_manifest_bytes(raw.as_bytes())
+}
+
+fn parse_reference_trust_manifest_bytes(
+    bytes: &[u8],
+) -> Result<ReferenceTrustManifest, ReferenceTrustError> {
+    let raw: RawManifest = serde_json::from_slice(bytes).map_err(|_| {
+        ReferenceTrustError("trusted release signing key manifest shape is invalid".into())
     })?;
     if raw.keys.is_empty() {
         return Err(ReferenceTrustError(

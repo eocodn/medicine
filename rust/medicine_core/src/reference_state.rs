@@ -166,6 +166,14 @@ impl ReferenceStore {
         &mut self,
         version: ReferenceVersion,
     ) -> Result<ReferenceVersion, ReferenceStateError> {
+        self.install_initial_with_seal(version, None)
+    }
+
+    pub fn install_initial_with_seal(
+        &mut self,
+        version: ReferenceVersion,
+        seal: Option<ReferenceFileSeal>,
+    ) -> Result<ReferenceVersion, ReferenceStateError> {
         validate_version(&version)?;
         if version.release_sequence <= 0 {
             return Err(ReferenceStateError::new(
@@ -198,13 +206,28 @@ impl ReferenceStore {
             highest_seen_root_sequence: self.state.highest_seen_root_sequence,
             highest_seen_root_hash: self.state.highest_seen_root_hash.clone(),
             highest_retired_contract_major: self.state.highest_retired_contract_major,
-            active_seal: None,
+            active_seal: seal,
             previous_seal: None,
             pending_seal: None,
         };
         validate_state(&next)?;
         self.state = next;
         Ok(version)
+    }
+
+    pub fn set_role_seals(
+        &mut self,
+        active: Option<ReferenceFileSeal>,
+        previous: Option<ReferenceFileSeal>,
+        pending: Option<ReferenceFileSeal>,
+    ) -> Result<(), ReferenceStateError> {
+        let mut next = self.state.clone();
+        next.active_seal = active;
+        next.previous_seal = previous;
+        next.pending_seal = pending;
+        validate_state(&next)?;
+        self.state = next;
+        Ok(())
     }
 
     pub fn observe_signed_root(

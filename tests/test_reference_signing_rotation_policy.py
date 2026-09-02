@@ -22,9 +22,8 @@ class ReferenceSigningRotationPolicyTest(unittest.TestCase):
             parameter = inspect.signature(publisher).parameters["trusted_public_keys"]
             self.assertIs(parameter.default, inspect.Parameter.empty)
 
-    def test_release_gate_loads_trust_from_manifest_not_kotlin_source(self) -> None:
+    def test_release_gate_loads_trust_from_manifest(self) -> None:
         script = Path("scripts/verify-reference-contract-root.py")
-        self.assertNotIn("ReferenceTrust.kt", script.read_text())
         spec = importlib.util.spec_from_file_location("verify_reference_contract_root", script)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)

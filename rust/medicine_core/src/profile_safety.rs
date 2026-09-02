@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 use crate::canonical_products::{self, ProductError};
 use crate::profile_age::evaluate_age_rule;
-use crate::reference_runtime::{linked_product_rows, resolved_product_rows};
+use crate::reference_queries::{linked_product_rows, resolved_product_rows};
 use crate::reference_semantics::{
     criterion_note_requires_review, dedupe_qualifiers, has_semantics, qualifiers,
 };

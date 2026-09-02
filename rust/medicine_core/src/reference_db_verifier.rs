@@ -7,7 +7,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 
-const CONTRACT_MAJOR: u64 = 1;
+use crate::reference_contract::REFERENCE_CONTRACT_MAJOR;
 const REQUIRED_COLUMNS: [(&str, &[&str]); 11] = [
     ("reference_contract_meta", &["key", "value"]),
     ("canonical_meta", &["key", "value"]),
@@ -197,7 +197,7 @@ pub fn verify_reference_database(
     expected_contract_major: u64,
     expected_dataset_id: &str,
 ) -> Result<ReferenceVerificationReport, ReferenceVerificationError> {
-    if expected_contract_major != CONTRACT_MAJOR {
+    if expected_contract_major != REFERENCE_CONTRACT_MAJOR as u64 {
         return Err(ReferenceVerificationError::InvalidArgument(
             "reference contract major is unsupported by this runtime".to_owned(),
         ));

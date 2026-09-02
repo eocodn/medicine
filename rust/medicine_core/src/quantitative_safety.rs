@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 use crate::dose_quantity::{draft_quantity, frequency, is_count_unit, source_quantity};
-use crate::reference_runtime::{has_unlinked_product_rule, linked_product_rows};
+use crate::reference_queries::{has_unlinked_product_rule, linked_product_rows};
 use crate::reference_semantics::{criterion_note_requires_review, dedupe_qualifiers, qualifiers};
 
 pub(crate) fn evaluate(con: &Connection, product: &Value, draft: &Value) -> Result<Value, ()> {

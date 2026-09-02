@@ -20,58 +20,30 @@ class ManifestContractTest {
     }
 
     @Test
-    fun referenceDataBootstrapsFromSignedChannelWithoutBundledDatabaseAssets() {
-        val bootstrapper = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapper.kt").readText()
-        val store = java.io.File("src/main/java/com/medicine/android/ReferenceStore.kt").readText()
-        val build = java.io.File("build.gradle.kts").readText()
-        assertTrue(store.contains("MessageDigest.getInstance(\"SHA-256\")"))
-        assertTrue(store.contains("highestActivatedSequence"))
-        assertTrue(store.contains("pending"))
-        assertTrue(store.contains("previous"))
-        assertTrue(bootstrapper.contains("ReferenceManifestVerifier(ReferenceTrust.trustedPublicKeys)"))
-        assertTrue(bootstrapper.contains(".bootstrap-artifact-"))
-        assertTrue(bootstrapper.contains("ReferenceBootstrapStorageException"))
-        assertTrue(store.contains("candidate.renameTo(target)"))
-        assertTrue(store.contains("target.setReadOnly()"))
-        assertFalse(java.io.File("src/main/java/com/medicine/android/ReferenceAssetInstaller.kt").exists())
-        assertFalse(build.contains("PrepareMobileAssets"))
-        assertFalse(build.contains("mobile.sqlite"))
-        assertFalse(build.contains("mobile.manifest.json"))
-    }
-
-    @Test
-    fun referenceUpdaterPackagesSharedPatchCoreAndUsesDevelopmentDistributionEndpoint() {
-        val build = java.io.File("build.gradle.kts").readText()
-        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
-        val bootstrapper = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapper.kt").readText()
-        val bootstrapBridge = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapJsBridge.kt").readText()
-        val updater = java.io.File("src/main/java/com/medicine/android/ReferenceUpdater.kt").readText()
-        val coordinator = java.io.File("src/main/java/com/medicine/android/ReferenceOperationCoordinator.kt").readText()
-        val source = java.io.File("src/main/java/com/medicine/android/ReferenceReleaseHttpSource.kt").readText()
-        assertTrue(build.contains("MEDICINE_REFERENCE_UPDATE_BASE_URL"))
-        assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
-        assertTrue(build.contains("pub-539f06de795a469c85ab40570a8634a2.r2.dev"))
-        assertFalse(build.contains("medicine_canonical"))
-        assertTrue(bootstrapper.contains("RustReferenceDatabaseVerifier()"))
-        assertTrue(activity.contains("RustReferenceArtifactRebuilder()"))
-        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.bootstrapPhase(coordinatorHandle, name)"))
+    fun referenceDataBootstrapsThroughTheNativeSignedChannelRuntime() {
         val nativeReference = java.io.File(
             "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
         ).readText()
-        assertTrue(nativeReference.contains("nativeVerifyManifest"))
-        assertTrue(nativeReference.contains("nativeParseReleaseRoot"))
-        assertTrue(nativeReference.contains("nativeVerifyDatabase"))
-        assertTrue(nativeReference.contains("nativeRebuildArtifact"))
-        assertTrue(updater.contains("ReferenceUpdateStatus.STAGED"))
-        assertTrue(updater.contains(".artifact-"))
-        assertTrue(bootstrapper.contains("ReferenceOperationCoordinator.exclusive"))
-        assertTrue(updater.contains("ReferenceOperationCoordinator.exclusive"))
-        assertTrue(coordinator.contains("ReentrantLock"))
-        assertTrue(activity.contains("RejectedExecutionException"))
-        assertTrue(activity.contains("startupExecutor.isShutdown"))
-        assertTrue(source.contains("Range"))
-        assertTrue(source.contains("Content-Range"))
-        assertTrue(source.contains("HttpsURLConnection"))
+        assertTrue(nativeReference.contains("nativeCreateReferenceRuntime"))
+        assertTrue(nativeReference.contains("nativeReferencePrepare"))
+        assertTrue(nativeReference.contains("nativeReferenceStart"))
+        assertTrue(nativeReference.contains("nativeReferenceCheckForUpdate"))
+        assertTrue(nativeReference.contains("BuildConfig.REFERENCE_TRUST_MANIFEST_JSON"))
+    }
+
+    @Test
+    fun referenceUpdatesUseTheSameRustLifecycleRuntimeAsBootstrap() {
+        val build = java.io.File("build.gradle.kts").readText()
+        val bridge = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapJsBridge.kt").readText()
+        val nativeReference = java.io.File(
+            "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
+        ).readText()
+
+        assertTrue(build.contains("MEDICINE_REFERENCE_UPDATE_BASE_URL"))
+        assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
+        assertTrue(build.contains("pub-539f06de795a469c85ab40570a8634a2.r2.dev"))
+        assertTrue(bridge.contains("ReferenceNativeCore.checkForUpdate(runtimeHandle)"))
+        assertTrue(nativeReference.contains("nativeReferenceCheckForUpdate"))
     }
 
     @Test
@@ -147,10 +119,8 @@ class ManifestContractTest {
         assertTrue(activity.contains("MedicineNativeProxy"))
         assertTrue(activity.contains("WebSettings.LOAD_NO_CACHE"))
         assertFalse(activity.contains("AlertDialog"))
-        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.createBootstrapCoordinator()"))
-        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.bootstrapSnapshot(coordinatorHandle)"))
-        assertFalse(bootstrapBridge.contains("private var state ="))
-        assertFalse(bootstrapBridge.contains("private var operationRunning ="))
+        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.createReferenceRuntime"))
+        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.status(runtimeHandle)"))
         assertTrue(bootstrapUi.contains("다운로드하지 않으면 앱을 사용할 수 없습니다"))
         assertTrue(bootstrapUi.contains("completed_bytes"))
         assertTrue(bootstrapUi.contains("total_bytes"))

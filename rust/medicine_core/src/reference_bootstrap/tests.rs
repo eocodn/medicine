@@ -1,10 +1,13 @@
-use medicine_core::{ReferenceBootstrapCoordinator, ReferenceBootstrapState};
+use super::{ReferenceBootstrapCoordinator, ReferenceBootstrapState};
 
 #[test]
 fn bootstrap_coordinator_owns_shared_first_install_transitions() {
     let mut coordinator = ReferenceBootstrapCoordinator::checking();
 
-    assert_eq!(coordinator.snapshot().state, ReferenceBootstrapState::Checking);
+    assert_eq!(
+        coordinator.snapshot().state,
+        ReferenceBootstrapState::Checking
+    );
     assert!(coordinator.begin_prepare());
     assert!(!coordinator.begin_prepare());
 
@@ -18,7 +21,10 @@ fn bootstrap_coordinator_owns_shared_first_install_transitions() {
     assert!(!coordinator.begin_install());
     coordinator.progress(60, 100);
     coordinator.installing();
-    assert_eq!(coordinator.snapshot().state, ReferenceBootstrapState::Installing);
+    assert_eq!(
+        coordinator.snapshot().state,
+        ReferenceBootstrapState::Installing
+    );
 
     coordinator.ready();
     let snapshot = coordinator.snapshot();
@@ -49,17 +55,26 @@ fn bootstrap_coordinator_classifies_failure_from_authoritative_phase() {
     let mut coordinator = ReferenceBootstrapCoordinator::checking();
     assert!(coordinator.begin_prepare());
     coordinator.failed_for_current_phase();
-    assert_eq!(coordinator.snapshot().detail.as_deref(), Some("manifest_failed"));
+    assert_eq!(
+        coordinator.snapshot().detail.as_deref(),
+        Some("manifest_failed")
+    );
 
     coordinator.reset_for_prepare();
     assert!(coordinator.begin_prepare());
     coordinator.prepared_download(0, 100);
     assert!(coordinator.begin_install());
     coordinator.failed_for_current_phase();
-    assert_eq!(coordinator.snapshot().detail.as_deref(), Some("download_failed"));
+    assert_eq!(
+        coordinator.snapshot().detail.as_deref(),
+        Some("download_failed")
+    );
 
     assert!(coordinator.begin_install());
     coordinator.installing();
     coordinator.failed_for_current_phase();
-    assert_eq!(coordinator.snapshot().detail.as_deref(), Some("install_failed"));
+    assert_eq!(
+        coordinator.snapshot().detail.as_deref(),
+        Some("install_failed")
+    );
 }

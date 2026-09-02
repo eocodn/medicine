@@ -1,17 +1,14 @@
-use medicine_core::development_reference::{
-    check_development_reference_update, inspect_development_reference_bootstrap,
-    open_development_reference, DevelopmentReferenceBootstrapInspection,
-    DevelopmentReferenceConfig, DevelopmentReferenceUpdateStatus,
+use medicine_core::web::{
+    build_runtime, schedule_reference_update, WebConfig, WebReferenceRuntime,
 };
-use medicine_core::web::{build_runtime, WebConfig, WebReferenceBootstrapConfig};
-use std::{env, net::IpAddr, path::PathBuf, thread, time::Duration};
+use medicine_core::{open_reference_channel, ReferenceBootstrapState, ReferenceChannelConfig};
+use std::{env, net::IpAddr, path::PathBuf, sync::Arc, thread, time::Duration};
 use tokio::net::TcpListener;
 
 const DEFAULT_PERSONAL_DB: &str = "data/db/personal.sqlite";
 const DEFAULT_REFERENCE_DIR: &str = "data/reference";
 const DEFAULT_REFERENCE_TRUST_MANIFEST: &str = "deploy/reference-signing-trusted-keys.json";
 const DEFAULT_STATIC_DIR: &str = "ui/dist";
-const REFERENCE_CONTRACT_MAJOR: i32 = 1;
 
 #[tokio::main]
 async fn main() {
@@ -97,8 +94,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         return Err("web port must be an integer between 1 and 65535".to_owned());
     }
 
-    let mut managed_reference_update = None;
-    let mut reference_bootstrap = None;
+    let mut managed_reference_runtime = None;
     let canonical_db = if reference_unavailable_reason.is_some() {
         None
     } else if let Some(path) = canonical_db {
@@ -108,53 +104,60 @@ async fn run(args: Vec<String>) -> Result<(), String> {
             "reference distribution base URL is not configured and no --canonical-db override was supplied"
                 .to_owned()
         })?;
-        let config = DevelopmentReferenceConfig {
+        let config = ReferenceChannelConfig {
             reference_dir: PathBuf::from(reference_dir),
             base_url,
             trust_manifest: PathBuf::from(reference_trust_manifest),
-            contract_major: REFERENCE_CONTRACT_MAJOR,
         };
-        let startup_config = config.clone();
-        let selection =
-            tokio::task::spawn_blocking(move || open_development_reference(startup_config))
+        // ReferenceHttpSource deliberately uses the same synchronous HTTP
+        // implementation as Android. reqwest::blocking must construct its
+        // internal runtime outside Tokio's async context.
+        let runtime = Arc::new(
+            tokio::task::spawn_blocking(move || open_reference_channel(config))
                 .await
-                .map_err(|error| format!("reference preparation task failed: {error}"))?
-                .map_err(|error| format!("reference preparation failed: {error}"))?;
-        if selection.database.is_some() && selection.unavailable_reason.is_none() {
-            managed_reference_update = Some(config);
-        } else if selection.unavailable_reason.is_none() {
-            let inspect_config = config.clone();
-            let inspection = tokio::task::spawn_blocking(move || {
-                inspect_development_reference_bootstrap(inspect_config)
-            })
+                .map_err(|error| format!("reference runtime initialization task failed: {error}"))?
+                .map_err(|error| format!("reference runtime initialization failed: {error}"))?,
+        );
+        let prepare_runtime = Arc::clone(&runtime);
+        let prepared = tokio::task::spawn_blocking(move || prepare_runtime.prepare())
             .await
-            .map_err(|error| format!("reference bootstrap inspection task failed: {error}"))?
-            .map_err(|error| format!("reference bootstrap inspection failed: {error}"))?;
-            match inspection {
-                DevelopmentReferenceBootstrapInspection::Download(info) => {
-                    reference_unavailable_reason = Some("bootstrap_required".to_owned());
-                    reference_bootstrap = Some(WebReferenceBootstrapConfig {
-                        development: config,
-                        download_size_bytes: info.download_size_bytes,
-                        total_download_bytes: info.total_download_bytes,
-                    });
-                }
-                DevelopmentReferenceBootstrapInspection::Unavailable => {
-                    reference_unavailable_reason = Some("update_required".to_owned());
-                }
+            .map_err(|error| format!("reference preparation task failed: {error}"))?
+            .map_err(|error| format!("reference preparation failed: {error}"))?;
+        let database = match prepared.selection {
+            Some(selection) => {
+                reference_unavailable_reason = selection.unavailable_reason.clone();
+                selection.database
             }
-        } else {
-            reference_unavailable_reason = selection.unavailable_reason.clone();
-        }
-        selection.database
+            None => {
+                match prepared.snapshot.state {
+                    ReferenceBootstrapState::DownloadRequired => {
+                        reference_unavailable_reason = Some("bootstrap_required".to_owned());
+                    }
+                    ReferenceBootstrapState::Unavailable => {
+                        reference_unavailable_reason = Some("update_required".to_owned());
+                    }
+                    state => {
+                        return Err(format!(
+                            "reference preparation ended in unexpected state: {state:?}"
+                        ));
+                    }
+                }
+                None
+            }
+        };
+        managed_reference_runtime = Some(runtime);
+        database
     };
+    let web_reference_runtime = managed_reference_runtime
+        .clone()
+        .map(|runtime| runtime as Arc<dyn WebReferenceRuntime>);
     let runtime = build_runtime(WebConfig {
         canonical_db,
         personal_db: PathBuf::from(personal_db),
         static_dir: PathBuf::from(static_dir),
         ocr_assets_dir: ocr_assets_dir.map(PathBuf::from),
         reference_unavailable_reason,
-        reference_bootstrap,
+        reference_runtime: web_reference_runtime,
     })?;
     let address = (host, port);
     let listener = TcpListener::bind(address)
@@ -168,60 +171,18 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         heartbeat_status.heartbeat();
     });
 
-    if let Some(config) = managed_reference_update {
-        let engine = runtime.engine.clone();
-        let status = runtime.status.clone();
-        status.reference_update_running("check");
-        tokio::spawn(async move {
-            let result =
-                tokio::task::spawn_blocking(move || check_development_reference_update(config))
-                    .await;
-            match result {
-                Err(error) => {
-                    let detail = format!("reference update task failed: {error}");
-                    status.reference_update_failed("join", &detail);
-                    eprintln!("{detail}");
-                }
-                Ok(Err(error)) => {
-                    let detail = format!("reference update skipped; using LKG: {error}");
-                    status.reference_update_failed("check", &detail);
-                    eprintln!("{detail}");
-                }
-                Ok(Ok(DevelopmentReferenceUpdateStatus::NoChange)) => {
-                    status.reference_update_completed("no_change");
-                    eprintln!("reference update check completed: no change");
-                }
-                Ok(Ok(DevelopmentReferenceUpdateStatus::Staged)) => {
-                    status.reference_update_completed("staged");
-                    eprintln!("reference update staged for next startup");
-                }
-                Ok(Ok(DevelopmentReferenceUpdateStatus::UpdateRequired)) => match engine.write() {
-                    Ok(mut engine) => {
-                        if let Err(error) =
-                            engine.set_reference_available(false, Some("update_required"))
-                        {
-                            let detail = format!(
-                                "cannot apply reference retirement to live engine: {error}"
-                            );
-                            status.reference_update_failed("retire", &detail);
-                            eprintln!("cannot apply reference retirement to live engine: {error}");
-                        } else {
-                            status.reference_update_completed("update_required");
-                            eprintln!(
-                                "reference contract retired; live safety-data access disabled"
-                            );
-                        }
-                    }
-                    Err(_) => {
-                        status.reference_update_failed(
-                            "retire",
-                            "cannot lock live medicine engine after reference retirement",
-                        );
-                        eprintln!("cannot lock live medicine engine after reference retirement")
-                    }
-                },
-            }
-        });
+    if let Some(reference_runtime) = managed_reference_runtime {
+        if reference_runtime.status().state == ReferenceBootstrapState::Ready {
+            schedule_reference_update(
+                reference_runtime as Arc<dyn WebReferenceRuntime>,
+                runtime.engine.clone(),
+                runtime.status.clone(),
+            );
+        } else {
+            runtime
+                .status
+                .reference_update_disabled("reference bootstrap is not ready");
+        }
     } else {
         runtime
             .status
