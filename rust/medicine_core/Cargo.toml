@@ -39,3 +39,8 @@ tower = { version = "0.5", features = ["util"], optional = true }
 tower-http = { version = "0.6", features = ["fs"], optional = true }
 unicode-normalization = "0.1"
 uuid = { version = "1.18", features = ["v4"] }
+# The integration suite links the full core into many test binaries. Full test
+# debug info makes those links exceed constrained development executors; release
+# artifacts keep their normal profile.
+[profile.test]
+debug = 0

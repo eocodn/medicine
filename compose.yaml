@@ -100,4 +100,4 @@ services:
     working_dir: /workspace/android
     volumes:
       - .:/workspace
-    command: ["sh", "/workspace/scripts/android_compose_build.sh"]
+    command: ["sh", "/workspace/scripts/android_debug_build.sh"]

@@ -13,4 +13,4 @@ RUN mkdir -p /opt/medicine-rust/src/bin \
 
 WORKDIR /app
 
-ENTRYPOINT ["sh", "/app/scripts/app_compose_run.sh"]
+ENTRYPOINT ["sh", "/app/scripts/run_app.sh"]

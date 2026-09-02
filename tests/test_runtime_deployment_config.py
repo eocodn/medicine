@@ -50,13 +50,13 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         ui_dockerfile = Path("Dockerfile.ui").read_text()
         self.assertIn("dockerfile: Dockerfile.app", app_service)
         self.assertIn("- .:/app", app_service)
-        self.assertIn('ENTRYPOINT ["sh", "/app/scripts/app_compose_run.sh"]', app_dockerfile)
-        app_runner = Path("scripts/app_compose_run.sh").read_text()
+        self.assertIn('ENTRYPOINT ["sh", "/app/scripts/run_app.sh"]', app_dockerfile)
+        app_runner = Path("scripts/run_app.sh").read_text()
         self.assertIn("cargo build --locked --release", app_runner)
         self.assertIn("--features agentctl", app_runner)
         self.assertIn("--bin medicine-agentctl", app_runner)
         self.assertNotIn("python", app_dockerfile.lower())
-        ui_runner = Path("scripts/ui_compose_run.sh").read_text()
+        ui_runner = Path("scripts/run_ui.sh").read_text()
         self.assertIn("cargo build --locked --release", ui_runner)
         self.assertIn("--features agentctl,web", ui_runner)
         self.assertIn("--bin medicine-agentctl", ui_runner)
@@ -79,8 +79,8 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertIn("AS ui-toolchain", android_dockerfile)
         self.assertIn("MEDICINE_TSC_BINARY", android_dockerfile)
         for dockerfile, runner in (
-            (web_dockerfile, Path("scripts/web_compose_run.sh").read_text()),
-            (ui_dockerfile, Path("scripts/ui_compose_run.sh").read_text()),
+            (web_dockerfile, Path("scripts/build_web.sh").read_text()),
+            (ui_dockerfile, Path("scripts/run_ui.sh").read_text()),
         ):
             self.assertIn("COPY ui/package.json ui/package-lock.json /opt/medicine-ui-tools/", dockerfile)
             self.assertIn("npm ci", dockerfile)
@@ -170,9 +170,9 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         compose = (repo_root / "compose.yaml").read_text()
         android_service = compose.split("\n  android:\n", 1)[1]
-        build_script = repo_root / "scripts" / "android_compose_build.sh"
+        build_script = repo_root / "scripts" / "android_debug_build.sh"
 
-        self.assertIn('command: ["sh", "/workspace/scripts/android_compose_build.sh"]', android_service)
+        self.assertIn('command: ["sh", "/workspace/scripts/android_debug_build.sh"]', android_service)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             bin_dir = Path(temp_dir) / "bin"
@@ -187,6 +187,7 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
 
             env = os.environ.copy()
             env["ANDROID_BUILD_TEST_LOG"] = str(log_path)
+            env["MEDICINE_GRADLE_BIN"] = str(gradle_stub)
             env["PATH"] = f"{bin_dir}:{env['PATH']}"
             result = subprocess.run(
                 ["sh", str(build_script)],
@@ -215,10 +216,16 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertIn("HOME: /tmp", web_service)
         self.assertNotIn("PYTHONDONTWRITEBYTECODE", web_service)
         self.assertIn("AS rust-toolchain", dockerfile)
-        runner = Path("scripts/web_compose_run.sh").read_text()
-        self.assertIn("cargo build --locked --release", runner)
-        self.assertIn("--features web", runner)
-        self.assertIn("--bin medicine-core-web", runner)
+        builder = Path("scripts/build_web.sh").read_text()
+        runner = Path("scripts/run_web.sh").read_text()
+        dev_runner = Path("scripts/run_web_dev.sh").read_text()
+        self.assertIn("cargo build --locked --release", builder)
+        self.assertIn("--features web", builder)
+        self.assertIn("--bin medicine-core-web", builder)
+        self.assertNotIn("cargo build", runner)
+        self.assertIn("medicine-core-web", runner)
+        self.assertIn("build_web.sh", dev_runner)
+        self.assertIn("run_web.sh", dev_runner)
         self.assertNotIn("AS ocr-assets", dockerfile)
         self.assertNotIn("medicine-ocr-assets", dockerfile)
         self.assertIn("MEDICINE_OCR_ASSETS_DIR", web_binary)
@@ -228,8 +235,18 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertIn("MEDICINE_STATIC_DIR=/app/ui/dist", dockerfile)
         self.assertNotIn("COPY ui/src", dockerfile)
         self.assertNotIn("COPY rust/medicine_core/src", dockerfile)
-        self.assertIn('ENTRYPOINT ["sh", "/app/scripts/web_compose_run.sh"]', dockerfile)
+        self.assertIn('ENTRYPOINT ["sh", "/app/scripts/run_web_dev.sh"]', dockerfile)
         self.assertNotIn("python", dockerfile.lower())
+
+    def test_compose_named_runner_scripts_are_retired(self) -> None:
+        for retired in (
+            "scripts/app_compose_run.sh",
+            "scripts/test_compose_run.sh",
+            "scripts/ui_compose_run.sh",
+            "scripts/web_compose_run.sh",
+            "scripts/android_compose_build.sh",
+        ):
+            self.assertFalse(Path(retired).exists(), retired)
     def test_development_runtime_uses_signed_reference_channel_by_default(self) -> None:
         compose = Path("compose.yaml").read_text()
         web_service = compose.split("\n  web:\n", 1)[1].split("\n  ui:\n", 1)[0]

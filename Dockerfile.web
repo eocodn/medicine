@@ -30,4 +30,4 @@ RUN apt-get update \
     && chmod -R a+rX /opt/medicine-ui-tools /opt/medicine-reference-trust.json
 
 WORKDIR /app
-ENTRYPOINT ["sh", "/app/scripts/web_compose_run.sh"]
+ENTRYPOINT ["sh", "/app/scripts/run_web_dev.sh"]

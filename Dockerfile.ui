@@ -28,4 +28,4 @@ RUN apt-get update \
     && chmod -R a+rX /opt/medicine-ui-tools
 
 WORKDIR /app
-ENTRYPOINT ["sh", "/app/scripts/ui_compose_run.sh"]
+ENTRYPOINT ["sh", "/app/scripts/run_ui.sh"]

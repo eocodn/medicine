@@ -1,4 +1,6 @@
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -73,7 +75,6 @@ class FarmctlDevelopmentTest(unittest.TestCase):
         self.assertNotIn("npm ci", script)
         self.assertIn("npm run check", script)
         self.assertIn("MEDICINE_TSC_BINARY", script)
-        self.assertIn("CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-1}", script)
         self.assertIn(
             "./gradlew --no-daemon --dependency-verification strict testDebugUnitTest lintDebug assembleDebug",
             script,
@@ -89,6 +90,115 @@ class FarmctlDevelopmentTest(unittest.TestCase):
         self.assertNotEqual(0, invalid.returncode)
         self.assertIn("usage:", invalid.stderr.lower())
 
+    def test_android_build_parallelism_is_bounded_by_repository_policy(self) -> None:
+        gradle_properties = (ROOT / "android" / "gradle.properties").read_text()
+
+        self.assertIn("org.gradle.workers.max=2", gradle_properties)
+        self.assertIn("kotlin.compiler.execution.strategy=in-process", gradle_properties)
+
+    def test_core_test_profile_avoids_full_debug_link_memory(self) -> None:
+        cargo_manifest = (ROOT / "rust" / "medicine_core" / "Cargo.toml").read_text()
+
+        self.assertIn("[profile.test]", cargo_manifest)
+        self.assertIn("debug = 0", cargo_manifest)
+
+    def test_rust_entrypoints_share_standard_image_dependency_seed_setup(self) -> None:
+        helper = ROOT / "scripts" / "dev_dependencies.sh"
+        self.assertTrue(helper.is_file())
+        helper_text = helper.read_text()
+        self.assertIn("prepare_rust_dependencies()", helper_text)
+        self.assertIn("prepare_gradle_dependencies()", helper_text)
+        self.assertIn("CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-1}", helper_text)
+
+        for relative_path in (
+            "scripts/check.sh",
+            "scripts/run_app.sh",
+            "scripts/run_tests.sh",
+            "scripts/run_ui.sh",
+            "scripts/build_web.sh",
+            "scripts/android_debug_build.sh",
+        ):
+            script = (ROOT / relative_path).read_text()
+            self.assertIn(
+                '. "$root/scripts/dev_dependencies.sh"',
+                script,
+                msg=f"{relative_path} must use the shared dependency seed helper",
+            )
+
+        for relative_path in (
+            "scripts/run_app.sh",
+            "scripts/run_tests.sh",
+            "scripts/run_ui.sh",
+            "scripts/build_web.sh",
+            "scripts/android_debug_build.sh",
+        ):
+            script = (ROOT / relative_path).read_text()
+            self.assertIn("prepare_rust_dependencies", script)
+
+        android = (ROOT / "scripts" / "android_debug_build.sh").read_text()
+        self.assertIn("prepare_gradle_dependencies", android)
+
+    def test_local_env_launcher_loads_only_allowlisted_secrets_from_private_file(self) -> None:
+        launcher = ROOT / "scripts" / "with_local_env.py"
+        self.assertTrue(launcher.is_file())
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            env_file = home / ".config" / "medicine" / "dev.env"
+            env_file.parent.mkdir(parents=True)
+            env_file.write_text("DATA_GO_KR_SERVICE_KEY=secret-value\n")
+            env_file.chmod(0o600)
+
+            env = os.environ.copy()
+            env["HOME"] = str(home)
+            env.pop("DATA_GO_KR_SERVICE_KEY", None)
+            result = subprocess.run(
+                [
+                    "python",
+                    str(launcher),
+                    "--require",
+                    "DATA_GO_KR_SERVICE_KEY",
+                    "--",
+                    "python",
+                    "-c",
+                    "import os; print(os.environ['DATA_GO_KR_SERVICE_KEY'])",
+                ],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual("secret-value", result.stdout.strip())
+
+            env_file.write_text("UNEXPECTED_SECRET=must-not-load\n")
+            env_file.chmod(0o600)
+            unexpected = subprocess.run(
+                ["python", str(launcher), "--", "python", "-c", "pass"],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(0, unexpected.returncode)
+            self.assertIn("unsupported local environment key", unexpected.stderr.lower())
+
+            env_file.write_text("DATA_GO_KR_SERVICE_KEY=secret-value\n")
+            env_file.chmod(0o644)
+            public = subprocess.run(
+                ["python", str(launcher), "--", "python", "-c", "pass"],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(0, public.returncode)
+            self.assertIn("must not be accessible by group or other users", public.stderr.lower())
+
     def test_compose_exposes_the_same_standard_development_image(self) -> None:
         compose = (ROOT / "compose.yaml").read_text()
         dev_service = compose.split("\n  dev:\n", 1)[1].split("\n  canonical:\n", 1)[0]
@@ -100,8 +210,10 @@ class FarmctlDevelopmentTest(unittest.TestCase):
 
     def test_readme_keeps_farmctl_operations_out_of_repository_docs(self) -> None:
         readme = (ROOT / "README.md").read_text()
+        development = (ROOT / "docs" / "development.md").read_text()
 
         self.assertNotIn("farmctl", readme.lower())
+        self.assertNotIn("farmctl", development.lower())
 
 
 if __name__ == "__main__":
