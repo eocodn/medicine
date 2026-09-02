@@ -122,12 +122,28 @@ class ReferenceBootstrapJsBridge(
                 error.hasCause<SSLException>() -> "network_failed"
             error is ReferenceManifestStageException -> error.stage
             error is ReferenceBootstrapPrepareStageException -> error.stage
+            BuildConfig.DEBUG -> debugFailureDetail(error)
             else -> "phase_failed"
         }
         ReferenceNativeCore.bootstrapFailed(
             coordinatorHandle,
             detail,
         )
+    }
+
+    private fun debugFailureDetail(error: Throwable): String {
+        val type = error.javaClass.simpleName
+            .replace(Regex("[^A-Za-z0-9]+"), "_")
+            .trim('_')
+            .take(80)
+            .ifEmpty { "Throwable" }
+        val message = error.message
+            ?.replace(Regex("[\r\n\t]+"), " ")
+            ?.replace(Regex("[^A-Za-z0-9 ._:/-]+"), "_")
+            ?.trim()
+            ?.take(160)
+            .orEmpty()
+        return if (message.isEmpty()) "debug_$type" else "debug_${type}_$message"
     }
 
     private inline fun <reified T : Throwable> Throwable.hasCause(): Boolean {

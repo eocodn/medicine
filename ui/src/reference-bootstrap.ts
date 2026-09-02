@@ -118,7 +118,7 @@ type ReferenceBootstrapStatus = {
     bytes.textContent = total > 0 ? `${formatBytes(completed)} / ${formatBytes(total)} · ${percent}%` : "";
     error.classList.toggle("hidden", current.state !== "failed");
     error.textContent = current.state === "failed"
-      ? current.detail && (current.detail.startsWith("manifest_") || current.detail.startsWith("prepare_"))
+      ? current.detail && (current.detail.startsWith("manifest_") || current.detail.startsWith("prepare_") || current.detail.startsWith("debug_"))
         ? `진단 코드: ${current.detail}`
         : "안전 데이터를 준비하지 못했습니다. 다시 시도해주세요."
       : "";
@@ -155,6 +155,8 @@ type ReferenceBootstrapStatus = {
                   ? "현재 앱과 맞는 안전 데이터 정보를 해석하지 못했습니다. 앱을 업데이트해주세요."
           : current.detail?.startsWith("prepare_")
             ? "안전 데이터 준비 상태를 확인하는 중 오류가 발생했습니다. 다시 시도해주세요."
+          : current.detail?.startsWith("debug_")
+            ? "안전 데이터 준비 중 예기치 않은 오류가 발생했습니다. 아래 진단 코드를 알려주세요."
           : current.detail === "manifest_failed"
             ? "안전 데이터 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요."
             : current.detail === "download_failed"
