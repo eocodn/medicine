@@ -142,6 +142,7 @@ class ManifestContractTest {
         val bootstrapUi = java.io.File("../../ui/src/reference-bootstrap.ts").readText()
         assertTrue(activity.contains("MedicineBootstrapNative"))
         assertTrue(activity.contains("MedicineNativeProxy"))
+        assertTrue(activity.contains("WebSettings.LOAD_NO_CACHE"))
         assertFalse(activity.contains("AlertDialog"))
         assertTrue(bootstrapUi.contains("다운로드하지 않으면 앱을 사용할 수 없습니다"))
         assertTrue(bootstrapUi.contains("completed_bytes"))
