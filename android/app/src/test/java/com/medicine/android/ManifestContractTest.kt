@@ -54,7 +54,7 @@ class ManifestContractTest {
         assertFalse(build.contains("medicine_canonical"))
         assertTrue(bootstrapper.contains("RustReferenceDatabaseVerifier()"))
         assertTrue(activity.contains("RustReferenceArtifactRebuilder()"))
-        assertTrue(bootstrapBridge.contains("\"rebuild\", \"rebuild-checkpoint\", \"verify-and-install\""))
+        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.bootstrapPhase(coordinatorHandle, name)"))
         val nativeReference = java.io.File(
             "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
         ).readText()
@@ -139,11 +139,16 @@ class ManifestContractTest {
     @Test
     fun firstLaunchReferenceDownloadUsesSharedBlockingUiWithByteProgress() {
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val bootstrapBridge = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapJsBridge.kt").readText()
         val bootstrapUi = java.io.File("../../ui/src/reference-bootstrap.ts").readText()
         assertTrue(activity.contains("MedicineBootstrapNative"))
         assertTrue(activity.contains("MedicineNativeProxy"))
         assertTrue(activity.contains("WebSettings.LOAD_NO_CACHE"))
         assertFalse(activity.contains("AlertDialog"))
+        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.createBootstrapCoordinator()"))
+        assertTrue(bootstrapBridge.contains("ReferenceNativeCore.bootstrapSnapshot(coordinatorHandle)"))
+        assertFalse(bootstrapBridge.contains("private var state ="))
+        assertFalse(bootstrapBridge.contains("private var operationRunning ="))
         assertTrue(bootstrapUi.contains("다운로드하지 않으면 앱을 사용할 수 없습니다"))
         assertTrue(bootstrapUi.contains("completed_bytes"))
         assertTrue(bootstrapUi.contains("total_bytes"))

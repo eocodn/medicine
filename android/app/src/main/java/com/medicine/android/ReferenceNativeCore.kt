@@ -10,6 +10,32 @@ interface NativeReferenceArtifactObserver {
 }
 
 object ReferenceNativeCore {
+    fun createBootstrapCoordinator(): Long = nativeCreateBootstrapCoordinator()
+
+    fun destroyBootstrapCoordinator(handle: Long) = nativeDestroyBootstrapCoordinator(handle)
+
+    fun bootstrapBeginPrepare(handle: Long): Boolean = nativeBootstrapBeginPrepare(handle)
+
+    fun bootstrapResetForPrepare(handle: Long) = nativeBootstrapResetForPrepare(handle)
+
+    fun bootstrapPreparedDownload(handle: Long, completedBytes: Long, totalBytes: Long) =
+        nativeBootstrapPreparedDownload(handle, completedBytes, totalBytes)
+
+    fun bootstrapBeginInstall(handle: Long): Boolean = nativeBootstrapBeginInstall(handle)
+
+    fun bootstrapPhase(handle: Long, phase: String) = nativeBootstrapPhase(handle, phase)
+
+    fun bootstrapProgress(handle: Long, completedBytes: Long, totalBytes: Long) =
+        nativeBootstrapProgress(handle, completedBytes, totalBytes)
+
+    fun bootstrapReady(handle: Long) = nativeBootstrapReady(handle)
+
+    fun bootstrapUnavailable(handle: Long, detail: String) = nativeBootstrapUnavailable(handle, detail)
+
+    fun bootstrapFailed(handle: Long, detail: String) = nativeBootstrapFailed(handle, detail)
+
+    fun bootstrapSnapshot(handle: Long): String = nativeBootstrapSnapshot(handle)
+
     fun planReferenceBootstrap(
         expectedContractMajor: Int,
         highestActivatedSequence: Long,
@@ -234,6 +260,23 @@ object ReferenceNativeCore {
         highestActivatedSequence: Long,
         releaseJson: String,
     ): String
+
+    private external fun nativeCreateBootstrapCoordinator(): Long
+    private external fun nativeDestroyBootstrapCoordinator(handle: Long)
+    private external fun nativeBootstrapBeginPrepare(handle: Long): Boolean
+    private external fun nativeBootstrapResetForPrepare(handle: Long)
+    private external fun nativeBootstrapPreparedDownload(
+        handle: Long,
+        completedBytes: Long,
+        totalBytes: Long,
+    )
+    private external fun nativeBootstrapBeginInstall(handle: Long): Boolean
+    private external fun nativeBootstrapPhase(handle: Long, phase: String)
+    private external fun nativeBootstrapProgress(handle: Long, completedBytes: Long, totalBytes: Long)
+    private external fun nativeBootstrapReady(handle: Long)
+    private external fun nativeBootstrapUnavailable(handle: Long, detail: String)
+    private external fun nativeBootstrapFailed(handle: Long, detail: String)
+    private external fun nativeBootstrapSnapshot(handle: Long): String
 
     init {
         System.loadLibrary("medicine_core")
