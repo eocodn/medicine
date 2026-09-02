@@ -87,17 +87,15 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
             self.assertIn("npm run build", runner)
             self.assertIn("MEDICINE_STATIC_DIR=/app/ui/dist", dockerfile)
             self.assertNotIn("COPY ui/dist", dockerfile)
-    def test_android_bootstrap_contract_matches_embedded_runtime_contract(self) -> None:
-        kotlin = Path(
-            "android/app/src/main/java/com/medicine/android/ReferenceNativeCore.kt"
-        ).read_text()
+    def test_rust_runtime_contract_matches_python_reference_contract(self) -> None:
+        rust_runtime = Path("rust/medicine_core/src/reference_contract.rs").read_text()
         python_runtime = Path("medicine_reference/reference_contracts/v1.py").read_text()
 
-        android_contract = re.search(r'REFERENCE_CONTRACT_MAJOR = ([0-9]+)', kotlin)
+        rust_contract = re.search(r'REFERENCE_CONTRACT_MAJOR:\s*i32\s*=\s*([0-9]+)', rust_runtime)
         runtime_contract = re.search(r'REFERENCE_CONTRACT_MAJOR = ([0-9]+)', python_runtime)
-        self.assertIsNotNone(android_contract)
+        self.assertIsNotNone(rust_contract)
         self.assertIsNotNone(runtime_contract)
-        self.assertEqual(android_contract.group(1), runtime_contract.group(1))
+        self.assertEqual(rust_contract.group(1), runtime_contract.group(1))
     def test_canonical_reviewed_corpora_are_included_in_built_package(self) -> None:
         config = tomllib.loads(Path("pyproject.toml").read_text())
         package_data = config["tool"]["setuptools"]["package-data"]
@@ -259,7 +257,7 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertNotIn("COPY rust/medicine_core/src", dockerfile)
         self.assertIn('ENTRYPOINT ["sh", "/app/scripts/web_compose_run.sh"]', dockerfile)
         self.assertNotIn("python", dockerfile.lower())
-    def test_development_runtime_uses_android_signed_reference_channel_by_default(self) -> None:
+    def test_development_runtime_uses_signed_reference_channel_by_default(self) -> None:
         compose = Path("compose.yaml").read_text()
         web_service = compose.split("\n  web:\n", 1)[1].split("\n  ui:\n", 1)[0]
         web_binary = Path("rust/medicine_core/src/bin/medicine_core_web.rs").read_text()
@@ -274,12 +272,10 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         )
         self.assertIn("MEDICINE_REFERENCE_DIR: ${MEDICINE_REFERENCE_DIR:-data/reference}", web_service)
         self.assertIn("MEDICINE_REFERENCE_UPDATE_BASE_URL", web_service)
-        self.assertIn("development_reference_runtime", web_binary)
+        self.assertIn("reference_channel_runtime", web_binary)
         self.assertIn("prepare_runtime.prepare()", web_binary)
         self.assertIn("schedule_reference_update", web_binary)
         self.assertIn("update_runtime.check_for_update()", web_runtime)
-        self.assertNotIn("open_development_reference", web_binary)
-        self.assertNotIn("inspect_development_reference_bootstrap", web_binary)
         self.assertIn('const DEFAULT_REFERENCE_DIR: &str = "data/reference";', web_binary)
         self.assertNotIn('const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";', web_binary)
         self.assertIn('const DEFAULT_CANONICAL_DB: &str = "data/db/mobile.sqlite";', app_commands)

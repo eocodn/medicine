@@ -1,11 +1,8 @@
-#![cfg(feature = "web")]
-
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use medicine_core::development_reference::{
-    DevelopmentReferenceBootstrapInfo, DevelopmentReferenceBootstrapInspection,
-    DevelopmentReferenceError, DevelopmentReferenceManager, DevelopmentReferenceUpdateStatus,
-    ReferenceDatabaseValidator, ReferenceReleaseSource,
+use medicine_core::reference_manager::{
+    ReferenceBootstrapInfo, ReferenceBootstrapInspection, ReferenceDatabaseValidator,
+    ReferenceManager, ReferenceReleaseSource, ReferenceRuntimeError, ReferenceUpdateStatus,
 };
 use medicine_core::reference_state::ReferenceStateCodec;
 use medicine_core::{
@@ -25,23 +22,23 @@ struct FakeSource {
 }
 
 impl ReferenceReleaseSource for FakeSource {
-    fn fetch_latest(&self) -> Result<ReferenceRootSelection, DevelopmentReferenceError> {
+    fn fetch_latest(&self) -> Result<ReferenceRootSelection, ReferenceRuntimeError> {
         self.root
             .clone()
-            .map_err(DevelopmentReferenceError::from_message)
+            .map_err(ReferenceRuntimeError::from_message)
     }
 
     fn download(
         &self,
         artifact: &ReferenceReleaseArtifact,
         target: &Path,
-    ) -> Result<(), DevelopmentReferenceError> {
+    ) -> Result<(), ReferenceRuntimeError> {
         let bytes = self
             .artifacts
             .get(&artifact.sha256)
-            .ok_or_else(|| DevelopmentReferenceError::from_message("missing fake artifact"))?;
+            .ok_or_else(|| ReferenceRuntimeError::from_message("missing fake artifact"))?;
         std::fs::write(target, bytes)
-            .map_err(|error| DevelopmentReferenceError::from_message(error.to_string()))
+            .map_err(|error| ReferenceRuntimeError::from_message(error.to_string()))
     }
 }
 
@@ -49,7 +46,7 @@ impl ReferenceReleaseSource for FakeSource {
 struct PanicSource;
 
 impl ReferenceReleaseSource for PanicSource {
-    fn fetch_latest(&self) -> Result<ReferenceRootSelection, DevelopmentReferenceError> {
+    fn fetch_latest(&self) -> Result<ReferenceRootSelection, ReferenceRuntimeError> {
         panic!("valid LKG startup must not fetch latest release")
     }
 
@@ -57,7 +54,7 @@ impl ReferenceReleaseSource for PanicSource {
         &self,
         _artifact: &ReferenceReleaseArtifact,
         _target: &Path,
-    ) -> Result<(), DevelopmentReferenceError> {
+    ) -> Result<(), ReferenceRuntimeError> {
         panic!("valid LKG startup must not download reference artifacts")
     }
 }
@@ -70,11 +67,11 @@ impl ReferenceDatabaseValidator for AcceptingValidator {
         &self,
         file: &Path,
         _version: &medicine_core::reference_state::ReferenceVersion,
-    ) -> Result<(), DevelopmentReferenceError> {
+    ) -> Result<(), ReferenceRuntimeError> {
         if file.is_file() {
             Ok(())
         } else {
-            Err(DevelopmentReferenceError::from_message(
+            Err(ReferenceRuntimeError::from_message(
                 "candidate does not exist",
             ))
         }
@@ -138,7 +135,7 @@ fn temp_root() -> PathBuf {
 fn first_bootstrap_installs_content_addressed_reference_and_state() {
     let root = temp_root();
     let (release, archive) = fixture_release(17, 1);
-    let manager = DevelopmentReferenceManager::new(
+    let manager = ReferenceManager::new(
         root.clone(),
         1,
         source_for(release.clone(), archive),
@@ -160,7 +157,7 @@ fn bootstrap_inspection_exposes_signed_download_size_without_downloading() {
     let root = temp_root();
     let (release, archive) = fixture_release(21, 4);
     let expected_size = release.full.size_bytes;
-    let manager = DevelopmentReferenceManager::new(
+    let manager = ReferenceManager::new(
         root.clone(),
         1,
         source_for(release, archive),
@@ -171,7 +168,7 @@ fn bootstrap_inspection_exposes_signed_download_size_without_downloading() {
 
     assert_eq!(
         inspection,
-        DevelopmentReferenceBootstrapInspection::Download(DevelopmentReferenceBootstrapInfo {
+        ReferenceBootstrapInspection::Download(ReferenceBootstrapInfo {
             download_size_bytes: expected_size,
             total_download_bytes: expected_size,
         })
@@ -198,7 +195,7 @@ fn bootstrap_repairs_writable_content_addressed_file_before_state_adoption() {
     permissions.set_mode(0o644);
     std::fs::set_permissions(&final_path, permissions).unwrap();
 
-    let selected = DevelopmentReferenceManager::new(
+    let selected = ReferenceManager::new(
         root.clone(),
         1,
         source_for(release.clone(), archive),
@@ -220,7 +217,7 @@ fn bootstrap_repairs_writable_content_addressed_file_before_state_adoption() {
 fn valid_lkg_startup_does_not_fetch_latest() {
     let root = temp_root();
     let (release, archive) = fixture_release(17, 2);
-    DevelopmentReferenceManager::new(
+    ReferenceManager::new(
         root.clone(),
         1,
         source_for(release.clone(), archive),
@@ -233,10 +230,9 @@ fn valid_lkg_startup_does_not_fetch_latest() {
     permissions.set_mode(0o644);
     std::fs::set_permissions(&installed, permissions).unwrap();
 
-    let selected =
-        DevelopmentReferenceManager::new(root.clone(), 1, PanicSource, AcceptingValidator)
-            .ensure_installed()
-            .expect("local LKG startup");
+    let selected = ReferenceManager::new(root.clone(), 1, PanicSource, AcceptingValidator)
+        .ensure_installed()
+        .expect("local LKG startup");
     assert_eq!(selected.database, Some(installed.clone()));
     let mode = std::fs::metadata(&installed).unwrap().permissions().mode();
     assert_eq!(
@@ -251,7 +247,7 @@ fn valid_lkg_startup_does_not_fetch_latest() {
 fn update_is_staged_and_activates_on_next_start() {
     let root = temp_root();
     let (release1, archive1) = fixture_release(17, 3);
-    DevelopmentReferenceManager::new(
+    ReferenceManager::new(
         root.clone(),
         1,
         source_for(release1.clone(), archive1),
@@ -261,7 +257,7 @@ fn update_is_staged_and_activates_on_next_start() {
     .unwrap();
 
     let (release2, archive2) = fixture_release(18, 4);
-    let update_manager = DevelopmentReferenceManager::new(
+    let update_manager = ReferenceManager::new(
         root.clone(),
         1,
         source_for(release2.clone(), archive2),
@@ -279,13 +275,13 @@ fn update_is_staged_and_activates_on_next_start() {
     assert!(before_update.pending.is_none());
     assert_eq!(
         update_manager.check_for_update().expect("stage update"),
-        DevelopmentReferenceUpdateStatus::Staged
+        ReferenceUpdateStatus::Staged
     );
     let staged =
         ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
     assert_eq!(staged.pending.unwrap().release_sequence, 18);
 
-    let next = DevelopmentReferenceManager::new(root.clone(), 1, PanicSource, AcceptingValidator)
+    let next = ReferenceManager::new(root.clone(), 1, PanicSource, AcceptingValidator)
         .ensure_installed()
         .expect("activate pending without an update fetch");
     assert_eq!(
@@ -303,7 +299,7 @@ fn update_is_staged_and_activates_on_next_start() {
 fn authenticated_update_retirement_is_applied_only_by_explicit_update_check() {
     let root = temp_root();
     let (release, archive) = fixture_release(17, 8);
-    DevelopmentReferenceManager::new(
+    ReferenceManager::new(
         root.clone(),
         1,
         source_for(release.clone(), archive),
@@ -318,7 +314,7 @@ fn authenticated_update_retirement_is_applied_only_by_explicit_update_check() {
         current_contract_major: 2,
         minimum_supported_contract_major: 2,
     };
-    let manager = DevelopmentReferenceManager::new(
+    let manager = ReferenceManager::new(
         root.clone(),
         1,
         FakeSource {
@@ -338,7 +334,7 @@ fn authenticated_update_retirement_is_applied_only_by_explicit_update_check() {
         manager
             .check_for_update()
             .expect("authenticated retirement check"),
-        DevelopmentReferenceUpdateStatus::UpdateRequired
+        ReferenceUpdateStatus::UpdateRequired
     );
     let state =
         ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
@@ -360,7 +356,7 @@ fn authenticated_contract_retirement_is_persisted_and_fails_closed() {
         root: Ok(retired),
         artifacts: HashMap::new(),
     };
-    let selected = DevelopmentReferenceManager::new(root.clone(), 1, source, AcceptingValidator)
+    let selected = ReferenceManager::new(root.clone(), 1, source, AcceptingValidator)
         .ensure_installed()
         .expect("retirement is a valid terminal state");
     assert_eq!(selected.database, None);

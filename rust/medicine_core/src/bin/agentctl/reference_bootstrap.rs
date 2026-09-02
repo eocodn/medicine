@@ -1,7 +1,6 @@
-use medicine_core::development_reference::{
-    development_reference_runtime, DevelopmentReferenceConfig, DevelopmentReferenceUpdateStatus,
-};
+use medicine_core::reference_channel::{reference_channel_runtime, ReferenceChannelConfig};
 use medicine_core::reference_lifecycle_runtime::ReferenceRuntimeResult;
+use medicine_core::reference_manager::ReferenceUpdateStatus;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -16,7 +15,6 @@ pub(super) fn command(args: &[String], usage: fn() -> String) -> Result<(), Stri
     let mut reference_dir = None;
     let mut base_url = None;
     let mut trust_manifest = None;
-    let mut contract_major = None;
     let mut json_output = false;
     let mut index = 1;
     while index < args.len() {
@@ -33,26 +31,16 @@ pub(super) fn command(args: &[String], usage: fn() -> String) -> Result<(), Stri
                 index += 1;
                 trust_manifest = Some(PathBuf::from(args.get(index).ok_or_else(usage)?));
             }
-            "--contract-major" => {
-                index += 1;
-                contract_major = Some(
-                    args.get(index)
-                        .ok_or_else(usage)?
-                        .parse::<i32>()
-                        .map_err(|_| "contract major must be a positive integer".to_owned())?,
-                );
-            }
             "--json" => json_output = true,
             _ => return Err(usage()),
         }
         index += 1;
     }
 
-    let runtime = development_reference_runtime(DevelopmentReferenceConfig {
+    let runtime = reference_channel_runtime(ReferenceChannelConfig {
         reference_dir: reference_dir.ok_or_else(usage)?,
         base_url: base_url.ok_or_else(usage)?,
         trust_manifest: trust_manifest.ok_or_else(usage)?,
-        contract_major: contract_major.ok_or_else(usage)?,
     })
     .map_err(|error| error.to_string())?;
 
@@ -86,9 +74,9 @@ pub(super) fn command(args: &[String], usage: fn() -> String) -> Result<(), Stri
                 .check_for_update()
                 .map_err(|error| error.to_string())?
             {
-                DevelopmentReferenceUpdateStatus::NoChange => "no_change",
-                DevelopmentReferenceUpdateStatus::Staged => "staged",
-                DevelopmentReferenceUpdateStatus::UpdateRequired => "update_required",
+                ReferenceUpdateStatus::NoChange => "no_change",
+                ReferenceUpdateStatus::Staged => "staged",
+                ReferenceUpdateStatus::UpdateRequired => "update_required",
             };
             emit(
                 json!({

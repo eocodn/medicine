@@ -4,11 +4,11 @@ mod app_commands;
 #[cfg(feature = "agentctl")]
 #[path = "discovery.rs"]
 mod discovery;
+#[cfg(feature = "agentctl")]
+#[path = "reference_bootstrap.rs"]
+mod reference_bootstrap;
 #[path = "../medicine_core/reference_cli.rs"]
 mod reference_cli;
-#[cfg(feature = "agentctl")]
-#[path = "reference_runtime.rs"]
-mod reference_runtime;
 #[cfg(feature = "agentctl")]
 #[path = "runtime_log.rs"]
 mod runtime_log;
@@ -54,7 +54,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         #[cfg(feature = "agentctl")]
         "scenario" => scenario::run(&args[1..], usage),
         #[cfg(feature = "agentctl")]
-        "reference-bootstrap" => reference_runtime::command(&args[1..], usage),
+        "reference-bootstrap" => reference_bootstrap::command(&args[1..], usage),
         "request-access" => request_access(&args[1..]),
         "request" => request(&args[1..]),
         "health" => health(&args[1..]),
@@ -496,7 +496,7 @@ fn usage() -> String {
     #[cfg(feature = "agentctl")]
     {
         format!(
-            "usage: medicine-agentctl capabilities [--json]\n       medicine-agentctl targets [--json]\n       medicine-agentctl logs [--limit <N>] [--log-db <PATH>] [--json]\n       medicine-agentctl scenario --personal-db <PATH> [--canonical-db <PATH>] --input <JSON> [--json]\n       medicine-agentctl reference-bootstrap <status|start|update> --reference-dir <PATH> --base-url <HTTPS_BASE_URL> --trust-manifest <PATH> --contract-major <N> [--json]\n       {common}"
+            "usage: medicine-agentctl capabilities [--json]\n       medicine-agentctl targets [--json]\n       medicine-agentctl logs [--limit <N>] [--log-db <PATH>] [--json]\n       medicine-agentctl scenario --personal-db <PATH> [--canonical-db <PATH>] --input <JSON> [--json]\n       medicine-agentctl reference-bootstrap <status|start|update> --reference-dir <PATH> --base-url <HTTPS_BASE_URL> --trust-manifest <PATH> [--json]\n       {common}"
         )
     }
     #[cfg(not(feature = "agentctl"))]

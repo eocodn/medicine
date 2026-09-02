@@ -1,6 +1,4 @@
-use medicine_core::development_reference::{
-    development_reference_runtime, DevelopmentReferenceConfig,
-};
+use medicine_core::reference_channel::{reference_channel_runtime, ReferenceChannelConfig};
 use medicine_core::web::{
     build_runtime, schedule_reference_update, WebConfig, WebReferenceRuntime,
 };
@@ -12,7 +10,6 @@ const DEFAULT_PERSONAL_DB: &str = "data/db/personal.sqlite";
 const DEFAULT_REFERENCE_DIR: &str = "data/reference";
 const DEFAULT_REFERENCE_TRUST_MANIFEST: &str = "deploy/reference-signing-trusted-keys.json";
 const DEFAULT_STATIC_DIR: &str = "ui/dist";
-const REFERENCE_CONTRACT_MAJOR: i32 = 1;
 
 #[tokio::main]
 async fn main() {
@@ -108,17 +105,16 @@ async fn run(args: Vec<String>) -> Result<(), String> {
             "reference distribution base URL is not configured and no --canonical-db override was supplied"
                 .to_owned()
         })?;
-        let config = DevelopmentReferenceConfig {
+        let config = ReferenceChannelConfig {
             reference_dir: PathBuf::from(reference_dir),
             base_url,
             trust_manifest: PathBuf::from(reference_trust_manifest),
-            contract_major: REFERENCE_CONTRACT_MAJOR,
         };
         // ReferenceHttpSource deliberately uses the same synchronous HTTP
         // implementation as Android. reqwest::blocking must construct its
         // internal runtime outside Tokio's async context.
         let runtime = Arc::new(
-            tokio::task::spawn_blocking(move || development_reference_runtime(config))
+            tokio::task::spawn_blocking(move || reference_channel_runtime(config))
                 .await
                 .map_err(|error| format!("reference runtime initialization task failed: {error}"))?
                 .map_err(|error| format!("reference runtime initialization failed: {error}"))?,

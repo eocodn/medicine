@@ -25,31 +25,19 @@ class ManifestContractTest {
         val nativeReference = java.io.File(
             "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
         ).readText()
-        val bridge = java.io.File(
-            "src/main/java/com/medicine/android/ReferenceBootstrapJsBridge.kt"
-        ).readText()
-
         assertTrue(nativeReference.contains("nativeCreateReferenceRuntime"))
         assertTrue(nativeReference.contains("nativeReferencePrepare"))
         assertTrue(nativeReference.contains("nativeReferenceStart"))
         assertTrue(nativeReference.contains("nativeReferenceCheckForUpdate"))
-        assertFalse(nativeReference.contains("nativeVerifyManifest"))
-        assertFalse(nativeReference.contains("nativePlanReferenceBootstrap"))
-        assertFalse(bridge.contains("ReferenceStore"))
-        assertFalse(bridge.contains("HttpsURLConnection"))
-        assertFalse(java.io.File("src/main/java/com/medicine/android/ReferenceStore.kt").exists())
-        assertFalse(java.io.File("src/main/java/com/medicine/android/ReferenceUpdater.kt").exists())
-        assertFalse(java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapper.kt").exists())
-        assertFalse(java.io.File("src/main/java/com/medicine/android/ReferenceAssetInstaller.kt").exists())
+        assertTrue(nativeReference.contains("BuildConfig.REFERENCE_TRUSTED_KEYS_JSON"))
         assertFalse(build.contains("PrepareMobileAssets"))
         assertFalse(build.contains("mobile.sqlite"))
         assertFalse(build.contains("mobile.manifest.json"))
     }
 
     @Test
-    fun referenceUpdaterUsesTheSameRustLifecycleRuntimeAsBootstrap() {
+    fun referenceUpdatesUseTheSameRustLifecycleRuntimeAsBootstrap() {
         val build = java.io.File("build.gradle.kts").readText()
-        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
         val bridge = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapJsBridge.kt").readText()
         val nativeReference = java.io.File(
             "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
@@ -61,10 +49,6 @@ class ManifestContractTest {
         assertFalse(build.contains("medicine_canonical"))
         assertTrue(bridge.contains("ReferenceNativeCore.checkForUpdate(runtimeHandle)"))
         assertTrue(nativeReference.contains("nativeReferenceCheckForUpdate"))
-        assertFalse(activity.contains("ReferenceUpdater"))
-        assertFalse(activity.contains("HttpsReferenceReleaseSource"))
-        assertFalse(activity.contains("startupExecutor"))
-        assertFalse(nativeReference.contains("ReferencePlannerWire"))
     }
 
     @Test
@@ -142,8 +126,6 @@ class ManifestContractTest {
         assertFalse(activity.contains("AlertDialog"))
         assertTrue(bootstrapBridge.contains("ReferenceNativeCore.createReferenceRuntime"))
         assertTrue(bootstrapBridge.contains("ReferenceNativeCore.status(runtimeHandle)"))
-        assertFalse(bootstrapBridge.contains("ReferenceStore"))
-        assertFalse(bootstrapBridge.contains("ReferenceUpdater"))
         assertTrue(bootstrapUi.contains("다운로드하지 않으면 앱을 사용할 수 없습니다"))
         assertTrue(bootstrapUi.contains("completed_bytes"))
         assertTrue(bootstrapUi.contains("total_bytes"))

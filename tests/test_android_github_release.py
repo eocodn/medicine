@@ -215,8 +215,6 @@ class AndroidGithubReleaseTest(unittest.TestCase):
                     str(script),
                     "--root",
                     str(root_file),
-                    "--contract-major",
-                    "1",
                     "--key-id",
                     "test-2026",
                     "--public-key-der-hex",

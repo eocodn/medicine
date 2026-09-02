@@ -3,8 +3,6 @@ mod assessment_token;
 mod canonical_products;
 mod current_products;
 mod dashboard;
-#[cfg(feature = "web")]
-pub mod development_reference;
 mod dose_logs;
 mod dose_quantity;
 mod doses;
@@ -37,12 +35,14 @@ mod quantitative_safety;
 pub mod reference_artifacts;
 mod reference_bootstrap;
 mod reference_capabilities;
+pub mod reference_channel;
+mod reference_contract;
 mod reference_db_verifier;
 mod reference_http;
 mod reference_lifecycle;
 pub mod reference_lifecycle_runtime;
 pub mod reference_manager;
-mod reference_runtime;
+mod reference_queries;
 mod reference_semantics;
 mod reference_signature;
 pub mod reference_state;
@@ -62,6 +62,7 @@ pub use reference_bootstrap::{
 pub use reference_capabilities::{
     verify_reference_runtime_capabilities, ReferenceRuntimeCapabilityError,
 };
+pub use reference_contract::REFERENCE_CONTRACT_MAJOR;
 pub use reference_db_verifier::{
     verify_reference_database, ReferenceVerificationError, ReferenceVerificationReport,
 };

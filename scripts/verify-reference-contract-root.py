@@ -31,11 +31,11 @@ DATASET_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 MAX_SIGNED_LONG = (1 << 63) - 1
 
 
-def _android_contract_major() -> int:
-    source = (ROOT / "android/app/src/main/java/com/medicine/android/ReferenceRuntimeAdapters.kt").read_text()
-    match = re.search(r"const val CONTRACT_MAJOR\s*=\s*([1-9][0-9]*)", source)
+def _runtime_contract_major() -> int:
+    source = (ROOT / "rust/medicine_core/src/reference_contract.rs").read_text()
+    match = re.search(r"REFERENCE_CONTRACT_MAJOR:\s*i32\s*=\s*([1-9][0-9]*)", source)
     if match is None:
-        raise RuntimeError("cannot resolve Android Reference Contract major")
+        raise RuntimeError("cannot resolve runtime Reference Contract major")
     return int(match.group(1))
 
 
@@ -247,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     result = verify_root(
         args.root.read_bytes(),
-        contract_major=args.contract_major or _android_contract_major(),
+        contract_major=args.contract_major or _runtime_contract_major(),
         trusted_public_keys=trusted_public_keys,
     )
     if args.full_artifact is not None:

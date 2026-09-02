@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::canonical_products::{self, ProductError};
 use crate::prescriptions::{self, DraftError};
 use crate::quantitative_safety;
-use crate::reference_runtime;
+use crate::reference_queries;
 
 enum BasisError {
     BadRequest(String),
@@ -42,15 +42,15 @@ fn build(
     let con = canonical_products::open(canonical_db).map_err(BasisError::from)?;
     let product =
         canonical_products::resolve_from_connection(&con, product_ref).map_err(BasisError::from)?;
-    let dataset = reference_runtime::manifest(&con).map_err(|_| BasisError::Internal)?;
+    let dataset = reference_queries::manifest(&con).map_err(|_| BasisError::Internal)?;
     let item_seq = product
         .get("catalog_item_seq")
         .and_then(Value::as_str)
         .ok_or(BasisError::Internal)?;
-    let issues = reference_runtime::category_resolution_issues(&con, item_seq)
+    let issues = reference_queries::category_resolution_issues(&con, item_seq)
         .map_err(|_| BasisError::Internal)?;
     let pregnancy_relevant =
-        reference_runtime::has_product_category(&con, item_seq, "pregnancy_contraindication")
+        reference_queries::has_product_category(&con, item_seq, "pregnancy_contraindication")
             .map_err(|_| BasisError::Internal)?;
     let coverage = coverage_summary(&product, &dataset, &person, &issues, pregnancy_relevant)?;
     let quantitative =

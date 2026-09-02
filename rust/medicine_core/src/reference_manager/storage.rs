@@ -176,7 +176,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ReferenceRun
     result
 }
 
-pub(crate) fn recover_legacy_android_atomic_file(path: &Path) -> Result<(), ReferenceRuntimeError> {
+pub(crate) fn recover_android_atomic_file_state(path: &Path) -> Result<(), ReferenceRuntimeError> {
     let backup = suffixed_path(path, ".bak");
     let new = suffixed_path(path, ".new");
     let mut changed = false;

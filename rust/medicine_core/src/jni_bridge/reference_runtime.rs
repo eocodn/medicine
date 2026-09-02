@@ -2,7 +2,7 @@ use super::{required_string, string_result, throw};
 use crate::reference_http::ReferenceHttpSource;
 use crate::reference_lifecycle_runtime::{ReferenceLifecycleRuntime, ReferenceRuntimeResult};
 use crate::reference_manager::{ReferenceUpdateStatus, RustReferenceDatabaseValidator};
-use crate::{ReferenceManifestVerifier, TrustedSigningKey};
+use crate::{ReferenceManifestVerifier, TrustedSigningKey, REFERENCE_CONTRACT_MAJOR};
 use jni::objects::{JObject, JString};
 use jni::sys::{jlong, jstring};
 use jni::JNIEnv;
@@ -111,23 +111,18 @@ pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeCreat
     _this: JObject<'_>,
     reference_dir: JString<'_>,
     base_url: JString<'_>,
-    contract_major: jlong,
     trusted_keys_json: JString<'_>,
 ) -> jlong {
     match catch_unwind(AssertUnwindSafe(|| {
         let reference_dir = required_string(&mut env, reference_dir)?;
         let base_url = required_string(&mut env, base_url)?;
         let trusted_keys_json = required_string(&mut env, trusted_keys_json)?;
-        let contract_major = i32::try_from(contract_major)
-            .ok()
-            .filter(|value| *value > 0)
-            .ok_or_else(|| "reference contract major must be positive".to_owned())?;
         let verifier = ReferenceManifestVerifier::new(trusted_keys(&trusted_keys_json)?);
-        let source = ReferenceHttpSource::new(&base_url, verifier, contract_major as u64)
+        let source = ReferenceHttpSource::new(&base_url, verifier, REFERENCE_CONTRACT_MAJOR as u64)
             .map_err(|error| error.to_string())?;
         let runtime = Arc::new(ReferenceLifecycleRuntime::new(
             PathBuf::from(reference_dir),
-            contract_major,
+            REFERENCE_CONTRACT_MAJOR,
             source,
             RustReferenceDatabaseValidator,
         ));

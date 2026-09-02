@@ -63,13 +63,11 @@ fn reference_bootstrap_command_is_wired_to_shared_runtime_validation() {
             "https://example.invalid/",
             "--trust-manifest",
             "/tmp/missing-reference-trust.json",
-            "--contract-major",
-            "0",
             "--json",
         ])
         .output()
         .expect("run agentctl reference bootstrap validation");
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("reference contract major must be positive"));
+        .contains("trusted release signing key file is unavailable"));
 }

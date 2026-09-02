@@ -62,7 +62,6 @@ object ReferenceNativeCore {
         nativeCreateReferenceRuntime(
             referenceDir.absolutePath,
             baseUrl,
-            REFERENCE_CONTRACT_MAJOR.toLong(),
             BuildConfig.REFERENCE_TRUSTED_KEYS_JSON,
         ).also { handle ->
             check(handle != 0L) { "native reference runtime initialization failed" }
@@ -95,7 +94,6 @@ object ReferenceNativeCore {
     private external fun nativeCreateReferenceRuntime(
         referenceDir: String,
         baseUrl: String,
-        contractMajor: Long,
         trustedKeysJson: String,
     ): Long
 
@@ -109,5 +107,4 @@ object ReferenceNativeCore {
         System.loadLibrary("medicine_core")
     }
 
-    private const val REFERENCE_CONTRACT_MAJOR = 1
 }

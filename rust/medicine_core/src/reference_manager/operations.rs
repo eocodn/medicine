@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use super::storage::{
     atomic_write, available_bytes, capture_file_seal, io_error, normalize_checkpoint,
-    recover_legacy_android_atomic_file, seal_read_only, sync_directory, verify_file_identity,
+    recover_android_atomic_file_state, seal_read_only, sync_directory, verify_file_identity,
     ReferenceDirectoryLock,
 };
 
@@ -456,7 +456,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceManager<
 
     fn load_store(&self) -> Result<ReferenceStore, ReferenceRuntimeError> {
         let path = self.root.join("state.v1");
-        recover_legacy_android_atomic_file(&path)?;
+        recover_android_atomic_file_state(&path)?;
         if !path.exists() {
             return Ok(ReferenceStore::default());
         }

@@ -15,7 +15,7 @@ use std::{
 };
 use tower_http::services::ServeDir;
 
-use crate::development_reference::DevelopmentReferenceRuntime;
+use crate::reference_channel::ReferenceChannelRuntime;
 use crate::reference_lifecycle_runtime::ReferenceRuntimeResult;
 use crate::reference_manager::{ReferenceRuntimeError, ReferenceUpdateStatus};
 use crate::{MedicineEngine, ReferenceBootstrapSnapshot, ReferenceBootstrapState};
@@ -29,17 +29,17 @@ pub trait WebReferenceRuntime: Send + Sync {
     fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError>;
 }
 
-impl WebReferenceRuntime for DevelopmentReferenceRuntime {
+impl WebReferenceRuntime for ReferenceChannelRuntime {
     fn start(&self) -> Result<ReferenceRuntimeResult, ReferenceRuntimeError> {
-        DevelopmentReferenceRuntime::start(self)
+        ReferenceChannelRuntime::start(self)
     }
 
     fn status(&self) -> ReferenceBootstrapSnapshot {
-        DevelopmentReferenceRuntime::status(self)
+        ReferenceChannelRuntime::status(self)
     }
 
     fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError> {
-        DevelopmentReferenceRuntime::check_for_update(self)
+        ReferenceChannelRuntime::check_for_update(self)
     }
 }
 

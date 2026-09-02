@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::canonical_products::{self, infer_administration_route, ProductError};
 use crate::interaction_timing::{interaction_timing_applies, remark_timing};
-use crate::reference_runtime::{
+use crate::reference_queries::{
     combination_rows, resolved_product_rows, unlinked_combination_exists,
 };
 use crate::reference_semantics::{

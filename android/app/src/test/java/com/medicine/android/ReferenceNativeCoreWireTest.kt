@@ -7,7 +7,7 @@ import org.junit.Test
 
 class ReferenceNativeCoreWireTest {
     @Test
-    fun runtimeOperationDecodesReadySelectionWithoutPlannerWire() {
+    fun runtimeOperationDecodesReadySelection() {
         val operation = decodeReferenceRuntimeOperation(
             """{
               "selection": {
