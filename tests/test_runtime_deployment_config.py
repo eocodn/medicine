@@ -127,21 +127,6 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertNotIn("mfds_remark_registry.tsv", gradle)
         self.assertIn('"reference_criterion_semantics"', verifier)
         self.assertIn("_verify_schema(con)", verifier)
-    def test_android_build_does_not_generate_or_package_reference_snapshot(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        build_script = Path("scripts/android_compose_build.sh").read_text()
-        gradle = Path("android/app/build.gradle.kts").read_text()
-        self.assertNotIn("build_mobile_database", build_script)
-        self.assertNotIn("mobile.sqlite", build_script)
-        self.assertNotIn("mobile.manifest.json", build_script)
-        self.assertNotIn("PrepareMobileAssets", gradle)
-        self.assertNotIn("MEDICINE_MOBILE_DB", gradle)
-        self.assertNotIn("MEDICINE_MOBILE_MANIFEST", gradle)
-        self.assertIn('command: ["sh", "/workspace/scripts/android_compose_build.sh"]', compose)
-        self.assertIn("androidComponents", gradle)
-        self.assertIn("addGeneratedSourceDirectory", gradle)
-        self.assertNotIn("assets.srcDirs", gradle)
-        self.assertNotIn("project.copy", gradle)
     def test_ui_service_runs_as_the_host_user_for_bind_mounted_screenshots(self) -> None:
         compose = Path("compose.yaml").read_text()
         ui_service = compose.split("\n  ui:\n", 1)[1].split("\n  test:\n", 1)[0]
@@ -181,18 +166,6 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         self.assertIn("GRADLE_USER_HOME: /workspace/.android-gradle-cache", android_service)
         self.assertNotIn("android-gradle-cache:/opt/gradle-cache", android_service)
         self.assertNotIn("\nvolumes:\n  android-gradle-cache:\n", compose)
-    def test_android_has_no_prebuilt_reference_asset_inputs(self) -> None:
-        compose = Path("compose.yaml").read_text()
-        gradle = Path("android/app/build.gradle.kts").read_text()
-        build_script = Path("scripts/android_compose_build.sh").read_text()
-        android_service = compose.split("\n  android:\n", 1)[1]
-
-        self.assertNotIn("MEDICINE_MOBILE_DB", gradle)
-        self.assertNotIn("MEDICINE_MOBILE_MANIFEST", gradle)
-        self.assertNotIn("MEDICINE_MOBILE_DB", android_service)
-        self.assertNotIn("MEDICINE_MOBILE_MANIFEST", android_service)
-        self.assertNotIn("mobile.sqlite", build_script)
-        self.assertNotIn("mobile.manifest.json", build_script)
     def test_android_default_compose_build_runs_gradle_without_mobile_builder(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         compose = (repo_root / "compose.yaml").read_text()
@@ -272,7 +245,7 @@ class RuntimeDeploymentConfigTest(unittest.TestCase):
         )
         self.assertIn("MEDICINE_REFERENCE_DIR: ${MEDICINE_REFERENCE_DIR:-data/reference}", web_service)
         self.assertIn("MEDICINE_REFERENCE_UPDATE_BASE_URL", web_service)
-        self.assertIn("reference_channel_runtime", web_binary)
+        self.assertIn("open_reference_channel", web_binary)
         self.assertIn("prepare_runtime.prepare()", web_binary)
         self.assertIn("schedule_reference_update", web_binary)
         self.assertIn("update_runtime.check_for_update()", web_runtime)

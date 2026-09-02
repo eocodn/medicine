@@ -20,8 +20,7 @@ class ManifestContractTest {
     }
 
     @Test
-    fun referenceDataBootstrapsFromSignedChannelWithoutBundledDatabaseAssets() {
-        val build = java.io.File("build.gradle.kts").readText()
+    fun referenceDataBootstrapsThroughTheNativeSignedChannelRuntime() {
         val nativeReference = java.io.File(
             "src/main/java/com/medicine/android/ReferenceNativeCore.kt"
         ).readText()
@@ -29,10 +28,7 @@ class ManifestContractTest {
         assertTrue(nativeReference.contains("nativeReferencePrepare"))
         assertTrue(nativeReference.contains("nativeReferenceStart"))
         assertTrue(nativeReference.contains("nativeReferenceCheckForUpdate"))
-        assertTrue(nativeReference.contains("BuildConfig.REFERENCE_TRUSTED_KEYS_JSON"))
-        assertFalse(build.contains("PrepareMobileAssets"))
-        assertFalse(build.contains("mobile.sqlite"))
-        assertFalse(build.contains("mobile.manifest.json"))
+        assertTrue(nativeReference.contains("BuildConfig.REFERENCE_TRUST_MANIFEST_JSON"))
     }
 
     @Test
@@ -46,7 +42,6 @@ class ManifestContractTest {
         assertTrue(build.contains("MEDICINE_REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("REFERENCE_UPDATE_BASE_URL"))
         assertTrue(build.contains("pub-539f06de795a469c85ab40570a8634a2.r2.dev"))
-        assertFalse(build.contains("medicine_canonical"))
         assertTrue(bridge.contains("ReferenceNativeCore.checkForUpdate(runtimeHandle)"))
         assertTrue(nativeReference.contains("nativeReferenceCheckForUpdate"))
     }

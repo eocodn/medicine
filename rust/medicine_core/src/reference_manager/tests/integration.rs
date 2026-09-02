@@ -1,14 +1,15 @@
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use medicine_core::reference_manager::{
-    ReferenceBootstrapInfo, ReferenceBootstrapInspection, ReferenceDatabaseValidator,
-    ReferenceManager, ReferenceReleaseSource, ReferenceRuntimeError, ReferenceUpdateStatus,
+use super::TestReferenceManagerExt;
+use crate::reference_manager::{
+    ReferenceDatabaseValidator, ReferenceManager, ReferenceReleaseSource, ReferenceRuntimeError,
+    ReferenceUpdateStatus,
 };
-use medicine_core::reference_state::ReferenceStateCodec;
-use medicine_core::{
+use crate::reference_state::ReferenceStateCodec;
+use crate::{
     ReferenceArtifactKind, ReferenceReleaseArtifact, ReferenceRootSelection,
     VerifiedReferenceRelease,
 };
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -66,7 +67,7 @@ impl ReferenceDatabaseValidator for AcceptingValidator {
     fn verify(
         &self,
         file: &Path,
-        _version: &medicine_core::reference_state::ReferenceVersion,
+        _version: &crate::reference_state::ReferenceVersion,
     ) -> Result<(), ReferenceRuntimeError> {
         if file.is_file() {
             Ok(())
@@ -149,35 +150,6 @@ fn first_bootstrap_installs_content_addressed_reference_and_state() {
     let state =
         ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
     assert_eq!(state.active.unwrap().release_sequence, 17);
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn bootstrap_inspection_exposes_signed_download_size_without_downloading() {
-    let root = temp_root();
-    let (release, archive) = fixture_release(21, 4);
-    let expected_size = release.full.size_bytes;
-    let manager = ReferenceManager::new(
-        root.clone(),
-        1,
-        source_for(release, archive),
-        AcceptingValidator,
-    );
-
-    let inspection = manager.inspect_bootstrap().expect("inspect bootstrap");
-
-    assert_eq!(
-        inspection,
-        ReferenceBootstrapInspection::Download(ReferenceBootstrapInfo {
-            download_size_bytes: expected_size,
-            total_download_bytes: expected_size,
-        })
-    );
-    assert!(!root
-        .read_dir()
-        .unwrap()
-        .flatten()
-        .any(|entry| entry.file_name().to_string_lossy().ends_with(".part")));
     let _ = std::fs::remove_dir_all(root);
 }
 

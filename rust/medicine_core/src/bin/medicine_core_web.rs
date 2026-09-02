@@ -1,8 +1,7 @@
-use medicine_core::reference_channel::{reference_channel_runtime, ReferenceChannelConfig};
 use medicine_core::web::{
     build_runtime, schedule_reference_update, WebConfig, WebReferenceRuntime,
 };
-use medicine_core::ReferenceBootstrapState;
+use medicine_core::{open_reference_channel, ReferenceBootstrapState, ReferenceChannelConfig};
 use std::{env, net::IpAddr, path::PathBuf, sync::Arc, thread, time::Duration};
 use tokio::net::TcpListener;
 
@@ -114,7 +113,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         // implementation as Android. reqwest::blocking must construct its
         // internal runtime outside Tokio's async context.
         let runtime = Arc::new(
-            tokio::task::spawn_blocking(move || reference_channel_runtime(config))
+            tokio::task::spawn_blocking(move || open_reference_channel(config))
                 .await
                 .map_err(|error| format!("reference runtime initialization task failed: {error}"))?
                 .map_err(|error| format!("reference runtime initialization failed: {error}"))?,

@@ -2,8 +2,11 @@ use crate::reference_signature::{ReferenceReleaseArtifact, VerifiedReferenceRele
 use crate::reference_state::{ReferenceStoreState, ReferenceVersion};
 use std::fmt::{Display, Formatter};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReferenceLifecycleError(String);
+pub(crate) struct ReferenceLifecycleError(String);
 
 impl ReferenceLifecycleError {
     fn new(message: impl Into<String>) -> Self {
@@ -20,13 +23,13 @@ impl Display for ReferenceLifecycleError {
 impl std::error::Error for ReferenceLifecycleError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReferenceBootstrapPlan {
+pub(crate) struct ReferenceBootstrapPlan {
     pub target: ReferenceVersion,
     pub full: ReferenceReleaseArtifact,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReferenceUpdatePlan {
+pub(crate) enum ReferenceUpdatePlan {
     UpToDate,
     RollbackRejected,
     IdentityConflict,
@@ -34,13 +37,13 @@ pub enum ReferenceUpdatePlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReferenceUpdateStagePlan {
+pub(crate) struct ReferenceUpdateStagePlan {
     pub target: ReferenceVersion,
     pub primary: ReferenceReleaseArtifact,
     pub fallback_full: Option<ReferenceReleaseArtifact>,
 }
 
-pub fn plan_reference_bootstrap(
+pub(crate) fn plan_reference_bootstrap(
     expected_contract_major: i32,
     state: &ReferenceStoreState,
     release: &VerifiedReferenceRelease,
@@ -66,7 +69,7 @@ pub fn plan_reference_bootstrap(
     })
 }
 
-pub fn plan_reference_update(
+pub(crate) fn plan_reference_update(
     current: &ReferenceVersion,
     state: &ReferenceStoreState,
     release: &VerifiedReferenceRelease,

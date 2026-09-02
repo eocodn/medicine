@@ -1,4 +1,4 @@
-use medicine_core::load_reference_trust_manifest;
+use medicine_core::{load_reference_trust_manifest, parse_reference_trust_manifest_json};
 use std::path::Path;
 
 #[test]
@@ -27,4 +27,16 @@ fn trust_manifest_rejects_fingerprint_mismatch() {
     let result = load_reference_trust_manifest(&path);
     let _ = std::fs::remove_file(path);
     assert!(result.unwrap_err().to_string().contains("fingerprint"));
+}
+
+#[test]
+fn embedded_manifest_json_uses_the_same_parser_as_the_file_channel() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../deploy/reference-signing-trusted-keys.json");
+    let trust = load_reference_trust_manifest(&path).expect("load tracked trust manifest");
+    let raw = std::fs::read_to_string(path).expect("read tracked trust manifest");
+
+    let parsed = parse_reference_trust_manifest_json(&raw).expect("parse embedded trust manifest");
+    assert_eq!(parsed.active_key_id, trust.active_key_id);
+    assert_eq!(parsed.keys, trust.keys);
 }

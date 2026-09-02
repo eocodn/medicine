@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 mod cleanup;
 mod operations;
 pub(crate) mod storage;
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug)]
 pub struct ReferenceRuntimeError(String);
@@ -41,19 +43,7 @@ pub struct ReferenceSelection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReferenceBootstrapInfo {
-    pub download_size_bytes: u64,
-    pub total_download_bytes: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReferenceBootstrapInspection {
-    Download(ReferenceBootstrapInfo),
-    Unavailable,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReferenceBootstrapPreparation {
+pub(crate) enum ReferenceBootstrapPreparation {
     Ready(ReferenceSelection),
     Download {
         release: VerifiedReferenceRelease,
@@ -69,7 +59,17 @@ pub enum ReferenceUpdateStatus {
     UpdateRequired,
 }
 
-pub trait ReferenceReleaseSource {
+impl ReferenceUpdateStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NoChange => "no_change",
+            Self::Staged => "staged",
+            Self::UpdateRequired => "update_required",
+        }
+    }
+}
+
+pub(crate) trait ReferenceReleaseSource {
     fn fetch_latest(&self) -> Result<ReferenceRootSelection, ReferenceRuntimeError>;
     fn download(
         &self,
@@ -78,7 +78,7 @@ pub trait ReferenceReleaseSource {
     ) -> Result<(), ReferenceRuntimeError>;
 }
 
-pub trait ReferenceDatabaseValidator {
+pub(crate) trait ReferenceDatabaseValidator {
     fn verify(&self, file: &Path, version: &ReferenceVersion) -> Result<(), ReferenceRuntimeError>;
 
     fn verify_runtime_capabilities(
@@ -90,7 +90,7 @@ pub trait ReferenceDatabaseValidator {
     }
 }
 
-pub trait ReferenceBootstrapObserver {
+pub(crate) trait ReferenceBootstrapObserver {
     fn installing(&mut self) -> Result<(), ReferenceRuntimeError>;
 }
 
@@ -104,7 +104,7 @@ where
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub struct RustReferenceDatabaseValidator;
+pub(crate) struct RustReferenceDatabaseValidator;
 
 impl ReferenceDatabaseValidator for RustReferenceDatabaseValidator {
     fn verify(&self, file: &Path, version: &ReferenceVersion) -> Result<(), ReferenceRuntimeError> {
@@ -127,7 +127,7 @@ impl ReferenceDatabaseValidator for RustReferenceDatabaseValidator {
     }
 }
 
-pub struct ReferenceManager<S, V> {
+pub(crate) struct ReferenceManager<S, V> {
     pub(super) root: PathBuf,
     pub(super) contract_major: i32,
     pub(super) source: S,

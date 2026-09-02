@@ -132,8 +132,8 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertEqual(trust["active_key_id"], workflow_key_id)
         self.assertIn(trust["active_key_id"], entries)
         self.assertIn("../deploy/reference-signing-trusted-keys.json", gradle)
-        self.assertIn("REFERENCE_TRUSTED_KEYS_JSON", gradle)
-        self.assertIn("BuildConfig.REFERENCE_TRUSTED_KEYS_JSON", android_runtime)
+        self.assertIn("REFERENCE_TRUST_MANIFEST_JSON", gradle)
+        self.assertIn("BuildConfig.REFERENCE_TRUST_MANIFEST_JSON", android_runtime)
         self.assertNotIn("reference-prod-2026-01", android_runtime)
         for key_id, entry in entries.items():
             pem = entry["public_key_pem"]

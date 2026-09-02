@@ -117,7 +117,7 @@ fun decodeReviewedPublicKeyPem(pem: String, keyId: String): ByteArray {
     }
 }
 
-fun referenceTrustedKeysJson(file: File): String {
+fun validatedReferenceTrustManifestJson(file: File): String {
     require(file.isFile) { "reference signing trust manifest is missing: $file" }
     val document = JsonSlurper().parse(file)
     require(document is Map<*, *> && document.keys == setOf("active_key_id", "keys")) {
@@ -129,7 +129,7 @@ fun referenceTrustedKeysJson(file: File): String {
         ?: error("reference signing trust manifest keys must be a list")
     require(rawKeys.isNotEmpty()) { "reference signing trust manifest keys must not be empty" }
 
-    val trusted = linkedMapOf<String, String>()
+    val trustedKeyIds = linkedSetOf<String>()
     rawKeys.forEach { rawKey ->
         require(
             rawKey is Map<*, *> &&
@@ -140,7 +140,7 @@ fun referenceTrustedKeysJson(file: File): String {
         require(Regex("[A-Za-z0-9._-]{1,64}").matches(keyId)) {
             "reference signing trust key ID is invalid: $keyId"
         }
-        require(!trusted.containsKey(keyId)) { "duplicate reference signing trust key ID: $keyId" }
+        require(trustedKeyIds.add(keyId)) { "duplicate reference signing trust key ID: $keyId" }
         val pem = rawKey["public_key_pem"] as? String
             ?: error("reference signing public key is invalid: $keyId")
         val reviewedFingerprint = rawKey["spki_sha256"] as? String
@@ -155,15 +155,14 @@ fun referenceTrustedKeysJson(file: File): String {
         require(actualFingerprint == reviewedFingerprint) {
             "reference signing fingerprint does not match reviewed key: $keyId"
         }
-        trusted[keyId] = spki.joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
-    require(activeKeyId in trusted) {
+    require(activeKeyId in trustedKeyIds) {
         "reference signing active key ID is missing from trusted keys"
     }
-    return JsonOutput.toJson(trusted)
+    return file.readText()
 }
 
-val referenceSigningTrustedKeysJson = referenceTrustedKeysJson(referenceTrustManifestFile)
+val referenceTrustManifestJson = validatedReferenceTrustManifestJson(referenceTrustManifestFile)
 
 data class AndroidReleaseEnvironment(
     val versionCode: Int,
@@ -320,8 +319,8 @@ android {
         versionName = releaseEnvironment?.versionName ?: releaseVersionName
         buildConfigField(
             "String",
-            "REFERENCE_TRUSTED_KEYS_JSON",
-            JsonOutput.toJson(referenceSigningTrustedKeysJson),
+            "REFERENCE_TRUST_MANIFEST_JSON",
+            JsonOutput.toJson(referenceTrustManifestJson),
         )
 
         ndk {

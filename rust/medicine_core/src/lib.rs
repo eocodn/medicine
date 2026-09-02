@@ -35,14 +35,15 @@ mod quantitative_safety;
 pub mod reference_artifacts;
 mod reference_bootstrap;
 mod reference_capabilities;
-pub mod reference_channel;
+mod reference_channel;
 mod reference_contract;
 mod reference_db_verifier;
 mod reference_http;
 mod reference_lifecycle;
-pub mod reference_lifecycle_runtime;
-pub mod reference_manager;
+mod reference_lifecycle_runtime;
+mod reference_manager;
 mod reference_queries;
+mod reference_runtime;
 mod reference_semantics;
 mod reference_signature;
 pub mod reference_state;
@@ -56,27 +57,26 @@ pub mod web;
 #[cfg(feature = "agentctl")]
 pub use engine::RequestObservation;
 pub use engine::{AccessClass, MedicineEngine};
-pub use reference_bootstrap::{
-    ReferenceBootstrapCoordinator, ReferenceBootstrapSnapshot, ReferenceBootstrapState,
-};
+pub use reference_bootstrap::{ReferenceBootstrapSnapshot, ReferenceBootstrapState};
 pub use reference_capabilities::{
     verify_reference_runtime_capabilities, ReferenceRuntimeCapabilityError,
 };
+pub use reference_channel::{open_reference_channel, ReferenceChannelConfig};
 pub use reference_contract::REFERENCE_CONTRACT_MAJOR;
 pub use reference_db_verifier::{
     verify_reference_database, ReferenceVerificationError, ReferenceVerificationReport,
 };
-pub use reference_lifecycle::{
-    plan_reference_bootstrap, plan_reference_update, ReferenceBootstrapPlan,
-    ReferenceLifecycleError, ReferenceUpdatePlan,
-};
+pub use reference_lifecycle_runtime::ReferenceRuntimeResult;
+pub use reference_manager::{ReferenceRuntimeError, ReferenceSelection, ReferenceUpdateStatus};
+pub use reference_runtime::ReferenceRuntime;
 pub use reference_signature::{
     ReferenceArtifactKind, ReferenceManifestVerifier, ReferenceReleaseArtifact,
     ReferenceReleaseProtocolV2, ReferenceRootSelection, ReferenceSignatureError, TrustedSigningKey,
     VerifiedReferenceManifestSignature, VerifiedReferenceRelease,
 };
 pub use reference_trust::{
-    load_reference_trust_manifest, ReferenceTrustError, ReferenceTrustManifest,
+    load_reference_trust_manifest, parse_reference_trust_manifest_json, ReferenceTrustError,
+    ReferenceTrustManifest,
 };
 pub const PERSONAL_SCHEMA_VERSION: i64 = personal_schema::SCHEMA_VERSION;
 

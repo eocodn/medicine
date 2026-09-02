@@ -15,9 +15,9 @@ use std::{
 };
 use tower_http::services::ServeDir;
 
-use crate::reference_channel::ReferenceChannelRuntime;
 use crate::reference_lifecycle_runtime::ReferenceRuntimeResult;
 use crate::reference_manager::{ReferenceRuntimeError, ReferenceUpdateStatus};
+use crate::reference_runtime::ReferenceRuntime;
 use crate::{MedicineEngine, ReferenceBootstrapSnapshot, ReferenceBootstrapState};
 
 pub const BROWSER_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
@@ -29,17 +29,17 @@ pub trait WebReferenceRuntime: Send + Sync {
     fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError>;
 }
 
-impl WebReferenceRuntime for ReferenceChannelRuntime {
+impl WebReferenceRuntime for ReferenceRuntime {
     fn start(&self) -> Result<ReferenceRuntimeResult, ReferenceRuntimeError> {
-        ReferenceChannelRuntime::start(self)
+        ReferenceRuntime::start(self)
     }
 
     fn status(&self) -> ReferenceBootstrapSnapshot {
-        ReferenceChannelRuntime::status(self)
+        ReferenceRuntime::status(self)
     }
 
     fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError> {
-        ReferenceChannelRuntime::check_for_update(self)
+        ReferenceRuntime::check_for_update(self)
     }
 }
 

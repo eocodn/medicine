@@ -1,35 +1,19 @@
 use super::{required_string, string_result, throw};
-use crate::reference_http::ReferenceHttpSource;
-use crate::reference_lifecycle_runtime::{ReferenceLifecycleRuntime, ReferenceRuntimeResult};
-use crate::reference_manager::{ReferenceUpdateStatus, RustReferenceDatabaseValidator};
-use crate::{ReferenceManifestVerifier, TrustedSigningKey, REFERENCE_CONTRACT_MAJOR};
+use crate::parse_reference_trust_manifest_json;
+use crate::reference_lifecycle_runtime::ReferenceRuntimeResult;
+use crate::reference_runtime::ReferenceRuntime;
 use jni::objects::{JObject, JString};
 use jni::sys::{jlong, jstring};
 use jni::JNIEnv;
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-type AndroidReferenceRuntime =
-    ReferenceLifecycleRuntime<ReferenceHttpSource, RustReferenceDatabaseValidator>;
+type AndroidReferenceRuntime = ReferenceRuntime;
 
 static NEXT_HANDLE: AtomicI64 = AtomicI64::new(1);
 static RUNTIMES: OnceLock<Mutex<HashMap<i64, Arc<AndroidReferenceRuntime>>>> = OnceLock::new();
-
-fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
-    if !value.len().is_multiple_of(2) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("invalid reference signing key encoding".to_owned());
-    }
-    (0..value.len())
-        .step_by(2)
-        .map(|offset| {
-            u8::from_str_radix(&value[offset..offset + 2], 16)
-                .map_err(|_| "invalid reference signing key encoding".to_owned())
-        })
-        .collect()
-}
 
 fn runtimes() -> &'static Mutex<HashMap<i64, Arc<AndroidReferenceRuntime>>> {
     RUNTIMES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -47,28 +31,8 @@ fn runtime(handle: jlong) -> Result<Arc<AndroidReferenceRuntime>, String> {
         .ok_or_else(|| "native reference runtime is closed".to_owned())
 }
 
-fn trusted_keys(raw: &str) -> Result<Vec<TrustedSigningKey>, String> {
-    let document: serde_json::Value = serde_json::from_str(raw)
-        .map_err(|_| "invalid trusted reference signing keys".to_owned())?;
-    let object = document
-        .as_object()
-        .ok_or_else(|| "invalid trusted reference signing keys".to_owned())?;
-    if object.is_empty() {
-        return Err("trusted reference signing keys are empty".to_owned());
-    }
-    object
-        .iter()
-        .map(|(key_id, encoded)| {
-            let encoded = encoded
-                .as_str()
-                .ok_or_else(|| "invalid trusted reference signing key".to_owned())?;
-            Ok(TrustedSigningKey::active(key_id, decode_hex(encoded)?))
-        })
-        .collect()
-}
-
-fn result_json(result: ReferenceRuntimeResult, error: Option<&str>) -> String {
-    let selection = result.selection.map(|selection| {
+fn result_json(selection: Option<crate::ReferenceSelection>, error: Option<&str>) -> String {
+    let selection = selection.map(|selection| {
         serde_json::json!({
             "database_path": selection
                 .database
@@ -78,7 +42,6 @@ fn result_json(result: ReferenceRuntimeResult, error: Option<&str>) -> String {
     });
     serde_json::json!({
         "selection": selection,
-        "snapshot": result.snapshot,
         "error": error,
     })
     .to_string()
@@ -94,14 +57,8 @@ fn operation_json(
     >,
 ) -> String {
     match operation(runtime) {
-        Ok(result) => result_json(result, None),
-        Err(error) => result_json(
-            ReferenceRuntimeResult {
-                selection: None,
-                snapshot: runtime.status(),
-            },
-            Some(&error.to_string()),
-        ),
+        Ok(result) => result_json(result.selection, None),
+        Err(error) => result_json(None, Some(&error.to_string())),
     }
 }
 
@@ -111,21 +68,18 @@ pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeCreat
     _this: JObject<'_>,
     reference_dir: JString<'_>,
     base_url: JString<'_>,
-    trusted_keys_json: JString<'_>,
+    trust_manifest_json: JString<'_>,
 ) -> jlong {
     match catch_unwind(AssertUnwindSafe(|| {
         let reference_dir = required_string(&mut env, reference_dir)?;
         let base_url = required_string(&mut env, base_url)?;
-        let trusted_keys_json = required_string(&mut env, trusted_keys_json)?;
-        let verifier = ReferenceManifestVerifier::new(trusted_keys(&trusted_keys_json)?);
-        let source = ReferenceHttpSource::new(&base_url, verifier, REFERENCE_CONTRACT_MAJOR as u64)
+        let trust_manifest_json = required_string(&mut env, trust_manifest_json)?;
+        let trust = parse_reference_trust_manifest_json(&trust_manifest_json)
             .map_err(|error| error.to_string())?;
-        let runtime = Arc::new(ReferenceLifecycleRuntime::new(
-            PathBuf::from(reference_dir),
-            REFERENCE_CONTRACT_MAJOR,
-            source,
-            RustReferenceDatabaseValidator,
-        ));
+        let runtime = Arc::new(
+            ReferenceRuntime::new(reference_dir.into(), &base_url, trust)
+                .map_err(|error| error.to_string())?,
+        );
         let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
         if handle <= 0 {
             return Err("native reference runtime handle space exhausted".to_owned());
@@ -219,11 +173,7 @@ pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeRefer
     let result = catch_unwind(AssertUnwindSafe(|| {
         let runtime = runtime(handle)?;
         let value = match runtime.check_for_update() {
-            Ok(ReferenceUpdateStatus::NoChange) => serde_json::json!({"status": "no_change"}),
-            Ok(ReferenceUpdateStatus::Staged) => serde_json::json!({"status": "staged"}),
-            Ok(ReferenceUpdateStatus::UpdateRequired) => {
-                serde_json::json!({"status": "update_required"})
-            }
+            Ok(status) => serde_json::json!({"status": status.as_str()}),
             Err(error) => serde_json::json!({
                 "status": "failed",
                 "detail": error.to_string(),

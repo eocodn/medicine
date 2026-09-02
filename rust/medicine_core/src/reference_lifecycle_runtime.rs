@@ -8,20 +8,28 @@ use crate::reference_manager::{
 use std::fs;
 use std::sync::Mutex;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceRuntimeResult {
     pub selection: Option<ReferenceSelection>,
     pub snapshot: ReferenceBootstrapSnapshot,
 }
 
-pub struct ReferenceLifecycleRuntime<S, V> {
+pub(crate) struct ReferenceLifecycleRuntime<S, V> {
     manager: ReferenceManager<S, V>,
     bootstrap: Mutex<ReferenceBootstrapCoordinator>,
     prepared: Mutex<Option<ReferenceBootstrapPreparation>>,
 }
 
 impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceLifecycleRuntime<S, V> {
-    pub fn new(root: std::path::PathBuf, contract_major: i32, source: S, validator: V) -> Self {
+    pub(crate) fn new(
+        root: std::path::PathBuf,
+        contract_major: i32,
+        source: S,
+        validator: V,
+    ) -> Self {
         Self {
             manager: ReferenceManager::new(root, contract_major, source, validator),
             bootstrap: Mutex::new(ReferenceBootstrapCoordinator::checking()),
@@ -29,7 +37,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceLifecycl
         }
     }
 
-    pub fn prepare(&self) -> Result<ReferenceRuntimeResult, ReferenceRuntimeError> {
+    pub(crate) fn prepare(&self) -> Result<ReferenceRuntimeResult, ReferenceRuntimeError> {
         {
             let mut bootstrap = self.lock_bootstrap()?;
             if !bootstrap.begin_prepare() {
@@ -86,7 +94,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceLifecycl
         }
     }
 
-    pub fn start(&self) -> Result<ReferenceRuntimeResult, ReferenceRuntimeError> {
+    pub(crate) fn start(&self) -> Result<ReferenceRuntimeResult, ReferenceRuntimeError> {
         let state = self.status().state;
         match state {
             ReferenceBootstrapState::Downloading | ReferenceBootstrapState::Installing => {
@@ -168,7 +176,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceLifecycl
         }
     }
 
-    pub fn status(&self) -> ReferenceBootstrapSnapshot {
+    pub(crate) fn status(&self) -> ReferenceBootstrapSnapshot {
         let Ok(mut bootstrap) = self.bootstrap.lock() else {
             return ReferenceBootstrapSnapshot {
                 state: ReferenceBootstrapState::Failed,
@@ -189,7 +197,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceLifecycl
         bootstrap.snapshot()
     }
 
-    pub fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError> {
+    pub(crate) fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError> {
         self.manager.check_for_update()
     }
 

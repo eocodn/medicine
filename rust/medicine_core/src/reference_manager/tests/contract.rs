@@ -1,14 +1,15 @@
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use medicine_core::reference_manager::{
+use super::TestReferenceManagerExt;
+use crate::reference_manager::{
     ReferenceDatabaseValidator, ReferenceManager, ReferenceReleaseSource, ReferenceRuntimeError,
     ReferenceUpdateStatus,
 };
-use medicine_core::reference_state::{ReferenceStateCodec, ReferenceStore, ReferenceVersion};
-use medicine_core::{
+use crate::reference_state::{ReferenceStateCodec, ReferenceStore, ReferenceVersion};
+use crate::{
     ReferenceArtifactKind, ReferenceReleaseArtifact, ReferenceRootSelection,
     VerifiedReferenceRelease,
 };
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Write;
@@ -234,4 +235,14 @@ fn unchanged_installed_reference_uses_file_seal_without_full_reverification() {
     assert_eq!(validator.full_verifications.load(Ordering::SeqCst), 0);
     assert_eq!(validator.capability_verifications.load(Ordering::SeqCst), 1);
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn update_status_has_one_shared_wire_name() {
+    assert_eq!(ReferenceUpdateStatus::NoChange.as_str(), "no_change");
+    assert_eq!(ReferenceUpdateStatus::Staged.as_str(), "staged");
+    assert_eq!(
+        ReferenceUpdateStatus::UpdateRequired.as_str(),
+        "update_required"
+    );
 }

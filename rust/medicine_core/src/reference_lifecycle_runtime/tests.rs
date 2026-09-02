@@ -1,14 +1,15 @@
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use medicine_core::reference_lifecycle_runtime::ReferenceLifecycleRuntime;
-use medicine_core::reference_manager::{
+use super::ReferenceLifecycleRuntime;
+use crate::reference_manager::{
     ReferenceDatabaseValidator, ReferenceReleaseSource, ReferenceRuntimeError,
 };
-use medicine_core::reference_state::ReferenceVersion;
-use medicine_core::{
-    ReferenceArtifactKind, ReferenceBootstrapState, ReferenceReleaseArtifact,
-    ReferenceRootSelection, VerifiedReferenceRelease,
+use crate::reference_runtime::ReferenceRuntime;
+use crate::reference_state::ReferenceVersion;
+use crate::{
+    load_reference_trust_manifest, ReferenceArtifactKind, ReferenceBootstrapState,
+    ReferenceReleaseArtifact, ReferenceRootSelection, VerifiedReferenceRelease,
 };
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -317,4 +318,18 @@ fn prepare_preserves_stable_manifest_and_network_diagnostic_codes() {
         assert_eq!(status.detail.as_deref(), Some(expected), "{raw}");
         let _ = std::fs::remove_dir_all(root);
     }
+}
+
+#[test]
+fn concrete_runtime_owns_shared_http_construction() {
+    let trust = load_reference_trust_manifest(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/reference-signing-trusted-keys.json"),
+    )
+    .expect("load tracked trust manifest");
+    let root = temp_root();
+    let runtime = ReferenceRuntime::new(root, "https://example.invalid/", trust)
+        .expect("construct shared HTTP runtime");
+
+    assert_eq!(runtime.status().state, ReferenceBootstrapState::Checking);
 }

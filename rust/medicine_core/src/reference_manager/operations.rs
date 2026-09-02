@@ -1,7 +1,7 @@
 use super::{
-    ReferenceBootstrapInfo, ReferenceBootstrapInspection, ReferenceBootstrapObserver,
-    ReferenceBootstrapPreparation, ReferenceDatabaseValidator, ReferenceManager,
-    ReferenceReleaseSource, ReferenceRuntimeError, ReferenceSelection, ReferenceUpdateStatus,
+    ReferenceBootstrapObserver, ReferenceBootstrapPreparation, ReferenceDatabaseValidator,
+    ReferenceManager, ReferenceReleaseSource, ReferenceRuntimeError, ReferenceSelection,
+    ReferenceUpdateStatus,
 };
 use crate::reference_artifacts::{
     apply_chunk_patch_verified, decompress_snapshot, NoopArtifactObserver,
@@ -43,7 +43,7 @@ impl StartupVerification {
 }
 
 impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceManager<S, V> {
-    pub fn new(root: PathBuf, contract_major: i32, source: S, validator: V) -> Self {
+    pub(crate) fn new(root: PathBuf, contract_major: i32, source: S, validator: V) -> Self {
         Self {
             root,
             contract_major,
@@ -52,47 +52,11 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceManager<
         }
     }
 
-    pub fn reference_dir(&self) -> &Path {
+    pub(crate) fn reference_dir(&self) -> &Path {
         &self.root
     }
 
-    pub fn ensure_installed(&self) -> Result<ReferenceSelection, ReferenceRuntimeError> {
-        let preparation = self.prepare_bootstrap()?;
-        self.install_prepared(preparation)
-    }
-
-    pub fn open_installed(&self) -> Result<ReferenceSelection, ReferenceRuntimeError> {
-        fs::create_dir_all(&self.root).map_err(io_error("create reference data directory"))?;
-        let _operation_lock = ReferenceDirectoryLock::acquire(&self.root.join(".operation.lock"))?;
-        let mut store = self.load_store()?;
-        Ok(self
-            .open_installed_exclusive(&mut store)?
-            .unwrap_or(ReferenceSelection {
-                database: None,
-                unavailable_reason: None,
-            }))
-    }
-
-    pub fn inspect_bootstrap(&self) -> Result<ReferenceBootstrapInspection, ReferenceRuntimeError> {
-        Ok(match self.prepare_bootstrap()? {
-            ReferenceBootstrapPreparation::Ready(_) => {
-                ReferenceBootstrapInspection::Download(ReferenceBootstrapInfo {
-                    download_size_bytes: 0,
-                    total_download_bytes: 0,
-                })
-            }
-            ReferenceBootstrapPreparation::Download {
-                release,
-                checkpoint_bytes,
-            } => ReferenceBootstrapInspection::Download(ReferenceBootstrapInfo {
-                download_size_bytes: release.full.size_bytes.saturating_sub(checkpoint_bytes),
-                total_download_bytes: release.full.size_bytes,
-            }),
-            ReferenceBootstrapPreparation::Unavailable => ReferenceBootstrapInspection::Unavailable,
-        })
-    }
-
-    pub fn prepare_bootstrap(
+    pub(crate) fn prepare_bootstrap(
         &self,
     ) -> Result<ReferenceBootstrapPreparation, ReferenceRuntimeError> {
         fs::create_dir_all(&self.root).map_err(io_error("create reference data directory"))?;
@@ -139,15 +103,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceManager<
         })
     }
 
-    pub fn install_prepared(
-        &self,
-        preparation: ReferenceBootstrapPreparation,
-    ) -> Result<ReferenceSelection, ReferenceRuntimeError> {
-        let mut observer = || Ok(());
-        self.install_prepared_with_observer(preparation, &mut observer)
-    }
-
-    pub fn install_prepared_with_observer<O: ReferenceBootstrapObserver>(
+    pub(crate) fn install_prepared_with_observer<O: ReferenceBootstrapObserver>(
         &self,
         preparation: ReferenceBootstrapPreparation,
         observer: &mut O,
@@ -233,7 +189,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceManager<
         Ok(None)
     }
 
-    pub fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError> {
+    pub(crate) fn check_for_update(&self) -> Result<ReferenceUpdateStatus, ReferenceRuntimeError> {
         fs::create_dir_all(&self.root).map_err(io_error("create reference data directory"))?;
         let _operation_lock = ReferenceDirectoryLock::acquire(&self.root.join(".operation.lock"))?;
         let mut store = self.load_store()?;

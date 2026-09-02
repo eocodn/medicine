@@ -5,7 +5,6 @@ import java.io.File
 
 data class InstalledReference(
     val database: File?,
-    val recoveryReason: String? = null,
     val unavailableReason: String? = null,
 ) {
     val referenceAvailable: Boolean
@@ -16,7 +15,6 @@ data class InstalledReference(
 
 data class ReferenceRuntimeOperation(
     val selection: InstalledReference?,
-    val snapshot: String,
     val error: String?,
 )
 
@@ -52,7 +50,6 @@ internal fun decodeReferenceRuntimeOperation(raw: String): ReferenceRuntimeOpera
     }
     return ReferenceRuntimeOperation(
         selection = selection,
-        snapshot = document.getJSONObject("snapshot").toString(),
         error = if (document.isNull("error")) null else document.optString("error").takeIf { it.isNotEmpty() },
     )
 }
@@ -62,7 +59,7 @@ object ReferenceNativeCore {
         nativeCreateReferenceRuntime(
             referenceDir.absolutePath,
             baseUrl,
-            BuildConfig.REFERENCE_TRUSTED_KEYS_JSON,
+            BuildConfig.REFERENCE_TRUST_MANIFEST_JSON,
         ).also { handle ->
             check(handle != 0L) { "native reference runtime initialization failed" }
         }
@@ -94,7 +91,7 @@ object ReferenceNativeCore {
     private external fun nativeCreateReferenceRuntime(
         referenceDir: String,
         baseUrl: String,
-        trustedKeysJson: String,
+        trustManifestJson: String,
     ): Long
 
     private external fun nativeDestroyReferenceRuntime(handle: Long)

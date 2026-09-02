@@ -1,6 +1,4 @@
-use medicine_core::reference_channel::{reference_channel_runtime, ReferenceChannelConfig};
-use medicine_core::reference_lifecycle_runtime::ReferenceRuntimeResult;
-use medicine_core::reference_manager::ReferenceUpdateStatus;
+use medicine_core::{open_reference_channel, ReferenceChannelConfig, ReferenceRuntimeResult};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -37,7 +35,7 @@ pub(super) fn command(args: &[String], usage: fn() -> String) -> Result<(), Stri
         index += 1;
     }
 
-    let runtime = reference_channel_runtime(ReferenceChannelConfig {
+    let runtime = open_reference_channel(ReferenceChannelConfig {
         reference_dir: reference_dir.ok_or_else(usage)?,
         base_url: base_url.ok_or_else(usage)?,
         trust_manifest: trust_manifest.ok_or_else(usage)?,
@@ -70,14 +68,10 @@ pub(super) fn command(args: &[String], usage: fn() -> String) -> Result<(), Stri
                     json_output,
                 );
             }
-            let update_status = match runtime
+            let update_status = runtime
                 .check_for_update()
                 .map_err(|error| error.to_string())?
-            {
-                ReferenceUpdateStatus::NoChange => "no_change",
-                ReferenceUpdateStatus::Staged => "staged",
-                ReferenceUpdateStatus::UpdateRequired => "update_required",
-            };
+                .as_str();
             emit(
                 json!({
                     "action": action,

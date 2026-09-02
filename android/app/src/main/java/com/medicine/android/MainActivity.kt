@@ -59,9 +59,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun activateReference(reference: InstalledReference) {
-        reference.recoveryReason?.let { reason ->
-            Log.w(TAG, "Reference store recovery: $reason")
-        }
         val personalDatabase = File(filesDir, "personal.sqlite")
         val encryptedPersonalDatabase = File(filesDir, "personal.sqlite.enc")
         val vault = PersonalDatabaseVault(
