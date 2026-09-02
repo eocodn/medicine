@@ -548,6 +548,7 @@ function bindEvents() {
 document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
   try {
+    await window.MedicineBootstrapUi?.ensureReady();
     await loadHealth();
     await loadPeople();
     const requestedScreen = new URLSearchParams(window.location.search).get("screen");
