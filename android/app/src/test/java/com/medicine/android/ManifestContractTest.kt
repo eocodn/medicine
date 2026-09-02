@@ -132,7 +132,9 @@ class ManifestContractTest {
         assertTrue(strings.contains("<string name=\"app_name\">약봄</string>"))
         assertFalse(strings.contains(">Medicine</string>"))
         assertTrue(activity.contains("ReferenceBootstrapJsBridge"))
-        assertTrue(bootstrapUi.contains("안전 데이터 준비에 실패했습니다. 인터넷 연결을 확인한 뒤 다시 시도해주세요."))
+        assertTrue(bootstrapUi.contains("network_failed"))
+        assertTrue(bootstrapUi.contains("install_failed"))
+        assertTrue(bootstrapUi.contains("안전 데이터 설치 또는 검증에 실패했습니다. 다시 시도해주세요."))
         assertFalse(bootstrapUi.contains("error.message"))
     }
 

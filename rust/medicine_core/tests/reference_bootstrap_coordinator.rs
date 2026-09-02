@@ -43,3 +43,23 @@ fn bootstrap_coordinator_preserves_failure_progress_and_allows_retry() {
     assert_eq!(snapshot.detail.as_deref(), Some("insufficient_storage"));
     assert!(coordinator.begin_install());
 }
+
+#[test]
+fn bootstrap_coordinator_classifies_failure_from_authoritative_phase() {
+    let mut coordinator = ReferenceBootstrapCoordinator::checking();
+    assert!(coordinator.begin_prepare());
+    coordinator.failed_for_current_phase();
+    assert_eq!(coordinator.snapshot().detail.as_deref(), Some("manifest_failed"));
+
+    coordinator.reset_for_prepare();
+    assert!(coordinator.begin_prepare());
+    coordinator.prepared_download(0, 100);
+    assert!(coordinator.begin_install());
+    coordinator.failed_for_current_phase();
+    assert_eq!(coordinator.snapshot().detail.as_deref(), Some("download_failed"));
+
+    assert!(coordinator.begin_install());
+    coordinator.installing();
+    coordinator.failed_for_current_phase();
+    assert_eq!(coordinator.snapshot().detail.as_deref(), Some("install_failed"));
+}

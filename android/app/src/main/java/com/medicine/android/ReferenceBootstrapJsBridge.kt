@@ -1,7 +1,13 @@
 package com.medicine.android
 
 import android.app.Activity
+import android.util.Log
 import android.webkit.JavascriptInterface
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -106,10 +112,29 @@ class ReferenceBootstrapJsBridge(
     }
 
     private fun fail(error: Throwable) {
+        Log.e(TAG, "Reference bootstrap failed", error)
+        val detail = when {
+            error is ReferenceBootstrapStorageException -> "insufficient_storage"
+            error.hasCause<UnknownHostException>() ||
+                error.hasCause<ConnectException>() ||
+                error.hasCause<NoRouteToHostException>() ||
+                error.hasCause<SocketTimeoutException>() ||
+                error.hasCause<SSLException>() -> "network_failed"
+            else -> "phase_failed"
+        }
         ReferenceNativeCore.bootstrapFailed(
             coordinatorHandle,
-            if (error is ReferenceBootstrapStorageException) "insufficient_storage" else "bootstrap_failed",
+            detail,
         )
+    }
+
+    private inline fun <reified T : Throwable> Throwable.hasCause(): Boolean {
+        var current: Throwable? = this
+        while (current != null) {
+            if (current is T) return true
+            current = current.cause
+        }
+        return false
     }
 
     private fun snapshot(): String = ReferenceNativeCore.bootstrapSnapshot(coordinatorHandle)
@@ -118,5 +143,9 @@ class ReferenceBootstrapJsBridge(
         responseHandler = null
         executor.shutdownNow()
         ReferenceNativeCore.destroyBootstrapCoordinator(coordinatorHandle)
+    }
+
+    companion object {
+        private const val TAG = "ReferenceBootstrap"
     }
 }

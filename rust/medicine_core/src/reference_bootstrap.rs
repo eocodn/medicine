@@ -145,6 +145,18 @@ impl ReferenceBootstrapCoordinator {
         self.snapshot.detail = Some(detail.to_owned());
     }
 
+    pub fn failed_for_current_phase(&mut self) {
+        let detail = match self.snapshot.state {
+            ReferenceBootstrapState::Checking => "manifest_failed",
+            ReferenceBootstrapState::DownloadRequired | ReferenceBootstrapState::Downloading => {
+                "download_failed"
+            }
+            ReferenceBootstrapState::Installing => "install_failed",
+            _ => "bootstrap_failed",
+        };
+        self.failed(detail);
+    }
+
     fn set_progress(
         &mut self,
         state: ReferenceBootstrapState,

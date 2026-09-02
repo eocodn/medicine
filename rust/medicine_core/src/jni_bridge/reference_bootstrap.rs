@@ -258,7 +258,11 @@ pub extern "system" fn Java_com_medicine_android_ReferenceNativeCore_nativeBoots
     let result = catch_unwind(AssertUnwindSafe(|| {
         let detail = required_string(&mut env, detail)?;
         with_bootstrap(handle, |coordinator| {
-            coordinator.failed(&detail);
+            if detail == "phase_failed" {
+                coordinator.failed_for_current_phase();
+            } else {
+                coordinator.failed(&detail);
+            }
             Ok(())
         })
     }))
