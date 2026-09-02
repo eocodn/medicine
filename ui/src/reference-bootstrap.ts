@@ -118,7 +118,7 @@ type ReferenceBootstrapStatus = {
     bytes.textContent = total > 0 ? `${formatBytes(completed)} / ${formatBytes(total)} · ${percent}%` : "";
     error.classList.toggle("hidden", current.state !== "failed");
     error.textContent = current.state === "failed"
-      ? current.detail?.startsWith("manifest_")
+      ? current.detail && (current.detail.startsWith("manifest_") || current.detail.startsWith("prepare_"))
         ? `진단 코드: ${current.detail}`
         : "안전 데이터를 준비하지 못했습니다. 다시 시도해주세요."
       : "";
@@ -153,6 +153,8 @@ type ReferenceBootstrapStatus = {
                 ? "안전 데이터 정보의 서명을 검증하지 못했습니다. 앱을 업데이트한 뒤 다시 시도해주세요."
                 : current.detail === "manifest_release"
                   ? "현재 앱과 맞는 안전 데이터 정보를 해석하지 못했습니다. 앱을 업데이트해주세요."
+          : current.detail?.startsWith("prepare_")
+            ? "안전 데이터 준비 상태를 확인하는 중 오류가 발생했습니다. 다시 시도해주세요."
           : current.detail === "manifest_failed"
             ? "안전 데이터 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요."
             : current.detail === "download_failed"

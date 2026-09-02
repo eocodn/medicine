@@ -121,6 +121,7 @@ class ReferenceBootstrapJsBridge(
                 error.hasCause<SocketTimeoutException>() ||
                 error.hasCause<SSLException>() -> "network_failed"
             error is ReferenceManifestStageException -> error.stage
+            error is ReferenceBootstrapPrepareStageException -> error.stage
             else -> "phase_failed"
         }
         ReferenceNativeCore.bootstrapFailed(
