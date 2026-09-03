@@ -9,7 +9,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
-from medicine_reference.reference_update import REFERENCE_CONTRACT_MAJOR, verify_reference_database
+from medicine_reference.reference_contracts.v1 import REFERENCE_CONTRACT_MAJOR, verify_reference_database
 from medicine_canonical.mobile import RUNTIME_INDEXES, build_mobile_database
 from medicine_canonical.cli import main as canonical_main
 from medicine_canonical.product_search_documents import materialize_product_search_fts

@@ -21,7 +21,6 @@ from medicine_canonical.release_window import (
     ContractReleaseCandidate,
     ROOT_KEY,
     build_and_publish_contract_window_from_env,
-    publish_contract_directory_from_env,
     publish_contract_window,
     publish_verified_contract_window,
 )

@@ -17,14 +17,9 @@ from .inspection import canonical_product_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .mobile import build_mobile_database
 from .reference_contracts.registry import build_supported_contract_window
-from medicine_reference.reference_update import verify_reference_database
 from .release_r2_public import audit_public_bucket_from_env
 from .release_r2_runtime import download_object_from_env
-from .release_window import (
-    build_and_publish_contract_window_from_env,
-    publish_contract_directory_from_env,
-    publish_contract_window_from_env,
-)
+from .release_window import build_and_publish_contract_window_from_env
 from .release_signing import verify_signed_envelope
 from .source_layout import MfdsSourceLayout
 from .sources import preflight_permit_api
@@ -192,15 +187,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reference_build_publish.add_argument("--json", action="store_true")
 
-    mobile_verify_runtime = sub.add_parser(
-        "mobile-verify-runtime",
-        help="Verify a mobile reference DB against on-device runtime policy and release identity",
-    )
-    mobile_verify_runtime.add_argument("--db", type=Path, required=True)
-    mobile_verify_runtime.add_argument("--contract-major", required=True)
-    mobile_verify_runtime.add_argument("--dataset-id", required=True)
-    mobile_verify_runtime.add_argument("--json", action="store_true")
-
     verify = sub.add_parser("verify", help="Verify canonical source policy, schema and SQLite integrity")
     verify.add_argument("--db", type=Path, default=DEFAULT_DB)
     verify.add_argument("--json", action="store_true")
@@ -270,18 +256,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     r2_public_audit.add_argument("--json", action="store_true")
 
-    release_publish = sub.add_parser("release-publish-r2", help="Prepare and atomically publish a mobile DB release to R2")
-    release_publish.add_argument("--db", type=Path, default=Path("data/db/mobile.sqlite"))
-    release_publish.add_argument("--mobile-manifest", type=Path, default=Path("data/db/mobile.manifest.json"))
-    release_publish.add_argument("--contract-dir", type=Path)
-    release_publish.add_argument("--output-dir", type=Path, default=Path("artifacts/reference-release"))
-    release_publish.add_argument("--created-at")
-    release_publish.add_argument(
-        "--retire-previous-contract",
-        action="store_true",
-        help="Explicitly advance the signed minimum support bound to current N",
-    )
-    release_publish.add_argument("--json", action="store_true")
     return parser
 
 
@@ -388,12 +362,6 @@ def main(argv=None) -> int:
             allow_previous_failure=args.allow_retired_previous_failure,
             progress=_reference_progress,
         )
-    elif args.command == "mobile-verify-runtime":
-        payload = verify_reference_database(
-            args.db,
-            expected_contract_major=args.contract_major,
-            expected_dataset_id=args.dataset_id,
-        )
     elif args.command == "substance-sync":
         payload = sync_substance_identity_sources(
             args.raw_dir,
@@ -441,25 +409,6 @@ def main(argv=None) -> int:
         payload = download_object_from_env(args.key, args.output)
     elif args.command == "r2-public-audit":
         payload = audit_public_bucket_from_env()
-    elif args.command == "release-publish-r2":
-        if args.contract_dir is not None:
-            payload = publish_contract_directory_from_env(
-                args.contract_dir,
-                args.output_dir,
-                created_at=args.created_at,
-                retire_previous_contract=args.retire_previous_contract,
-                progress=_reference_progress,
-            )
-        else:
-            if args.retire_previous_contract:
-                raise ValueError("--retire-previous-contract requires --contract-dir")
-            payload = publish_contract_window_from_env(
-                args.db,
-                args.mobile_manifest,
-                args.output_dir,
-                created_at=args.created_at,
-                progress=_reference_progress,
-            )
     else:
         payload = verify_canonical_database(args.db)
         _emit(payload, args.json)

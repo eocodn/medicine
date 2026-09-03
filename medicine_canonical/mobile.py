@@ -28,18 +28,10 @@ MOBILE_PHYSICAL_POLICY_VERSION = "9"
 # history or exact-byte generation. Release artifact identity is the signed
 # SHA-256/size; the publisher intentionally treats a new SHA for the same
 # logical dataset as a new physical release.
-# Compatibility alias for server-side callers while the old name is retired.
-# It is intentionally not part of dataset identity anymore.
-MOBILE_DATA_POLICY_VERSION = MOBILE_PHYSICAL_POLICY_VERSION
 REFERENCE_BUILD_META_DDL = """CREATE TABLE reference_build_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 )"""
-RUNTIME_TABLES = (
-    "canonical_meta", "source_snapshots", "products", "product_identifiers",
-    "product_search_documents", "product_rules", "product_flags", "ingredient_rules", "dose_criteria",
-    "product_criterion_links",
-)
 RUNTIME_VIEWS: tuple[str, ...] = ()
 COPIED_RUNTIME_TABLES = (
     "canonical_meta", "source_snapshots", "products", "product_identifiers",
@@ -566,14 +558,8 @@ def build_mobile_database(
     )
 
 
-# Compatibility alias for callers which assert the current default contract.
-# Contract-specific behavior is owned by reference_contracts.v1, not here.
-from .reference_contracts.v1 import REFERENCE_CONTRACT_MAJOR  # noqa: E402
-
-
 __all__ = [
     "MOBILE_PHYSICAL_POLICY_VERSION",
-    "REFERENCE_CONTRACT_MAJOR",
     "RUNTIME_INDEXES",
     "_build_mobile_database",
     "build_mobile_database",

@@ -6,8 +6,7 @@ from .release_r2_runtime import client_from_env
 from .release_window import ROOT_KEY
 
 
-LEGACY_LATEST_KEY = "reference/v1/latest.json"
-PUBLIC_REFERENCE_PREFIXES = ("reference/v1/", "reference/v2/")
+PUBLIC_REFERENCE_PREFIX = "reference/v2/"
 
 
 def _list_all_keys(client, bucket: str) -> list[str]:
@@ -33,29 +32,21 @@ def audit_public_bucket(client, bucket: str) -> dict:
     if not bucket.strip():
         raise ValueError("R2 bucket is required")
     keys = _list_all_keys(client, bucket)
-    unexpected = [
-        key
-        for key in keys
-        if not any(key.startswith(prefix) for prefix in PUBLIC_REFERENCE_PREFIXES)
-    ]
+    unexpected = [key for key in keys if not key.startswith(PUBLIC_REFERENCE_PREFIX)]
     if unexpected:
         preview = ", ".join(unexpected[:5])
         raise RuntimeError(
             "R2 bucket contains objects outside public reference namespaces "
             f"and cannot be exposed: {preview}"
         )
-    latest_keys = [key for key in (LEGACY_LATEST_KEY, ROOT_KEY) if key in keys]
-    if not latest_keys:
-        raise RuntimeError(
-            f"R2 bucket does not contain required {LEGACY_LATEST_KEY} or {ROOT_KEY}"
-        )
+    if ROOT_KEY not in keys:
+        raise RuntimeError(f"R2 bucket does not contain required {ROOT_KEY}")
     return {
         "status": "safe_to_expose",
         "bucket": bucket,
         "object_count": len(keys),
         "unexpected_keys": [],
-        "latest_keys": latest_keys,
-        "latest_key": ROOT_KEY if ROOT_KEY in latest_keys else LEGACY_LATEST_KEY,
+        "latest_key": ROOT_KEY,
     }
 
 
