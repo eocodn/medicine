@@ -376,6 +376,59 @@ fn app_commands_preserve_the_developer_cli_surface_without_python() {
 }
 
 #[test]
+fn app_reminder_commands_expose_upcoming_and_authoritative_resolution() {
+    let personal = common::temp_sqlite_path("agentctl-reminders");
+    let upcoming = agentctl()
+        .args([
+            "--personal-db",
+            personal.to_str().expect("personal path"),
+            "reminders",
+            "--from",
+            "2026-09-03T18:00:00+09:00",
+            "--days",
+            "8",
+            "--json",
+        ])
+        .output()
+        .expect("run reminders through agentctl");
+    assert!(
+        upcoming.status.success(),
+        "{}",
+        String::from_utf8_lossy(&upcoming.stderr)
+    );
+    let body: Value = serde_json::from_slice(&upcoming.stdout).expect("reminders json");
+    assert_eq!(body["occurrences"], json!([]));
+
+    let resolved = agentctl()
+        .args([
+            "--personal-db",
+            personal.to_str().expect("personal path"),
+            "reminder-resolve",
+            "--person",
+            "missing-person",
+            "--medication",
+            "missing-medication",
+            "--date",
+            "2026-09-04",
+            "--schedule-key",
+            "slot:1",
+            "--scheduled-at",
+            "2026-09-04T08:00:00+09:00",
+            "--json",
+        ])
+        .output()
+        .expect("run reminder-resolve through agentctl");
+    assert!(
+        resolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolved.stderr)
+    );
+    let body: Value = serde_json::from_slice(&resolved.stdout).expect("reminder resolve json");
+    assert_eq!(body, json!({"active": false}));
+    remove_sqlite(&personal);
+}
+
+#[test]
 fn app_search_command_preserves_query_options_and_encoding() {
     let personal = common::temp_sqlite_path("agentctl-search-personal");
     let reference = search_reference();

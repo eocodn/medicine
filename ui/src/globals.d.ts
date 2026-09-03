@@ -23,6 +23,16 @@ interface Window {
       coalesceKey: string,
     ): void;
   };
+  MedicineReminderNative?: {
+    status(): string;
+    setEnabled(enabled: boolean): void;
+    offerAfterScheduledMedicationSave(): void;
+    requestExactAlarmAccess(): void;
+  };
+  MedicineReminderUi?: {
+    refresh(): void;
+    offerAfterScheduledMedicationSave(scheduleTimes: unknown): void;
+  };
   MedicineOcrIntake?: {
     buildMedicationQueries(items: unknown): Array<{ query_id: string; text: string; node_ids: string[] }>;
     discoverMedicationRows(items: unknown, request: (path: string, options?: any) => Promise<any>): Promise<any[]>;

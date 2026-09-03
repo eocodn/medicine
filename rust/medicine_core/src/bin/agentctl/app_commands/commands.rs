@@ -28,6 +28,8 @@ pub(super) fn dispatch(
         "med-history" => medication_history(args, usage)?,
         "med-stop" => medication_stop(args, usage)?,
         "daily-plan" => daily_plan(args, usage)?,
+        "reminders" => reminders(args, usage)?,
+        "reminder-resolve" => reminder_resolve(args, usage)?,
         "dose-instance" => dose_instance(args, usage)?,
         "dose-instance-cancel" => dose_instance_cancel(args, usage)?,
         "prn-intake" => prn_intake(args, usage)?,
@@ -426,6 +428,51 @@ fn daily_plan(
         "GET",
         format!("/api/people/{person}/daily-plan{query}"),
         None,
+    ))
+}
+
+fn reminders(
+    args: &[String],
+    usage: fn() -> String,
+) -> Result<(&'static str, String, Option<Value>), String> {
+    let parsed = parse(args, &["--from", "--days"], &["--json"], usage)?;
+    parsed.expect_no_positionals()?;
+    let from = encode_query(parsed.required("--from")?);
+    let days = parsed.parse_required_i64("--days")?;
+    Ok((
+        "GET",
+        format!("/api/reminders/upcoming?from={from}&days={days}"),
+        None,
+    ))
+}
+
+fn reminder_resolve(
+    args: &[String],
+    usage: fn() -> String,
+) -> Result<(&'static str, String, Option<Value>), String> {
+    let parsed = parse(
+        args,
+        &[
+            "--person",
+            "--medication",
+            "--date",
+            "--schedule-key",
+            "--scheduled-at",
+        ],
+        &["--json"],
+        usage,
+    )?;
+    parsed.expect_no_positionals()?;
+    Ok((
+        "POST",
+        "/api/reminders/resolve".to_owned(),
+        Some(json!({
+            "person_id": parsed.required("--person")?,
+            "medication_id": parsed.required("--medication")?,
+            "scheduled_date": parsed.required("--date")?,
+            "schedule_key": parsed.required("--schedule-key")?,
+            "scheduled_at": parsed.required("--scheduled-at")?,
+        })),
     ))
 }
 

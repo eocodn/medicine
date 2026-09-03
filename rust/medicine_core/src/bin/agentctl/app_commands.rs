@@ -21,6 +21,8 @@ const APP_COMMANDS: &[&str] = &[
     "med-history",
     "med-stop",
     "daily-plan",
+    "reminders",
+    "reminder-resolve",
     "dose-instance",
     "dose-instance-cancel",
     "prn-intake",

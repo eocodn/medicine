@@ -598,3 +598,16 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .profile-switcher { min-width: 110px; max-width: 138px; }
   .history-controls { align-items: flex-end; flex-direction: column; gap: 4px; }
 }
+
+.reminder-settings-card {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.reminder-settings-card h3 { margin: 2px 0 6px; }
+.reminder-settings-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.reminder-settings-actions .secondary-button { flex: 1 1 180px; }

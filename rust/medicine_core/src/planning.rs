@@ -18,12 +18,12 @@ pub(crate) enum PlanningError {
     Internal,
 }
 
-struct DesiredDose {
-    medication_id: String,
-    schedule_key: String,
-    scheduled_time: Option<String>,
-    slot_label: Option<String>,
-    dose_text: Option<String>,
+pub(crate) struct DesiredDose {
+    pub(crate) medication_id: String,
+    pub(crate) schedule_key: String,
+    pub(crate) scheduled_time: Option<String>,
+    pub(crate) slot_label: Option<String>,
+    pub(crate) dose_text: Option<String>,
 }
 
 struct ExistingDose {
@@ -178,7 +178,10 @@ fn materialize(
     }))
 }
 
-fn medication_applies(medication: &Medication, target: NaiveDate) -> Result<bool, PlanningError> {
+pub(crate) fn medication_applies(
+    medication: &Medication,
+    target: NaiveDate,
+) -> Result<bool, PlanningError> {
     if !medication.active() {
         return Ok(false);
     }
@@ -191,7 +194,7 @@ fn medication_applies(medication: &Medication, target: NaiveDate) -> Result<bool
     Ok(true)
 }
 
-fn desired_for(medication: &Medication) -> Result<Vec<DesiredDose>, PlanningError> {
+pub(crate) fn desired_for(medication: &Medication) -> Result<Vec<DesiredDose>, PlanningError> {
     let medication_id = medication.id()?.to_owned();
     if !medication.schedules.is_empty() {
         return medication

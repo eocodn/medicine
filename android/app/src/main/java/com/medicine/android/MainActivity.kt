@@ -1,11 +1,12 @@
 package com.medicine.android
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.ViewGroup
@@ -20,13 +21,12 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 import java.io.File
-import java.security.KeyStore
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
 import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
@@ -36,8 +36,14 @@ class MainActivity : ComponentActivity() {
     private val backDispatchGate = BackDispatchGate()
     private val medicineNativeProxy = MedicineNativeProxy()
     private var referenceBootstrapBridge: ReferenceBootstrapJsBridge? = null
+    private var reminderNativeBridge: ReminderNativeBridge? = null
     private var webViewProviderPackageName: String? = null
     private var webViewProviderVersion: String? = null
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        reminderNativeBridge?.onNotificationPermissionResult(granted)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,9 +92,16 @@ class MainActivity : ComponentActivity() {
         val vault = PersonalDatabaseVault(
             personalDatabase,
             encryptedPersonalDatabase,
-            ::personalDatabaseKey,
+            PersonalDatabaseKeyStore::getOrCreate,
         )
-        val bridge = MedicineBridge(reference.database, personalDatabase, vault)
+        val bridge = MedicineBridge(
+            reference.database,
+            personalDatabase,
+            vault,
+            onPersonalWriteCommitted = { request, _ ->
+                ReminderMutationObserver.onCommitted(applicationContext, request)
+            },
+        )
         if (!reference.referenceAvailable) {
             bridge.setReferenceAvailable(
                 false,
@@ -111,23 +124,6 @@ class MainActivity : ComponentActivity() {
         }
         medicineBridge = bridge
         medicineNativeProxy.attach(bridge)
-    }
-
-    private fun personalDatabaseKey(): SecretKey {
-        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey(PERSONAL_DB_KEY_ALIAS, null) as? SecretKey)?.let { return it }
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                PERSONAL_DB_KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build()
-        )
-        return generator.generateKey()
     }
 
     private fun setupWebView() {
@@ -174,9 +170,21 @@ class MainActivity : ComponentActivity() {
             onReferenceRetired = { reason -> medicineBridge?.setReferenceAvailable(false, reason) },
         )
         referenceBootstrapBridge = bootstrapBridge
+        val reminderBridge = ReminderNativeBridge(
+            this,
+            requestNotificationPermission = ::requestMedicationNotificationPermission,
+            requestExactAlarmPermission = ::requestExactAlarmPermission,
+            onStatusChanged = ::notifyReminderStatusChanged,
+        )
+        reminderNativeBridge = reminderBridge
+        // onResume can run before WebView compatibility/bootstrap creates this bridge.
+        // Refresh here as the cold-start boundary so alarms removed by force-stop are rebuilt
+        // as soon as the user launches the app again.
+        reminderBridge.refresh()
 
         view.addJavascriptInterface(medicineNativeProxy, "MedicineNative")
         view.addJavascriptInterface(bootstrapBridge, "MedicineBootstrapNative")
+        view.addJavascriptInterface(reminderBridge, "MedicineReminderNative")
         ocrIntegration.configureWebView(view)
         view.webViewClient = createAssetWebViewClient(assetLoader)
         bootstrapBridge.setResponseHandler { requestId, response ->
@@ -230,6 +238,61 @@ class MainActivity : ComponentActivity() {
             super.onPageFinished(view, url)
             onPageFinished?.invoke(view, url)
         }
+    }
+
+    private fun requestMedicationNotificationPermission() {
+        runOnUiThread {
+            val runtimePermissionMissing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (runtimePermissionMissing) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return@runOnUiThread
+            }
+            if (!ReminderPermissions.notificationsAllowed(this)) {
+                try {
+                    startActivity(
+                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    )
+                } catch (error: ActivityNotFoundException) {
+                    Log.e(TAG, "Notification settings are unavailable", error)
+                    reminderNativeBridge?.onNotificationPermissionResult(false)
+                }
+                return@runOnUiThread
+            }
+            reminderNativeBridge?.onNotificationPermissionResult(true)
+        }
+    }
+
+    private fun requestExactAlarmPermission() {
+        runOnUiThread {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || ReminderPermissions.exactAlarmAllowed(this)) {
+                reminderNativeBridge?.refresh()
+                return@runOnUiThread
+            }
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                        .setData("package:$packageName".toUri())
+                )
+            } catch (error: ActivityNotFoundException) {
+                Log.e(TAG, "Exact alarm settings are unavailable", error)
+                reminderNativeBridge?.refresh()
+            }
+        }
+    }
+
+    private fun notifyReminderStatusChanged() {
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
+            webView?.evaluateJavascript("window.MedicineReminderUi?.refresh?.()", null)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        reminderNativeBridge?.refresh()
     }
 
     private fun showUnsupportedWebView() {
@@ -316,6 +379,7 @@ class MainActivity : ComponentActivity() {
         view.stopLoading()
         view.removeJavascriptInterface("MedicineNative")
         view.removeJavascriptInterface("MedicineBootstrapNative")
+        view.removeJavascriptInterface("MedicineReminderNative")
         view.clearHistory()
         view.removeAllViews()
         view.destroy()
@@ -329,6 +393,7 @@ class MainActivity : ComponentActivity() {
         if (::ocrIntegration.isInitialized) ocrIntegration.close()
         referenceBootstrapBridge?.close()
         referenceBootstrapBridge = null
+        reminderNativeBridge = null
         medicineBridge?.close()
         medicineBridge = null
         webView?.let(::destroyWebView)
@@ -342,6 +407,5 @@ class MainActivity : ComponentActivity() {
             "https://$APP_ASSET_DOMAIN/static/webview-compatibility.html"
         private const val APP_URL = "https://$APP_ASSET_DOMAIN/static/index.html"
         private const val DEFAULT_WEBVIEW_PACKAGE = "com.google.android.webview"
-        private const val PERSONAL_DB_KEY_ALIAS = "medicine.personal-db.v1"
     }
 }

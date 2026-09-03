@@ -360,6 +360,11 @@ function renderPrescriptionForm(preview, medication = null) {
   refocusRiskSheetIfOpen();
 }
 
+function offerRemindersAfterScheduleSave(scheduleTimes) {
+  if (typeof window === "undefined") return;
+  window.MedicineReminderUi?.offerAfterScheduledMedicationSave?.(scheduleTimes);
+}
+
 function medicationSafetyPreview(medication) {
   const currentAssessment = medication.current_assessment || {};
   return {
@@ -430,6 +435,7 @@ async function confirmEditMedication() {
     return;
   }
 
+  offerRemindersAfterScheduleSave(draft.schedule_times);
   reconcileCommittedMedication(updated);
   markDashboardStale();
   state.editingMedicationId = null;
@@ -477,6 +483,8 @@ async function confirmAddMedication() {
     toast(error.message);
     return;
   }
+
+  offerRemindersAfterScheduleSave(draft.schedule_times);
 
   const currentDashboard = state.dashboard || {};
   const currentMedications = currentDashboard.medications || [];
