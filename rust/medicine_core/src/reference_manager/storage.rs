@@ -8,7 +8,7 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const IO_BUFFER_SIZE: usize = 1024 * 1024;
 
@@ -174,39 +174,6 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ReferenceRun
         let _ = fs::remove_file(temp);
     }
     result
-}
-
-pub(crate) fn recover_android_atomic_file_state(path: &Path) -> Result<(), ReferenceRuntimeError> {
-    let backup = suffixed_path(path, ".bak");
-    let new = suffixed_path(path, ".new");
-    let mut changed = false;
-
-    // Existing Android installs used android.util.AtomicFile. Its read path
-    // restores the legacy backup after an interrupted write and discards an
-    // incomplete .new file. Consume those real upgrade artifacts before Rust
-    // becomes the sole state writer; otherwise high-water state could appear
-    // missing or corrupt after an app/process interruption during an upgrade.
-    if backup.exists() {
-        fs::rename(&backup, path).map_err(io_error("restore legacy Android reference state"))?;
-        changed = true;
-    }
-    if new.exists() {
-        fs::remove_file(&new).map_err(io_error("discard legacy Android reference state temp"))?;
-        changed = true;
-    }
-    if changed {
-        let parent = path
-            .parent()
-            .ok_or_else(|| ReferenceRuntimeError::new("reference state path has no parent"))?;
-        sync_directory(parent)?;
-    }
-    Ok(())
-}
-
-fn suffixed_path(path: &Path, suffix: &str) -> PathBuf {
-    let mut value = path.as_os_str().to_os_string();
-    value.push(suffix);
-    PathBuf::from(value)
 }
 
 pub(crate) fn available_bytes(path: &Path) -> Result<u64, ReferenceRuntimeError> {

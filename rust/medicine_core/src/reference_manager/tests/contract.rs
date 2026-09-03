@@ -3,7 +3,7 @@ use crate::reference_manager::{
     ReferenceDatabaseValidator, ReferenceManager, ReferenceReleaseSource, ReferenceRuntimeError,
     ReferenceUpdateStatus,
 };
-use crate::reference_state::{ReferenceStateCodec, ReferenceStore, ReferenceVersion};
+use crate::reference_state::{ReferenceStateCodec, ReferenceVersion};
 use crate::{
     ReferenceArtifactKind, ReferenceReleaseArtifact, ReferenceRootSelection,
     VerifiedReferenceRelease,
@@ -144,7 +144,7 @@ fn shared_manager_bootstraps_and_stages_update_without_web_feature() {
         .ensure_installed()
         .expect("bootstrap");
     let installed_state =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.json")).unwrap()).unwrap();
     assert!(installed_state.active_seal.is_some());
     let (v2, a2) = fixture(11, 2);
     let manager =
@@ -154,62 +154,9 @@ fn shared_manager_bootstraps_and_stages_update_without_web_feature() {
         ReferenceUpdateStatus::Staged
     );
     let state =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.json")).unwrap()).unwrap();
     assert_eq!(state.pending.unwrap().release_sequence, 11);
     assert!(state.pending_seal.is_some());
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn shared_manager_recovers_interrupted_android_atomic_file_state() {
-    let root = root();
-    std::fs::create_dir_all(&root).unwrap();
-    let database = vec![3u8; 4096];
-    let active = ReferenceVersion {
-        dataset_id: format!("sha256:{}", digest(b"android-atomic-state")),
-        sha256: digest(&database),
-        size_bytes: database.len() as i64,
-        contract_major: 1,
-        release_sequence: 40,
-    };
-    let mut store = ReferenceStore::default();
-    store.install_initial(active.clone()).unwrap();
-    let encoded = ReferenceStateCodec::encode(&store.snapshot()).unwrap();
-    std::fs::write(
-        root.join(format!("mobile-{}.sqlite", active.sha256)),
-        &database,
-    )
-    .unwrap();
-
-    // android.util.AtomicFile may leave a valid .bak plus an incomplete base
-    // and .new file when the process dies during a state write. openRead()
-    // restores the backup and discards the in-progress file.
-    std::fs::write(root.join("state.v1.bak"), &encoded).unwrap();
-    std::fs::write(root.join("state.v1"), b"corrupt partial state").unwrap();
-    std::fs::write(root.join("state.v1.new"), b"incomplete replacement").unwrap();
-
-    let (release, archive) = fixture(41, 4);
-    let manager = ReferenceManager::new(
-        root.clone(),
-        1,
-        source(release, archive),
-        AcceptingValidator,
-    );
-    let selected = manager
-        .open_installed()
-        .expect("recover legacy AtomicFile state");
-
-    assert_eq!(
-        selected.database,
-        Some(root.join(format!("mobile-{}.sqlite", active.sha256)))
-    );
-    let recovered =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
-    assert_eq!(recovered.active, Some(active));
-    assert_eq!(recovered.highest_activated_sequence, 40);
-    assert!(recovered.active_seal.is_some());
-    assert!(!root.join("state.v1.bak").exists());
-    assert!(!root.join("state.v1.new").exists());
     let _ = std::fs::remove_dir_all(root);
 }
 

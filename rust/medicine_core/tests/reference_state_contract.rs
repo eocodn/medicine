@@ -24,33 +24,6 @@ fn seal(marker: i64) -> ReferenceFileSeal {
     }
 }
 
-fn put_utf(output: &mut Vec<u8>, value: &str) {
-    let bytes = value.as_bytes();
-    output.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-    output.extend_from_slice(bytes);
-}
-
-fn put_version_v1(output: &mut Vec<u8>, value: Option<&ReferenceVersion>) {
-    output.push(u8::from(value.is_some()));
-    if let Some(value) = value {
-        put_utf(output, &value.dataset_id);
-        put_utf(output, &value.sha256);
-        output.extend_from_slice(&value.size_bytes.to_be_bytes());
-        put_utf(output, "10");
-        output.extend_from_slice(&value.release_sequence.to_be_bytes());
-    }
-}
-
-fn legacy_v1(active: Option<&ReferenceVersion>, high_water: i64) -> Vec<u8> {
-    let mut output = Vec::new();
-    put_utf(&mut output, "MEDREFSTATE1");
-    output.extend_from_slice(&high_water.to_be_bytes());
-    put_version_v1(&mut output, active);
-    put_version_v1(&mut output, None);
-    put_version_v1(&mut output, None);
-    output
-}
-
 #[test]
 fn initial_install_and_interrupted_adoption_are_idempotent() {
     let initial = version(12, 'a', 1);
@@ -208,17 +181,9 @@ fn state_json_uses_stable_cross_platform_camel_case_and_preserves_seals() {
 }
 
 #[test]
-fn codec_decodes_legacy_v1_and_round_trips_integrated_v3() {
-    let active = version(5, 'e', 1);
-    let decoded = ReferenceStateCodec::decode(&legacy_v1(Some(&active), 5)).unwrap();
-    assert_eq!(decoded.active, Some(active.clone()));
-    assert_eq!(decoded.active.unwrap().contract_major, 1);
-    assert_eq!(decoded.highest_activated_sequence, 5);
-    assert_eq!(decoded.highest_seen_root_sequence, 0);
-    assert_eq!(decoded.active_seal, None);
-
+fn codec_round_trips_current_json_and_rejects_non_json_state() {
     let state = ReferenceStoreState {
-        active: Some(active),
+        active: Some(version(5, 'e', 1)),
         previous: Some(version(3, 'd', 1)),
         pending: Some(version(8, 'f', 1)),
         highest_activated_sequence: 5,
@@ -230,43 +195,11 @@ fn codec_decodes_legacy_v1_and_round_trips_integrated_v3() {
         pending_seal: Some(seal(8)),
     };
     let encoded = ReferenceStateCodec::encode(&state).unwrap();
-    assert_eq!(&encoded[2..14], b"MEDREFSTATE3");
+    let json: Value = serde_json::from_slice(&encoded).expect("state must be JSON");
+    assert_eq!(json["highestActivatedSequence"], 5);
     assert_eq!(ReferenceStateCodec::decode(&encoded).unwrap(), state);
-}
 
-#[test]
-fn rust_codec_reads_existing_android_data_output_stream_v3_state() {
-    // Fixture encoded with Android-compatible java.io.DataOutputStream bytes.
-    let bytes = include_bytes!("fixtures/android_reference_state_v3.bin");
-
-    let state = ReferenceStateCodec::decode(bytes).expect("Android v3 state must remain readable");
-    assert_eq!(state.highest_activated_sequence, 36);
-    assert_eq!(state.highest_seen_root_sequence, 37);
-    let expected_root = "a".repeat(64);
-    assert_eq!(
-        state.highest_seen_root_hash.as_deref(),
-        Some(expected_root.as_str())
-    );
-    assert_eq!(state.highest_retired_contract_major, 1);
-    let active = state.active.as_ref().expect("active reference");
-    assert_eq!(active.dataset_id, format!("sha256:{}", "b".repeat(64)));
-    assert_eq!(active.sha256, "c".repeat(64));
-    assert_eq!(active.size_bytes, 47_786_161);
-    assert_eq!(active.release_sequence, 36);
-    assert_eq!(
-        state
-            .active_seal
-            .as_ref()
-            .map(|seal| seal.identity_key.as_str()),
-        Some("(dev=fd00,ino=12345)")
-    );
-
-    // Persisted reference fields are ASCII, so Rust's UTF-8 writer is
-    // byte-for-byte compatible with DataOutputStream's modified-UTF framing.
-    assert_eq!(
-        ReferenceStateCodec::encode(&state).unwrap().as_slice(),
-        bytes
-    );
+    assert!(ReferenceStateCodec::decode(b"not-json").is_err());
 }
 
 #[test]

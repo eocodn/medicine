@@ -1,9 +1,9 @@
-//! Creation and migration of the encrypted application's personal SQLite DB.
+//! Creation and validation of the encrypted application's personal SQLite DB.
 //!
-//! The schema is deliberately owned by the Rust core.  Android and local
-//! development callers may open the same file, but only this module decides
-//! when a schema transition is complete.  A schema marker is written last;
-//! callers must still validate the core objects instead of trusting it alone.
+//! The schema is owned by the Rust core. Android and local development callers
+//! may open the same file, but only this module defines the current schema. A
+//! schema marker is written last; callers still validate core objects instead
+//! of trusting the marker alone.
 
 mod validation;
 
@@ -65,8 +65,8 @@ impl SchemaLock {
             .read(true)
             .write(true)
             .open(PathBuf::from(lock_path))?;
-        // Keep a retained advisory lock file so concurrent app and CLI processes
-        // serialize schema migration before opening their SQLite write boundary.
+        // Keep an advisory lock file so concurrent app and CLI processes
+        // serialize schema initialization before opening their SQLite write boundary.
         let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
         if result != 0 {
             return Err(io::Error::last_os_error().into());
@@ -85,7 +85,7 @@ impl Drop for SchemaLock {
     }
 }
 
-/// Create or migrate a personal database in one immediate transaction.
+/// Create or validate a personal database in one immediate transaction.
 pub(crate) fn initialize(path: &Path) -> Result<(), SchemaError> {
     if let Some(parent) = path
         .parent()
@@ -108,9 +108,6 @@ pub(crate) fn ensure(connection: &mut Connection) -> Result<(), SchemaError> {
     connection.pragma_update(None, "foreign_keys", "ON")?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     create_tables(&transaction)?;
-    add_legacy_columns(&transaction)?;
-    backfill(&transaction)?;
-    migrate_occurrence_keys(&transaction)?;
     install_indexes_and_triggers(&transaction)?;
     validation::validate_required_columns(&transaction)?;
     // user_version is an advisory marker.  It is deliberately the final
@@ -151,14 +148,27 @@ fn create_tables(transaction: &Transaction<'_>) -> Result<(), SchemaError> {
         CREATE TABLE IF NOT EXISTS medications (
             id TEXT PRIMARY KEY,
             person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+            catalog_item_seq TEXT,
             product_code TEXT,
             product_name TEXT NOT NULL,
             ingredient_code TEXT,
             ingredient_name TEXT,
+            manufacturer TEXT,
+            catalog_source TEXT,
             dosage_text TEXT,
+            dose_amount REAL,
+            dose_unit TEXT,
+            frequency_per_day INTEGER,
+            meal_relation TEXT,
+            administration_route TEXT,
+            as_needed INTEGER NOT NULL DEFAULT 0,
+            prn_max_per_day INTEGER,
+            prescription_days INTEGER,
+            long_term INTEGER NOT NULL DEFAULT 0,
             start_date TEXT,
             end_date TEXT,
             active INTEGER NOT NULL DEFAULT 1,
+            stopped_at TEXT,
             source TEXT NOT NULL DEFAULT 'dur_search',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             revision INTEGER NOT NULL DEFAULT 1,
@@ -177,6 +187,7 @@ fn create_tables(transaction: &Transaction<'_>) -> Result<(), SchemaError> {
             id TEXT PRIMARY KEY,
             medication_id TEXT NOT NULL REFERENCES medications(id) ON DELETE RESTRICT,
             person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+            dose_instance_id TEXT,
             status TEXT NOT NULL,
             occurred_at TEXT NOT NULL,
             note TEXT,
@@ -234,207 +245,6 @@ fn create_tables(transaction: &Transaction<'_>) -> Result<(), SchemaError> {
         );
         "#,
     )?;
-    Ok(())
-}
-
-fn add_legacy_columns(transaction: &Transaction<'_>) -> Result<(), SchemaError> {
-    add_missing_columns(
-        transaction,
-        "people",
-        &[("lactation_status", "TEXT NOT NULL DEFAULT 'unknown'")],
-    )?;
-    add_missing_columns(
-        transaction,
-        "medications",
-        &[
-            ("catalog_item_seq", "TEXT"),
-            ("manufacturer", "TEXT"),
-            ("catalog_source", "TEXT"),
-            ("dose_amount", "REAL"),
-            ("dose_unit", "TEXT"),
-            ("frequency_per_day", "INTEGER"),
-            ("meal_relation", "TEXT"),
-            ("administration_route", "TEXT"),
-            ("as_needed", "INTEGER NOT NULL DEFAULT 0"),
-            ("prn_max_per_day", "INTEGER"),
-            ("prescription_days", "INTEGER"),
-            ("long_term", "INTEGER NOT NULL DEFAULT 0"),
-            ("stopped_at", "TEXT"),
-            ("revision", "INTEGER NOT NULL DEFAULT 1"),
-            ("updated_at", "TEXT"),
-        ],
-    )?;
-    add_missing_columns(
-        transaction,
-        "dose_logs",
-        &[
-            ("dose_instance_id", "TEXT"),
-            ("product_name_snapshot", "TEXT"),
-            ("dosage_text_snapshot", "TEXT"),
-        ],
-    )?;
-    add_missing_columns(
-        transaction,
-        "dose_instances",
-        &[
-            ("product_name_snapshot", "TEXT"),
-            ("ingredient_name_snapshot", "TEXT"),
-        ],
-    )?;
-    add_missing_columns(
-        transaction,
-        "medication_revisions",
-        &[
-            ("medication_id", "TEXT"),
-            ("revision", "INTEGER"),
-            ("action", "TEXT"),
-            ("snapshot_json", "TEXT"),
-            ("assessment_json", "TEXT"),
-            ("acknowledged", "INTEGER NOT NULL DEFAULT 0"),
-            ("request_id", "TEXT"),
-            ("payload_hash", "TEXT"),
-            ("created_at", "TEXT"),
-        ],
-    )?;
-    add_missing_columns(
-        transaction,
-        "medication_requests",
-        &[
-            ("request_id", "TEXT"),
-            ("person_id", "TEXT"),
-            ("payload_hash", "TEXT"),
-            ("medication_id", "TEXT"),
-            ("created_at", "TEXT"),
-        ],
-    )?;
-    Ok(())
-}
-
-fn add_missing_columns(
-    transaction: &Transaction<'_>,
-    table: &str,
-    columns: &[(&str, &str)],
-) -> Result<(), SchemaError> {
-    let existing = {
-        let mut statement = transaction.prepare(&format!("PRAGMA table_info({table})"))?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<Result<Vec<_>, _>>()?;
-        rows
-    };
-    for (name, definition) in columns {
-        if !existing.iter().any(|column| column == name) {
-            transaction.execute(
-                &format!("ALTER TABLE {table} ADD COLUMN {name} {definition}"),
-                [],
-            )?;
-        }
-    }
-    Ok(())
-}
-
-fn backfill(transaction: &Transaction<'_>) -> Result<(), SchemaError> {
-    transaction.execute_batch(
-        r#"
-        UPDATE medications
-        SET updated_at=COALESCE(updated_at, created_at, CURRENT_TIMESTAMP),
-            revision=COALESCE(revision, 1)
-        WHERE updated_at IS NULL OR revision IS NULL;
-
-        UPDATE medications
-        SET stopped_at=substr(COALESCE(updated_at, created_at), 1, 10)
-        WHERE active=0 AND stopped_at IS NULL;
-
-        UPDATE medications SET long_term=1
-        WHERE end_date IS NULL AND prescription_days IS NULL
-          AND COALESCE(long_term,0)=0;
-
-        UPDATE people
-        SET pregnancy_status='not_applicable', lactation_status='not_applicable'
-        WHERE sex='male';
-
-        UPDATE dose_instances
-        SET product_name_snapshot=COALESCE(
-                product_name_snapshot,
-                (SELECT product_name FROM medications
-                 WHERE medications.id=dose_instances.medication_id)
-            ),
-            ingredient_name_snapshot=COALESCE(
-                ingredient_name_snapshot,
-                (SELECT ingredient_name FROM medications
-                 WHERE medications.id=dose_instances.medication_id)
-            )
-        WHERE product_name_snapshot IS NULL OR ingredient_name_snapshot IS NULL;
-
-        UPDATE dose_logs
-        SET product_name_snapshot=COALESCE(
-                product_name_snapshot,
-                (SELECT product_name FROM medications
-                 WHERE medications.id=dose_logs.medication_id)
-            ),
-            dosage_text_snapshot=COALESCE(
-                dosage_text_snapshot,
-                (SELECT dosage_text FROM medications
-                 WHERE medications.id=dose_logs.medication_id)
-            )
-        WHERE product_name_snapshot IS NULL OR dosage_text_snapshot IS NULL;
-        "#,
-    )?;
-    Ok(())
-}
-
-fn migrate_occurrence_keys(transaction: &Transaction<'_>) -> Result<(), SchemaError> {
-    let groups = {
-        let mut statement = transaction.prepare(
-            "SELECT DISTINCT medication_id,scheduled_date FROM dose_instances
-             WHERE schedule_key LIKE 'time:%'",
-        )?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        rows
-    };
-    for (medication_id, scheduled_date) in groups {
-        let rows = {
-            let mut statement = transaction.prepare(
-                "SELECT id,rowid FROM dose_instances
-                 WHERE medication_id=? AND scheduled_date=? AND schedule_key NOT LIKE 'prn:%'
-                 ORDER BY CASE WHEN scheduled_time IS NULL THEN 1 ELSE 0 END,
-                          scheduled_time,created_at,rowid",
-            )?;
-            let rows = statement
-                .query_map((&medication_id, &scheduled_date), |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            rows
-        };
-        // First move every row away from both the old time keys and existing
-        // slot keys.  The generated namespace is checked before each write so
-        // even a hand-crafted legacy key cannot collide with this phase.
-        for (id, rowid) in &rows {
-            let mut temporary = format!("__occurrence_migration__:{rowid}");
-            while transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM dose_instances WHERE schedule_key=? AND id<>?)",
-                (&temporary, id),
-                |row| row.get::<_, bool>(0),
-            )? {
-                temporary.push('_');
-            }
-            transaction.execute(
-                "UPDATE dose_instances SET schedule_key=? WHERE id=?",
-                (&temporary, id),
-            )?;
-        }
-        for (index, (id, _)) in rows.iter().enumerate() {
-            transaction.execute(
-                "UPDATE dose_instances SET schedule_key=? WHERE id=?",
-                (format!("slot:{}", index + 1), id),
-            )?;
-        }
-    }
     Ok(())
 }
 
@@ -500,7 +310,6 @@ fn install_indexes_and_triggers(transaction: &Transaction<'_>) -> Result<(), Sch
             SELECT RAISE(ABORT, 'dose log snapshots are immutable');
         END;
 
-        DROP TRIGGER IF EXISTS trg_medication_revisions_append_only_delete;
         "#,
     )?;
     Ok(())
