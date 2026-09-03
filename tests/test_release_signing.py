@@ -175,7 +175,7 @@ class ReleaseSigningTest(unittest.TestCase):
         self.assertEqual(payload["release_sequence"], 7)
         self.assertEqual(payload["manifest"], self.manifest)
 
-    def test_release_verify_envelope_cli_rejects_unsupported_legacy_schema(self) -> None:
+    def test_release_verify_envelope_cli_rejects_unsupported_schema(self) -> None:
         manifest = dict(self.manifest, schema_version=2)
         payload = (
             json.dumps(

@@ -20,11 +20,6 @@ fn encode_gzip(bytes: &[u8]) -> Vec<u8> {
     encoder.finish().expect("finish gzip fixture")
 }
 
-fn put_utf(output: &mut Vec<u8>, value: &str) {
-    output.extend_from_slice(&(value.len() as u16).to_be_bytes());
-    output.extend_from_slice(value.as_bytes());
-}
-
 const PATCH_SOURCE: &[u8] = b"abcdefgh";
 const PATCH_TARGET: &[u8] = b"abCDefgh!";
 const PATCH_SOURCE_SHA: &str = "9c56cc51b374c3ba189210d5b6d4bf57790d351c96c47c02190ecf1e430635ab";
@@ -53,23 +48,8 @@ fn valid_patch_bytes() -> Vec<u8> {
     bytes
 }
 
-fn legacy_state_bytes(version: &ReferenceVersion) -> Vec<u8> {
-    let mut output = Vec::new();
-    put_utf(&mut output, "MEDREFSTATE1");
-    output.extend_from_slice(&version.release_sequence.to_be_bytes());
-    output.push(1);
-    put_utf(&mut output, &version.dataset_id);
-    put_utf(&mut output, &version.sha256);
-    output.extend_from_slice(&version.size_bytes.to_be_bytes());
-    put_utf(&mut output, "10");
-    output.extend_from_slice(&version.release_sequence.to_be_bytes());
-    output.push(0);
-    output.push(0);
-    output
-}
-
 #[test]
-fn reference_state_command_decodes_v3_and_reports_legacy_format() {
+fn reference_state_command_reports_current_state_without_migration_metadata() {
     let state_path = common::temp_sqlite_path("cli-reference-state");
     let version = ReferenceVersion {
         dataset_id: format!("sha256:{}", "a".repeat(64)),
@@ -79,7 +59,7 @@ fn reference_state_command_decodes_v3_and_reports_legacy_format() {
         release_sequence: 7,
     };
     let state = ReferenceStoreState {
-        active: Some(version.clone()),
+        active: Some(version),
         highest_activated_sequence: 7,
         highest_seen_root_sequence: 8,
         highest_seen_root_hash: Some("c".repeat(64)),
@@ -87,11 +67,11 @@ fn reference_state_command_decodes_v3_and_reports_legacy_format() {
     };
     fs::write(
         &state_path,
-        ReferenceStateCodec::encode(&state).expect("encode v3 state"),
+        ReferenceStateCodec::encode(&state).expect("encode state"),
     )
-    .expect("write v3 state");
+    .expect("write state");
 
-    let v3 = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
+    let output = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
         .args([
             "reference-state",
             "--state-file",
@@ -99,38 +79,17 @@ fn reference_state_command_decodes_v3_and_reports_legacy_format() {
             "--json",
         ])
         .output()
-        .expect("run reference-state v3");
+        .expect("run reference-state");
     assert!(
-        v3.status.success(),
+        output.status.success(),
         "{}",
-        String::from_utf8_lossy(&v3.stderr)
+        String::from_utf8_lossy(&output.stderr)
     );
-    let value: Value = serde_json::from_slice(&v3.stdout).expect("state json");
+    let value: Value = serde_json::from_slice(&output.stdout).expect("state json");
     assert_eq!(value["status"], 200);
-    assert_eq!(value["body"]["format"], "MEDREFSTATE3");
-    assert_eq!(value["body"]["legacy"], false);
     assert_eq!(value["body"]["state"]["active"]["releaseSequence"], 7);
     assert_eq!(value["body"]["state"]["highestSeenRootSequence"], 8);
-
-    fs::write(&state_path, legacy_state_bytes(&version)).expect("write v1 state");
-    let v1 = Command::new(env!("CARGO_BIN_EXE_medicine-agentctl"))
-        .args([
-            "reference-state",
-            "--state-file",
-            state_path.to_str().expect("state path"),
-            "--json",
-        ])
-        .output()
-        .expect("run reference-state v1");
-    assert!(
-        v1.status.success(),
-        "{}",
-        String::from_utf8_lossy(&v1.stderr)
-    );
-    let value: Value = serde_json::from_slice(&v1.stdout).expect("legacy state json");
-    assert_eq!(value["body"]["format"], "MEDREFSTATE1");
-    assert_eq!(value["body"]["legacy"], true);
-    assert_eq!(value["body"]["state"]["active"]["releaseSequence"], 7);
+    assert!(value["body"].get("format").is_none());
 
     fs::remove_file(state_path).ok();
 }
@@ -178,7 +137,7 @@ fn reference_state_command_fails_closed_for_missing_malformed_or_trailing_state(
         .output()
         .expect("run trailing reference-state");
     assert!(!trailing.status.success());
-    assert!(String::from_utf8_lossy(&trailing.stderr).contains("trailing reference state data"));
+    assert!(String::from_utf8_lossy(&trailing.stderr).contains("reference state"));
     fs::remove_file(state_path).ok();
 }
 

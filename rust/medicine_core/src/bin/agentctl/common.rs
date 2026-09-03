@@ -7,7 +7,7 @@ mod discovery;
 #[cfg(feature = "agentctl")]
 #[path = "reference_bootstrap.rs"]
 mod reference_bootstrap;
-#[path = "../medicine_core/reference_cli.rs"]
+#[path = "reference_cli.rs"]
 mod reference_cli;
 #[cfg(feature = "agentctl")]
 #[path = "runtime_log.rs"]

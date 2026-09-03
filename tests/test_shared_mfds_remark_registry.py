@@ -67,9 +67,7 @@ class SharedMfdsRemarkRegistryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unreviewed MFDS REMARK"):
             reviewed_mfds_remark("dose_caution", "새로운 미검토 비고")
 
-    def test_registry_has_one_server_review_location_and_is_not_android_packaged(self) -> None:
-        self.assertFalse(Path("medicine_canonical/mfds_remark_registry.py").exists())
-        self.assertFalse(Path("medicine_canonical/data/mfds_remark_registry.tsv").exists())
+    def test_registry_is_packaged_as_server_side_builder_data(self) -> None:
         self.assertTrue(Path("medicine_reference/mfds_remark_registry.py").is_file())
         self.assertTrue(Path("medicine_reference/data/mfds_remark_registry.tsv").is_file())
 
@@ -79,8 +77,6 @@ class SharedMfdsRemarkRegistryTest(unittest.TestCase):
         gradle = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
         self.assertNotIn('include("medicine_reference/**/*.py")', gradle)
         self.assertNotIn('include("medicine_reference/data/mfds_remark_registry.tsv")', gradle)
-        self.assertNotIn('include("medicine_canonical/mfds_remark_registry.py")', gradle)
-        self.assertNotIn('include("medicine_canonical/data/mfds_remark_registry.tsv")', gradle)
 
 
 if __name__ == "__main__":

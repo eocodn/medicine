@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from medicine_reference.reference_update import REFERENCE_CONTRACT_MAJOR as RUNTIME_CONTRACT_MAJOR
+from medicine_reference.reference_contracts.v1 import REFERENCE_CONTRACT_MAJOR
 from medicine_canonical import linking
-from medicine_canonical.mobile import REFERENCE_CONTRACT_MAJOR as BUILDER_CONTRACT_MAJOR
 from medicine_canonical.preprocessing import IdentityResolver
 from medicine_canonical.schema import SCHEMA_VERSION
 from tests.canonical_linking_test_support import CanonicalLinkingFixture
@@ -257,5 +256,4 @@ class MfdsFalseNegativeRecoveryTest(CanonicalLinkingFixture):
 
     def test_semantic_link_change_advances_persisted_generations(self) -> None:
         self.assertEqual(SCHEMA_VERSION, "11")
-        self.assertEqual(BUILDER_CONTRACT_MAJOR, 1)
-        self.assertEqual(RUNTIME_CONTRACT_MAJOR, 1)
+        self.assertEqual(REFERENCE_CONTRACT_MAJOR, 1)

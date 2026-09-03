@@ -31,14 +31,11 @@ pub fn reference_state(args: &[String], usage: fn() -> String) -> Result<(), Str
             state_file.display()
         )
     })?;
-    let legacy = ReferenceStateCodec::is_legacy_v1(&bytes);
     let state = ReferenceStateCodec::decode(&bytes)
         .map_err(|error| format!("cannot decode reference state: {error}"))?;
     let response = json!({
         "status": 200,
         "body": {
-            "format": if legacy { "MEDREFSTATE1" } else { "MEDREFSTATE3" },
-            "legacy": legacy,
             "state": state,
         }
     });

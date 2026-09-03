@@ -146,9 +146,9 @@ fn first_bootstrap_installs_content_addressed_reference_and_state() {
     let expected = root.join(format!("mobile-{}.sqlite", release.target_sha256));
     assert_eq!(selected.database.as_deref(), Some(expected.as_path()));
     assert!(expected.is_file());
-    assert!(root.join("state.v1").is_file());
+    assert!(root.join("state.json").is_file());
     let state =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.json")).unwrap()).unwrap();
     assert_eq!(state.active.unwrap().release_sequence, 17);
     let _ = std::fs::remove_dir_all(root);
 }
@@ -180,7 +180,7 @@ fn bootstrap_repairs_writable_content_addressed_file_before_state_adoption() {
     let mode = std::fs::metadata(&final_path).unwrap().permissions().mode();
     assert_eq!(mode & 0o222, 0, "adopted reference must be read-only");
     let state =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.json")).unwrap()).unwrap();
     assert_eq!(state.active.unwrap().release_sequence, 17);
     let _ = std::fs::remove_dir_all(root);
 }
@@ -243,14 +243,14 @@ fn update_is_staged_and_activates_on_next_start() {
         Some(root.join(format!("mobile-{}.sqlite", release1.target_sha256)))
     );
     let before_update =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.json")).unwrap()).unwrap();
     assert!(before_update.pending.is_none());
     assert_eq!(
         update_manager.check_for_update().expect("stage update"),
         ReferenceUpdateStatus::Staged
     );
     let staged =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.json")).unwrap()).unwrap();
     assert_eq!(staged.pending.unwrap().release_sequence, 18);
 
     let next = ReferenceManager::new(root.clone(), 1, PanicSource, AcceptingValidator)
@@ -261,7 +261,7 @@ fn update_is_staged_and_activates_on_next_start() {
         Some(root.join(format!("mobile-{}.sqlite", release2.target_sha256)))
     );
     let activated =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.json")).unwrap()).unwrap();
     assert_eq!(activated.active.unwrap().release_sequence, 18);
     assert_eq!(activated.previous.unwrap().release_sequence, 17);
     let _ = std::fs::remove_dir_all(root);
@@ -309,7 +309,7 @@ fn authenticated_update_retirement_is_applied_only_by_explicit_update_check() {
         ReferenceUpdateStatus::UpdateRequired
     );
     let state =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.json")).unwrap()).unwrap();
     assert_eq!(state.highest_retired_contract_major, 1);
     assert_eq!(state.highest_seen_root_sequence, 19);
     let _ = std::fs::remove_dir_all(root);
@@ -337,7 +337,7 @@ fn authenticated_contract_retirement_is_persisted_and_fails_closed() {
         Some("update_required")
     );
     let state =
-        ReferenceStateCodec::decode(&std::fs::read(root.join("state.v1")).unwrap()).unwrap();
+        ReferenceStateCodec::decode(&std::fs::read(root.join("state.json")).unwrap()).unwrap();
     assert_eq!(state.highest_retired_contract_major, 1);
     assert_eq!(state.highest_seen_root_sequence, 19);
     let _ = std::fs::remove_dir_all(root);

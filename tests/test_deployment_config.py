@@ -172,7 +172,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("actions/runs/${GITHUB_RUN_ID}", incident)
     def test_android_debug_and_release_default_to_r2_dev_reference_bootstrap(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
-        compose = Path("compose.yaml").read_text()
 
         self.assertIn("https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/", gradle)
         self.assertIn("REFERENCE_UPDATE_BASE_URL", gradle)
@@ -181,8 +180,6 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("debug", gradle)
         self.assertIn("release", gradle)
         self.assertIn("r2.dev", gradle)
-        self.assertIn("MEDICINE_REFERENCE_UPDATE_BASE_URL", compose)
-        self.assertIn("MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL", compose)
     def test_android_release_enables_code_and_resource_shrinking(self) -> None:
         gradle = Path("android/app/build.gradle.kts").read_text()
         release = gradle.split('getByName("release") {', 1)[1].split("\n        }", 1)[0]
@@ -283,24 +280,21 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertTrue(verification.is_file())
         self.assertIn("sha256", verification.read_text())
 
-        compose = Path("compose.yaml").read_text()
-        android_service = compose.split("\n  android:\n", 1)[1]
-        dockerfile = Path("Dockerfile.android").read_text()
-        self.assertIn("- .:/workspace", android_service)
-        self.assertNotIn("COPY android/gradle", dockerfile)
-        self.assertNotIn("COPY android/app", dockerfile)
+        dockerfile = Path("Dockerfile.dev").read_text()
+        self.assertIn("android/app/gradle.lockfile", dockerfile)
+        self.assertIn("android/gradle/verification-metadata.xml", dockerfile)
+        self.assertIn("prefetchLockedDependencies prefetchMedicineAapt2", dockerfile)
+        self.assertNotIn("COPY android/app/src", dockerfile)
+
     def test_android_sdk_archive_is_checksum_verified(self) -> None:
-        dockerfile = Path("Dockerfile.android").read_text()
-        self.assertIn(
-            "gradle:9.4.1-jdk17@sha256:549ab76a04fc532f37945d689207a3fb2642350b1235901eb652c93dae218dd0",
-            dockerfile,
-        )
+        dockerfile = Path("Dockerfile.dev").read_text()
         self.assertIn("commandlinetools-linux-13114758_latest.zip", dockerfile)
         self.assertIn(
             "7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee",
             dockerfile,
         )
         self.assertIn("sha256sum -c", dockerfile)
+
     def test_android_release_script_rejects_missing_release_configuration_before_gradle(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script = repo_root / "scripts" / "android_release_build.sh"

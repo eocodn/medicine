@@ -392,89 +392,6 @@ def publish_verified_contract_window(
     )
 
 
-def publish_contract_window_from_env(
-    target_db: str | Path,
-    mobile_manifest_path: str | Path,
-    output_dir: str | Path,
-    *,
-    created_at: str | None = None,
-    progress=None,
-) -> dict:
-    bucket = os.environ.get("R2_BUCKET", "").strip()
-    if not bucket:
-        raise RuntimeError("R2_BUCKET is required")
-    manifest_path = Path(mobile_manifest_path)
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("reference contract manifest is invalid JSON") from exc
-    major = manifest.get("contract_major") if isinstance(manifest, dict) else None
-    if not isinstance(major, int) or isinstance(major, bool) or major <= 0:
-        raise ValueError("reference contract manifest major is invalid")
-    # Contract 1 has no predecessor.  When contract 2 is introduced the publish
-    # workflow must supply both exporters through `publish_contract_window` so a
-    # supported predecessor is never silently dropped.
-    signer = release_signer_from_env()
-    return publish_contract_window(
-        client_from_env(),
-        bucket,
-        [
-            ContractReleaseCandidate(
-                major,
-                target_db,
-                manifest_path,
-                verifier=_strict_verifier_with_progress(implementation_for(major), progress),
-            )
-        ],
-        output_dir,
-        signer=signer,
-        release_sequence=release_sequence_from_env(),
-        trusted_public_keys=trusted_public_keys_from_env(signer=signer),
-        current_contract_major=major,
-        minimum_supported_contract_major=major,
-        created_at=created_at,
-        progress=progress,
-    )
-
-
-def publish_contract_directory_from_env(
-    contract_dir: str | Path,
-    output_dir: str | Path,
-    *,
-    created_at: str | None = None,
-    retire_previous_contract: bool = False,
-    progress=None,
-) -> dict:
-    bucket, majors, client, signer, effective_retirement, selected_majors, minimum_supported = (
-        _publication_context_from_env(retire_previous_contract)
-    )
-    root = Path(contract_dir)
-    candidates = []
-    for major in selected_majors:
-        candidates.append(
-            ContractReleaseCandidate(
-                major,
-                root / f"contract-{major}.sqlite",
-                root / f"contract-{major}.manifest.json",
-                verifier=_strict_verifier_with_progress(implementation_for(major), progress),
-            )
-        )
-    return publish_contract_window(
-        client,
-        bucket,
-        candidates,
-        output_dir,
-        signer=signer,
-        release_sequence=release_sequence_from_env(),
-        trusted_public_keys=trusted_public_keys_from_env(signer=signer),
-        current_contract_major=majors[-1],
-        minimum_supported_contract_major=minimum_supported,
-        created_at=created_at,
-        allow_early_retirement=effective_retirement,
-        progress=progress,
-    )
-
-
 def _publication_context_from_env(retire_previous_contract: bool):
     bucket = os.environ.get("R2_BUCKET", "").strip()
     if not bucket:
@@ -566,7 +483,5 @@ __all__ = [
     "ROOT_KEY",
     "build_and_publish_contract_window_from_env",
     "publish_contract_window",
-    "publish_contract_directory_from_env",
     "publish_verified_contract_window",
-    "publish_contract_window_from_env",
 ]

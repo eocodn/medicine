@@ -21,8 +21,7 @@ use std::path::{Path, PathBuf};
 
 use super::storage::{
     atomic_write, available_bytes, capture_file_seal, io_error, normalize_checkpoint,
-    recover_android_atomic_file_state, seal_read_only, sync_directory, verify_file_identity,
-    ReferenceDirectoryLock,
+    seal_read_only, sync_directory, verify_file_identity, ReferenceDirectoryLock,
 };
 
 const STORAGE_SAFETY_MARGIN_BYTES: u64 = 16 * 1024 * 1024;
@@ -411,8 +410,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceManager<
     }
 
     fn load_store(&self) -> Result<ReferenceStore, ReferenceRuntimeError> {
-        let path = self.root.join("state.v1");
-        recover_android_atomic_file_state(&path)?;
+        let path = self.root.join("state.json");
         if !path.exists() {
             return Ok(ReferenceStore::default());
         }
@@ -426,7 +424,7 @@ impl<S: ReferenceReleaseSource, V: ReferenceDatabaseValidator> ReferenceManager<
     fn persist_store(&self, store: &ReferenceStore) -> Result<(), ReferenceRuntimeError> {
         let bytes = ReferenceStateCodec::encode(&store.snapshot())
             .map_err(|error| ReferenceRuntimeError::new(error.to_string()))?;
-        atomic_write(&self.root.join("state.v1"), &bytes)
+        atomic_write(&self.root.join("state.json"), &bytes)
     }
 
     fn file_for(&self, version: &ReferenceVersion) -> PathBuf {

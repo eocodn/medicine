@@ -157,7 +157,6 @@ class AndroidGithubReleaseTest(unittest.TestCase):
         self.assertNotIn("MEDICINE_OCR_ASSETS_DIR", workflow)
         self.assertNotIn("${{ runner.temp }}", workflow)
         self.assertNotIn("docker ", workflow)
-        self.assertNotIn("Dockerfile.android", workflow)
         self.assertIn("actions/cache/save@caa296126883cff596d87d8935842f9db880ef25", workflow)
         self.assertIn("actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25", workflow)
         self.assertIn("android-release-unsigned-${{ github.sha }}-${{ github.run_id }}-arm64-v8a", workflow)

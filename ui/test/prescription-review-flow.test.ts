@@ -225,11 +225,11 @@ test("clean DUR status requires exactly seven authoritative category checks", ()
   assert.equal(context.hasClearDurCoverage({ dur_checks: checks.slice(0, 6) }), false);
   assert.equal(context.hasClearDurCoverage({
     dur_checks: checks,
-    coverage: { status: "limited", not_evaluable_checks: [{ category: "dataset", reason: "legacy" }] },
+    coverage: { status: "limited", not_evaluable_checks: [{ category: "dataset", reason: "diagnostic detail" }] },
   }), true);
 });
 
-test("authoritative DUR details never render legacy coverage output", () => {
+test("authoritative DUR details render only the current review and DUR result surfaces", () => {
   const context = prescriptionContext({});
   const html = context.assessmentDetailsHtml({
     dur_checks: [

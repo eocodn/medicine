@@ -1,10 +1,6 @@
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::fmt;
 
-const MAGIC_V1: &str = "MEDREFSTATE1";
-const MAGIC_V3: &str = "MEDREFSTATE3";
-const LEGACY_SCHEMA_VERSION: &str = "10";
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ReferenceVersion {
     #[serde(rename = "datasetId")]

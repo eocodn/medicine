@@ -15,89 +15,24 @@ services:
           create_host_path: false
     command: ["sh", "/workspace/scripts/check.sh", "core"]
 
-  canonical:
-    build: .
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    working_dir: /app
-    volumes:
-      - .:/app
-    environment:
-      DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}
-      HOME: /tmp
-      PYTHONDONTWRITEBYTECODE: "1"
-    entrypoint: ["python", "-m", "medicine_canonical.cli"]
-
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile.app
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    environment:
-      HOME: /tmp
-    working_dir: /app
-    volumes:
-      - .:/app
-
   web:
+    image: medicine/dev:local
     build:
       context: .
-      dockerfile: Dockerfile.web
+      dockerfile: Dockerfile.dev
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /workspace
     environment:
-      HOME: /tmp
       MEDICINE_CANONICAL_DB: ${MEDICINE_CANONICAL_DB:-}
       MEDICINE_REFERENCE_DIR: ${MEDICINE_REFERENCE_DIR:-data/reference}
       MEDICINE_REFERENCE_UPDATE_BASE_URL: ${MEDICINE_REFERENCE_UPDATE_BASE_URL:-https://pub-539f06de795a469c85ab40570a8634a2.r2.dev/}
-    working_dir: /app
     volumes:
-      - .:/app
+      - .:/workspace
+      - type: bind
+        source: ${MEDICINE_DEV_HOME:-${HOME}/dev/.artifacts/medicine/dev-home/${COMPOSE_PROJECT_NAME}}
+        target: /home/build-farm
+        bind:
+          create_host_path: false
     ports:
       - "${MEDICINE_BIND_IP:-127.0.0.1}:${MEDICINE_PORT:-18787}:8000"
-
-  ui:
-    build:
-      context: .
-      dockerfile: Dockerfile.ui
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    environment:
-      HOME: /tmp
-    working_dir: /app
-    volumes:
-      - .:/app
-
-  test:
-    build:
-      context: .
-      dockerfile: Dockerfile.test
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    environment:
-      PYTHONDONTWRITEBYTECODE: "1"
-    working_dir: /app
-    volumes:
-      - .:/app
-
-  browser-test:
-    image: node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    environment:
-      HOME: /tmp
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-    command: ["sh", "-lc", "node --test ui/test/*.test.js"]
-
-  android:
-    build:
-      context: .
-      dockerfile: Dockerfile.android
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    environment:
-      HOME: /tmp
-      GRADLE_USER_HOME: /workspace/.android-gradle-cache
-      MEDICINE_REFERENCE_UPDATE_BASE_URL: ${MEDICINE_REFERENCE_UPDATE_BASE_URL:-}
-      MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL: ${MEDICINE_REFERENCE_UPDATE_RELEASE_BASE_URL:-}
-      PYTHONDONTWRITEBYTECODE: "1"
-    working_dir: /workspace/android
-    volumes:
-      - .:/workspace
-    command: ["sh", "/workspace/scripts/android_debug_build.sh"]
+    command: ["sh", "/workspace/scripts/run_web_dev.sh"]
