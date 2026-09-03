@@ -173,7 +173,6 @@ class MainActivity : ComponentActivity() {
         val reminderBridge = ReminderNativeBridge(
             this,
             requestNotificationPermission = ::requestMedicationNotificationPermission,
-            requestExactAlarmPermission = ::requestExactAlarmPermission,
             onStatusChanged = ::notifyReminderStatusChanged,
         )
         reminderNativeBridge = reminderBridge
@@ -262,24 +261,6 @@ class MainActivity : ComponentActivity() {
                 return@runOnUiThread
             }
             reminderNativeBridge?.onNotificationPermissionResult(true)
-        }
-    }
-
-    private fun requestExactAlarmPermission() {
-        runOnUiThread {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || ReminderPermissions.exactAlarmAllowed(this)) {
-                reminderNativeBridge?.refresh()
-                return@runOnUiThread
-            }
-            try {
-                startActivity(
-                    Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                        .setData("package:$packageName".toUri())
-                )
-            } catch (error: ActivityNotFoundException) {
-                Log.e(TAG, "Exact alarm settings are unavailable", error)
-                reminderNativeBridge?.refresh()
-            }
         }
     }
 
