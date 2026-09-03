@@ -376,7 +376,7 @@ function medicationSafetyPreview(medication) {
       permit_status_changed_at: medication.permit_status_changed_at,
     },
     person: currentPerson(),
-    current_medication_count: Math.max((state.dashboard?.medications || []).length - 1, 0),
+    current_medication_count: Math.max((dashboardData()?.medications || []).length - 1, 0),
     risks: currentAssessment.risks || [],
     review_items: currentAssessment.review_items || [],
     dur_checks: currentAssessment.dur_checks || [],
@@ -399,7 +399,7 @@ function prepareMedicationEdit(medication) {
 }
 
 function openMedicationSafety(medicationId) {
-  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  const medication = (dashboardData()?.medications || []).find((item) => item.id === medicationId);
   if (!medication) return;
   prepareMedicationEdit(medication);
   renderRiskSheet(medicationSafetyPreview(medication), medication);
@@ -407,7 +407,7 @@ function openMedicationSafety(medicationId) {
 }
 
 function openMedicationEdit(medicationId) {
-  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  const medication = (dashboardData()?.medications || []).find((item) => item.id === medicationId);
   if (!medication) return;
   prepareMedicationEdit(medication);
   renderPrescriptionForm(medicationSafetyPreview(medication), medication);
@@ -415,7 +415,7 @@ function openMedicationEdit(medicationId) {
 }
 
 async function confirmEditMedication() {
-  const medication = (state.dashboard?.medications || []).find((item) => item.id === state.editingMedicationId);
+  const medication = (dashboardData()?.medications || []).find((item) => item.id === state.editingMedicationId);
   if (!medication) return;
   const draft = prescriptionPayloadFromForm();
   let updated;
@@ -486,9 +486,9 @@ async function confirmAddMedication() {
 
   offerRemindersAfterScheduleSave(draft.schedule_times);
 
-  const currentDashboard = state.dashboard || {};
+  const currentDashboard = dashboardData() || {};
   const currentMedications = currentDashboard.medications || [];
-  state.dashboard = {
+  state.dashboardSession.data = {
     ...currentDashboard,
     medications: [...currentMedications.filter((item) => item.id !== created.id), created],
   };

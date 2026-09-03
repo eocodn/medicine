@@ -50,7 +50,10 @@ function medicationAddContext() {
       pendingRequestId: "request-2",
       warningToken: null,
       reviewedDraftKey: null,
-      dashboard: { medications: [{ id: "med-1", product_name: "첫번째약" }] },
+      dashboardSession: {
+        ownerPersonId: "person-1", date: "2026-08-19", phase: "ready", generation: 1, reason: null,
+        data: { medications: [{ id: "med-1", product_name: "첫번째약" }] },
+      },
     },
     $: (selector) => nodes.get(selector) || null,
     $$: () => [],
@@ -69,7 +72,8 @@ function medicationAddContext() {
     completeOcrProductRowAndContinue: () => false,
     closeSheets: () => events.push("close"),
     closeSheetsAfterMutation: () => events.push("close"),
-    markDashboardStale: () => { context.state.dashboardStale = true; events.push("stale"); },
+    dashboardData: () => context.state.dashboardSession.data,
+    markDashboardStale: () => { context.state.dashboardSession.phase = "stale"; events.push("stale"); },
     toast: (message) => events.push(`toast:${message}`),
     escapeHtml: (value) => String(value ?? ""),
     assessmentDetailsHtml: () => "",
@@ -105,7 +109,7 @@ test("a committed medication remains in local state when only the dashboard refr
   await context.confirmAddMedication();
 
   assert.deepEqual(
-    Array.from(context.state.dashboard.medications, (item) => item.id),
+    Array.from(context.state.dashboardSession.data.medications, (item) => item.id),
     ["med-1", "med-2"],
   );
   assert.ok(events.includes("screen:meds"));

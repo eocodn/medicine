@@ -10,11 +10,10 @@ class ReferenceBootstrapStartupTest(unittest.TestCase):
         source = (ROOT / "ui" / "src" / "app.ts").read_text(encoding="utf-8")
 
         bootstrap = source.index("await window.MedicineBootstrapUi?.ensureReady();")
-        health = source.index("await loadHealth();")
         people = source.index("await loadPeople();")
 
-        self.assertLess(bootstrap, health)
-        self.assertLess(health, people)
+        self.assertLess(bootstrap, people)
+        self.assertNotIn("await loadHealth();", source)
 
 
 if __name__ == "__main__":

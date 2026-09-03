@@ -193,53 +193,12 @@ function currentPerson() {
 }
 
 async function loadPeople() {
-  const previousPersonId = state.currentPersonId;
   state.people = await api("/api/people");
-  if (!state.people.some((person) => person.id === state.currentPersonId)) {
-    state.currentPersonId = state.people[0]?.id || null;
-  }
-  if (previousPersonId && previousPersonId !== state.currentPersonId) resetOcrProductDiscovery({ clearSearch: true });
-  if (state.currentPersonId) {
-    localStorage.setItem("medicine.currentPersonId", state.currentPersonId);
-    await loadDashboard();
-    recoverPersistedDoseIntents(state.currentPersonId);
-  } else {
-    localStorage.removeItem("medicine.currentPersonId");
-    state.dashboard = null;
-  }
+  const nextPersonId = state.people.some((person) => person.id === state.currentPersonId)
+    ? state.currentPersonId
+    : state.people[0]?.id || null;
+  selectCurrentPerson(nextPersonId);
   renderAll();
-}
-async function loadHealth() {
-  const health = await api("/api/health");
-  state.fullCatalog = Boolean(health.full_catalog);
-}
-async function loadDashboard() {
-  if (!state.currentPersonId) return;
-  const personId = state.currentPersonId;
-  const existing = state.dashboardLoads.get(personId);
-  if (existing) {
-    existing.dirty = true;
-    return existing.promise;
-  }
-  const entry = { dirty: false, promise: null };
-  entry.promise = (async () => {
-    try {
-      do {
-        entry.dirty = false;
-        const dashboard = await api(`/api/people/${personId}/dashboard`);
-        if (state.currentPersonId === personId && !entry.dirty) {
-          reconcilePrnRequestIds(dashboard?.recent_logs || []);
-          state.dashboard = dashboard;
-          state.dashboardDate = dashboard?.daily_plan?.date || todayInKorea();
-          state.dashboardStale = false;
-        }
-      } while (entry.dirty && state.currentPersonId === personId);
-    } finally {
-      if (state.dashboardLoads.get(personId) === entry) state.dashboardLoads.delete(personId);
-    }
-  })();
-  state.dashboardLoads.set(personId, entry);
-  return entry.promise;
 }
 
 function renderAll() {
@@ -265,18 +224,21 @@ function renderHome() {
     return;
   }
 
-  if (state.dashboardStale) {
+  if (!dashboardReadyForCurrent()) {
+    const phase = dashboardBelongsToCurrentPerson() ? state.dashboardSession.phase : "empty";
+    const loading = phase === "empty" || phase === "loading";
+    const changed = phase === "stale";
     root.innerHTML = `
       <div class="hero-card">
-        <p class="eyebrow">REFRESH REQUIRED</p>
-        <h2>${escapeHtml(person.name)}님의<br>변경사항은 저장됐어요.</h2>
-        <p class="muted">최신 복약 정보는 다시 확인이 필요합니다. 앱을 다시 열어 최신 상태를 확인해주세요.</p>
+        <p class="eyebrow">${loading ? "LOADING" : changed ? "REFRESH REQUIRED" : "LOAD FAILED"}</p>
+        <h2>${escapeHtml(person.name)}님의<br>${loading ? "복약 정보를 불러오고 있어요." : changed ? "변경사항은 저장됐어요." : "프로필은 불러왔어요."}</h2>
+        <p class="muted">${loading ? "잠시 후 최신 복약 정보를 보여드릴게요." : changed ? "최신 복약 정보를 다시 확인하고 있습니다." : "복약 정보를 불러오지 못했습니다. 다시 열거나 화면으로 돌아오면 자동으로 다시 확인합니다."}</p>
       </div>`;
     return;
   }
 
-  const meds = state.dashboard?.medications || [];
-  const plan = state.dashboard?.daily_plan || { doses: [], prn_medications: [], unscheduled_medications: [], summary: {} };
+  const meds = dashboardData()?.medications || [];
+  const plan = dashboardData()?.daily_plan || { doses: [], prn_medications: [], unscheduled_medications: [], summary: {} };
   const doses = plan.doses || [];
   const unscheduled = plan.unscheduled_medications || [];
 
@@ -340,13 +302,15 @@ function permitChangeCardHtml(medication) {
 function renderMedications() {
   const medsRoot = $("#medications-list");
   const historyRoot = $("#dose-history");
-  if (state.dashboardStale) {
-    medsRoot.innerHTML = `<div class="empty-state"><strong>변경사항은 저장됐어요</strong>최신 복약 정보는 다시 확인이 필요합니다. 앱을 다시 열어 최신 상태를 확인해주세요.</div>`;
+  if (!dashboardReadyForCurrent()) {
+    const phase = dashboardBelongsToCurrentPerson() ? state.dashboardSession.phase : "empty";
+    const loading = phase === "empty" || phase === "loading";
+    medsRoot.innerHTML = `<div class="empty-state"><strong>${loading ? "복약 정보를 불러오는 중이에요" : phase === "stale" ? "변경사항은 저장됐어요" : "복약 정보를 불러오지 못했어요"}</strong>${phase === "stale" ? "최신 복약 정보를 다시 확인하고 있습니다." : "프로필은 유지되며, 확인이 끝날 때까지 이전 복약 동작은 사용할 수 없습니다."}</div>`;
     historyRoot.innerHTML = "";
     return;
   }
-  const meds = state.dashboard?.medications || [];
-  const logs = state.dashboard?.recent_logs || [];
+  const meds = dashboardData()?.medications || [];
+  const logs = dashboardData()?.recent_logs || [];
 
   medsRoot.innerHTML = meds.length ? meds.map((med) => `
     <article class="card med-card">
@@ -369,7 +333,9 @@ function renderMedications() {
       <div class="med-actions">
         ${med.as_needed ? `<button class="primary-button wide" data-prn-taken="${med.id}" type="button">지금 복용 기록</button>` : ""}
         <div class="med-secondary-actions">
-          <button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>
+          ${state.referenceAvailable
+            ? `<button class="secondary-button" data-edit="${med.id}" type="button">처방 수정</button>`
+            : `<span class="muted small">앱 업데이트 후 처방 수정 가능</span>`}
           <button class="stop-button" data-stop="${med.id}" type="button">복용 종료</button>
         </div>
       </div>
@@ -390,7 +356,7 @@ function renderMedications() {
 }
 
 function stopMedication(medicationId) {
-  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  const medication = (dashboardData()?.medications || []).find((item) => item.id === medicationId);
   if (!medication) return;
   state.pendingStopMedicationId = medicationId;
   $("#stop-medication-copy").textContent = `${medication.product_name} 복용을 종료합니다. 기존 복용 기록은 그대로 남습니다.`;
@@ -400,7 +366,7 @@ function stopMedication(medicationId) {
 async function confirmStopMedication() {
   const medicationId = state.pendingStopMedicationId;
   if (!medicationId) return;
-  const medication = (state.dashboard?.medications || []).find((item) => item.id === medicationId);
+  const medication = (dashboardData()?.medications || []).find((item) => item.id === medicationId);
   const query = medication ? `?expected_revision=${medication.revision}` : "";
   let stopped;
   try {
@@ -452,6 +418,12 @@ async function runDrugSearch(successMessage = "") {
     root.innerHTML = "";
     return false;
   }
+  if (!state.referenceAvailable) {
+    invalidateProductSearch();
+    status.textContent = "약 안전 데이터가 필요한 기능입니다. 앱을 업데이트해주세요.";
+    root.innerHTML = "";
+    return false;
+  }
   const requestId = ++state.searchRequestId;
   state.searchObserver?.disconnect?.();
   state.searchObserver = null;
@@ -465,7 +437,6 @@ async function runDrugSearch(successMessage = "") {
       coalesceKey: "product-search",
     }));
     if (requestId !== state.searchRequestId || $("#drug-query").value.trim() !== term) return false;
-    state.fullCatalog = true;
     status.textContent = successMessage;
     renderProductSearchPage(page);
     state.searchHasMore = page.has_more;
@@ -482,15 +453,6 @@ async function runDrugSearch(successMessage = "") {
 
 function selectProductResult(card) {
   previewProduct(card.dataset.productSelect);
-}
-
-async function refreshForDateChange() {
-  if (!state.currentPersonId || document.visibilityState === "hidden") return;
-  if (state.dashboardDate === todayInKorea()) return;
-  try {
-    await loadDashboard();
-    renderAll();
-  } catch (error) { console.error("date rollover refresh failed", error); }
 }
 
 function bindEvents() {
@@ -549,9 +511,17 @@ function bindEvents() {
 document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
   try {
-    await window.MedicineBootstrapUi?.ensureReady();
-    await loadHealth();
+    const bootstrap = await window.MedicineBootstrapUi?.ensureReady();
+    state.referenceAvailable = bootstrap?.state !== "unavailable";
     await loadPeople();
+    if (state.currentPersonId) {
+      try {
+        await refreshActiveDashboard();
+      } catch (error) {
+        console.error("initial dashboard load failed", error);
+        toast("프로필은 불러왔지만 복약 정보를 불러오지 못했어요.");
+      }
+    }
     const requestedScreen = new URLSearchParams(window.location.search).get("screen");
     if (requestedScreen && Object.hasOwn(titles, requestedScreen)) showScreen(requestedScreen);
   }

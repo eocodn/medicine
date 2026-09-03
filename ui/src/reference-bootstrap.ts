@@ -179,7 +179,7 @@ type ReferenceBootstrapStatus = {
     return new Promise((resolve) => button.addEventListener("click", () => resolve(), { once: true }));
   }
 
-  async function ensureReady(): Promise<void> {
+  async function ensureReady(): Promise<ReferenceBootstrapStatus> {
     render({ state: "checking", completed_bytes: 0, total_bytes: 0 });
     for (;;) {
       let current: ReferenceBootstrapStatus;
@@ -189,9 +189,9 @@ type ReferenceBootstrapStatus = {
         console.error("reference bootstrap status failed", error);
         current = { state: "failed", completed_bytes: 0, total_bytes: 0 };
       }
-      if (current.state === "ready") {
+      if (current.state === "ready" || current.state === "unavailable") {
         ensureModal().classList.add("hidden");
-        return;
+        return current;
       }
       render(current);
       if (current.state === "download_required" || current.state === "failed") {
