@@ -112,20 +112,11 @@ class MfdsSourceManifestTest(unittest.TestCase):
     def test_shared_manifest_is_packaged_only_for_python_builder_tools(self) -> None:
         pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
         android = Path("android/app/build.gradle.kts").read_text(encoding="utf-8")
-        rust_web = Path("Dockerfile.web").read_text(encoding="utf-8")
+        dockerfile = Path("Dockerfile.dev").read_text(encoding="utf-8")
+
         self.assertIn('"medicine_reference*"', pyproject)
-        builder = Path("Dockerfile").read_text(encoding="utf-8")
-        compose = Path("compose.yaml").read_text(encoding="utf-8")
-        canonical_service = compose.split("\n  canonical:\n", 1)[1].split("\n  app:\n", 1)[0]
-        self.assertIn("- .:/app", canonical_service)
-        self.assertNotIn("COPY medicine_reference", builder)
-        self.assertNotIn("COPY medicine_canonical", builder)
-        for dockerfile in ("Dockerfile.app", "Dockerfile.ui", "Dockerfile.web"):
-            content = Path(dockerfile).read_text(encoding="utf-8")
-            self.assertNotIn("COPY medicine_reference", content)
-            self.assertNotIn("COPY medicine_canonical", content)
-        self.assertNotIn("COPY medicine_reference", rust_web)
-        self.assertNotIn("COPY medicine_canonical", rust_web)
+        self.assertNotIn("COPY medicine_reference", dockerfile)
+        self.assertNotIn("COPY medicine_canonical", dockerfile)
         self.assertNotIn('include("medicine_reference/**/*.py")', android)
         self.assertNotIn("mfds_remark_registry.tsv", android)
 

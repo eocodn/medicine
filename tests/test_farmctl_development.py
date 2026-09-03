@@ -113,7 +113,6 @@ class FarmctlDevelopmentTest(unittest.TestCase):
         for relative_path in (
             "scripts/check.sh",
             "scripts/run_app.sh",
-            "scripts/run_tests.sh",
             "scripts/run_ui.sh",
             "scripts/build_web.sh",
             "scripts/android_debug_build.sh",
@@ -127,7 +126,6 @@ class FarmctlDevelopmentTest(unittest.TestCase):
 
         for relative_path in (
             "scripts/run_app.sh",
-            "scripts/run_tests.sh",
             "scripts/run_ui.sh",
             "scripts/build_web.sh",
             "scripts/android_debug_build.sh",
@@ -199,14 +197,21 @@ class FarmctlDevelopmentTest(unittest.TestCase):
             self.assertNotEqual(0, public.returncode)
             self.assertIn("must not be accessible by group or other users", public.stderr.lower())
 
-    def test_compose_exposes_the_same_standard_development_image(self) -> None:
+    def test_compose_uses_one_standard_development_image(self) -> None:
         compose = (ROOT / "compose.yaml").read_text()
-        dev_service = compose.split("\n  dev:\n", 1)[1].split("\n  canonical:\n", 1)[0]
-        self.assertIn("    image: medicine/dev:local", dev_service)
-        self.assertIn("      dockerfile: Dockerfile.dev", dev_service)
-        self.assertIn("      - .:/workspace", dev_service)
-        self.assertIn("target: /home/build-farm", dev_service)
-        self.assertIn("create_host_path: false", dev_service)
+        service_names = [
+            line.strip()[:-1]
+            for line in compose.splitlines()
+            if line.startswith("  ") and not line.startswith("    ") and line.rstrip().endswith(":")
+        ]
+        self.assertEqual(service_names, ["dev", "web"])
+        self.assertEqual(compose.count("image: medicine/dev:local"), 2)
+        self.assertEqual(compose.count("dockerfile: Dockerfile.dev"), 2)
+        self.assertEqual(compose.count("- .:/workspace"), 2)
+        self.assertEqual(compose.count("target: /home/build-farm"), 2)
+        self.assertEqual(compose.count("create_host_path: false"), 2)
+        web_service = compose.split("\n  web:\n", 1)[1]
+        self.assertIn("scripts/run_web_dev.sh", web_service)
 
     def test_readme_keeps_farmctl_operations_out_of_repository_docs(self) -> None:
         readme = (ROOT / "README.md").read_text()
