@@ -243,6 +243,7 @@ async function loadDashboard() {
 }
 
 function renderAll() {
+  window.MedicineReminderUi?.refresh?.();
   renderProfileShortcut();
   renderHome();
   renderMedications();

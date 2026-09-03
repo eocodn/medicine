@@ -45,10 +45,12 @@ class PersonalDatabaseOperationCoordinatorTest {
     }
 
     @Test
-    fun medicineBridgeUsesProcessWideBoundaryForInitAndPersonalRequests() {
+    fun personalDatabaseApiUsesProcessWideBoundaryForInitAndPersonalRequests() {
+        val personalApi = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseApi.kt").readText()
         val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
-        val uses = "PersonalDatabaseOperationCoordinator.exclusive".toRegex().findAll(bridge).count()
+        val uses = "PersonalDatabaseOperationCoordinator.exclusive".toRegex().findAll(personalApi).count()
 
         assertTrue(uses >= 2)
+        assertTrue(bridge.contains("PersonalDatabaseApi"))
     }
 }

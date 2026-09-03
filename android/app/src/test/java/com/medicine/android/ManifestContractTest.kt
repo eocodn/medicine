@@ -49,36 +49,37 @@ class ManifestContractTest {
     @Test
     fun personalDatabaseIsSealedWithAndroidKeystoreBetweenBridgeRequests() {
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
-        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
+        val personalApi = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseApi.kt").readText()
+        val keyStore = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseKeyStore.kt").readText()
         val vault = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseVault.kt").readText()
         assertTrue(activity.contains("personal.sqlite.enc"))
-        assertTrue(activity.contains("AndroidKeyStore"))
-        assertTrue(bridge.contains("openForUse"))
-        assertTrue(bridge.contains("nativeCore.prepareForSeal()"))
-        assertTrue(bridge.contains("sealAfterUse"))
+        assertTrue(keyStore.contains("AndroidKeyStore"))
+        assertTrue(personalApi.contains("vault.openForUse()"))
+        assertTrue(personalApi.contains("nativeCore.prepareForSeal()"))
+        assertTrue(personalApi.contains("vault.sealAfterUse()"))
         assertTrue(vault.contains("AES/GCM/NoPadding"))
     }
 
     @Test
     fun personalSchemaAndCheckpointUseRustInsideTheVaultCoordinator() {
-        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
+        val personalApi = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseApi.kt").readText()
         val nativeCore = java.io.File("src/main/java/com/medicine/android/MedicineNativeCore.kt").readText()
 
         assertTrue(nativeCore.contains("fun initializePersonalDatabase"))
         assertTrue(nativeCore.contains("fun prepareForSeal"))
         assertTrue(nativeCore.contains("nativeInitializePersonalDatabase"))
         assertTrue(nativeCore.contains("nativePrepareForSeal"))
-        assertFalse(bridge.contains("prepare_for_seal"))
+        assertFalse(personalApi.contains("prepare_for_seal"))
 
         val nativeCalls = listOf("nativeCore", "createdNativeCore")
         for (method in listOf("initializePersonalDatabase", "prepareForSeal")) {
             val call = nativeCalls
                 .map { "$it.$method()" }
-                .firstOrNull { bridge.contains(it) }
-            assertTrue("MedicineBridge must call native $method", call != null)
-            val callIndex = bridge.indexOf(call!!)
-            val vaultOpen = bridge.lastIndexOf("vault.openForUse()", callIndex)
-            val vaultSeal = bridge.indexOf("vault.sealAfterUse()", callIndex)
+                .firstOrNull { personalApi.contains(it) }
+            assertTrue("PersonalDatabaseApi must call native $method", call != null)
+            val callIndex = personalApi.indexOf(call!!)
+            val vaultOpen = personalApi.lastIndexOf("vault.openForUse()", callIndex)
+            val vaultSeal = personalApi.indexOf("vault.sealAfterUse()", callIndex)
             assertTrue("$method must be inside the vault coordinator", vaultOpen >= 0)
             assertTrue("$method must run before vault reseal", vaultSeal > callIndex)
         }
@@ -86,11 +87,11 @@ class ManifestContractTest {
 
     @Test
     fun nativeBridgeHasNoPythonFallbackAndResealsOnInitFailure() {
-        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
-        assertFalse(bridge.contains("Python"))
-        assertFalse(bridge.contains("callAttr"))
-        assertTrue(bridge.contains("finally"))
-        assertTrue(bridge.contains("vault.sealAfterUse()"))
+        val personalApi = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseApi.kt").readText()
+        assertFalse(personalApi.contains("Python"))
+        assertFalse(personalApi.contains("callAttr"))
+        assertTrue(personalApi.contains("finally"))
+        assertTrue(personalApi.contains("vault.sealAfterUse()"))
     }
 
     @Test
@@ -182,4 +183,48 @@ class ManifestContractTest {
         assertTrue(modernRules.readText().contains("<exclude domain=\"file\" path=\".\""))
         assertTrue(legacyRules.readText().contains("<exclude domain=\"file\" path=\".\""))
     }
+    @Test
+    fun medicationRemindersHaveBackgroundReceiversPermissionsAndSharedVaultBoundary() {
+        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
+        val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
+        val personalApi = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseApi.kt")
+        val keyStore = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseKeyStore.kt")
+        val scheduler = java.io.File("src/main/java/com/medicine/android/ReminderScheduler.kt")
+        val alarmReceiver = java.io.File("src/main/java/com/medicine/android/ReminderAlarmReceiver.kt")
+        val actionReceiver = java.io.File("src/main/java/com/medicine/android/ReminderActionReceiver.kt")
+
+        assertTrue(manifest.contains("android.permission.POST_NOTIFICATIONS"))
+        assertTrue(manifest.contains("android.permission.SCHEDULE_EXACT_ALARM"))
+        assertTrue(manifest.contains("android.permission.RECEIVE_BOOT_COMPLETED"))
+        assertTrue(manifest.contains(".ReminderAlarmReceiver"))
+        assertTrue(manifest.contains(".ReminderActionReceiver"))
+        assertTrue(manifest.contains(".ReminderSystemReceiver"))
+        assertTrue(personalApi.isFile)
+        assertTrue(keyStore.isFile)
+        assertTrue(scheduler.isFile)
+        assertTrue(alarmReceiver.isFile)
+        assertTrue(actionReceiver.isFile)
+        assertTrue(bridge.contains("PersonalDatabaseApi"))
+        assertFalse(bridge.contains("vault.openForUse()"))
+    }
+
+    @Test
+    fun medicationReminderStartupAndChannelStateRecoverAuthoritatively() {
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+        val permissions = java.io.File(
+            "src/main/java/com/medicine/android/ReminderPermissions.kt"
+        ).readText()
+        val notifications = java.io.File(
+            "src/main/java/com/medicine/android/ReminderNotifications.kt"
+        ).readText()
+
+        val bridgeAttach = activity.indexOf("reminderNativeBridge = reminderBridge")
+        val initialRefresh = activity.indexOf("reminderBridge.refresh()", bridgeAttach)
+        assertTrue("cold launch must rebuild reminder alarms once the bridge exists", bridgeAttach >= 0)
+        assertTrue("cold launch must refresh after reminder bridge attachment", initialRefresh > bridgeAttach)
+        assertTrue(permissions.contains("getNotificationChannel(ReminderNotifications.CHANNEL_ID)"))
+        assertTrue(permissions.contains("NotificationManager.IMPORTANCE_NONE"))
+        assertTrue(notifications.contains("internal const val CHANNEL_ID"))
+    }
+
 }
