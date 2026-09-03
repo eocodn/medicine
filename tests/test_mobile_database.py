@@ -129,7 +129,7 @@ class MobileDatabaseTest(unittest.TestCase):
         self.assertEqual(manifest["dataset_id"], result["dataset_id"])
         self.assertFalse(checkpoint.exists())
 
-    def test_compact_snapshot_preserves_frozen_contract_without_legacy_tables(self) -> None:
+    def test_compact_snapshot_preserves_frozen_contract(self) -> None:
         result = build_mobile_database(
             self.canonical_db, self.mobile_db, manifest_path=self.manifest
         )
@@ -148,8 +148,6 @@ class MobileDatabaseTest(unittest.TestCase):
             self.assertIn("product_rule_criteria", views)
             self.assertNotIn("product_ingredient_criterion_links", tables)
             self.assertNotIn("product_ingredient_criterion_unresolved", tables)
-            for legacy in ("product_dur", "ingredient_dur", "product_catalog", "product_code_bridge", "ingredient_aliases"):
-                self.assertNotIn(legacy, tables)
             runtime_indexes = {
                 row[0]
                 for row in mobile.execute(

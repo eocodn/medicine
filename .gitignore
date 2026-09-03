@@ -6,7 +6,6 @@ gha-creds-*.json
 
 # DUR source and generated data are intentionally kept out of Git.
 data/raw/
-data/kids/
 data/db/
 data/reference/
 data/backup/
@@ -18,8 +17,6 @@ android/build/
 android/app/build/
 android/**/*.jks
 android/**/*.keystore
-
-# OCR local private inputs must stay out of Git.
 
 # Detector model caches are reproducible from pinned manifests.
 android/.kotlin/

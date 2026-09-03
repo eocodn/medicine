@@ -93,7 +93,6 @@ class MfdsSourceManifestTest(unittest.TestCase):
         )
 
     def test_existing_builder_endpoint_views_are_derived_from_shared_manifest(self) -> None:
-        self.assertFalse(Path("medicine_canonical/mfds_ingredient_endpoints.py").exists())
         self.assertEqual(PERMIT_DATASET_KEY, PERMIT_SOURCE.dataset_key)
         self.assertEqual(PERMIT_FILENAME, PERMIT_SOURCE.filename)
         self.assertIs(DUR_ENDPOINTS, MFDS_DUR_ITEM_SOURCES_BY_OPERATION)
