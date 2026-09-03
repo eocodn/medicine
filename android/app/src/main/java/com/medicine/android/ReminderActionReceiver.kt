@@ -21,6 +21,7 @@ class ReminderActionReceiver : BroadcastReceiver() {
                 ReminderRepository(context).use { repository ->
                     try {
                         repository.recordDose(instanceId, status)
+                        PersonalDataRevision.markChanged(context)
                         ReminderNotifications.cancel(context, occurrence.key)
                     } catch (error: Throwable) {
                         // A native/vault failure can be ambiguous after the Rust transaction.
@@ -32,6 +33,7 @@ class ReminderActionReceiver : BroadcastReceiver() {
                             null
                         }
                         if (resolved == null) {
+                            PersonalDataRevision.markChanged(context)
                             ReminderNotifications.cancel(context, occurrence.key)
                         } else {
                             ReminderNotifications.post(

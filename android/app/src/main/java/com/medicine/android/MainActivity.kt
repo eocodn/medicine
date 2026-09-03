@@ -32,6 +32,8 @@ import org.json.JSONObject
 class MainActivity : ComponentActivity() {
     private var webView: WebView? = null
     private var medicineBridge: MedicineBridge? = null
+    private var personalDataRevisionGate: PersonalDataRevisionGate? = null
+    private var appPageReady = false
     private lateinit var ocrIntegration: ProductCapabilityIntegration
     private val backDispatchGate = BackDispatchGate()
     private val medicineNativeProxy = MedicineNativeProxy()
@@ -99,6 +101,12 @@ class MainActivity : ComponentActivity() {
             personalDatabase,
             vault,
             onPersonalWriteCommitted = { request, _ ->
+                // Dashboard GET materializes planning rows and is classified as a personal
+                // write by the core, but it is itself the UI's authoritative refresh. Only
+                // non-GET commits need a later external-change invalidation signal.
+                if (!request.method.equals("GET", ignoreCase = true)) {
+                    PersonalDataRevision.markChanged(applicationContext)
+                }
                 ReminderMutationObserver.onCommitted(applicationContext, request)
             },
         )
@@ -124,6 +132,9 @@ class MainActivity : ComponentActivity() {
         }
         medicineBridge = bridge
         medicineNativeProxy.attach(bridge)
+        personalDataRevisionGate = PersonalDataRevisionGate(
+            PersonalDataRevision.current(applicationContext),
+        )
     }
 
     private fun setupWebView() {
@@ -185,7 +196,12 @@ class MainActivity : ComponentActivity() {
         view.addJavascriptInterface(bootstrapBridge, "MedicineBootstrapNative")
         view.addJavascriptInterface(reminderBridge, "MedicineReminderNative")
         ocrIntegration.configureWebView(view)
-        view.webViewClient = createAssetWebViewClient(assetLoader)
+        appPageReady = false
+        view.webViewClient = createAssetWebViewClient(assetLoader) { pageView, url ->
+            if (url != APP_URL || pageView !== webView) return@createAssetWebViewClient
+            appPageReady = true
+            refreshPersonalDataIfChanged()
+        }
         bootstrapBridge.setResponseHandler { requestId, response ->
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
@@ -271,9 +287,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun refreshPersonalDataIfChanged() {
+        if (!appPageReady || isFinishing || isDestroyed) return
+        val gate = personalDataRevisionGate ?: return
+        val revision = PersonalDataRevision.current(applicationContext)
+        if (!gate.consumeIfChanged(revision)) return
+        webView?.evaluateJavascript("window.MedicineApp?.refreshPersonalData?.()", null)
+    }
+
     override fun onResume() {
         super.onResume()
         reminderNativeBridge?.refresh()
+        refreshPersonalDataIfChanged()
     }
 
     private fun showUnsupportedWebView() {
@@ -364,7 +389,10 @@ class MainActivity : ComponentActivity() {
         view.clearHistory()
         view.removeAllViews()
         view.destroy()
-        if (webView === view) webView = null
+        if (webView === view) {
+            webView = null
+            appPageReady = false
+        }
     }
 
     private fun isAllowedOrigin(uri: Uri): Boolean =
