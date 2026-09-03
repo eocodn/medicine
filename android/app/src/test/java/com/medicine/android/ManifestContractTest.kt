@@ -111,6 +111,18 @@ class ManifestContractTest {
     }
 
     @Test
+    fun webViewCompatibilityIsCheckedBeforeTheSharedUiLoads() {
+        val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
+
+        assertTrue(activity.contains("WebView.getCurrentWebViewPackage()"))
+        assertTrue(activity.contains("WebViewCompatibility.isSupportedVersion"))
+        assertTrue(activity.contains("WebViewCompatibility.CAPABILITY_PROBE"))
+        assertTrue(activity.contains("WebViewCompatibility.capabilitiesSatisfied"))
+        assertTrue(activity.indexOf("WebViewCompatibility.isSupportedVersion") < activity.indexOf("setupWebView()"))
+        assertTrue(activity.indexOf("WebViewCompatibility.capabilitiesSatisfied") < activity.indexOf("loadUrl(APP_URL)"))
+    }
+
+    @Test
     fun firstLaunchReferenceDownloadUsesSharedBlockingUiWithByteProgress() {
         val activity = java.io.File("src/main/java/com/medicine/android/MainActivity.kt").readText()
         val bootstrapBridge = java.io.File("src/main/java/com/medicine/android/ReferenceBootstrapJsBridge.kt").readText()
