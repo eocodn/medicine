@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">약봄</string>
+    <string name="webview_update_title">브라우저 구성요소 업데이트가 필요합니다</string>
+    <string name="webview_update_message">약봄을 실행하려면 Android System WebView 또는 Google Chrome을 최신 버전으로 업데이트해 주세요.\n\n현재 사용 중인 구성요소: %1$s %2$s\n\n업데이트 후 약봄을 다시 실행하세요.</string>
+    <string name="webview_update_button">업데이트 열기</string>
+    <string name="webview_update_store_unavailable">업데이트 화면을 열 수 없습니다. Play 스토어에서 Android System WebView 또는 Chrome을 직접 업데이트해 주세요.</string>
+    <string name="webview_provider_unknown">확인할 수 없음</string>
 </resources>

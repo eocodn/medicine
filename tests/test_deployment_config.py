@@ -245,6 +245,8 @@ class DeploymentConfigTest(unittest.TestCase):
         for user_term in (
             "약봄",
             "Android 9",
+            "Android System WebView",
+            "Chrome",
             "arm64-v8a",
             "GitHub Releases",
             "APK",

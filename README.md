@@ -25,6 +25,9 @@
 - Android 9 이상
 - `arm64-v8a` 기기
 
+Android System WebView 또는 Google Chrome이 오래된 경우 앱 실행 전에 업데이트 안내가 표시될 수 있습니다.
+안내가 표시되면 해당 구성요소를 최신 버전으로 업데이트한 뒤 약봄을 다시 실행하세요.
+
 [GitHub Releases](https://github.com/eocodn/medicine/releases)에서 최신 버전의 다음 형식 APK를 받아 설치하세요.
 
 `medicine-vX.Y.Z-arm64-v8a.apk`
