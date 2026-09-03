@@ -414,7 +414,7 @@ class CanonicalDatabaseTest(CanonicalDatabaseTestFixture):
                 """INSERT INTO source_snapshots(
                        dataset_key,source_family,source_locator,snapshot_path,row_count,sha256,metadata_json
                    ) VALUES(?,?,?,?,?,?,?)""",
-                ("legacy:test", "legacy_product_csv", "legacy.csv", "legacy.csv", 1, "0" * 64, "{}"),
+                ("unsupported:test", "unsupported_source", "unsupported.dat", "unsupported.dat", 1, "0" * 64, "{}"),
             )
             con.commit()
         result = verify_canonical_database(self.db)

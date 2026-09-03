@@ -41,14 +41,14 @@ fn temp_db(name: &str, with_product: bool) -> PathBuf {
     path
 }
 
-fn legacy_temp_db(name: &str) -> PathBuf {
+fn incomplete_reference_db(name: &str) -> PathBuf {
     let path = common::temp_sqlite_path(name);
-    let con = Connection::open(&path).expect("create legacy sqlite fixture");
+    let con = Connection::open(&path).expect("create incomplete sqlite fixture");
     con.execute_batch(
         "CREATE TABLE products(item_seq TEXT PRIMARY KEY);
          INSERT INTO products(item_seq) VALUES ('fixture');",
     )
-    .expect("create legacy products table");
+    .expect("create incomplete products table");
     drop(con);
     path
 }
@@ -148,7 +148,7 @@ fn request_policy_matches_existing_mobile_contract() {
 fn health_reports_reference_and_catalog_state() {
     let populated = temp_db("populated", true);
     let empty = temp_db("empty", false);
-    let legacy = legacy_temp_db("legacy");
+    let incomplete = incomplete_reference_db("incomplete");
 
     let mut available = MedicineEngine::new(Some(populated.as_path()), None, None);
     let response: Value = serde_json::from_str(&available.request("GET", "/api/health", ""))
@@ -173,19 +173,19 @@ fn health_reports_reference_and_catalog_state() {
         .expect("empty health response json");
     assert_eq!(response["body"]["full_catalog"], false);
 
-    let legacy_engine = MedicineEngine::new(Some(legacy.as_path()), None, None);
-    let response: Value = serde_json::from_str(&legacy_engine.request("GET", "/api/health", ""))
-        .expect("legacy health response json");
+    let incomplete_engine = MedicineEngine::new(Some(incomplete.as_path()), None, None);
+    let response: Value = serde_json::from_str(&incomplete_engine.request("GET", "/api/health", ""))
+        .expect("incomplete health response json");
     assert_eq!(response["body"]["reference_available"], true);
     assert_eq!(response["body"]["full_catalog"], false);
 
     fs::remove_file(populated).ok();
     fs::remove_file(empty).ok();
-    fs::remove_file(legacy).ok();
+    fs::remove_file(incomplete).ok();
 }
 
 #[test]
-fn migrated_runtime_routes_are_owned_by_rust() {
+fn runtime_routes_are_owned_by_rust() {
     let engine = MedicineEngine::new(None, None, None);
     assert!(engine.handles_request("GET", "/api/health"));
     assert!(engine.handles_request("GET", "/api/products?q=example"));
@@ -244,10 +244,10 @@ fn rust_people_routes_preserve_profile_contract_and_child_cleanup() {
     let con = Connection::open(&personal).expect("open personal fixture");
     con.execute(
         "INSERT INTO people(id,name,birth_date,sex,pregnancy_status,lactation_status)
-         VALUES('legacy','legacy','2000-01-01','unknown','unknown','unknown')",
+         VALUES('incomplete','incomplete','2000-01-01','unknown','unknown','unknown')",
         [],
     )
-    .expect("insert legacy profile");
+    .expect("insert incomplete profile");
     drop(con);
 
     let listed: Value = serde_json::from_str(&engine.request("GET", "/api/people", ""))

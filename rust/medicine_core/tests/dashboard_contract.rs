@@ -437,32 +437,32 @@ fn dashboard_daily_plan_materialization_is_idempotent() {
 }
 
 #[test]
-fn dashboard_uses_target_date_for_legacy_long_term_medication_without_start_date() {
+fn dashboard_handles_long_term_medication_without_start_date() {
     let reference = reference_db();
     let personal = personal_db();
-    let con = Connection::open(&personal).expect("open legacy dashboard fixture");
+    let con = Connection::open(&personal).expect("open incomplete dashboard fixture");
     con.execute(
         "INSERT INTO medications(
              id,person_id,catalog_item_seq,product_code,product_name,ingredient_name,dosage_text,
              dose_amount,dose_unit,frequency_per_day,meal_relation,administration_route,
              prescription_days,long_term,start_date,end_date,active,revision
-         ) VALUES('legacy','p1','SAFE','SAFE','구형 장기약','SafeDrug','1정',1,'정',NULL,
+         ) VALUES('incomplete','p1','SAFE','SAFE','시작일 미입력 장기약','SafeDrug','1정',1,'정',NULL,
                   'unspecified','oral',NULL,1,NULL,NULL,1,1)",
         [],
     )
-    .expect("insert legacy medication without start date");
+    .expect("insert medication without start date");
     drop(con);
     let engine = engine(Some(&reference), &personal);
 
     let dashboard = get(&engine, "/api/people/p1/dashboard?date=2026-08-10");
     assert_eq!(dashboard["status"], 200, "{dashboard}");
-    let legacy = dashboard["body"]["medications"]
+    let incomplete = dashboard["body"]["medications"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|medication| medication["id"] == "legacy")
-        .expect("legacy medication remains visible");
-    assert!(legacy["current_assessment"].is_object());
+        .find(|medication| medication["id"] == "incomplete")
+        .expect("incomplete medication remains visible");
+    assert!(incomplete["current_assessment"].is_object());
 
     cleanup(Some(reference), personal);
 }

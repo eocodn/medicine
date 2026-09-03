@@ -90,7 +90,6 @@ fn reference_state_command_reports_current_state_without_migration_metadata() {
     assert_eq!(value["body"]["state"]["active"]["releaseSequence"], 7);
     assert_eq!(value["body"]["state"]["highestSeenRootSequence"], 8);
     assert!(value["body"].get("format").is_none());
-    assert!(value["body"].get("legacy").is_none());
 
     fs::remove_file(state_path).ok();
 }

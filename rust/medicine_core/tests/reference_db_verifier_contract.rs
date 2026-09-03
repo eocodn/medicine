@@ -147,9 +147,9 @@ fn verifier_returns_structured_verified_report_for_contract_v1_database() {
 }
 
 #[test]
-fn runtime_capability_verifier_rejects_legacy_v1_without_product_search() {
-    let path = reference_db("reference-runtime-capability-legacy");
-    verify(&path).expect("legacy fixture remains valid contract v1");
+fn runtime_capability_verifier_rejects_contract_database_without_product_search() {
+    let path = reference_db("reference-runtime-capability-incomplete");
+    verify(&path).expect("logical contract remains valid without runtime search materialization");
 
     let error = verify_reference_runtime_capabilities(&path)
         .expect_err("current runtime must reject a reference without product search capability");

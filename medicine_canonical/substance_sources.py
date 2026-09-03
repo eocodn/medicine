@@ -211,12 +211,12 @@ def iter_gsrs_unii_names(data: bytes) -> Iterator[dict[str, str]]:
             ) as text:
                 reader = csv.DictReader(text, delimiter="\t")
                 fieldnames = reader.fieldnames or []
-                legacy = {"Name", "TYPE", "UNII", "Display Name"}
-                current = {"NAME", "TYPE", "UNII", "DISPLAY_NAME"}
-                if len(fieldnames) != 4 or frozenset(fieldnames) not in {frozenset(legacy), frozenset(current)}:
+                title_case_headers = {"Name", "TYPE", "UNII", "Display Name"}
+                uppercase_headers = {"NAME", "TYPE", "UNII", "DISPLAY_NAME"}
+                if len(fieldnames) != 4 or frozenset(fieldnames) not in {frozenset(title_case_headers), frozenset(uppercase_headers)}:
                     raise RuntimeError(
                         "FDA GSRS UNII Names columns mismatch: "
-                        f"expected one of {sorted(legacy)} or {sorted(current)}, got {reader.fieldnames}"
+                        f"expected one of {sorted(title_case_headers)} or {sorted(uppercase_headers)}, got {reader.fieldnames}"
                     )
                 name_column = "NAME" if "NAME" in fieldnames else "Name"
                 display_name_column = "DISPLAY_NAME" if "DISPLAY_NAME" in fieldnames else "Display Name"
