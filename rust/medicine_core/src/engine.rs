@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::{
-    dashboard, doses, medication_list, medications, ocr_medication_candidates, people, personal_schema,
-    planning, preview, prn, product_search, reference_capabilities,
+    dashboard, doses, medication_list, medications, ocr_medication_candidates, people,
+    personal_schema, planning, preview, prn, product_search, reference_capabilities, reminders,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,6 +133,7 @@ impl MedicineEngine {
             || medications::handles_request(method, path)
             || prn::handles_request(method, path)
             || doses::handles_request(method, path)
+            || reminders::handles_request(method, path)
     }
 
     pub fn request(&self, method: &str, raw_path: &str, body_json: &str) -> String {
@@ -160,7 +161,10 @@ impl MedicineEngine {
             return json!({"status": status, "body": body}).to_string();
         }
         if let Some((status, body)) = ocr_medication_candidates::handle_request(
-            self.canonical_db.as_deref(), method, path, body_json,
+            self.canonical_db.as_deref(),
+            method,
+            path,
+            body_json,
         ) {
             return json!({"status": status, "body": body}).to_string();
         }
@@ -223,6 +227,15 @@ impl MedicineEngine {
         if let Some((status, body)) =
             doses::handle_request(self.personal_db.as_deref(), method, path, body_json)
         {
+            return json!({"status": status, "body": body}).to_string();
+        }
+        if let Some((status, body)) = reminders::handle_request(
+            self.personal_db.as_deref(),
+            method,
+            raw_path,
+            path,
+            body_json,
+        ) {
             return json!({"status": status, "body": body}).to_string();
         }
         json!({"status": 404, "body": {"detail": "route not found"}}).to_string()
@@ -300,6 +313,12 @@ fn classify_request(method: &str, raw_path: &str) -> RequestPolicy {
     }
     if method == "GET" && path == "/api/people" {
         return RequestPolicy::new(AccessClass::PersonalRead, false);
+    }
+    if method == "GET" && path == "/api/reminders/upcoming" {
+        return RequestPolicy::new(AccessClass::PersonalRead, false);
+    }
+    if method == "POST" && path == "/api/reminders/resolve" {
+        return RequestPolicy::new(AccessClass::PersonalWrite, false);
     }
     if method == "GET" && single_segment_route(path, "/api/medications/", "/history") {
         return RequestPolicy::new(AccessClass::PersonalRead, false);

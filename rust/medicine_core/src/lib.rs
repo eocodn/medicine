@@ -49,6 +49,7 @@ mod reference_signature;
 pub mod reference_state;
 mod reference_trust;
 mod regimen_review;
+mod reminders;
 mod safety_basis;
 mod safety_time;
 #[cfg(feature = "web")]
