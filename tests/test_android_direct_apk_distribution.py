@@ -15,7 +15,7 @@ class AndroidDirectApkDistributionTest(unittest.TestCase):
 
         self.assertIn('applicationId = "kr.yakbom.app"', gradle)
         self.assertIn("minSdk = 28", gradle)
-        self.assertIn("targetSdk = 35", gradle)
+        self.assertIn("targetSdk = 36", gradle)
         self.assertNotIn("MEDICINE_OCR_ASSETS_DIR", gradle)
         self.assertIn("PrepareSharedUiAssets", gradle)
         self.assertIn("verify-ocr-android-artifact.py", release)

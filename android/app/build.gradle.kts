@@ -314,7 +314,7 @@ android {
     defaultConfig {
         applicationId = "kr.yakbom.app"
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 36
         versionCode = releaseEnvironment?.versionCode ?: releaseVersionCode
         versionName = releaseEnvironment?.versionName ?: releaseVersionName
         buildConfigField(
