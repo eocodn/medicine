@@ -4,7 +4,6 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.util.Log
 import androidx.core.net.toUri
 import java.time.OffsetDateTime
@@ -88,13 +87,7 @@ object ReminderScheduler {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         val pendingIntent = alarmPendingIntent(context, occurrence)
         val triggerAt = occurrence.triggerAtMillis()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()) {
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
-        } else {
-            // Exact-alarm special access is optional. Keep reminders functional with the
-            // platform's inexact idle-aware delivery rather than silently disabling them.
-            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
-        }
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
     }
 
     private fun cancelToken(context: Context, token: String) {

@@ -13,10 +13,9 @@ test("Android profile screen exposes medication reminder controls without adding
   const reminders = source("reminders.js");
 
   assert.match(index, /id="reminder-settings"/);
-  assert.match(index, /\/static\/reminders\.js/);
+  assert.match(index, /\/static\/reminders\.js\?v=20260903reminders2/);
   assert.doesNotMatch(index, /data-nav="reminders"/);
   assert.match(reminders, /MedicineReminderNative/);
-  assert.match(reminders, /requestExactAlarmAccess/);
   assert.match(reminders, /모든 프로필/);
 });
 

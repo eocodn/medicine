@@ -184,7 +184,7 @@ class ManifestContractTest {
         assertTrue(legacyRules.readText().contains("<exclude domain=\"file\" path=\".\""))
     }
     @Test
-    fun medicationRemindersHaveBackgroundReceiversPermissionsAndSharedVaultBoundary() {
+    fun medicationRemindersUseOrdinaryIdleAwareAlarmScheduling() {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
         val bridge = java.io.File("src/main/java/com/medicine/android/MedicineBridge.kt").readText()
         val personalApi = java.io.File("src/main/java/com/medicine/android/PersonalDatabaseApi.kt")
@@ -192,9 +192,9 @@ class ManifestContractTest {
         val scheduler = java.io.File("src/main/java/com/medicine/android/ReminderScheduler.kt")
         val alarmReceiver = java.io.File("src/main/java/com/medicine/android/ReminderAlarmReceiver.kt")
         val actionReceiver = java.io.File("src/main/java/com/medicine/android/ReminderActionReceiver.kt")
+        val schedulerText = scheduler.readText()
 
         assertTrue(manifest.contains("android.permission.POST_NOTIFICATIONS"))
-        assertTrue(manifest.contains("android.permission.SCHEDULE_EXACT_ALARM"))
         assertTrue(manifest.contains("android.permission.RECEIVE_BOOT_COMPLETED"))
         assertTrue(manifest.contains(".ReminderAlarmReceiver"))
         assertTrue(manifest.contains(".ReminderActionReceiver"))
@@ -206,6 +206,7 @@ class ManifestContractTest {
         assertTrue(actionReceiver.isFile)
         assertTrue(bridge.contains("PersonalDatabaseApi"))
         assertFalse(bridge.contains("vault.openForUse()"))
+        assertTrue(schedulerText.contains("setAndAllowWhileIdle"))
     }
 
     @Test

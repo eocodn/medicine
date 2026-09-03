@@ -3,7 +3,6 @@
     supported: boolean;
     enabled: boolean;
     notifications_allowed: boolean;
-    exact_alarm_allowed: boolean;
   };
 
   function rootNode(): HTMLElement | null {
@@ -36,9 +35,6 @@
     if (status.enabled && !status.notifications_allowed) {
       stateCopy = "복약 알림은 켜져 있지만 휴대폰 알림 권한이 꺼져 있어요.";
       primaryLabel = "알림 권한 허용";
-    } else if (status.enabled && !status.exact_alarm_allowed) {
-      stateCopy = "복약 알림은 켜져 있어요. 정확한 시간 권한을 허용하면 지연 가능성을 줄일 수 있어요.";
-      primaryLabel = "복약 알림 끄기";
     } else if (status.enabled) {
       stateCopy = "모든 프로필의 시간 지정 약을 복용 시간에 맞춰 알려드려요.";
       primaryLabel = "복약 알림 끄기";
@@ -53,9 +49,6 @@
         </div>
         <div class="reminder-settings-actions">
           <button class="secondary-button" data-reminder-toggle type="button">${primaryLabel}</button>
-          ${status.enabled && status.notifications_allowed && !status.exact_alarm_allowed
-            ? `<button class="secondary-button" data-reminder-exact type="button">정확한 시간 알림 허용</button>`
-            : ""}
         </div>
       </article>`;
 
@@ -66,9 +59,6 @@
         window.MedicineReminderNative?.setEnabled(false);
       }
       window.setTimeout(refresh, 0);
-    });
-    root.querySelector("[data-reminder-exact]")?.addEventListener("click", () => {
-      window.MedicineReminderNative?.requestExactAlarmAccess();
     });
   }
 

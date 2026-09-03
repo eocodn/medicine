@@ -27,7 +27,6 @@ interface Window {
     status(): string;
     setEnabled(enabled: boolean): void;
     offerAfterScheduledMedicationSave(): void;
-    requestExactAlarmAccess(): void;
   };
   MedicineReminderUi?: {
     refresh(): void;

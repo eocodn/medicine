@@ -10,7 +10,6 @@ class ReminderSystemReceiver : BroadcastReceiver() {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
-            ACTION_EXACT_ALARM_PERMISSION_CHANGED,
             ReminderScheduler.ACTION_MAINTENANCE,
             -> ReminderScheduler.reconcileAsync(
                 context,
@@ -20,17 +19,12 @@ class ReminderSystemReceiver : BroadcastReceiver() {
         }
     }
 
-    companion object {
-        internal const val ACTION_EXACT_ALARM_PERMISSION_CHANGED =
-            "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED"
-    }
 }
 
 object ReminderSystemEventPolicy {
     fun replaceAll(action: String?): Boolean = when (action) {
         Intent.ACTION_BOOT_COMPLETED,
         Intent.ACTION_MY_PACKAGE_REPLACED,
-        ReminderSystemReceiver.ACTION_EXACT_ALARM_PERMISSION_CHANGED,
         -> true
         else -> false
     }

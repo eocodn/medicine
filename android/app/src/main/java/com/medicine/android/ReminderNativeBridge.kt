@@ -7,7 +7,6 @@ import org.json.JSONObject
 class ReminderNativeBridge(
     context: Context,
     private val requestNotificationPermission: () -> Unit,
-    private val requestExactAlarmPermission: () -> Unit,
     private val onStatusChanged: () -> Unit,
 ) {
     private val appContext = context.applicationContext
@@ -18,7 +17,6 @@ class ReminderNativeBridge(
         .put("supported", true)
         .put("enabled", ReminderSettings.isEnabled(appContext))
         .put("notifications_allowed", ReminderPermissions.notificationsAllowed(appContext))
-        .put("exact_alarm_allowed", ReminderPermissions.exactAlarmAllowed(appContext))
         .toString()
 
     @JavascriptInterface
@@ -43,11 +41,6 @@ class ReminderNativeBridge(
         if (!ReminderSettings.shouldAutomaticallyOffer(appContext)) return
         ReminderSettings.markAutomaticOfferCompleted(appContext)
         requestEnable(PendingEnable.AUTOMATIC_OFFER)
-    }
-
-    @JavascriptInterface
-    fun requestExactAlarmAccess() {
-        requestExactAlarmPermission()
     }
 
     fun onNotificationPermissionResult(granted: Boolean) {
