@@ -2,16 +2,41 @@ package com.medicine.android
 
 import android.content.Context
 
+
+class PersonalDataRevisionSignal {
+    private val listeners = linkedSetOf<(Long) -> Unit>()
+
+    @Synchronized
+    fun subscribe(listener: (Long) -> Unit) {
+        listeners += listener
+    }
+
+    @Synchronized
+    fun unsubscribe(listener: (Long) -> Unit) {
+        listeners -= listener
+    }
+
+    fun publish(revision: Long) {
+        val snapshot = synchronized(this) { listeners.toList() }
+        snapshot.forEach { listener -> listener(revision) }
+    }
+}
+
 object PersonalDataRevision {
     private const val PREFERENCES = "medicine.personal-data-revision"
     private const val KEY_REVISION = "revision"
     private var initialized = false
     private var processRevision = 0L
+    private val externalSignal = PersonalDataRevisionSignal()
 
     fun current(context: Context): Long = synchronized(this) {
         ensureInitialized(context)
         processRevision
     }
+
+    fun subscribeExternal(listener: (Long) -> Unit) = externalSignal.subscribe(listener)
+
+    fun unsubscribeExternal(listener: (Long) -> Unit) = externalSignal.unsubscribe(listener)
 
     fun markChanged(context: Context): Long = synchronized(this) {
         ensureInitialized(context)
@@ -25,6 +50,12 @@ object PersonalDataRevision {
             .putLong(KEY_REVISION, processRevision)
             .apply()
         processRevision
+    }
+
+    fun markExternalChanged(context: Context): Long {
+        val revision = markChanged(context)
+        externalSignal.publish(revision)
+        return revision
     }
 
     private fun ensureInitialized(context: Context) {

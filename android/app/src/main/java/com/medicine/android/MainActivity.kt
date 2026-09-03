@@ -34,6 +34,10 @@ class MainActivity : ComponentActivity() {
     private var medicineBridge: MedicineBridge? = null
     private var personalDataRevisionGate: PersonalDataRevisionGate? = null
     private var appPageReady = false
+    private var activityResumed = false
+    private val externalPersonalDataChangeListener: (Long) -> Unit = {
+        runOnUiThread { refreshPersonalDataIfChanged() }
+    }
     private lateinit var ocrIntegration: ProductCapabilityIntegration
     private val backDispatchGate = BackDispatchGate()
     private val medicineNativeProxy = MedicineNativeProxy()
@@ -49,6 +53,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PersonalDataRevision.subscribeExternal(externalPersonalDataChangeListener)
         val webViewPackage = WebView.getCurrentWebViewPackage()
         webViewProviderPackageName = webViewPackage?.packageName
         webViewProviderVersion = webViewPackage?.versionName
@@ -288,7 +293,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshPersonalDataIfChanged() {
-        if (!appPageReady || isFinishing || isDestroyed) return
+        if (!activityResumed || !appPageReady || isFinishing || isDestroyed) return
         val gate = personalDataRevisionGate ?: return
         val revision = PersonalDataRevision.current(applicationContext)
         if (!gate.consumeIfChanged(revision)) return
@@ -297,8 +302,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        activityResumed = true
         reminderNativeBridge?.refresh()
         refreshPersonalDataIfChanged()
+    }
+
+    override fun onPause() {
+        activityResumed = false
+        super.onPause()
     }
 
     private fun showUnsupportedWebView() {
@@ -399,6 +410,7 @@ class MainActivity : ComponentActivity() {
         uri.scheme == "https" && uri.host == APP_ASSET_DOMAIN
 
     override fun onDestroy() {
+        PersonalDataRevision.unsubscribeExternal(externalPersonalDataChangeListener)
         if (::ocrIntegration.isInitialized) ocrIntegration.close()
         referenceBootstrapBridge?.close()
         referenceBootstrapBridge = null
