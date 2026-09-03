@@ -1,6 +1,6 @@
 interface Window {
   MedicineBootstrapUi?: {
-    ensureReady(): Promise<void>;
+    ensureReady(): Promise<{ state: string }>;
     resolve(requestId: string, rawStatus: string): void;
   };
   MedicineBootstrapNative?: {
@@ -38,6 +38,9 @@ interface Window {
     normalizeOcrItems(items: unknown): any[];
     reset(): void;
     setStatus(message: string): void;
+  };
+  MedicineApp?: {
+    refreshPersonalData(): Promise<void>;
   };
   friendlyErrorMessage?: (message: string) => string;
 }

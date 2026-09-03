@@ -1,3 +1,5 @@
+#[cfg(feature = "agentctl-web")]
+use axum::extract::Path;
 use axum::{
     body::{to_bytes, Body},
     extract::State,
@@ -18,6 +20,8 @@ use tower_http::services::ServeDir;
 use crate::reference_lifecycle_runtime::ReferenceRuntimeResult;
 use crate::reference_manager::{ReferenceRuntimeError, ReferenceUpdateStatus};
 use crate::reference_runtime::ReferenceRuntime;
+#[cfg(feature = "agentctl-web")]
+use crate::web_agent::{AgentFaultController, AgentFaultEffect};
 use crate::{MedicineEngine, ReferenceBootstrapSnapshot, ReferenceBootstrapState};
 
 pub const BROWSER_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
@@ -51,6 +55,7 @@ pub struct WebConfig {
     pub ocr_assets_dir: Option<PathBuf>,
     pub reference_unavailable_reason: Option<String>,
     pub reference_runtime: Option<Arc<dyn WebReferenceRuntime>>,
+    pub enable_agent_control: bool,
 }
 
 #[derive(Clone)]
@@ -60,6 +65,8 @@ struct AppState {
     status: DevelopmentWebStatus,
     personal_db: PathBuf,
     reference_runtime: Option<Arc<dyn WebReferenceRuntime>>,
+    #[cfg(feature = "agentctl-web")]
+    agent_faults: Option<AgentFaultController>,
 }
 
 pub struct WebRuntime {
@@ -221,6 +228,10 @@ pub fn build_router(config: WebConfig) -> Result<Router, String> {
 }
 
 pub fn build_runtime(config: WebConfig) -> Result<WebRuntime, String> {
+    #[cfg(not(feature = "agentctl-web"))]
+    if config.enable_agent_control {
+        return Err("agent control requires the agentctl-web feature".to_owned());
+    }
     let index_path = config.static_dir.join("index.html");
     let index_html = fs::read_to_string(&index_path)
         .map_err(|error| format!("cannot read static index {}: {error}", index_path.display()))?;
@@ -262,6 +273,10 @@ pub fn build_runtime(config: WebConfig) -> Result<WebRuntime, String> {
         status: status.clone(),
         personal_db: config.personal_db.clone(),
         reference_runtime: config.reference_runtime.clone(),
+        #[cfg(feature = "agentctl-web")]
+        agent_faults: config
+            .enable_agent_control
+            .then(AgentFaultController::default),
     };
 
     let mut router = Router::new()
@@ -270,7 +285,21 @@ pub fn build_runtime(config: WebConfig) -> Result<WebRuntime, String> {
         .route(
             "/api/development/reference-bootstrap/start",
             post(start_reference_bootstrap),
-        )
+        );
+    #[cfg(feature = "agentctl-web")]
+    if config.enable_agent_control {
+        router = router
+            .route("/api/development/agent/faults", post(agent_install_fault))
+            .route(
+                "/api/development/agent/faults/{id}",
+                get(agent_fault_status),
+            )
+            .route(
+                "/api/development/agent/faults/{id}/release",
+                post(agent_release_fault),
+            );
+    }
+    router = router
         .route("/api/{*path}", any(api_request))
         .nest_service("/static", ServeDir::new(config.static_dir));
     if let Some(ocr_root) = config.ocr_assets_dir {
@@ -395,6 +424,48 @@ async fn start_reference_bootstrap(State(state): State<AppState>) -> Response {
     json_response(StatusCode::ACCEPTED, json!({"status": "started"}))
 }
 
+#[cfg(feature = "agentctl-web")]
+async fn agent_install_fault(State(state): State<AppState>, Json(value): Json<Value>) -> Response {
+    let Some(controller) = state.agent_faults.as_ref() else {
+        return json_response(
+            StatusCode::NOT_FOUND,
+            json!({"detail":"agent control disabled"}),
+        );
+    };
+    match controller.install(value) {
+        Ok(body) => json_response(StatusCode::CREATED, body),
+        Err(detail) => json_response(StatusCode::BAD_REQUEST, json!({"detail":detail})),
+    }
+}
+
+#[cfg(feature = "agentctl-web")]
+async fn agent_fault_status(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(controller) = state.agent_faults.as_ref() else {
+        return json_response(
+            StatusCode::NOT_FOUND,
+            json!({"detail":"agent control disabled"}),
+        );
+    };
+    match controller.snapshot(&id) {
+        Ok(body) => json_response(StatusCode::OK, body),
+        Err(detail) => json_response(StatusCode::NOT_FOUND, json!({"detail":detail})),
+    }
+}
+
+#[cfg(feature = "agentctl-web")]
+async fn agent_release_fault(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(controller) = state.agent_faults.as_ref() else {
+        return json_response(
+            StatusCode::NOT_FOUND,
+            json!({"detail":"agent control disabled"}),
+        );
+    };
+    match controller.released(&id) {
+        Ok(()) => json_response(StatusCode::OK, json!({"id":id,"released":true})),
+        Err(detail) => json_response(StatusCode::CONFLICT, json!({"detail":detail})),
+    }
+}
+
 async fn api_request(State(state): State<AppState>, request: Request<Body>) -> Response {
     let method = request.method().as_str().to_owned();
     let raw_path = request
@@ -403,6 +474,25 @@ async fn api_request(State(state): State<AppState>, request: Request<Body>) -> R
         .map(|value| value.as_str())
         .unwrap_or_else(|| request.uri().path())
         .to_owned();
+    #[cfg(feature = "agentctl-web")]
+    if let Some(controller) = state.agent_faults.as_ref() {
+        match controller.effect(&method, &raw_path) {
+            Ok(Some(AgentFaultEffect::Fail { status, body })) => {
+                return json_response(status, body)
+            }
+            Ok(Some(AgentFaultEffect::Delay { delay_ms })) => {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            Ok(Some(AgentFaultEffect::Gate { id, notify })) => {
+                notify.notified().await;
+                eprintln!("agent fault gate released: {id}");
+            }
+            Ok(None) => {}
+            Err(detail) => {
+                return json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"detail":detail}))
+            }
+        }
+    }
     let body = match to_bytes(request.into_body(), MAX_API_BODY_BYTES).await {
         Ok(body) => body,
         Err(_) => {

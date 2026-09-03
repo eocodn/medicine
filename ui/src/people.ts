@@ -66,15 +66,16 @@ function renderPeople() {
 }
 
 async function selectPerson(personId) {
-  if (personId !== state.currentPersonId && typeof resetOcrProductDiscovery === "function") {
-    resetOcrProductDiscovery({ clearSearch: true });
-  }
-  state.currentPersonId = personId;
-  localStorage.setItem("medicine.currentPersonId", personId);
-  await loadDashboard();
-  recoverPersistedDoseIntents(personId);
+  if (!state.people.some((person) => person.id === personId)) return;
+  selectCurrentPerson(personId);
   renderAll();
   showScreen("home", { focus: true });
+  try {
+    await refreshActiveDashboard();
+  } catch (error) {
+    console.error("dashboard load after profile switch failed", error);
+    toast("프로필은 선택했지만 복약 정보를 불러오지 못했어요.");
+  }
 }
 
 function syncReproductiveFields() {
@@ -191,6 +192,7 @@ async function submitPerson(event) {
   showScreen(targetScreen, { focus: true });
   try {
     await loadPeople();
+    if (dashboardAffected && state.currentPersonId) await refreshActiveDashboard();
     showScreen(targetScreen, { focus: true });
   } catch (error) {
     console.error("people refresh after profile save failed", error);
@@ -228,6 +230,7 @@ async function confirmDeletePerson() {
   showScreen(targetScreen, { focus: true });
   try {
     await loadPeople();
+    if (dashboardAffected && state.currentPersonId) await refreshActiveDashboard();
     showScreen(state.people.length ? "people" : "home", { focus: true });
   } catch (error) {
     console.error("people refresh after profile delete failed", error);

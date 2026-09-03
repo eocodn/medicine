@@ -1,10 +1,30 @@
+type DashboardPhase = "empty" | "loading" | "ready" | "stale" | "error";
+
+type DashboardSession = {
+  ownerPersonId: string | null;
+  date: string | null;
+  phase: DashboardPhase;
+  data: any;
+  generation: number;
+  reason: string | null;
+};
+
+function initialDashboardSession(): DashboardSession {
+  return {
+    ownerPersonId: null,
+    date: null,
+    phase: "empty",
+    data: null,
+    generation: 0,
+    reason: null,
+  };
+}
+
 const state = {
   people: [],
   currentPersonId: localStorage.getItem("medicine.currentPersonId"),
-  dashboard: null,
-  dashboardDate: null,
-  dashboardStale: false,
-  fullCatalog: false,
+  dashboardSession: initialDashboardSession(),
+  referenceAvailable: true,
   pendingProduct: null,
   pendingRequestId: null,
   pendingOcrProductRows: [],
@@ -36,6 +56,139 @@ type PersistedDoseIntent = {
   desiredStatus: string;
 };
 
+function dashboardData() {
+  return state.dashboardSession.data;
+}
+
+function dashboardBelongsToCurrentPerson() {
+  return Boolean(
+    state.currentPersonId &&
+    state.dashboardSession.ownerPersonId === state.currentPersonId,
+  );
+}
+
+function dashboardReadyForCurrent(date = todayInKorea()) {
+  const session = state.dashboardSession;
+  const dashboard = session.data;
+  return dashboardBelongsToCurrentPerson()
+    && session.phase === "ready"
+    && session.date === date
+    && Boolean(dashboard)
+    && (!dashboard?.person?.id || dashboard.person.id === state.currentPersonId)
+    && (!dashboard?.daily_plan?.date || dashboard.daily_plan.date === date);
+}
+
+function clearDashboardSession() {
+  state.dashboardSession = {
+    ...initialDashboardSession(),
+    generation: state.dashboardSession.generation + 1,
+  };
+}
+
+function activateDashboardOwner(personId) {
+  state.dashboardSession = {
+    ownerPersonId: personId || null,
+    date: null,
+    phase: "empty",
+    data: null,
+    generation: state.dashboardSession.generation + 1,
+    reason: null,
+  };
+}
+
+function beginDashboardLoad(personId, date) {
+  const current = state.dashboardSession;
+  const preserve = current.ownerPersonId === personId && current.date === date
+    ? current.data
+    : null;
+  const generation = current.generation + 1;
+  state.dashboardSession = {
+    ownerPersonId: personId,
+    date,
+    phase: "loading",
+    data: preserve,
+    generation,
+    reason: null,
+  };
+  return generation;
+}
+
+function commitDashboardLoad(personId, date, generation, dashboard) {
+  if (dashboard?.person?.id && dashboard.person.id !== personId) {
+    throw new Error("dashboard owner mismatch");
+  }
+  if (dashboard?.daily_plan?.date && dashboard.daily_plan.date !== date) {
+    throw new Error("dashboard date mismatch");
+  }
+  const current = state.dashboardSession;
+  if (
+    state.currentPersonId !== personId ||
+    current.ownerPersonId !== personId ||
+    current.date !== date ||
+    current.generation !== generation
+  ) return false;
+  reconcilePrnRequestIds(dashboard?.recent_logs || []);
+  state.dashboardSession = {
+    ownerPersonId: personId,
+    date,
+    phase: "ready",
+    data: dashboard,
+    generation,
+    reason: null,
+  };
+  return true;
+}
+
+function failDashboardLoad(personId, date, generation, error) {
+  const current = state.dashboardSession;
+  if (
+    state.currentPersonId !== personId ||
+    current.ownerPersonId !== personId ||
+    current.date !== date ||
+    current.generation !== generation
+  ) return false;
+  state.dashboardSession = {
+    ...current,
+    phase: "error",
+    reason: String(error?.message || "dashboard load failed"),
+  };
+  return true;
+}
+
+function markDashboardStale(reason = "refresh_required") {
+  const personId = state.currentPersonId;
+  if (!personId) {
+    clearDashboardSession();
+    return;
+  }
+  const current = state.dashboardSession;
+  const sameOwner = current.ownerPersonId === personId;
+  state.dashboardSession = {
+    ownerPersonId: personId,
+    date: sameOwner ? current.date : null,
+    phase: "stale",
+    data: sameOwner ? current.data : null,
+    generation: current.generation + 1,
+    reason,
+  };
+}
+
+function selectCurrentPerson(personId) {
+  const nextPersonId = personId || null;
+  const changed = state.currentPersonId !== nextPersonId;
+  if (changed && state.currentPersonId && typeof resetOcrProductDiscovery === "function") {
+    resetOcrProductDiscovery({ clearSearch: true });
+  }
+  state.currentPersonId = nextPersonId;
+  if (nextPersonId) localStorage.setItem("medicine.currentPersonId", nextPersonId);
+  else localStorage.removeItem("medicine.currentPersonId");
+  if (changed || state.dashboardSession.ownerPersonId !== nextPersonId) {
+    if (nextPersonId) activateDashboardOwner(nextPersonId);
+    else clearDashboardSession();
+  }
+  return changed;
+}
+
 function persistedDoseIntents(): Record<string, PersistedDoseIntent> {
   const raw = localStorage.getItem(DOSE_INTENTS_STORAGE_KEY);
   if (!raw) return {};
@@ -58,8 +211,8 @@ function writePersistedDoseIntents(intents) {
 }
 
 function rememberScheduledDoseIntent(instanceId, desiredStatus) {
-  const scheduled = (state.dashboard?.daily_plan?.doses || []).some((item) => item.id === instanceId);
-  if (!scheduled || !state.currentPersonId) return false;
+  const scheduled = (dashboardData()?.daily_plan?.doses || []).some((item) => item.id === instanceId);
+  if (!scheduled || !state.currentPersonId || !dashboardBelongsToCurrentPerson()) return false;
   const intents = persistedDoseIntents();
   intents[instanceId] = { personId: state.currentPersonId, desiredStatus };
   writePersistedDoseIntents(intents);
@@ -106,13 +259,8 @@ function reconcilePrnRequestIds(logs) {
   }
 }
 
-function markDashboardStale() {
-  state.dashboardStale = true;
-  state.dashboardDate = null;
-}
-
 function recomputeDoseSummary() {
-  const plan = state.dashboard?.daily_plan;
+  const plan = dashboardData()?.daily_plan;
   if (!plan) return;
   const doses = plan.doses || [];
   plan.summary = {
@@ -123,14 +271,16 @@ function recomputeDoseSummary() {
 }
 
 function currentDoseStatus(instanceId) {
-  const localDose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
+  const dashboard = dashboardData();
+  const localDose = (dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
   if (localDose) return localDose.status;
-  const log = (state.dashboard?.recent_logs || []).find((item) => item.dose_instance_id === instanceId);
+  const log = (dashboard?.recent_logs || []).find((item) => item.dose_instance_id === instanceId);
   return log?.status || null;
 }
 
 function applyPendingDoseIntent(instanceId, desiredStatus) {
-  const localDose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
+  if (!dashboardBelongsToCurrentPerson()) return false;
+  const localDose = (dashboardData()?.daily_plan?.doses || []).find((item) => item.id === instanceId);
   if (!localDose) return false;
   localDose.status = desiredStatus;
   if (desiredStatus === "planned") localDose.completed_at = null;
@@ -140,24 +290,25 @@ function applyPendingDoseIntent(instanceId, desiredStatus) {
 }
 
 function clearPendingDoseIntent(instanceId) {
-  const localDose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
+  const localDose = (dashboardData()?.daily_plan?.doses || []).find((item) => item.id === instanceId);
   if (!localDose) return false;
   delete localDose._pending;
   return true;
 }
 
 function reconcileDoseMutation(committed) {
-  if (!committed || !state.dashboard) return false;
+  const dashboard = dashboardData();
+  if (!committed || !dashboard || !dashboardBelongsToCurrentPerson()) return false;
   let changed = false;
   if (Array.isArray(committed.recent_logs)) {
     reconcilePrnRequestIds(committed.recent_logs);
-    state.dashboard = {
-      ...state.dashboard,
+    state.dashboardSession.data = {
+      ...dashboard,
       recent_logs: committed.recent_logs,
     };
     changed = true;
   }
-  const localDose = (state.dashboard.daily_plan?.doses || []).find((item) => item.id === committed.id);
+  const localDose = (dashboardData().daily_plan?.doses || []).find((item) => item.id === committed.id);
   if (localDose) {
     localDose.status = committed.status;
     localDose.completed_at = committed.completed_at;
@@ -169,8 +320,11 @@ function reconcileDoseMutation(committed) {
 }
 
 function reconcileCommittedMedication(committed) {
-  if (!committed?.id) return false;
-  const dashboard = state.dashboard || {};
+  if (!committed?.id || !state.currentPersonId) return false;
+  if (state.dashboardSession.ownerPersonId !== state.currentPersonId) {
+    activateDashboardOwner(state.currentPersonId);
+  }
+  const dashboard = dashboardData() || {};
   const medications = dashboard.medications || [];
   const existing = medications.find((item) => item.id === committed.id) || {};
   let next;
@@ -182,8 +336,7 @@ function reconcileCommittedMedication(committed) {
       ? medications.map((item) => item.id === committed.id ? merged : item)
       : [...medications, merged];
   }
-  state.dashboard = { ...dashboard, medications: next };
-  state.dashboardDate = null;
+  state.dashboardSession.data = { ...dashboard, medications: next };
   return true;
 }
 
@@ -194,15 +347,7 @@ function reconcileCommittedPerson(person, { select = false } = {}) {
   state.people = exists
     ? state.people.map((item) => item.id === person.id ? person : item)
     : [...state.people, person];
-  if (select) {
-    if (state.currentPersonId && state.currentPersonId !== person.id && typeof resetOcrProductDiscovery === "function") {
-      resetOcrProductDiscovery({ clearSearch: true });
-    }
-    state.currentPersonId = person.id;
-    localStorage.setItem("medicine.currentPersonId", person.id);
-    state.dashboard = null;
-    state.dashboardDate = null;
-  }
+  if (select) selectCurrentPerson(person.id);
   return affectsCurrentDashboard;
 }
 
@@ -210,14 +355,6 @@ function reconcileDeletedPerson(personId) {
   const deletingCurrent = state.currentPersonId === personId;
   state.people = state.people.filter((person) => person.id !== personId);
   if (!deletingCurrent) return false;
-  if (typeof resetOcrProductDiscovery === "function") resetOcrProductDiscovery({ clearSearch: true });
-  state.currentPersonId = state.people[0]?.id || null;
-  state.dashboard = null;
-  state.dashboardDate = null;
-  if (state.currentPersonId) localStorage.setItem("medicine.currentPersonId", state.currentPersonId);
-  else {
-    localStorage.removeItem("medicine.currentPersonId");
-    state.dashboardStale = false;
-  }
+  selectCurrentPerson(state.people[0]?.id || null);
   return Boolean(state.currentPersonId);
 }

@@ -162,9 +162,22 @@ fn fixture_config(reference: Option<PathBuf>, reason: Option<&str>) -> (WebConfi
             ocr_assets_dir: Some(ocr_dir),
             reference_unavailable_reason: reason.map(str::to_owned),
             reference_runtime: None,
+            enable_agent_control: false,
         },
         root,
     )
+}
+
+#[cfg(not(feature = "agentctl-web"))]
+#[test]
+fn plain_web_usage_does_not_advertise_agent_control() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_medicine-core-web"))
+        .arg("--agent-control")
+        .output()
+        .expect("run plain web usage");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("[--agent-control]"), "{stderr}");
 }
 
 #[tokio::test]
@@ -322,6 +335,179 @@ async fn local_http_adapter_serves_ui_and_routes_api_through_medicine_engine() {
         con.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .expect("personal schema version"),
         medicine_core::PERSONAL_SCHEMA_VERSION
+    );
+
+    fs::remove_file(reference).ok();
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(feature = "agentctl-web")]
+#[test]
+fn agent_control_requires_loopback_web_host() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_medicine-core-web"))
+        .args(["--host", "0.0.0.0", "--agent-control"])
+        .output()
+        .expect("run agent-controlled web with non-loopback host");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires a loopback web host"));
+}
+
+#[cfg(feature = "agentctl-web")]
+#[tokio::test]
+async fn agent_fault_controller_fails_one_matching_request_then_restores_authoritative_api() {
+    let reference = reference_db("web-agent-fault-reference");
+    let (mut config, root) = fixture_config(Some(reference.clone()), None);
+    config.enable_agent_control = true;
+    let app = build_router(config).expect("build agent-controlled web router");
+
+    let install = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/development/agent/faults")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "id": "health-once",
+                        "method": "GET",
+                        "path": "/api/health",
+                        "action": "fail",
+                        "times": 1,
+                        "status": 503,
+                        "body": {"detail": "injected"}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("install fault");
+    assert_eq!(install.status(), StatusCode::CREATED);
+
+    let failed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("faulted health response");
+    assert_eq!(failed.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response_json(failed).await["detail"], "injected");
+
+    let recovered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("recovered health response");
+    assert_eq!(recovered.status(), StatusCode::OK);
+
+    let status = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/development/agent/faults/health-once")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("fault status");
+    let status = response_json(status).await;
+    assert_eq!(status["remaining"], 0);
+    assert_eq!(status["matched"], 1);
+
+    fs::remove_file(reference).ok();
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(feature = "agentctl-web")]
+#[tokio::test]
+async fn agent_fault_gate_waits_for_explicit_release() {
+    let reference = reference_db("web-agent-gate-reference");
+    let (mut config, root) = fixture_config(Some(reference.clone()), None);
+    config.enable_agent_control = true;
+    let app = build_router(config).expect("build agent-controlled web router");
+
+    let install = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/development/agent/faults")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "id": "health-gate",
+                        "method": "GET",
+                        "path": "/api/health",
+                        "action": "gate",
+                        "times": 1
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("install gate");
+    assert_eq!(install.status(), StatusCode::CREATED);
+
+    let request_app = app.clone();
+    let pending = tokio::spawn(async move {
+        request_app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("gated health response")
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let status = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/development/agent/faults/health-gate")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .expect("gate status");
+            let status = response_json(status).await;
+            if status["waiting"] == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("gate reached waiting state");
+
+    assert!(!pending.is_finished());
+    let release = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/development/agent/faults/health-gate/release")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("release gate");
+    assert_eq!(release.status(), StatusCode::OK);
+    assert_eq!(
+        pending.await.expect("join gated request").status(),
+        StatusCode::OK
     );
 
     fs::remove_file(reference).ok();

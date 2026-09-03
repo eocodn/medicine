@@ -54,6 +54,8 @@ mod safety_basis;
 mod safety_time;
 #[cfg(feature = "web")]
 pub mod web;
+#[cfg(feature = "agentctl-web")]
+mod web_agent;
 
 #[cfg(feature = "agentctl")]
 pub use engine::RequestObservation;

@@ -18,6 +18,10 @@ pub(super) fn capabilities(args: &[String], usage: fn() -> String) -> Result<(),
         "scenario-events",
         "logs",
         "screenshot",
+        #[cfg(feature = "agentctl-web")]
+        "ui-state",
+        #[cfg(feature = "agentctl-web")]
+        "ui-events",
     ];
     #[cfg(not(feature = "web"))]
     let control = vec![
@@ -53,6 +57,8 @@ pub(super) fn capabilities(args: &[String], usage: fn() -> String) -> Result<(),
         "scenario",
         "app-commands",
         "screenshot",
+        #[cfg(feature = "agentctl-web")]
+        "ui-scenario",
     ];
     let payload = json!({
         "agentctl": true,
@@ -83,6 +89,42 @@ pub(super) fn targets(args: &[String], usage: fn() -> String) -> Result<(), Stri
             "observations": ["reference-state", "reference-bootstrap"]
         }),
     ];
+    #[cfg(all(feature = "web", not(feature = "agentctl-web")))]
+    let shared_ui = json!({
+        "id": "shared-ui",
+        "kind": "gui",
+        "controls": ["screenshot"],
+        "observations": ["screenshot"]
+    });
+    #[cfg(feature = "agentctl-web")]
+    let shared_ui = json!({
+        "id": "shared-ui",
+        "kind": "gui",
+        "controls": ["screenshot", "ui-scenario"],
+        "observations": ["screenshot", "ui-state", "ui-events"],
+        "ui_scenario": {
+            "event_stream": ["ui_scenario_started", "ui_operation_started", "ui_operation_completed", "browser_event", "heartbeat"],
+            "actions": ["open", "reload", "click", "set-field", "observe", "set-storage", "request", "fault", "wait-request", "release", "wait-state", "clock-set", "screenshot"],
+            "fault_actions": ["fail", "delay", "gate"],
+            "semantic_targets": [
+                "screen:<home|meds|search|people>", "profile-shortcut", "add-person",
+                "person:<id>", "person:<id>:edit", "person:<id>:delete", "person-name:<name>",
+                "person:submit", "person:confirm-delete", "add-medication", "search:query",
+                "product:<product_ref>", "prescription:open", "prescription:add-time",
+                "prescription:save", "medication:<id>:edit", "medication:<id>:stop",
+                "medication:confirm-stop", "dose:<id>:taken", "dose:<id>:skipped",
+                "dose:<id>:cancel", "sheet:close"
+            ],
+            "fields": [
+                "person:name", "person:birth_year", "person:birth_month", "person:birth_day",
+                "person:sex", "person:pregnancy_status", "person:lactation_status", "person:notes",
+                "search:query", "prescription:dose-amount", "prescription:dose-unit",
+                "prescription:route", "prescription:prn", "prescription:frequency",
+                "prescription:meal", "prescription:prn-max", "prescription:start-date",
+                "prescription:long-term", "prescription:days", "prescription:time:<index>"
+            ]
+        }
+    });
     #[cfg(feature = "web")]
     let targets = vec![
         json!({
@@ -97,12 +139,7 @@ pub(super) fn targets(args: &[String], usage: fn() -> String) -> Result<(), Stri
             "controls": ["reference-apply", "reference-bootstrap"],
             "observations": ["reference-state", "reference-bootstrap"]
         }),
-        json!({
-            "id": "shared-ui",
-            "kind": "gui",
-            "controls": ["screenshot"],
-            "observations": ["screenshot"]
-        }),
+        shared_ui,
     ];
     emit(&json!({"targets": targets}), json_output)
 }

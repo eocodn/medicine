@@ -104,6 +104,19 @@ fn capabilities_and_targets_expose_exploratory_surface() {
         .expect("control list")
         .iter()
         .any(|item| item == "screenshot"));
+    #[cfg(feature = "agentctl-web")]
+    {
+        assert!(value["control"]
+            .as_array()
+            .expect("control list")
+            .iter()
+            .any(|item| item == "ui-scenario"));
+        assert!(value["observation"]
+            .as_array()
+            .expect("observation list")
+            .iter()
+            .any(|item| item == "ui-state"));
+    }
 
     let targets = agentctl()
         .args(["targets", "--json"])
@@ -123,6 +136,56 @@ fn capabilities_and_targets_expose_exploratory_surface() {
         .expect("medicine-engine observations")
         .iter()
         .any(|item| item == "logs"));
+    #[cfg(not(feature = "agentctl-web"))]
+    assert!(value["targets"][2].get("ui_scenario").is_none());
+    #[cfg(feature = "agentctl-web")]
+    {
+        let shared_ui = &value["targets"][2];
+        assert!(shared_ui["controls"]
+            .as_array()
+            .expect("shared-ui controls")
+            .iter()
+            .any(|item| item == "ui-scenario"));
+        assert!(shared_ui["observations"]
+            .as_array()
+            .expect("shared-ui observations")
+            .iter()
+            .any(|item| item == "ui-state"));
+        assert!(shared_ui["observations"]
+            .as_array()
+            .expect("shared-ui observations")
+            .iter()
+            .any(|item| item == "ui-events"));
+        assert!(shared_ui["ui_scenario"]["event_stream"]
+            .as_array()
+            .expect("UI scenario event stream")
+            .iter()
+            .any(|item| item == "browser_event"));
+        assert!(shared_ui["ui_scenario"]["actions"]
+            .as_array()
+            .expect("UI scenario actions")
+            .iter()
+            .any(|item| item == "set-field"));
+        assert!(shared_ui["ui_scenario"]["fault_actions"]
+            .as_array()
+            .expect("UI scenario fault actions")
+            .iter()
+            .any(|item| item == "gate"));
+        assert!(shared_ui["ui_scenario"]["fields"]
+            .as_array()
+            .expect("UI scenario fields")
+            .iter()
+            .any(|item| item == "person:name"));
+    }
+}
+
+#[cfg(not(feature = "agentctl-web"))]
+#[test]
+fn usage_without_agentctl_web_does_not_advertise_ui_scenario() {
+    let output = agentctl().output().expect("run agentctl usage");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("ui-scenario"), "{stderr}");
 }
 
 #[cfg(not(feature = "web"))]

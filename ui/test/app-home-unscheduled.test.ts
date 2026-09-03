@@ -44,7 +44,10 @@ function appContext(storage = new Map()) {
     friendlyErrorMessage: (value) => String(value),
     console,
     Intl,
-    Date,
+    Date: class FixedDate extends Date {
+      constructor(...args) { super(...(args.length ? args : ["2026-08-20T00:00:00+09:00"])); }
+      static now() { return new Date("2026-08-20T00:00:00+09:00").getTime(); }
+    },
     setTimeout,
     clearTimeout,
     crypto,
@@ -58,7 +61,50 @@ function appContext(storage = new Map()) {
     path.join(__dirname, "../../ui/dist/app.js"), "utf8",
   );
   vm.runInContext(stateSource, context);
+  vm.runInContext(`
+    Object.defineProperties(state, {
+      dashboard: {
+        configurable: true,
+        get() { return state.dashboardSession.data; },
+        set(value) {
+          const current = state.dashboardSession;
+          const owner = value?.person?.id || state.currentPersonId || current.ownerPersonId || "test-person";
+          if (!state.currentPersonId) state.currentPersonId = owner;
+          state.dashboardSession = {
+            ownerPersonId: owner,
+            date: current.date || todayInKorea(),
+            phase: value ? (current.phase === "stale" ? "stale" : "ready") : "empty",
+            data: value,
+            generation: current.generation + 1,
+            reason: null,
+          };
+        },
+      },
+      dashboardDate: {
+        configurable: true,
+        get() { return state.dashboardSession.date; },
+        set(value) { state.dashboardSession.date = value; },
+      },
+      dashboardStale: {
+        configurable: true,
+        get() { return state.dashboardSession.phase === "stale" || state.dashboardSession.phase === "error"; },
+        set(value) {
+          if (value) {
+            state.dashboardSession.ownerPersonId ||= state.currentPersonId;
+            state.dashboardSession.phase = "stale";
+          } else if (state.dashboardSession.data) {
+            state.dashboardSession.ownerPersonId ||= state.currentPersonId;
+            state.dashboardSession.phase = "ready";
+          }
+        },
+      },
+    });
+  `, context);
   vm.runInContext(source, context);
+  vm.runInContext(
+    fs.readFileSync(path.join(__dirname, "../../ui/dist/dashboard-runtime.js"), "utf8"),
+    context,
+  );
   vm.runInContext(
     fs.readFileSync(path.join(__dirname, "../../ui/dist/mutation-invariants.js"), "utf8"),
     context,
@@ -648,7 +694,7 @@ test("dashboard refresh is single-flight and collapses concurrent refreshes to o
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(requests.length, 2);
-  assert.equal(vm.runInContext(`state.dashboardStale`, context), true);
+  assert.equal(vm.runInContext(`!dashboardReadyForCurrent()`, context), true);
   assert.equal(
     vm.runInContext(`state.dashboard.medications[0].id`, context),
     "visible-before-refresh",
@@ -662,6 +708,6 @@ test("dashboard refresh is single-flight and collapses concurrent refreshes to o
   await Promise.all([first, second]);
 
   assert.equal(vm.runInContext(`state.dashboard.medications[0].id`, context), "latest");
-  assert.equal(vm.runInContext(`state.dashboardStale`, context), false);
+  assert.equal(vm.runInContext(`dashboardReadyForCurrent()`, context), true);
   assert.equal(vm.runInContext(`state.dashboardLoads.size`, context), 0);
 });

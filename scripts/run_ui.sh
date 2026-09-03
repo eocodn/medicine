@@ -11,7 +11,7 @@ export PATH
 
 cargo build --locked --release \
   --manifest-path "$root/rust/medicine_core/Cargo.toml" \
-  --features agentctl,web \
+  --features agentctl-web \
   --bin medicine-agentctl \
   --bin medicine-core-web
 

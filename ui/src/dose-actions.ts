@@ -199,7 +199,7 @@ function recoverPersistedDoseIntents(personId = state.currentPersonId) {
       clearScheduledDoseIntent(instanceId);
       continue;
     }
-    const dose = (state.dashboard?.daily_plan?.doses || []).find((item) => item.id === instanceId);
+    const dose = (dashboardData()?.daily_plan?.doses || []).find((item) => item.id === instanceId);
     if (!dose) continue;
     if (dose.status === intent.desiredStatus) {
       clearScheduledDoseIntent(instanceId);

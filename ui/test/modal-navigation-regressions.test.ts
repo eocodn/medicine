@@ -326,7 +326,7 @@ test("profile edit keeps the committed person when refresh fails", async () => {
   harness.setState(`
     state.people = [{ id: "p1", name: "이전 이름", birth_date: "1990-01-01", age: 36, sex: "male", pregnancy_status: "not_applicable", lactation_status: "not_applicable" }];
     state.currentPersonId = "p1";
-    state.dashboard = { person: { id: "p1" }, medications: [] };
+    state.dashboardSession = { ownerPersonId: "p1", date: "2026-08-19", phase: "ready", data: { person: { id: "p1" }, medications: [] }, generation: 1, reason: null };
     state.editingPersonId = "p1";
   `);
   harness.context.api = async () => ({
@@ -342,7 +342,7 @@ test("profile edit keeps the committed person when refresh fails", async () => {
   await harness.context.submitPerson({ preventDefault() {}, currentTarget: form });
 
   assert.equal(harness.read("state.people[0].name"), "새 이름");
-  assert.equal(harness.read("state.dashboardStale"), true);
+  assert.equal(harness.read("state.dashboardSession.phase === 'stale'"), true);
   assert.ok(harness.events.includes("screen:people"));
 });
 
@@ -351,7 +351,7 @@ test("profile create selects the committed person without retaining the previous
   harness.setState(`
     state.people = [{ id: "p1", name: "기존", birth_date: "1990-01-01", age: 36, sex: "male" }];
     state.currentPersonId = "p1";
-    state.dashboard = { person: { id: "p1" }, medications: [{ id: "old-med" }] };
+    state.dashboardSession = { ownerPersonId: "p1", date: "2026-08-19", phase: "ready", data: { person: { id: "p1" }, medications: [{ id: "old-med" }] }, generation: 1, reason: null };
     state.editingPersonId = null;
   `);
   harness.context.api = async () => ({
@@ -368,8 +368,8 @@ test("profile create selects the committed person without retaining the previous
 
   assert.equal(harness.read("state.currentPersonId"), "p2");
   assert.equal(harness.read("state.people.some((person) => person.id === 'p2')"), true);
-  assert.equal(harness.read("state.dashboard === null"), true);
-  assert.equal(harness.read("state.dashboardStale"), true);
+  assert.equal(harness.read("state.dashboardSession.data === null"), true);
+  assert.equal(harness.read("state.dashboardSession.phase === 'stale'"), true);
 });
 
 test("profile delete removes the committed person locally before refresh", async () => {
@@ -380,7 +380,7 @@ test("profile delete removes the committed person locally before refresh", async
       { id: "p2", name: "유지", birth_date: "1991-01-01", age: 35, sex: "male" }
     ];
     state.currentPersonId = "p1";
-    state.dashboard = { person: { id: "p1" }, medications: [{ id: "m1" }] };
+    state.dashboardSession = { ownerPersonId: "p1", date: "2026-08-19", phase: "ready", data: { person: { id: "p1" }, medications: [{ id: "m1" }] }, generation: 1, reason: null };
     state.pendingDeletePersonId = "p1";
   `);
   harness.context.api = async () => ({ id: "p1", deleted: true });
@@ -390,14 +390,15 @@ test("profile delete removes the committed person locally before refresh", async
 
   assert.equal(harness.read("state.people.some((person) => person.id === 'p1')"), false);
   assert.equal(harness.read("state.currentPersonId"), "p2");
-  assert.equal(harness.read("state.dashboard === null"), true);
-  assert.equal(harness.read("state.dashboardStale"), true);
+  assert.equal(harness.read("state.dashboardSession.data === null"), true);
+  assert.equal(harness.read("state.dashboardSession.phase === 'stale'"), true);
 });
 
 test("medication edit keeps authoritative revision and regimen when refresh fails", async () => {
   const harness = committedMutationContext();
   harness.setState(`
-    state.dashboard = { medications: [{ id: "m1", revision: 1, active: true, dosage_text: "1정", product_name: "약", dur_alert: true }] };
+    state.currentPersonId = "p1";
+    state.dashboardSession = { ownerPersonId: "p1", date: "2026-08-19", phase: "ready", data: { medications: [{ id: "m1", revision: 1, active: true, dosage_text: "1정", product_name: "약", dur_alert: true }] }, generation: 1, reason: null };
     state.editingMedicationId = "m1";
   `);
   harness.context.api = async () => ({
@@ -408,16 +409,17 @@ test("medication edit keeps authoritative revision and regimen when refresh fail
 
   await harness.context.confirmEditMedication();
 
-  assert.equal(harness.read("state.dashboard.medications[0].revision"), 2);
-  assert.equal(harness.read("state.dashboard.medications[0].dosage_text"), "2정");
-  assert.equal(harness.read("state.dashboardStale"), true);
+  assert.equal(harness.read("state.dashboardSession.data.medications[0].revision"), 2);
+  assert.equal(harness.read("state.dashboardSession.data.medications[0].dosage_text"), "2정");
+  assert.equal(harness.read("state.dashboardSession.phase === 'stale'"), true);
   assert.ok(harness.events.includes("screen:meds"));
 });
 
 test("medication stop removes the committed inactive medication before refresh", async () => {
   const harness = committedMutationContext();
   harness.setState(`
-    state.dashboard = { medications: [{ id: "m1", revision: 1, active: true, dosage_text: "1정", product_name: "약" }] };
+    state.currentPersonId = "p1";
+    state.dashboardSession = { ownerPersonId: "p1", date: "2026-08-19", phase: "ready", data: { medications: [{ id: "m1", revision: 1, active: true, dosage_text: "1정", product_name: "약" }] }, generation: 1, reason: null };
     state.pendingStopMedicationId = "m1";
   `);
   harness.context.api = async () => ({ id: "m1", revision: 2, active: false, product_name: "약", schedules: [] });
@@ -425,7 +427,7 @@ test("medication stop removes the committed inactive medication before refresh",
 
   await harness.context.confirmStopMedication();
 
-  assert.equal(harness.read("state.dashboard.medications.length"), 0);
-  assert.equal(harness.read("state.dashboardStale"), true);
+  assert.equal(harness.read("state.dashboardSession.data.medications.length"), 0);
+  assert.equal(harness.read("state.dashboardSession.phase === 'stale'"), true);
   assert.ok(harness.events.includes("screen:meds"));
 });

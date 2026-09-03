@@ -7,6 +7,7 @@ edition = "2021"
 default = []
 agentctl = []
 web = ["dep:axum", "dep:tokio", "dep:tower", "dep:tower-http"]
+agentctl-web = ["agentctl", "web", "tokio/time", "dep:tungstenite", "dep:base64"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -23,6 +24,7 @@ required-features = ["web"]
 
 [dependencies]
 axum = { version = "0.8", optional = true }
+base64 = { version = "0.22", optional = true }
 chrono = "0.4"
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 jni = "0.21"
@@ -37,6 +39,7 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"], optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 tower-http = { version = "0.6", features = ["fs"], optional = true }
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"], optional = true }
 unicode-normalization = "0.1"
 uuid = { version = "1.18", features = ["v4"] }
 # The integration suite links the full core into many test binaries. Full test
