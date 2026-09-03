@@ -39,6 +39,10 @@ async fn run(args: Vec<String>) -> Result<(), String> {
     let mut reference_unavailable_reason = env::var("MEDICINE_REFERENCE_UNAVAILABLE_REASON")
         .ok()
         .filter(|value| !value.trim().is_empty());
+    #[cfg(feature = "agentctl-web")]
+    let mut enable_agent_control = false;
+    #[cfg(not(feature = "agentctl-web"))]
+    let enable_agent_control = false;
 
     let mut index = 0;
     while index < args.len() {
@@ -80,6 +84,16 @@ async fn run(args: Vec<String>) -> Result<(), String> {
                 index += 1;
                 continue;
             }
+            "--agent-control" => {
+                #[cfg(feature = "agentctl-web")]
+                {
+                    enable_agent_control = true;
+                    index += 1;
+                    continue;
+                }
+                #[cfg(not(feature = "agentctl-web"))]
+                return Err("--agent-control requires the agentctl-web feature".to_owned());
+            }
             _ => return Err(usage()),
         }
     }
@@ -92,6 +106,9 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         .map_err(|_| "web port must be an integer between 1 and 65535".to_owned())?;
     if port == 0 {
         return Err("web port must be an integer between 1 and 65535".to_owned());
+    }
+    if enable_agent_control && !host.is_loopback() {
+        return Err("--agent-control requires a loopback web host".to_owned());
     }
 
     let mut managed_reference_runtime = None;
@@ -158,6 +175,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         ocr_assets_dir: ocr_assets_dir.map(PathBuf::from),
         reference_unavailable_reason,
         reference_runtime: web_reference_runtime,
+        enable_agent_control,
     })?;
     let address = (host, port);
     let listener = TcpListener::bind(address)
@@ -195,5 +213,11 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: medicine-core-web [--host <IP>] [--port <PORT>] [--canonical-db <PATH>] [--personal-db <PATH>] [--reference-dir <PATH>] [--reference-update-base-url <HTTPS_BASE_URL>] [--reference-trust-manifest <PATH>] [--static-dir <PATH>] [--ocr-assets-dir <PATH>] [--reference-unavailable-reason <REASON>]".to_owned()
+    #[cfg(feature = "agentctl-web")]
+    let agent_control = " [--agent-control]";
+    #[cfg(not(feature = "agentctl-web"))]
+    let agent_control = "";
+    format!(
+        "usage: medicine-core-web [--host <IP>] [--port <PORT>] [--canonical-db <PATH>] [--personal-db <PATH>] [--reference-dir <PATH>] [--reference-update-base-url <HTTPS_BASE_URL>] [--reference-trust-manifest <PATH>] [--static-dir <PATH>] [--ocr-assets-dir <PATH>] [--reference-unavailable-reason <REASON>]{agent_control}"
+    )
 }

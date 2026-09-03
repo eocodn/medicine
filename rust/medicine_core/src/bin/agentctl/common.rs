@@ -15,6 +15,15 @@ mod runtime_log;
 #[cfg(feature = "agentctl")]
 #[path = "scenario.rs"]
 mod scenario;
+#[cfg(feature = "agentctl-web")]
+#[path = "ui_browser.rs"]
+mod ui_browser;
+#[cfg(feature = "agentctl-web")]
+#[path = "ui_runtime.rs"]
+mod ui_runtime;
+#[cfg(feature = "agentctl-web")]
+#[path = "ui_scenario.rs"]
+mod ui_scenario;
 
 use medicine_core::{
     assemble_dur_display, checkpoint_personal_db, initialize_personal_db,
@@ -53,6 +62,8 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         "logs" => runtime_log::command(&args[1..], usage),
         #[cfg(feature = "agentctl")]
         "scenario" => scenario::run(&args[1..], usage),
+        #[cfg(feature = "agentctl-web")]
+        "ui-scenario" => ui_scenario::run(&args[1..], usage),
         #[cfg(feature = "agentctl")]
         "reference-bootstrap" => reference_bootstrap::command(&args[1..], usage),
         "request-access" => request_access(&args[1..]),
@@ -495,8 +506,12 @@ fn usage() -> String {
     let common = "medicine-agentctl request-access <METHOD> <PATH> [--json]\n       medicine-agentctl request <METHOD> <PATH> [--canonical-db <PATH>] [--personal-db <PATH>] [--body <JSON>] [--json]\n       medicine-agentctl health [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] [--json]\n       medicine-agentctl personal-schema --personal-db <PATH> [--json]\n       medicine-agentctl personal-checkpoint --personal-db <PATH> [--json]\n       medicine-agentctl reference-verify --reference-db <PATH> --contract-major <N> --dataset-id <SHA256> [--json]\n       medicine-agentctl reference-state --state-file <PATH> [--json]\n       medicine-agentctl reference-apply --kind <full|patch> --artifact <PATH> [--source <PATH>] --destination <PATH> --target-size <BYTES> --target-sha256 <SHA256> [--json]\n       medicine-agentctl product --canonical-db <PATH> --product-ref <REF> [--json]\n       medicine-agentctl draft-normalize --body <JSON> [--person <ID> --product-ref <REF>] [--json]\n       medicine-agentctl safety-basis --canonical-db <PATH> --product-ref <REF> --person <JSON> --draft <JSON> [--json]\n       medicine-agentctl dur-display --input <JSON> [--json]\n       medicine-agentctl profile-risks --canonical-db <PATH> --product-ref <REF> --person <JSON> --course <JSON> [--as-of <YYYY-MM-DD>] [--json]\n       medicine-agentctl interaction-risks --canonical-db <PATH> --product-ref <REF> --current <JSON> --course <JSON> [--json]";
     #[cfg(feature = "agentctl")]
     {
+        #[cfg(feature = "agentctl-web")]
+        let ui_scenario = "\n       medicine-agentctl ui-scenario --personal-db <PATH> [--canonical-db <PATH>] [--reference-unavailable-reason <REASON>] (--input <JSON>|--input-file <PATH>) [--json]";
+        #[cfg(not(feature = "agentctl-web"))]
+        let ui_scenario = "";
         format!(
-            "usage: medicine-agentctl capabilities [--json]\n       medicine-agentctl targets [--json]\n       medicine-agentctl logs [--limit <N>] [--log-db <PATH>] [--json]\n       medicine-agentctl scenario --personal-db <PATH> [--canonical-db <PATH>] --input <JSON> [--json]\n       medicine-agentctl reference-bootstrap <status|start|update> --reference-dir <PATH> --base-url <HTTPS_BASE_URL> --trust-manifest <PATH> [--json]\n       {common}"
+            "usage: medicine-agentctl capabilities [--json]\n       medicine-agentctl targets [--json]\n       medicine-agentctl logs [--limit <N>] [--log-db <PATH>] [--json]\n       medicine-agentctl scenario --personal-db <PATH> [--canonical-db <PATH>] --input <JSON> [--json]{ui_scenario}\n       medicine-agentctl reference-bootstrap <status|start|update> --reference-dir <PATH> --base-url <HTTPS_BASE_URL> --trust-manifest <PATH> [--json]\n       {common}"
         )
     }
     #[cfg(not(feature = "agentctl"))]

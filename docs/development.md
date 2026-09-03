@@ -88,6 +88,32 @@ docker compose run --rm dev sh scripts/run_app.sh drug-search 졸피뎀 --limit 
 
 Run `docker compose run --rm dev sh scripts/run_app.sh --help` for the complete command surface.
 
+For exploratory testing of the shared Web UI, `scripts/run_ui.sh` builds the UI plus the `agentctl-web`-only control surface and runs one bounded Chromium session. `targets --json` reports the supported UI actions, semantic targets, fields, observations, and fault actions. UI scenarios operate on a temporary snapshot of the supplied personal database, so exploratory mutations do not change the source database.
+
+```bash
+docker compose run --rm dev sh scripts/run_ui.sh targets --json
+docker compose run --rm dev sh scripts/run_ui.sh ui-scenario \
+  --personal-db data/db/personal.sqlite \
+  --canonical-db data/db/mobile.sqlite \
+  --input-file /workspace/scenario.json --json
+```
+
+A UI scenario can keep one browser alive across `open`, `reload`, semantic `click`/`set-field`, structured `observe`, API `request`, clock changes, and screenshots. Agent-only HTTP faults support `fail`, `delay`, and deterministic `gate`/`release`, which makes late-response and failed-refresh state transitions reproducible without changing production UI code. The agent control routes and Chromium/CDP dependencies are compiled only with `agentctl-web`.
+
+Example scenario fragment:
+
+```json
+{
+  "operations": [
+    {"id":"open","at_ms":0,"action":"open","screen":"home"},
+    {"id":"fail-dashboard","at_ms":0,"action":"fault","fault_id":"dashboard-once","method":"GET","path":"/api/people/*/dashboard","fault_action":"fail","times":1,"status":500},
+    {"id":"reload","at_ms":0,"action":"reload"},
+    {"id":"error","at_ms":0,"action":"wait-state","field":"dashboard.phase","equals":"error","timeout_ms":5000},
+    {"id":"state","at_ms":0,"action":"observe"}
+  ]
+}
+```
+
 ## Android
 
 The Android UI is packaged with the APK and calls the Rust core through JNI. It does not depend on the standalone development web service at runtime. The release build is currently `arm64-v8a`, Android 9+ (API 28+), with on-device OCR packaged in the APK.
