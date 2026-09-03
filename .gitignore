@@ -30,4 +30,5 @@ rust/**/target/
 
 # Shared UI build dependencies are reproducible from ui/package-lock.json.
 ui/node_modules/
+ui/dist/
 ocr_runtime/node_modules/

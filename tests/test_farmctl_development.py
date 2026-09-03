@@ -74,6 +74,7 @@ class FarmctlDevelopmentTest(unittest.TestCase):
         self.assertIn("python -m unittest discover -s tests -v", script)
         self.assertNotIn("npm ci", script)
         self.assertIn("npm run check", script)
+        self.assertIn("npm test", script)
         self.assertIn("MEDICINE_TSC_BINARY", script)
         self.assertIn(
             "./gradlew --no-daemon --dependency-verification strict testDebugUnitTest lintDebug assembleDebug",

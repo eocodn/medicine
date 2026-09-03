@@ -35,6 +35,7 @@ run_ui() {
   (
     cd "$root/ui"
     npm run check
+    npm test
   )
 }
 
