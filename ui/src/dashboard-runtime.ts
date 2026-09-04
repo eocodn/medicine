@@ -67,6 +67,26 @@ async function refreshForDateChange() {
   }
 }
 
+async function refreshForForeground() {
+  if (document.visibilityState === "hidden") return;
+  if (!currentPerson()) {
+    try {
+      await loadPeople();
+    } catch (error) {
+      console.error("people refresh failed", error);
+      return;
+    }
+    if (!state.currentPersonId) return;
+    try {
+      await refreshActiveDashboard();
+    } catch (error) {
+      console.error("dashboard refresh after people recovery failed", error);
+    }
+    return;
+  }
+  await refreshForDateChange();
+}
+
 async function refreshPersonalData() {
   if (!state.currentPersonId) return;
   markDashboardStale("external_personal_write");

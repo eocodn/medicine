@@ -503,8 +503,8 @@ function bindEvents() {
       await startNextOcrProductSearch();
     });
   });
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForDateChange(); });
-  window.addEventListener("focus", refreshForDateChange);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshForForeground(); });
+  window.addEventListener("focus", refreshForForeground);
   setInterval(refreshForDateChange, 60000);
 }
 

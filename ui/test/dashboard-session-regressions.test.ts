@@ -111,6 +111,32 @@ test("people stay visible when cold-start dashboard loading fails", async () => 
   assert.doesNotMatch(nodes.get("#home-content").innerHTML, /누구의 약을/);
 });
 
+test("foreground recovery reloads people after the cold-start people request fails", async () => {
+  const { context, nodes } = harness(new Map([["medicine.currentPersonId", "p1"]]));
+  let peopleRequests = 0;
+  context.window.MedicineLocalApi = {
+    async request(path) {
+      if (path === "/api/people") {
+        peopleRequests += 1;
+        if (peopleRequests === 1) throw new Error("personal database temporarily unavailable");
+        return [{ id: "p1", name: "나", age: 36, sex: "male" }];
+      }
+      if (path === "/api/people/p1/dashboard") return dashboard("p1", "med-1");
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+
+  await assert.rejects(vm.runInContext("loadPeople()", context), /temporarily unavailable/);
+  assert.equal(vm.runInContext("state.people.length", context), 0);
+
+  await vm.runInContext("refreshForForeground()", context);
+
+  assert.equal(peopleRequests, 2);
+  assert.equal(vm.runInContext("state.currentPersonId", context), "p1");
+  assert.match(nodes.get("#profile-shortcut-name").textContent, /나/);
+  assert.equal(vm.runInContext("state.dashboardSession.phase", context), "ready");
+});
+
 test("failed profile switch never leaves the previous dashboard owned by the new profile", async () => {
   const { context } = harness(new Map([["medicine.currentPersonId", "A"]]));
   context.window.MedicineLocalApi = {
