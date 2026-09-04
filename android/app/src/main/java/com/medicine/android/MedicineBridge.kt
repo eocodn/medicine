@@ -11,7 +11,7 @@ class MedicineBridge(
     personalDatabase: File,
     vault: PersonalDatabaseVault,
     private val onPersonalWriteCommitted: ((BridgeRequest, String) -> Unit)? = null,
-) {
+) : MedicineRequestDelegate {
     private val personalApi = PersonalDatabaseApi(referenceDatabase, personalDatabase, vault)
     private val requestExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     @Volatile private var responseHandler: ((String, String) -> Unit)? = null
@@ -32,7 +32,7 @@ class MedicineBridge(
     }
 
     @JavascriptInterface
-    fun requestAsync(
+    override fun requestAsync(
         requestId: String,
         method: String,
         path: String,
