@@ -15,6 +15,8 @@ class ManifestContractTest {
         assertFalse(build.contains("MEDICINE_OCR_ASSETS_DIR"))
         assertFalse(activity.contains("/ocr-assets/"))
         assertTrue(integration.contains("/ocr-assets/"))
+        assertTrue(integration.contains("OCR_ASSET_ROOT + path"))
+        assertTrue(integration.contains("private static final String OCR_ASSET_ROOT = \"ocr-assets/\""))
         assertTrue(manifest.contains("FileProvider"))
         assertTrue(runtimeManifest.isFile)
     }

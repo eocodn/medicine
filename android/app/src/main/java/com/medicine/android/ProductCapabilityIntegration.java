@@ -15,6 +15,8 @@ import androidx.webkit.WebViewAssetLoader;
 import java.io.File;
 
 final class ProductCapabilityIntegration {
+    private static final String OCR_ASSET_ROOT = "ocr-assets/";
+
     private final ComponentActivity activity;
     private final ActivityResultLauncher<Intent> fileChooserLauncher;
     private ValueCallback<Uri[]> fileChooserCallback;
@@ -45,7 +47,8 @@ final class ProductCapabilityIntegration {
     }
 
     void configureAssetLoader(WebViewAssetLoader.Builder builder) {
-        builder.addPathHandler("/ocr-assets/", new WebViewAssetLoader.AssetsPathHandler(activity));
+        WebViewAssetLoader.AssetsPathHandler assets = new WebViewAssetLoader.AssetsPathHandler(activity);
+        builder.addPathHandler("/ocr-assets/", path -> assets.handle(OCR_ASSET_ROOT + path));
     }
 
     void configureWebView(WebView webView) {
