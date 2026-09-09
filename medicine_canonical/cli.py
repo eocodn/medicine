@@ -17,7 +17,10 @@ from .inspection import canonical_product_criteria
 from .integrated_build import assemble_integrated_databases, build_integrated_databases
 from .mobile import build_mobile_database
 from .reference_contracts.registry import build_supported_contract_window
-from .release_r2_public import audit_public_bucket_from_env
+from .release_r2_public import (
+    audit_public_bucket_from_env,
+    retire_reference_namespace_from_env,
+)
 from .release_r2_runtime import download_object_from_env
 from .release_window import build_and_publish_contract_window_from_env
 from .release_signing import verify_signed_envelope
@@ -256,6 +259,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     r2_public_audit.add_argument("--json", action="store_true")
 
+    r2_retire_namespace = sub.add_parser(
+        "r2-retire-namespace",
+        help="Permanently delete an explicitly retired reference version namespace",
+    )
+    r2_retire_namespace.add_argument("--namespace", required=True)
+    r2_retire_namespace.add_argument("--json", action="store_true")
+
     return parser
 
 
@@ -409,6 +419,8 @@ def main(argv=None) -> int:
         payload = download_object_from_env(args.key, args.output)
     elif args.command == "r2-public-audit":
         payload = audit_public_bucket_from_env()
+    elif args.command == "r2-retire-namespace":
+        payload = retire_reference_namespace_from_env(args.namespace)
     else:
         payload = verify_canonical_database(args.db)
         _emit(payload, args.json)

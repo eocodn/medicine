@@ -52,6 +52,8 @@ class DeploymentConfigTest(unittest.TestCase):
         requirements = Path("deploy/reference-publish-requirements.txt").read_text()
         self.assertIn("google-cloud-kms==", requirements)
         self.assertIn("refresh_sources", workflow)
+        self.assertIn("retire_namespace", workflow)
+        self.assertIn("r2-retire-namespace", workflow)
         self.assertIn("actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25", workflow)
         self.assertIn("actions/cache/save@caa296126883cff596d87d8935842f9db880ef25", workflow)
         self.assertIn("data/canonical/raw", workflow)
@@ -81,6 +83,14 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("retire_previous_contract", workflow)
         self.assertIn("--retire-previous-contract", workflow)
         self.assertIn("RETIRE_PREVIOUS_CONTRACT", workflow)
+        self.assertLess(
+            workflow.index("r2-retire-namespace"),
+            workflow.index("\n  sources:"),
+        )
+        self.assertLess(
+            workflow.index("r2-public-audit"),
+            workflow.index("\n  sources:"),
+        )
         self.assertLess(
             workflow.index("r2-public-audit"),
             workflow.index("reference-build-publish-r2"),
@@ -151,7 +161,8 @@ class DeploymentConfigTest(unittest.TestCase):
         self.assertIn("always()", incident)
         self.assertIn("github.event_name == 'schedule'", incident)
         self.assertIn("REFERENCE_PUBLISH_SCHEDULE_ENABLED == 'true'", incident)
-        self.assertIn("needs: [gate, sources, publish]", incident)
+        self.assertIn("needs: [gate, preflight, sources, publish]", incident)
+        self.assertIn("PREFLIGHT_RESULT", incident)
         self.assertIn("needs.gate.outputs.should_run != 'false'", incident)
         self.assertIn("issues: write", incident)
         self.assertIn("contents: read", incident)

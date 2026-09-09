@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import os
+import re
 
 from .release_r2_runtime import client_from_env
 from .release_window import ROOT_KEY
 
 
 PUBLIC_REFERENCE_PREFIX = "reference/v2/"
+_VERSION_NAMESPACE = re.compile(r"reference/v[1-9][0-9]*/\Z")
 
 
-def _list_all_keys(client, bucket: str) -> list[str]:
+def _list_all_keys(client, bucket: str, *, prefix: str = "") -> list[str]:
     keys: list[str] = []
     continuation_token: str | None = None
     while True:
         kwargs: dict[str, str] = {"Bucket": bucket}
+        if prefix:
+            kwargs["Prefix"] = prefix
         if continuation_token:
             kwargs["ContinuationToken"] = continuation_token
         response = client.list_objects_v2(**kwargs)
@@ -57,4 +61,46 @@ def audit_public_bucket_from_env() -> dict:
     return audit_public_bucket(client_from_env(), bucket)
 
 
-__all__ = ["audit_public_bucket", "audit_public_bucket_from_env"]
+def retire_reference_namespace(client, bucket: str, namespace: str) -> dict:
+    if not bucket.strip():
+        raise ValueError("R2 bucket is required")
+    if not _VERSION_NAMESPACE.fullmatch(namespace):
+        raise ValueError("namespace must be a complete version namespace such as reference/v1/")
+    if namespace == PUBLIC_REFERENCE_PREFIX:
+        raise ValueError(f"active reference namespace cannot be retired: {namespace}")
+
+    keys = _list_all_keys(client, bucket, prefix=namespace)
+    deleted: list[str] = []
+    for key in keys:
+        try:
+            client.delete_object(Bucket=bucket, Key=key)
+        except Exception as exc:
+            raise RuntimeError(f"failed to retire reference namespace while deleting {key}") from exc
+        deleted.append(key)
+
+    remaining = _list_all_keys(client, bucket, prefix=namespace)
+    if remaining:
+        preview = ", ".join(remaining[:5])
+        raise RuntimeError(f"retired reference namespace still contains objects: {preview}")
+    return {
+        "status": "retired",
+        "bucket": bucket,
+        "namespace": namespace,
+        "deleted_count": len(deleted),
+        "deleted_keys": deleted,
+    }
+
+
+def retire_reference_namespace_from_env(namespace: str) -> dict:
+    bucket = os.environ.get("R2_BUCKET", "").strip()
+    if not bucket:
+        raise RuntimeError("R2_BUCKET is required")
+    return retire_reference_namespace(client_from_env(), bucket, namespace)
+
+
+__all__ = [
+    "audit_public_bucket",
+    "audit_public_bucket_from_env",
+    "retire_reference_namespace",
+    "retire_reference_namespace_from_env",
+]
